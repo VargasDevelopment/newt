@@ -66,6 +66,9 @@ class NightlyTests(unittest.TestCase):
         subprocess.run(['git', 'init', '-q', '--bare', '-b', 'main', str(self.origin)], check=True)
         self.git('init', '-q', '-b', 'main')
         self.git('config', 'core.hooksPath', str(self.root / 'no-hooks'))
+        # nightly.stamp commits in this repo with the process environment; CI runners have no identity.
+        self.git('config', 'user.name', 'Fixture')
+        self.git('config', 'user.email', 'fixture@example.invalid')
         self.git('remote', 'add', 'origin', str(self.origin))
         self.git('add', '.')
         self.git('commit', '-qm', 'chore(release): 0.1.0 -> 0.2.0')
