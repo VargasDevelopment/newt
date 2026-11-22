@@ -24,7 +24,9 @@ const HARD_RESET = 'D0|R1|W200|R0|W200';
 // an ack. The stub sends no more than one unacked block, so a 256-byte block
 // fills at most half that queue, even when every byte is 0xFF.
 export const READ_BLOCK = 256;
-const READ_TIMEOUT_MS = 3000; // per packet; esptool-js waits 100 s
+// Transport.read restarts this on every byte, so it bounds silence, not a whole
+// packet: a stream that keeps trickling bytes can run longer. esptool-js waits 100 s.
+const READ_TIMEOUT_MS = 3000;
 
 // What readFlash needs of an ESPLoader, so a test can stand in for the stub.
 export type FlashReader = Pick<ESPLoader, 'checkCommand' | 'ESP_READ_FLASH'> & {
