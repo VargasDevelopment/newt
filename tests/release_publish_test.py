@@ -34,6 +34,7 @@ import update_publish
 
 TAG = 'v' + VERSION
 PREVIOUS = 'v0.2.0-alpha.0'
+PUBLISHED = '2026-11-22T06:00:00Z'
 HEADER = '''inline constexpr WhatsNewUpdate kWhatsNew[] = {
     {"Oct 30, 2026",
      {"Updates arrive over \\"Wi-Fi\\".",
@@ -75,7 +76,7 @@ class FakeGit:
     """A tagged release merge on origin/main, with its files and the previous release's."""
 
     def __init__(self, **changes):
-        self.tags = {TAG: REVISION}
+        self.tags = {TAG: REVISION, PREVIOUS: PREVIOUS}
         self.origin = {TAG: REVISION}
         self.mainline = {REVISION}
         self.files = {(REVISION, NOTICES): NOTICE_TEXT, (REVISION, WHATS_NEW): HEADER, (PREVIOUS, WHATS_NEW): SHIPPED,
@@ -115,7 +116,8 @@ class FakeGitHub:
             self.blobs[len(self.blobs) + 1] = data
             assets.append({'id': len(self.blobs), 'name': asset, 'size': len(data), 'state': 'uploaded'})
         self.releases[release_id] = {'id': release_id, 'tag_name': tag, 'draft': draft, 'prerelease': prerelease,
-                                     'name': name, 'body': body, 'assets': assets}
+                                     'published_at': None if draft else PUBLISHED, 'name': name, 'body': body,
+                                     'assets': assets}
         return release_id
 
     def tag_commit(self, tag):
@@ -141,16 +143,16 @@ class FakeGitHub:
     def publish(self, release_id):
         self.patched.append(release_id)
         if self.answer != 'failed':
-            self.releases[release_id]['draft'] = False
+            self.releases[release_id].update(draft=False, published_at=PUBLISHED)
             self.tags.setdefault(self.releases[release_id]['tag_name'], REVISION)
         if self.answer != 'ok':
             raise subprocess.CalledProcessError(1, 'gh api -X PATCH')
 
-    def previous_release(self, tag):
-        """Releases published here win; `previous` stands for older ones this fake does not hold."""
-        published = [release['tag_name'] for release in self.releases.values()
-                     if not release['draft'] and release['tag_name'] != tag]
-        return published[-1] if published else self.previous
+    def all_releases(self):
+        """`previous` stands for an older published release this fake holds no assets for."""
+        older = [{'id': 1, 'tag_name': self.previous, 'draft': False, 'prerelease': False,
+                  'published_at': '2026-10-30T19:18:40Z'}] if self.previous else []
+        return older + list(self.releases.values())
 
     def latest(self):
         published = [release for release in self.releases.values() if not release['draft']]
@@ -220,6 +222,23 @@ class ReleasePublishTests(unittest.TestCase):
         github = FakeGitHub()
         github.add(TAG, {}, draft=False)
         self.assertEqual(self.plan(github=github).notes, self.plan().notes)
+
+    def test_previous_release_is_the_latest_published_one(self):
+        def row(tag, published_at, release_id, draft=False, prerelease=False):
+            return {'tag_name': tag, 'published_at': published_at, 'id': release_id, 'draft': draft,
+                    'prerelease': prerelease}
+        # A bulk import gave these one creation time; GitHub's list order is not publication order.
+        releases = [row('v1', '2026-11-02T00:00:00Z', 9), row('v3', '2026-11-20T00:00:00Z', 3),
+                    row('v2', '2026-11-20T00:00:00Z', 2), row('v4', None, 10, draft=True),
+                    row('v5', '2026-11-21T00:00:00Z', 11, prerelease=True), row(TAG, '2026-11-22T00:00:00Z', 12)]
+        self.assertEqual(release_publish.newest_published(releases, TAG), 'v3')
+        self.assertIsNone(release_publish.newest_published(releases[3:], TAG))
+
+    def test_refuses_when_the_previous_release_tag_is_not_here(self):
+        git = FakeGit()
+        del git.tags[PREVIOUS]
+        refusals = self.plan(git=git).refusals
+        self.assertTrue(any(f'tag {PREVIOUS} is not here' in refusal for refusal in refusals), refusals)
 
     def test_legacy_notes_are_only_read_for_previous_releases(self):
         expected = self.plan().notes
@@ -467,6 +486,10 @@ CONTROLS = (
     ("    require(shown.get('draft') is False,", '    require(True,', 'test_failed_publish_keeps_the_draft_and_stops'),
     ('    if draft is None:', '    if True:', 'test_resumes_a_matching_draft_without_creating_one'),
     ('    if prerelease:', '    if False:', 'test_refuses_the_prerelease_flag'),
+    ("    return max(shown, key=lambda release: (release['published_at'], release['id']))['tag_name'] if shown else None",
+     "    return shown[0]['tag_name'] if shown else None", 'test_previous_release_is_the_latest_published_one'),
+    ('    if previous and base is None:', '    if False:',
+     'test_refuses_when_the_previous_release_tag_is_not_here'),
     ("leaks('newt.bin', image, patterns, allowed) + ", '', 'test_refuses_a_host_path_in_the_image'),
     (" + leaks('The notes', notes.encode(), patterns, allowed)", '', 'test_refuses_a_host_detail_in_the_notes'),
     ('    refusals += bench_refusals(bench_receipt, version, build, image, manifest)', '',

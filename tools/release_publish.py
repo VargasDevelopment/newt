@@ -143,11 +143,11 @@ class GitHub:
     def latest(self):
         return self.api(f'repos/{self.repository}/releases/latest')
 
-    def previous_release(self, tag):
-        """The newest published release other than `tag`, or None. GitHub lists releases newest first."""
-        tags = self.run(['gh', 'api', '--paginate', f'repos/{self.repository}/releases?per_page=100',
-                         '--jq', f'.[] | select(.draft | not) | select(.tag_name != "{tag}") | .tag_name']).split()
-        return tags[0].decode() if tags else None
+    def all_releases(self):
+        """Every release here, drafts included, as {tag_name, draft, prerelease, published_at, id}."""
+        rows = self.run(['gh', 'api', '--paginate', f'repos/{self.repository}/releases?per_page=100',
+                         '--jq', '.[] | {tag_name, draft, prerelease, published_at, id} | tojson'])
+        return [json.loads(row) for row in rows.splitlines()]
 
 
 @dataclass
@@ -192,6 +192,14 @@ def whats_new(header):
         return [re.sub(r'\\(.)', r'\1', item) for item in found]
     return [(strings(date)[0], strings(lines))
             for date, lines in re.findall(r'\{\s*("[^"]*")\s*,\s*\{(.*?)\}\s*\}', header, re.DOTALL)]
+
+
+def newest_published(releases, tag):
+    """The tag of the latest release other than `tag` that devices could have shown, or None. GitHub orders
+    its list by creation time, which a bulk import ties, so this goes by publication time, then id."""
+    shown = [release for release in releases
+             if not release['draft'] and not release['prerelease'] and release['tag_name'] != tag]
+    return max(shown, key=lambda release: (release['published_at'], release['id']))['tag_name'] if shown else None
 
 
 def notes_at(git, commit):
@@ -327,8 +335,12 @@ def plan(image, receipt, bench_receipt=None, prerelease=False, git=None, github=
     require(header is not None, f'{commit} has no {WHATS_NEW}')
     # News is what this repository's readers have not seen: the repository's own previous release, not the
     # previous git tag, which a first release here (or the hop) may never have published.
-    previous = github.previous_release(tag)
-    shipped = whats_new(notes_at(git, previous)) if previous else []
+    previous = newest_published(github.all_releases(), tag)
+    base = previous and git.tag_commit(previous)
+    if previous and base is None:
+        refusals.append(f'{repository} last published {previous}, but tag {previous} is not here to show what it '
+                        'already said: git fetch origin --tags')
+    shipped = whats_new(notes_at(git, base)) if base else []
     news = list(dict.fromkeys(line for update in whats_new(header) if update not in shipped for line in update[1]))
     notes = render_notes(version, commit, build, image, news)
     # Until its firmware reads it, the source repository is private and its links 404.
