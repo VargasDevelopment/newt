@@ -40,6 +40,35 @@ def fixture_version(root, version, major_zero=True):
                             f'#define NEWT_FIRMWARE_VERSION "{version}"', header.read_text(), flags=re.MULTILINE))
 
 
+class LocalLinksTests(unittest.TestCase):
+    def test_linked_local_folders_leave_a_checkout_clean(self):
+        """Worktrees often link .release-venv and installer/node_modules from another checkout; the
+        repository's .gitignore must match a link as well as a folder, or every build is -dirty."""
+        for kind in ('link', 'folder'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                root, elsewhere = Path(directory) / 'repo', Path(directory) / 'elsewhere'
+                elsewhere.mkdir()
+                for name in ('.gitignore', 'rust/firmware/native/firmware_version.h'):
+                    (root / name).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(release.ROOT / name, root / name)
+                (root / 'installer').mkdir()
+
+                def git(*args):
+                    subprocess.run(['git', '-c', 'user.name=Release fixture', '-c',
+                                    'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false', *args],
+                                   cwd=root, check=True, capture_output=True)
+                git('init', '-q')
+                git('add', '-A')
+                git('commit', '-qm', 'chore: start')
+                for name in ('.release-venv', 'installer/node_modules'):
+                    if kind == 'link':
+                        (root / name).symlink_to(elsewhere, target_is_directory=True)
+                    else:
+                        (root / name).mkdir()
+                        (root / name / 'kept').write_text('local\n')
+                self.assertFalse(release.source_identity(root)['dirty'])
+
+
 class ReleaseTests(unittest.TestCase):
     RUN_IDS = itertools.count(40000000001)
 
