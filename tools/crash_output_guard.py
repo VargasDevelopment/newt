@@ -1,5 +1,5 @@
 """Console output's gates in the linked image (rust/firmware/native/crash_output.h,
-docs/082-ota-updates.md "Crash dumps and panic output"); verify-nvs-guard.py
+docs/UPDATES.md "Secrets in RAM"); verify-nvs-guard.py
 runs it on every firmware build."""
 from bisect import bisect_right
 import re
@@ -10,7 +10,7 @@ from crash_console_guard import CONSOLE_REGISTERS, decimal_power_ranges
 from crash_console_guard import validate_console_registers as _validate_console_registers
 
 
-# Console output's gates (rust/firmware/native/crash_output.h, docs/082-ota-updates.md).
+# Console output's gates (rust/firmware/native/crash_output.h, docs/UPDATES.md).
 # Every panic and abort reaches IDF's panic handler only through its wrap, the
 # task watchdog's register printout only through esp_backtrace_print's, and
 # ROM print only through the putc gate in the ROM's printf channel. Each gate

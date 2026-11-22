@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Derive Newt's linker script from the pinned ESP-IDF sections.ld (docs/084-wifi-memory.md).
+"""Derive Newt's linker script from the pinned ESP-IDF sections.ld (docs/UPDATES.md, "Wi-Fi memory").
 
 Three edits, nothing else:
 1. The .data/.bss of the files only Wi-Fi links (WIFI_FILES), the .bss inputs
@@ -38,7 +38,7 @@ PINNED = {
 }
 OUTPUT = ROOT / ".build" / FIRMWARE_BUILD / "ld/sections.ld"
 # Input files that only Wi-Fi links: none of their data is kept in a build
-# without Wi-Fi (docs/084-wifi-memory.md). verify-wifi-link.py fails the build
+# without Wi-Fi (docs/UPDATES.md, "Wi-Fi memory"). verify-wifi-link.py fails the build
 # if anything else lands in .dram0.newt_wifi or anything outside Wi-Fi uses it.
 WIFI_FILES = (
     "*libcore.a", "*libesp_netif.a", "*libesp_wifi.a", "*libespnow.a", "*liblwip.a",
@@ -48,7 +48,7 @@ WIFI_FILES = (
     "*libesp_phy.a:phy_common.c.obj", "*libesp_phy.a:phy_init.c.obj",
     "*libmbedcrypto.a:ecp.c.obj", "*libmbedcrypto.a:esp_aes_dma_core.c.obj",
     "*libmbedcrypto.a:esp_bignum.c.obj", "*libmbedcrypto.a:platform.c.obj",
-    # Update mode's GitHub check (docs/088-ota-wifi-install.md): HTTP, TLS, the
+    # Update mode's GitHub check (docs/UPDATES.md, "Updates over Wi-Fi"): HTTP, TLS, the
     # certificate bundle and the DS peripheral code esp-tls links.
     "*libesp_http_client.a", "*libesp-tls.a", "*libmbedtls.a", "*libmbedtls_2.a",
     "*libmbedcrypto.a:esp_ds_common.c.obj",
@@ -73,7 +73,7 @@ INIT_START, INIT_END = "_newt_wifi_init_start", "_newt_wifi_init_end"
 # The lent heap must hold the SD card's FATFS context, which a reading boot
 # allocates after the lend and keeps: the RAM heap has no room left for it, and
 # in the large heap it would split the block the reader opens books in
-# (docs/084-wifi-memory.md). Zero padding makes up any shortfall; a bigger
+# (docs/UPDATES.md, "Wi-Fi memory"). Zero padding makes up any shortfall; a bigger
 # Wi-Fi range needs none. tools/verify-wifi-link.py fails the health build if
 # the linked context needs more.
 LENT_FLOOR = 22528
@@ -172,7 +172,7 @@ def derive(text, force_load=False):
               f" * (at least {LENT_FLOOR} B);\n"
               f" * libphy and libesp_ringbuf IRAM code and {', '.join(f for _, _, f in FLASH_FUNCTIONS)} in flash.\n"
               " * Wi-Fi-only constructors in their own list, which update mode runs.\n"
-              " * See docs/084-wifi-memory.md. */\n")
+              " * See docs/UPDATES.md, Wi-Fi memory. */\n")
     return header + defer_constructors(code_to_flash(carve_out(text, force_load=force_load)))
 
 

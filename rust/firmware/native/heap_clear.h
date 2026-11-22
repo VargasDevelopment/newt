@@ -1,6 +1,6 @@
 #pragma once
 // Every boot clears the RAM that becomes heap before IDF registers it
-// (docs/085-wifi-setup.md). A restart or a panic reset keeps RAM, so an
+// (docs/UPDATES.md, "Secrets in RAM"). A restart or a panic reset keeps RAM, so an
 // update-mode boot's freed blocks, the Wi-Fi driver's copies of the password
 // and its derived keys among them, would otherwise reach a later boot's
 // allocations. IDF registers the heap in two steps, and each wrap clears what

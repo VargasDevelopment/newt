@@ -7,29 +7,10 @@ label and the matching `.cz.toml` version. It uses Commitizen's `semver2` scheme
 (`apps/pocket-pause.json`), `.newt` format and USB/DIAG schema numbers are separate
 contracts; a firmware bump does not migrate them.
 
-The selected current-runtime snapshot
-`6911ddb16b50d657dd779036fc3eefd96756be86` had no firmware release tag
-or firmware release version: About said “M1 UX candidate”; DEV USB used a Git
-revision, optional regional-experiment suffix and dirty suffix. Archived ESP
-image metadata's `arduino-lib-builder` version `8cabf2c` identifies the pinned
-Arduino provider, not a Newt release. `0.1.0-alpha.0` is therefore an unreleased
-initial development label. No old build is renamed, retagged or reflashed.
-This integrates the reviewed Commitizen candidate
-`b86ddeed54f1038a348bc17e36bdf2d6226f4798` onto that current runtime. Its original
-`da723f5be94abfe299e5e15d1e18be311424c60d` adoption boundary is historical
-provenance; current-runtime legacy commits through `6911ddb` remain unchanged.
-The original tooling boundary was `1e352f752979ec3cff8e28e21f6a0bd6e6716744`.
-The additional source-import boundary is
-`fcca87ad1cb792a3ca2bfafb7c7e5bae3ff14b0d`, the immutable published #16 draft
-checkpoint. It preserves original author/date and subjects from the separate
-unpublished runtime branch as an explicit bounded frozen-source import exception; its `Source-Commit` trailers identify those
-frozen source handoffs. The source-only import excludes historical device/build
-artifacts. This bounded closure does not exempt new implementation commits or
-add an allowed prefix. The release gate pins this same boundary;
-every later commit, including future merges, must satisfy Conventional Commits.
-The integration must retain this ancestry (a normal merge, not a squash that
-would discard the pinned boundary). No published commit or remote history is
-rewritten. This closure requires independent source review with the integration.
+The release gate exempts history before a pinned adoption boundary
+(`ADOPTION_BASE` in `tools/release_tools.py`), which only the private
+history carries; every later commit, including merges, must be a
+Conventional Commit.
 
 A repository started from a clean export (`python3 -B tools/clean_export.py
 --rev REV --out DIR --commit 'NAME <EMAIL>'`) has no such commit. Its single
@@ -104,8 +85,7 @@ record migration, recoverability or physical acceptance.
 
 ## Prepare a reviewed release
 
-`v0.1.0-alpha.0` is the reviewed baseline tag (owner decision 10 in
-[082](082-ota-updates.md)). Each owner update bumps to the next alpha. Newt
+`v0.1.0-alpha.0` is the reviewed baseline tag. Each owner update bumps to the next alpha. Newt
 offers newer versions from the card; reinstalling the same version needs an
 extra confirm. Commitizen classifies the history since the last tag, so never
 bump from a branch that lacks it.
@@ -146,8 +126,7 @@ the adoption note in `CHANGELOG.md`.
 ## Exact identity and acceptance
 
 The About Version label is not an image identifier; About's build line under
-it shows the DEV build ID and its commit date
-([081](081-about-build-whats-new.md)). DEV USB's exact Git/variant/dirty
+it shows the DEV build ID and its commit date. DEV USB's exact Git/variant/dirty
 build ID stays unchanged. `tools/firmware-build.py --clean --health-report`
 also writes `artifacts/firmware-identity-regional-dev-usb.json`: firmware version, full
 Git revision, dirty flag, variant, binary SHA-256 and existing source/toolchain
@@ -233,7 +212,7 @@ published mistake.
 
 An update is two files: `newt.bin`, the image, and `newt.manifest`, a small
 text file with its version, 12-hex build ID, size and SHA-256
-([083](083-ota-sd-install.md)). The
+([UPDATES.md](UPDATES.md#card-install)). The
 same two files serve a home-network folder or a GitHub Release
 ([Publish a GitHub release](#publish-a-github-release)) unchanged.
 
@@ -250,7 +229,7 @@ same two files serve a home-network folder or a GitHub Release
 4. Send the owner the version and build it printed.
 
 Another firmware needs no manifest: its own `.bin` in `/Newt/Update/` is
-offered after Newt checks it (docs/083). Publishing grants no flash, push or
+offered after Newt checks it ([UPDATES.md](UPDATES.md#card-install)). Publishing grants no flash, push or
 release permission.
 
 ## Publish a GitHub release
@@ -264,41 +243,6 @@ A device reads `GET /repos/<repository>/releases/latest`, then that release's
 `newt.manifest` and `newt.bin`. `tools/release_publish.py` checks every rule
 below and publishes the release there; only the Lead runs it with `--publish`.
 
-
-### First Rust release (NRUST-86)
-
-This records the alpha.16 to Rust crossover. The C++ Newt was deleted in
-NEWT-90; alpha.16's source lives only in git history (tag `cpp-final`).
-
-The shipping image is the full Rust `regional-dev-usb` build: regional display,
-DEV USB, Stage, Wi-Fi/update and the embedded sample. The update files retain
-their format and names. Publication requires that image's clean identity and
-resource receipt; a C++ image or a Rust bench build with omitted features is
-not a release candidate.
-
-Before the release merge, use `bench_flash.py` on the bench with its real card:
-install exact alpha.16, establish the reading anchor, preferences, statistics,
-theme and a Test of the saved network, then install the exact Rust candidate.
-Require VALID boot, Home, the expected version/build and preserved durable
-values; report cache reuse or rebuild and reading heap/stack. Record the actual
-written ranges: USB installation can replace the existing Newt slot and write
-a fallback selection, whereas the updater writes the inactive slot. USB
-crossover does not prove an HTTPS download or an OTA installation. Separately
-check the Rust pair against alpha.16's manifest, version-order, slot-size and
-image-header/descriptor/checksum rules, citing alpha.16's source and exact pair.
-
-There is no unpublished Wi-Fi test route. After the Lead merges, CI passes and
-tags the source, the Lead publishes the three assets through the reviewed
-process below. Before notifying the owner, run both real Wi-Fi transitions on
-the bench: exact alpha.16 to the published Rust alpha, then a distinct lower
-Rust version to that same published alpha. Repeat the durable-value, boot and
-memory checks. Any failure stops the run and is fixed forward; never publish a
-return to C++.
-
-Use only `bench_flash.py` and `dev-usb.py`, one lease and at least 30 seconds
-between port opens. Test may join the saved network; never Save, Forget, read
-its record, or press sleep. Backups stay private. Neither this procedure nor a
-passing build authorizes another device or agent publication.
 
 ### Rules
 
@@ -513,7 +457,7 @@ in this order:
 
 ## Install page
 
-The install page ([092](092-install-page.md), `installer/`) is served by the
+The install page ([installer/README.md](../installer/README.md)) is served by the
 public repository's GitHub Pages, `https://vargasdevelopment.github.io/newt/`.
 A web page cannot download a release asset itself: GitHub answers every step
 of a release download (github.com's two redirects and the asset host) without

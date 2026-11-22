@@ -1,6 +1,6 @@
 """Fault controls for the linked image keeping console output behind its
-gates (rust/firmware/native/crash_output.h, docs/082-ota-updates.md "Crash dumps and panic
-output"). Each fixture is a real RISC-V link by the pinned toolchain: the
+gates (rust/firmware/native/crash_output.h, docs/UPDATES.md "Secrets in
+RAM"). Each fixture is a real RISC-V link by the pinned toolchain: the
 actual gate source, compiled, and IDF's panic path, ROM print channels and
 Arduino's channel installs as small assembly objects, laid out like the
 firmware (IRAM, DRAM, flash, the sorted startup steps) and linked with the

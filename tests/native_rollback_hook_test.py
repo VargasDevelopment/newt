@@ -1,5 +1,5 @@
 """Fault controls for the linked hook that defers image confirmation to Newt's
-first finished screen (docs/083-ota-sd-install.md)."""
+first finished screen (docs/UPDATES.md, "Card install")."""
 import importlib.util
 from pathlib import Path
 import sys

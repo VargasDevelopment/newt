@@ -1,8 +1,7 @@
-# Approved project-local firmware toolchain
+# Project-local firmware toolchain
 
-Status: installed and the real X3 target compiles. The owner approved the exact bundle, then authorized continued necessary reputable project-local development dependencies. The 1.2 GB download /4 GB storage caps remain. No hardware, global installation, host security/network changes or public publication was authorized or performed.
-
-Existing Apple Clang21/Python3.14.6 run the host gate. Existing `/opt/homebrew/bin/python3.12` (3.12.6) bootstrapped the embedded environment. No global package/profile/cache was changed.
+The firmware builds with a pinned, project-local toolchain under `.toolchain/`
+and `.pio/`. Nothing is installed globally.
 
 ## Locked inputs and footprint
 
@@ -95,9 +94,3 @@ OpenSSL stays per checkout, because its archive must remain a single-link
 file. Stored links are kept verbatim, and `store` lists those that leave the
 component. One is the platform environment's absolute interpreter link, so a
 store depends on that bootstrap interpreter just as a copy does.
-
-## Evidence and physical boundary
-
-`artifacts/firmware-build.log`, `firmware-image-info.txt` and `verification.json` record the clean real build, valid417,072 B C3/DIO/16MB image, ELF/map hashes and both RAM summaries. The upstream precompiled app-description embeds `arduino-lib-builder` and its own version/date; use the Newt source and artifact receipt for this build's identity. The platform's generated partition table is not the X3's observed table.
-
-No flash or device reads were performed. Hardware session permission and verified recovery/duplicate private backups remain prerequisites in `BRINGUP.md`. Image compilation proves neither correct panel behavior nor runtime heap/power/bootloader compatibility.

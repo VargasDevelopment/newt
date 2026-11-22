@@ -7,8 +7,8 @@ through `decide`. When exactly one slot holds another firmware (any valid
 app without Newt's mark: stock, CrossPoint, CrossInk or another), Newt's
 slot is the other one and the other firmware is never written. Without one
 (Newt+Newt, Newt+Empty after an SD install), the slot that boots must hold a
-selected, confirmed Newt and tools write only the other slot (docs/082
-section 1). rust/core/src/slot_installer applies the same rule on the device
+selected, confirmed Newt and tools write only the other slot (docs/UPDATES.md,
+"Slots"). rust/core/src/slot_installer applies the same rule on the device
 and installer/src/slots.ts on the install page; tests/x3_slots_test.py's
 vectors hold all three (tests/installer_test.py, tests/slot_vectors_test.py).
 
@@ -40,8 +40,8 @@ NEWT_MARK = b'NEWT-X3-APP\0' + struct.pack('<I', 1)
 NEWT_IDENTITY_AT, NEWT_VERSION_BYTES, NEWT_BUILD_BYTES = NEWT_MARK_AT + len(NEWT_MARK), 24, 16
 ESP32C3_CHIP_ID = 5
 # What people call another firmware, by its descriptor's project
-# (firmwareName, include/newt/app_slot_identity.h). Stock X3 firmware
-# reports arduino-lib-builder and stays unknown. Evidence: docs/077.
+# descriptor project name. Stock X3 firmware reports arduino-lib-builder and
+# stays unknown.
 FIRMWARE_NAMES = {'CrossInk': 'CrossInk', 'crosspoint-reader': 'CrossPoint'}
 UNKNOWN_FIRMWARE = 'the other firmware'
 
@@ -247,7 +247,7 @@ class Layout:
 
 def decide(ota, heads, repair=False):
     """The layout, or Refused. `repair` allows only rewriting an unreadable
-    slot beside the running, selected and confirmed Newt (docs/082 section 1)."""
+    slot beside the running, selected and confirmed Newt (docs/UPDATES.md, "Slots")."""
     refuse(len(heads) == 2, 'Expected both app slot headers')
     images = tuple(classify(head) for head in heads)
     other = [i for i, image in enumerate(images) if image.kind == 'other']

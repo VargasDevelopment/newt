@@ -74,9 +74,9 @@ battery, sleep is a full power-off, so it behaves differently from USB.
 4. **Saved choices survive power loss.** A setting the reader chose must come
    back after a cold boot with all RAM lost.
    - Its authority is its durable record: the SD record, or for the four
-     device-settings records in
-     [docs/051-sd-reading-state.md](docs/051-sd-reading-state.md), their A/B
-     NVS record. RTC memory may only be a checked warm copy.
+     device-settings records in NVS (`newt_prefs`, `newt_pause`, `newt_apps`
+     and the built-in sample's `newt_reader`), their A/B NVS record. RTC
+     memory may only be a checked warm copy.
    - Commit and read back a choice before showing it as saved. Keep the old
      choice in use until then. Save an explicit "off" too, so an older "on"
      cannot come back.

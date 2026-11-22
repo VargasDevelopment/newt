@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify that a panic's leftover secrets stay out of the next boot (docs/085-wifi-setup.md); no hardware access.
+"""Verify that a panic's leftover secrets stay out of the next boot (docs/UPDATES.md, "Secrets in RAM"); no hardware access.
 
 A panic in update mode skips leaveUpdateMode's wipe, and RAM survives the
 reset (so does a clean restart, for the Wi-Fi driver's freed blocks). The next

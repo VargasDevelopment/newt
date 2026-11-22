@@ -75,7 +75,7 @@ def validate_loop_arguments(lines):
 
 def validate_rollback_hook(functions, symbols):
     """Arduino confirms a pending image before setup() unless this hook returns
-    true; Newt confirms after its first finished screen (docs/083-ota-sd-install.md)."""
+    true; Newt confirms after its first finished screen (docs/UPDATES.md, "Card install")."""
     definitions = [line for line in symbols.splitlines() if line.endswith(" " + ROLLBACK_HOOK)]
     if len(definitions) != 1 or not re.match(r"^[0-9a-fA-F]+\s+g\s+F\s+\S+\s+[0-9a-fA-F]+\s+", definitions[0]):
         raise RuntimeError("The rollback hook must have one strong Newt definition")
@@ -89,7 +89,7 @@ def validate_no_timer_task(functions, symbols):
     timers.c replaces it, and every boot then starts the timer task, whose 4 KiB
     stack and TCB come from the heap where no RAM ceiling sees them. Nothing in
     Newt uses FreeRTOS timers; Arduino's RGB LED path (RMT, event groups) pulled
-    them in until -DESP32_ARDUINO_NO_RGB_BUILTIN (docs/CODE_HEALTH.md, record 72)."""
+    them in until -DESP32_ARDUINO_NO_RGB_BUILTIN."""
     definitions = [line for line in symbols.splitlines() if line.endswith(" " + TIMER_TASK)]
     instructions = [(op, args) for op, args, _ in native_instructions(functions.get(TIMER_TASK, []))]
     if (len(definitions) != 1 or not re.match(r"^[0-9a-fA-F]+\s+w\s+F\s+", definitions[0])
@@ -100,7 +100,7 @@ def validate_no_timer_task(functions, symbols):
         raise RuntimeError(f"Arduino's RGB LED path is linked: {linked}")
 
 
-# Wi-Fi never writes flash (docs/084-wifi-memory.md). While Wi-Fi may run, the
+# Wi-Fi never writes flash (docs/UPDATES.md). While Wi-Fi may run, the
 # NVS guard's fence refuses partition writes and read-write NVS opens, so every
 # flash write primitive and every NVS open must lie behind a fenced entry point.
 FLASH_PRIMITIVES = (

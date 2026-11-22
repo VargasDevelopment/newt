@@ -70,7 +70,7 @@ def main() -> None:
         require(result.returncode == 2, "Preview CLI rejects invalid flags")
     previews = [
         ("home", "home", "unknown", None),
-        # Settings opens on its top row (docs/078): Select on Time zone opens
+        # Settings opens on its top row (the system page rule): Select on Time zone opens
         # the zone list and Select in it saves. On Time format below it, Select
         # switches the format and saves. Sleep screen is two rows down and
         # Diagnostics three.
@@ -133,7 +133,7 @@ def main() -> None:
     require((ROOT / "artifacts/device-sleep-screen.pbm").read_bytes() !=
             (ROOT / "artifacts/device-sleep-screen-week-on.pbm").read_bytes(), "Select switches Last 7 days on")
     # About under Diagnostics, with the preview build's own identity (fixed
-    # when it compiles); its What's new row and page show the committed notes (docs/081).
+    # when it compiles); its What's new row and page show the committed notes.
     about = "next,next,next,activate,activate"
     for name, actions in (("device-about", about), ("device-about-whats-new-row", about + ",next"),
                           ("device-whats-new", about + ",next,activate")):
@@ -187,7 +187,7 @@ def main() -> None:
     require(page["device-switch-cancelled"] == page["device-switch-row"], "Back cancels the switch")
     require(page["device-switch-missing-select"] == page["device-switch-missing"],
             "a missing other firmware keeps its row disabled")
-    # Update mode (docs/083-ota-sd-install.md), reached from Settings' Update
+    # Update mode (docs/UPDATES.md, "Card install"), reached from Settings' Update
     # row, with invented card fixtures against an invented running version
     # (rust/host/preview/update_fixtures.py): every list, confirm, progress and result state.
     # Settings' Wi-Fi row, the last, opens it on Wi-Fi networks (#103).
@@ -222,7 +222,7 @@ def main() -> None:
               "update-rolled-back": ("rolled-back", entry + ",activate"),
               "update-none": ("none", entry + ",activate"),
               "update-no-card": ("no-card", entry + ",activate"),
-              # The list's GitHub check (docs/088): its row, mid-download, and how it ends.
+              # The list's GitHub check (docs/UPDATES.md, "Updates over Wi-Fi"): its row, mid-download, and how it ends.
               "update-check-row": ("newer", entry + ",activate,next"),
               "update-check-ready-row": ("check-latest", entry + ",activate"),
               "update-check-downloading": ("check-downloading", entry + ",activate,activate"),
@@ -242,7 +242,7 @@ def main() -> None:
               "update-wifi-failed": ("wifi-failed", networks),
               "update-wifi-back": ("newer", networks + ",back"),
               "update-after-wifi": ("newer", networks + ",back,next,next,activate," + entry + ",activate"),
-              # Wi-Fi setup (docs/085): pick, the masked password, save or Forget.
+              # Wi-Fi setup (docs/UPDATES.md, "Wi-Fi setup"): pick, the masked password, save or Forget.
               "update-wifi-pick": ("newer", networks + ",next"),
               "update-wifi-password": ("newer", password),
               "update-wifi-typed": ("newer", password + ",down,next,activate,activate,activate"),
@@ -253,7 +253,7 @@ def main() -> None:
               "update-wifi-unconfirmed": ("wifi-unconfirmed", password + typed + ",up,previous,activate"),
               "update-wifi-forget": ("wifi-saved", networks + ",next" * 7),
               "update-wifi-forgotten": ("wifi-saved", networks + ",next" * 7 + ",activate"),
-              # The saved network's one join (docs/085, slice B) and how it ends.
+              # The saved network's one join (docs/UPDATES.md, "Wi-Fi setup") and how it ends.
               "update-wifi-connect": ("wifi-saved", networks + ",next" * 6),
               "update-wifi-joining": ("wifi-joining", networks + ",next" * 6 + ",activate"),
               "update-wifi-connected": ("wifi-saved", networks + ",next" * 6 + ",activate"),

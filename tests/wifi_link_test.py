@@ -1,4 +1,4 @@
-"""Fault controls for tools/verify-wifi-link.py (docs/084-wifi-memory.md): a
+"""Fault controls for tools/verify-wifi-link.py (docs/UPDATES.md, "Wi-Fi memory"): a
 small synthetic link in the reviewed shape passes, and each broken rule fails."""
 import copy
 import fnmatch

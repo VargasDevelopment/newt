@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write the certificate bundle update mode's HTTPS checks servers against (docs/088-ota-wifi-install.md).
+"""Write the certificate bundle update mode's HTTPS checks servers against (docs/UPDATES.md, "Updates over Wi-Fi").
 
 The pinned framework's mbedTLS is built with ESP-IDF's certificate bundle
 (CONFIG_MBEDTLS_CERTIFICATE_BUNDLE, its full default list) but ships no bundle

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Publish a Newt update: `newt.bin` and `newt.manifest`, ready for /Newt/Update/.
 
-One format for every source (docs/083-ota-sd-install.md): the same two files
+One format for every source (docs/UPDATES.md, "Card install"): the same two files
 serve the card, a release and the online check, so nothing here names a
 source or a path. Another firmware needs no manifest: its own `.bin` file
 goes in /Newt/Update/ as it is. The shipped parser (rust/core/src/update_manifest.rs)

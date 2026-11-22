@@ -40,7 +40,6 @@
  "native_rollback_hook_test.py": 0.2,
  "native_sleep_guard_test.py": 0.2,
  "native_timer_task_test.py": 0.2,
- "newt33_lead_device_script_test.py": 0.1,
  "newt_delivery_test.py": 0.4,
  "newt_package_test.py": 0.2,
  "next_boot_test.py": 0.1,

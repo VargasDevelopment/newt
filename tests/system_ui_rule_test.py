@@ -1,4 +1,4 @@
-"""The system UI rule (docs/078) on the shipped preview renderers: every
+"""The system UI rule on the shipped preview renderers: every
 non-reader system page shares the system bar, opens its list on the top row and
 uses the shared button rail, where every shown button does something. Host pixels
 of the real firmware built for the host (tools/rust_preview.py) only. Stage Home
@@ -23,7 +23,7 @@ POCKET = "next,activate"
 # Your pauses, from Pocket Pause: Select toggles the focused prompt (three rows,
 # then Save), and Save returns to the experience with the new prompts.
 EDIT = POCKET + ",activate"
-# Update mode (docs/083), reached through Settings' Update row, or on Wi-Fi
+# Update mode (docs/UPDATES.md, "Card install"), reached through Settings' Update row, or on Wi-Fi
 # networks through the Wi-Fi row below it.
 UPDATE = SETTINGS + ",next" * 6 + ",activate"
 WIFI = SETTINGS + ",next" * 7 + ",activate"
@@ -77,7 +77,7 @@ SCREENS = {
     "update-result-write": UPDATE + ",activate,activate",
     "update-result-unsettled": UPDATE + ",activate,activate",
     "update-result-unconfirmed": UPDATE + ",activate,activate",
-    # The list's GitHub check (docs/088).
+    # The list's GitHub check (docs/UPDATES.md, "Updates over Wi-Fi").
     "update-check-row": UPDATE + ",next",
     "update-check-ready-row": UPDATE,
     "update-check-latest": UPDATE + ",activate",
@@ -85,13 +85,13 @@ SCREENS = {
     "update-wifi": WIFI,
     "update-wifi-none": WIFI,
     "update-wifi-failed": WIFI,
-    # Wi-Fi setup (docs/085): a network picked, its password, a result, Forget.
+    # Wi-Fi setup (docs/UPDATES.md, "Wi-Fi setup"): a network picked, its password, a result, Forget.
     "update-wifi-pick": WIFI + ",next",
     "update-wifi-password": WIFI + ",next,activate",
     "update-wifi-saved": WIFI + ",next,activate" + ",activate" * 8 + ",up,previous,activate",
     "update-wifi-forget": WIFI + ",next" * 7,
     "update-wifi-connected": WIFI + ",next" * 6 + ",activate",
-    # The first boot after an install: "Updated to" over Home, once (docs/083).
+    # The first boot after an install: "Updated to" over Home, once (docs/UPDATES.md, "Card install").
     "updated": "",
 }
 # The card and outcome each update state runs with (rust/host/preview/update_fixtures.py).
@@ -225,7 +225,7 @@ class SystemUiRuleTests(unittest.TestCase):
                             ("sleep-screen", "previous"), ("sleep-screen-last-row", "next"),
                             ("pocket-pause-one-enabled", "next"), ("pocket-pause-one-enabled", "previous"),
                             ("pocket-pause-none-enabled", "next"),
-                            # About's Version Select only counts toward the first newt (docs/081).
+                            # About's Version Select only counts toward the first newt.
                             ("about", "previous"), ("about", "activate"), ("about-whats-new-row", "next"),
                             ("whats-new", "previous"), ("whats-new", "next"), ("whats-new", "activate"),
                             ("updated", "previous"), ("updated", "next"), ("updated", "activate")):

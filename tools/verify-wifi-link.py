@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify Wi-Fi's memory carve-out in the linked C3 image (docs/084-wifi-memory.md); no hardware access.
+"""Verify Wi-Fi's memory carve-out in the linked C3 image (docs/UPDATES.md, "Wi-Fi memory"); no hardware access.
 
 Each boot that is not update mode lends .dram0.newt_wifi to the heap
 (firmware/wifi_memory.h). That is safe only while nothing else reads, writes

@@ -18,7 +18,7 @@ The file only orders starts; a missing or malformed one means plan order.
 | `local` | `push` plus changed-owner full-only Rust positives and the negative controls of changed tests | `python3 tools/check.py` (the default), once per candidate; public CI on a pull request | 12 min on an idle 16-thread host; about 10 min measured (target 8 min) |
 | `push` | every positive test except the full-only Rust suites below, one clean firmware build with its resource gate, the release gate and the code-health ratchet | CI on every main push that is not a release | 24 min for the whole CI job on the runner's 8 CPUs; about 19-20 min measured (target 10 min: needs a 16-CPU cap or more cuts) |
 | `full` | everything: every negative control and exhaustive matrix, fresh objects and freshly built toolchains | CI on a release merge, nightly and manual runs; `check.py --tier full` by hand | 80 min for `check.py`, 110 min for the CI job |
-| Full-only Rust positives | `ft_font`, `png_decoder` are unreachable in the product; `inflate`, `epub_admission`, `reader_atlas` keep CI within budget. All five also run locally when their owned source or tests change. | Lead ruling 2026-11-16 | Existing budgets unchanged |
+| Full-only Rust positives | `ft_font`, `png_decoder` are unreachable in the product; `inflate`, `epub_admission`, `reader_atlas` keep CI within budget. All five also run locally when their owned source or tests change. | `full`; `local` when their sources or tests change | Existing budgets unchanged |
 
 There is one firmware, the Rust image, so every tier tests only it: the Rust
 checks, the previews and reviewed renderer frames (the real firmware compiled
@@ -99,8 +99,7 @@ update. Toolchain caches remain bound to the pins and verifier, and every
 restored Rust installation is verified before use.
 
 `fresh-gates.yml` uses the owner’s self-hosted Ubuntu x86_64 runner, with
-labels `[self-hosted, linux, x64, newt]`. It has run on that runner; the partial canonical evidence is recorded below. A separately approved
-manual bootstrap wrapper is distinct evidence. Runner provisioning and
+labels `[self-hosted, linux, x64, newt]`. Runner provisioning and
 registration remain separate infrastructure work. Mac checks use approved local
 tools; there is no paid GitHub-hosted Mac fallback. Local tests do not establish
 Linux bootstrap, runner availability, Linux golden parity, extraction footprint
@@ -155,7 +154,9 @@ and `native`, the plain clean compile and the one clean
 where public CI runs and passes only when every job it needs succeeded, so a
 failed, cancelled or skipped part fails it rather than skipping it; it is the
 one check to require and the one the release-tag job reads. Each part has the tier's whole CI job budget
-(`tools/gate-time-budgets.json`); no budget is split or edited.
+(`tools/gate-time-budgets.json`); no budget is split or edited. A pull
+request that changes a test also runs that test's negative controls (the
+`local` tier) in the part that holds them, so it can take longer.
 
 **Shards come from the gate's own plan.** `tools/gate_tier.py` `shard()` takes
 the tier's plan, keeps every phase with the phases it runs `after` in one
@@ -185,41 +186,6 @@ cache per repository and evicts the least recently used. Measured as
 `tar | zstd`: the toolchain trees take 1.2 GB and the raw archives 2.6 GB;
 each main push adds its parts' host objects (about 1.2 GB before compression
 for all seven), so older pushes' objects are evicted first.
-
-### Measured before launch (NEWT-74)
-
-No hosted run is possible before the repository is public, so each part ran
-locally on 4 pinned physical cores (`taskset -c 0-3`) of the shared 8-core
-host, in a fresh clone with no host objects, at commit `4bf13e92`.
-Other gates shared the host, so each row gives its 1-minute load average.
-
-| Part | Wall | Load (start → end) | Peak RSS | Peak disk |
-|---|---|---|---|---|
-| 0/7 | 216 s | 8.5 → 5.8 | 1.4 GiB | 6.1 GiB |
-| 1/7 | 473 s; repeat 571 s | 19.9 → 10.1; 23.6 → 22.4 | 1.2 GiB | 6.6 GiB |
-| 2/7 | 250 s | 5.5 → 7.7 | 1.4 GiB | 6.6 GiB |
-| 3/7 | 238 s | 6.8 → 6.1 | 1.1 GiB | 6.5 GiB |
-| 4/7 | 301 s | 5.6 → 23.2 | 1.8 GiB | 6.4 GiB |
-| 5/7 | 464 s | 23.3 → 26.0 | 1.6 GiB | 6.8 GiB |
-| 6/7 | 573 s | 24.5 → 30.5 | 1.1 GiB | 6.6 GiB |
-| native | 244 s | 27.9 → 24.8 | 1.9 GiB | 5.0 GiB |
-
-Peak RSS sums the part's whole process tree, so shared pages count more than
-once. Peak disk is the whole clone; 4.9 GiB of it (source, SDK and toolchains)
-is there before the gate starts. Toolchain setup on 4 cores: 933 s fresh from the raw archives
-(load about 26: a toolchain-cache miss, and every full-tier job), 22 s to
-unpack the cached trees and check their manifest.
-
-Every part holds about 1,250 CPU seconds, but part 1 also holds the longest
-`after` chain, `reader_turn_cost_test.py --quick` then
-`next_chapter_prefetch_test.py` (about 420 s of wall time at moderate load).
-That chain bounds a pull request's wall time: about 7-8 minutes of gate plus
-about 2 minutes of setup with warm caches, so about 9-10 minutes. Hosted vCPUs
-may be slower than these cores and carry no other load; the real hosted
-measurement happens at launch (NEWT-77). A shorter chain, not more shards, is
-what would lower it. A pull request that changes a test also runs that test's
-negative controls (the `local` tier), in the part that holds them, so it can
-take longer.
 
 ## Trusted source and execution
 
@@ -304,9 +270,7 @@ stay under workspace `.build/python-bootstrap`; the setup action's caches are
 disabled. Before adding Python to subsequent steps' PATH, the actual isolated
 interpreter must import the standard libraries, report exactly 3.12.6, resolve
 inside the managed directory and create and execute a real symlink venv. There
-is no unmanaged interpreter fallback. The manual wrapper for source
-`69afffbdaa851c526a5ba8f98717861387adfd98` passed these Linux bootstrap checks;
-the canonical bootstrap has also executed in the partial run below.
+is no unmanaged interpreter fallback.
 
 After bootstrap, preflight requires Ubuntu, glibc >=2.35, exact Python,
 `/usr/bin/make` and `/usr/bin/perl` before native, release or host-toolchain
@@ -320,9 +284,7 @@ The offline Python installation performs no dependency resolution. Existing
 native package/build/resource validators remain authoritative. Release tools
 use 16 locked wheels (3,036,938 bytes). LLVM’s archive is 1,938,859,476 bytes;
 OpenSSL’s is 53,279,637 bytes. Raw inputs total 2,635,264,209 bytes before
-Python/Action setup. Actual footprint and genuinely cold download time remain
-unmeasured. Partial canonical duration is recorded below; it is not a complete
-sequence measurement.
+Python/Action setup.
 
 The SHA adapter uses CommonCrypto on Mac and the freshly built static OpenSSL
 provider on Linux. OpenSSL is built with pinned LLVM and ASan/UBSan, without
@@ -401,33 +363,6 @@ workflow admits only main-history commits, premerge Linux verification requires
 a separately authorized trusted procedure. Publication of these branches also
 requires review of exact heads, privacy deltas and runner readiness.
 
-### Partial canonical execution and wall-time budget
-
-[Run 38329623821](https://github.com/VargasDevelopment/newt/actions/runs/38329623821)
-selected exact source `dead232d431746784c2d40876284e916ed792115` through
-`approved_commit`. Its workflow revision was `8266e7e`; these identities are
-distinct. On 2026-10-13 the fresh Linux host gate passed in 2,541.332 seconds,
-including the cover evidence write and all 20 reviewed renderer frames. Selected
-safety passed in 38.273 seconds and native preparation in 64.962 seconds. Clean
-default, DEV USB and regional resource phases passed in 90.167, 90.385 and
-90.703 seconds respectively.
-
-GitHub reported `The job has exceeded the maximum execution time of 1h0m0s`
-and cancelled regional DEV USB during compilation. It emitted no completed
-fourth resource phase or final all-output/source validation. The run is
-**cancelled, not accepted**; three completed variants cannot stand in for four.
-Mac ImageIO/renderer remains deferred and untested for the
-working experimental baseline; Linux coverage is explicitly incomplete.
-
-The preceding main push run `38328555731` stopped before host tests because its
-default GitHub merge subject violated the release-history policy. The immutable
-adoption boundary and validation remain unchanged. Published-history repair
-requires specific owner approval; follow [RELEASING.md](RELEASING.md) before merging.
-
-The earlier approximately nine-minute cached host gate is not a CI timing
-estimate. The fresh host mode rebuilds repeated app previews; its actual local
-measurements are recorded separately. No Linux performance claim is available.
-
 CI does not flash, read hardware/SD, approve UI or establish battery, optical,
 button, settings or physical reading behavior. A new Git build identity needs
 fresh exact-image review. Historical device evidence remains tied to its
@@ -462,10 +397,7 @@ The cheap `tools/check_scratch.py` source guard runs before prerequisites and
 rejects new fixed scratch paths or required `os.environ['TMPDIR']` lookups in
 `tests/` and `tools/`. Its reviewed line exceptions cover the single allocator,
 the persistent per-user flock pool, and inert rejection fixtures/comments.
-It grants no whole-file exclusions. The old book-open-work tool's evidence
-default is now project-local `.build/book-open-work-evidence`; explicit output
-arguments remain available. Issue #65's implicit owner-shell requirement is
-closed at the entry point, rather than patched separately in each new test.
+It grants no whole-file exclusions.
 Unused source-line exceptions fail the guard. An empty `TMPDIR` has the same
 private per-run default as an unset value.
 
@@ -549,10 +481,3 @@ reports phase admission wait and aggregate nested-job wait on one line when
 nonzero. Concurrent worker waits are summed, not presented as elapsed wall time.
 `NEWT_HOST_GLOBAL_SLOT_DIR` isolates the fake-gate regression pools; normal gates
 should retain the shared default. These are job limits, not OS thread limits.
-
-Parity evidence now lives in `.build/reader-turn-parity/shard-N/`: each shard's
-`raw.json`, `equality-raw.json` and `preparation.jsonl` describe only its fixture.
-The parent `prepared.json` identifies the shared immutable binary. Old top-level
-`raw.json`/`equality-raw.json`/`preparation.jsonl` files may be retained historical
-standalone output; they are not evidence for a sharded gate. Standalone full
-`--parity` still writes to the parent. Match evidence to the command and commit.
