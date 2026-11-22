@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3639024,
+      "flash_bytes": 3639408,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "e2d0ba05b205c703df7cae6335c98f51c4f7a62f",
-      "before": 3635712,
-      "after": 3639024,
-      "reason": "NEWT-99 / NEWT-113: the first-Newt page (mascot port), the hidden Developer page with its Test builds switch, the durable newt_builds SD record and the one-release list parsing for the test-build update check, rebased onto #14's nightly build stamp. Measured by CI's clean firmware-build.py --clean --health-report of e2d0ba05 (run 45059609471, native job): 3,639,024 B (+3,312 B over main's 3,635,712 B ceiling; PlatformIO image 3,578,442 -> 3,581,826 B against main 00e8be2). 3,377,424 B stay below the 7,016,448 B usable limit. RTC SLOW 228 -> 228 B (PlatformIO, unchanged; code-health RTC 300 unchanged). DRAM 123,824 unchanged; RAM 124,096, lend 22,528, frames, floors and exclusions unchanged.",
-      "reviewer": "Lead NEWT-99 resource ruling 2026-11-22 (size is headroom; owner policy)"
+      "source_revision": "aefd6dc5106d60f889fe322ccbd166905ca3f409",
+      "before": 3639024,
+      "after": 3639408,
+      "reason": "NEWT-114: read the version from the fixed ESP-IDF app descriptor and compose screen labels at runtime. Clean regional DEV USB builds of 9ab8c5e and aefd6dc measured 3,639,024 to 3,639,408 B (+384 B). RTC 300 to 300 B, RAM 124,096 to 124,096 B.",
+      "reviewer": "Lead NEWT-114 resource ruling 2026-11-22"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",

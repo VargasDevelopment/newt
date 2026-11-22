@@ -171,13 +171,11 @@ def check(checker, before, snapshot, identity):
         revision = runner.run(['git', 'rev-parse', '--short=12', 'HEAD'], checker.ROOT).strip()
         dirty = bool(runner.run(['git', 'status', '--porcelain', '--untracked-files=no'], checker.ROOT))
         date = runner.run(['git', 'show', '-s', '--format=%cs', 'HEAD'], checker.ROOT).strip()
-        version = re.findall(r'^#define NEWT_FIRMWARE_VERSION "([^"\n]+)"$',
-                            (snapshot/'rust/firmware/native/firmware_version.h').read_text(), re.M)
         support.require(re.fullmatch(r'[0-9a-f]{12}', revision) is not None
-                        and re.fullmatch(r'\d{4}-\d{2}-\d{2}', date) is not None
-                        and len(version) == 1, 'product build metadata absent/ambiguous')
+                        and re.fullmatch(r'\d{4}-\d{2}-\d{2}', date) is not None,
+                        'product build metadata absent/ambiguous')
         build_metadata = {'NEWT_DEV_BUILD_ID': revision + ('-dirty' if dirty else ''),
-                          'NEWT_DEV_BUILD_DATE': date, 'NEWT_FIRMWARE_VERSION': version[0]}
+                          'NEWT_DEV_BUILD_DATE': date}
         runner.env.update(build_metadata)
         target = checker.BUILD/'landing-rv32-target'
         archive_output = runner.cargo(ws, target, 'build', '-p', 'newt-app-image', '--release',

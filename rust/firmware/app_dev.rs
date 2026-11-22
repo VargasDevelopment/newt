@@ -2,6 +2,7 @@
 //! Short DEV views over the application's completed publication and real queue.
 #![forbid(unsafe_code)]
 use crate::dev_usb::{self, Bridge, ButtonEvent, Channel, Device, Diagnostics, PanelRing, Status};
+use newt_c3_board::image::running_image_version;
 use newt_input_policy::native::UiQueue;
 
 /// All facts belong to the caller's current completed publication. The view
@@ -44,7 +45,14 @@ pub fn fingerprint(hardware: &mut newt_c3_board::hardware::HardwareReader<'_>) -
 }
 pub const BUILD_ID: &str = env!("NEWT_DEV_BUILD_ID");
 pub const BUILD_DATE: &str = env!("NEWT_DEV_BUILD_DATE");
-pub(crate) const FIRMWARE_VERSION: &core::ffi::CStr = fixed_text(concat!(env!("NEWT_FIRMWARE_VERSION"), "\0").as_bytes());
+
+pub(crate) fn build_identity() -> newt_device_ui::BuildIdentity<'static> {
+    newt_device_ui::BuildIdentity {
+        version: running_image_version().to_bytes(),
+        id: Some(BUILD_ID.as_bytes()),
+        date: Some(BUILD_DATE.as_bytes()),
+    }
+}
 
 const fn fixed_text(bytes: &'static [u8]) -> &'static core::ffi::CStr {
     let parsed = core::ffi::CStr::from_bytes_with_nul(bytes);
@@ -52,9 +60,9 @@ const fn fixed_text(bytes: &'static [u8]) -> &'static core::ffi::CStr {
     match parsed { Ok(text) => text, Err(_) => c"" }
 }
 
-/// Identical version/build inputs to the native image descriptor. Dirty IDs
+/// The version comes from the mapped image descriptor. Dirty IDs
 /// are rejected by the existing exact-twelve rule, leaving its build empty.
 pub fn image_identity() -> newt_core::update_card::slot_installer::identity::NewtAppIdentity {
     const BUILD: &core::ffi::CStr = fixed_text(concat!(env!("NEWT_DEV_BUILD_ID"), "\0").as_bytes());
-    newt_core::update_card::slot_installer::identity::newt_app_identity(FIRMWARE_VERSION, Some(BUILD))
+    newt_core::update_card::slot_installer::identity::newt_app_identity(running_image_version(), Some(BUILD))
 }

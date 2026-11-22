@@ -6,7 +6,7 @@ use super::display::DisplayReceipt;
 use newt_c3_board::{Board, hardware::HardwareReader};
 use newt_core::{app::{Action, AppState},
     frame::Frame, refresh::UiRefresh, save_notice::SaveOutcome};
-use newt_device_ui::{BuildIdentity, DeviceInfo};
+use newt_device_ui::DeviceInfo;
 
 pub(crate) struct DevicePlatform<'a, 'events, 'task, 'sdk, R> {
     pub reader: &'a mut R,
@@ -72,7 +72,7 @@ impl<'sdk, R: Reader> firmware_switch::Ports<'sdk> for SwitchPorts<'_, '_, '_, '
         let bar = self.home.clock.read_system_bar(&mut self.home.bus, info, false);
         *self.press = PressState::Idle;
         newt_device_ui::render_device_ui(app, info, &bar, Some(self.logical), self.home.clock.zone(),
-            None, None, BuildIdentity { id: Some(crate::app_dev::BUILD_ID.as_bytes()), date: Some(crate::app_dev::BUILD_DATE.as_bytes()) },
+            None, None, crate::app_dev::build_identity(),
             self.home.clock.sleep_screen(), self.home.clock.test_builds());
         if self.displayed.binary(&mut self.home.bus.board, self.logical, self.budget, self.panels.as_deref_mut(), false, started, composition).is_err() {
             crate::app_power::stop();

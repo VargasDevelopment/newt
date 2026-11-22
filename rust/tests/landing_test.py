@@ -397,7 +397,6 @@ class LandingTest(unittest.TestCase):
                 self.assertNotIn('--no-default-features', archive_command)
                 self.assertEqual(env['NEWT_DEV_BUILD_ID'], 'a'*12)
                 self.assertEqual(env['NEWT_DEV_BUILD_DATE'], '2026-11-16')
-                self.assertEqual(env['NEWT_FIRMWARE_VERSION'], '0.1.0-alpha.16')
                 self.assertIn('+zicsr,+zifencei', env['RUSTFLAGS'])
                 self.assertIn('--force-dwarf-frame-section', env['RUSTFLAGS'])
                 self.assertIn(f'--remap-path-prefix={snapshot}=.', env['RUSTFLAGS'])

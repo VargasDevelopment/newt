@@ -6,14 +6,15 @@ use newt_core::update_online::TestBuilds;
 use newt_system_ui::*;
 #[derive(Default, Clone, Copy)]
 pub struct BuildIdentity<'a> {
+    pub version: &'a [u8],
     pub id: Option<&'a [u8]>,
     pub date: Option<&'a [u8]>,
 }
 pub const FIRMWARE_BUILD: BuildIdentity<'static> = BuildIdentity {
+    version: b"",
     id: None,
     date: None,
 };
-pub const VERSION: &str = env!("NEWT_FIRMWARE_VERSION");
 pub(crate) const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
@@ -182,6 +183,15 @@ fn settings(
     let note_top = 146 + ROWS.len() as i32 * SYSTEM_ROW_PITCH + 26;
     para(page.canvas(), 50, note_top, &note, 21, 428, note_top + 129);
 }
+// Leave room for the longest prefix and all 23 version bytes.
+fn version_label<'a>(line: &'a mut [u8; 34], prefix: &[u8], version: &[u8]) -> &'a [u8] {
+    let (head, tail) = line.split_at_mut(prefix.len());
+    head.copy_from_slice(prefix);
+    let count = version.len().min(tail.len());
+    tail[..count].copy_from_slice(&version[..count]);
+    &line[..prefix.len() + count]
+}
+
 fn about(frame: Option<&mut Frame>, bar: &SystemBar, view: AboutView, build: BuildIdentity<'_>) {
     let selected = view == AboutView::WhatsNewRow;
     let mut page = SystemPage::new(
@@ -205,7 +215,8 @@ fn about(frame: Option<&mut Frame>, bar: &SystemBar, view: AboutView, build: Bui
         false,
         428,
     );
-    page.row(284, 0, Some(concat!("Version: ", env!("NEWT_FIRMWARE_VERSION")).as_bytes()), !selected);
+    let mut version = [0; 34];
+    page.row(284, 0, Some(version_label(&mut version, b"Version: ", build.version)), !selected);
     let mut line = [0; 48];
     if format_build_line(build, &mut line) {
         text(page.canvas(), 72, 331, &line, 21, false, 406);
@@ -483,6 +494,7 @@ pub fn render_device_ui(
         ),
         DevicePage::About => about(frame, bar, state.about, build),
         DevicePage::WhatsNew => {
+            let mut version = [0; 34];
             let mut page = SystemPage::new(
                 frame,
                 bar,
@@ -491,7 +503,7 @@ pub fn render_device_ui(
                     ..Default::default()
                 },
                 Some(if state.about == AboutView::Updated {
-                    concat!("Updated to ", env!("NEWT_FIRMWARE_VERSION")).as_bytes()
+                    version_label(&mut version, b"Updated to ", build.version)
                 } else {
                     b"What's new"
                 }),
@@ -514,3 +526,7 @@ pub fn render_device_ui(
         DevicePage::Diagnostics => diagnostics(frame, bar, info),
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/device_ui/version_label.rs"]
+mod tests;

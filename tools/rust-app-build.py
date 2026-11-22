@@ -46,11 +46,8 @@ def main():
                            capture_output=True, text=True, check=True).stdout
     date = subprocess.run(['git', 'show', '-s', '--format=%cs', 'HEAD'], cwd=ROOT,
                           capture_output=True, text=True, check=True).stdout.strip()
-    version_header = (ROOT / 'rust/firmware/native/firmware_version.h').read_text()
-    version = next(line.split('"')[1] for line in version_header.splitlines()
-                   if line.startswith('#define NEWT_FIRMWARE_VERSION '))
     environment = build_environment(ROOT, toolchain, {
-        'NEWT_FIRMWARE_VERSION': version, 'NEWT_DEV_BUILD_ID': head + ('-dirty' if dirty else ''),
+        'NEWT_DEV_BUILD_ID': head + ('-dirty' if dirty else ''),
         'NEWT_DEV_BUILD_DATE': date})
     if not args.native_only:
         build_archive(ROOT, toolchain, environment, clean=args.clean,

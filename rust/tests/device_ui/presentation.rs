@@ -15,14 +15,6 @@ fn bytes(b: &[u8]) -> &[u8] {
     &b[..b.iter().position(|v| *v == 0).unwrap_or(b.len())]
 }
 #[test]
-fn version_matches_the_release_header() {
-    let header = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../firmware/native/firmware_version.h"));
-    let versions: Vec<_> = header.lines().filter_map(|line| {
-        line.strip_prefix("#define NEWT_FIRMWARE_VERSION \"")?.strip_suffix('"')
-    }).collect();
-    assert_eq!(versions, [VERSION]);
-}
-#[test]
 fn build_identity_vectors_preserve_tail() {
     for (id, date, expected) in [
         (
@@ -56,7 +48,7 @@ fn build_identity_vectors_preserve_tail() {
     ] {
         let mut out = [0xa5; 48];
         assert_eq!(
-            format_build_line(BuildIdentity { id, date }, &mut out),
+            format_build_line(BuildIdentity { id, date, ..Default::default() }, &mut out),
             expected.is_some()
         );
         if let Some(e) = expected {

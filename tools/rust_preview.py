@@ -101,8 +101,7 @@ def build(edits=None) -> Path:
     build.link(FIRMWARE)
     # Controls in later processes relink with this exact command and root.
     LINK.write_text(json.dumps({'command': list(map(str, build.command)), 'environment': {
-        key: env[key] for key in ('RUSTC', 'CARGO_HOME', 'NEWT_DEV_BUILD_ID', 'NEWT_DEV_BUILD_DATE',
-                                  'NEWT_FIRMWARE_VERSION')}}, indent=1) + '\n')
+        key: env[key] for key in ('RUSTC', 'CARGO_HOME', 'NEWT_DEV_BUILD_ID', 'NEWT_DEV_BUILD_DATE')}}, indent=1) + '\n')
     cli(FIRMWARE, BINARY)
     return FIRMWARE
 

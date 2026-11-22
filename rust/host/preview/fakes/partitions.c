@@ -12,6 +12,7 @@
  *   slot.lose     PART names whose writes report success but never land
  * freeze point: slot.write (the Installing page, at the first app write). */
 #include "fixture.h"
+#include "../../../firmware/native/firmware_version.h"
 #include "../../../tests/reader_providers/fake/mbedtls/sha256.h"
 #include <stdint.h>
 #include <stdio.h>
@@ -51,6 +52,10 @@ static int store(const struct partition *part, uint32_t at, const uint8_t *input
     return fclose(file) == 0 ? 0 : ESP_FAIL;
 }
 
+const char *nb_running_image_version(void) {
+    static const char version[32] = NEWT_FIRMWARE_VERSION;
+    return version;
+}
 static int running_slot(void) { return preview_conf_long("slot.running", 0) == 1; }
 int32_t nb_running_image_state(uint32_t *out) {
     FILE *file = fopen(preview_path("partitions/state"), "rb");
