@@ -55,18 +55,6 @@ Newt is early alpha software. Expect rough edges, and please
 
 Reading never needs a network. Wi-Fi is used only for updates.
 
-## Screens
-
-<p align="center">
-  <img src="docs/screen-home.png" alt="Home: Pride and Prejudice, 48% read, with Books, Apps and Settings" width="160">
-  <img src="docs/screen-books.png" alt="Books: four public-domain books with their covers" width="160">
-  <img src="docs/screen-reader.png" alt="A page of Pride and Prejudice in the reader" width="160">
-  <img src="docs/screen-settings.png" alt="Settings" width="160">
-  <img src="docs/screen-sleep.png" alt="The sleep screen with the book's title and progress" width="160">
-</p>
-
-<p align="center"><sub>Home, Books, the reader, Settings and the sleep screen, rendered from the real firmware by the host preview. Books and covers are from <a href="https://standardebooks.org">Standard Ebooks</a>' U.S. public-domain editions; the sleep screen has Book progress on.</sub></p>
-
 ## Device support
 
 - **Newer X3 units with the UC8279d screen controller** (sold from about
