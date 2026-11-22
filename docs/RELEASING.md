@@ -1,8 +1,9 @@
 # Newt firmware versions
 
-The firmware's About screen reads `rust/firmware/native/firmware_version.h`. Official
-Python [Commitizen](https://commitizen-tools.github.io/commitizen/) owns that
-label and the matching `.cz.toml` version. It uses Commitizen's `semver2` scheme, with `alpha.N`,
+The firmware reads its version from the fixed-width ESP-IDF app descriptor. The
+build fills that field from `rust/firmware/native/firmware_version.h`. Official
+Python [Commitizen](https://commitizen-tools.github.io/commitizen/) owns the
+header label and the matching `.cz.toml` version. It uses Commitizen's `semver2` scheme, with `alpha.N`,
 `beta.N` and `rc.N` prereleases starting at zero. Pocket Pause's app version
 (`apps/pocket-pause.json`), `.newt` format and USB/DIAG schema numbers are separate
 contracts; a firmware bump does not migrate them.

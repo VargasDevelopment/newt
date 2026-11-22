@@ -199,7 +199,8 @@ def main() -> None:
     # framework edit falls between them.
     with native_toolchain.quiescent(ROOT):
         rust_env = rust_environment(ROOT, rust_tools, {
-            'NEWT_DEV_BUILD_ID': identifier, 'NEWT_DEV_BUILD_DATE': date})
+            'NEWT_DEV_BUILD_ID': identifier,
+            'NEWT_DEV_BUILD_DATE': date})
         build_archive(ROOT, rust_tools, rust_env, clean=args.clean,
                       package='newt-app-image', features=','.join(FEATURES))
         subprocess.run(command, cwd=ROOT, env=env, check=True)

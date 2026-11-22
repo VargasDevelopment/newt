@@ -439,12 +439,12 @@ jobs:
           git switch --detach "$EXPECTED_COMMIT"
           trap 'git switch --detach "$stamped"' EXIT
           python3 -B tools/firmware-build.py --clean
-          unstamped_bytes=$(stat -c '%s' "$image")
+          unstamped_bytes=$(wc -c < "$image")
 
           git switch --detach "$stamped"
           trap - EXIT
           python3 -B tools/firmware-build.py --clean --health-report
-          stamped_bytes=$(stat -c '%s' "$image")
+          stamped_bytes=$(wc -c < "$image")
           echo "Firmware size before stamp: $unstamped_bytes B; after stamp: $stamped_bytes B"
           test "$unstamped_bytes" -eq "$stamped_bytes"
       # release_publish.py makes every check, rechecks main's tip, then pushes the
