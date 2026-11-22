@@ -1,0 +1,72 @@
+[
+  {
+    "site": "src/lib.rs: locate reverse range",
+    "from": "(0..=len - 4).rev()",
+    "to": "0..=len - 4",
+    "witness": "two-complete-eocds",
+    "effect": "latest signature must win"
+  },
+  {
+    "site": "locate overlap",
+    "from": "(size - lowest).min(3)",
+    "to": "(size - lowest).min(2)",
+    "witness": "eocd-overlap-4075",
+    "effect": "signature spanning scan boundary"
+  },
+  {
+    "site": "locate range check",
+    "from": "u64::from(d.offset) + u64::from(d.size) > size",
+    "to": "u64::from(d.offset) + u64::from(d.size) >= size",
+    "witness": "directory-end-equality",
+    "effect": "directory end equal file size is accepted"
+  },
+  {
+    "site": "catalog publication",
+    "from": "pub fn open(&mut self, scan: &mut [u8; 4099], sequential: &mut [u8; 1024]) -> Status {\n        self.count = 0;",
+    "to": "pub fn open(&mut self, scan: &mut [u8; 4099], sequential: &mut [u8; 1024]) -> Status {\n        self.count = self.count.wrapping_add(0);",
+    "witness": "reopen-io-failure",
+    "effect": "failed reopen must clear published catalog"
+  },
+  {
+    "site": "catalog local offset",
+    "from": "local_header_offset: le32(&hdr, 42)",
+    "to": "local_header_offset: le32(&hdr, 38)",
+    "witness": "stored-mixed-duplicate-nul",
+    "effect": "entry offsets and source trace differ"
+  },
+  {
+    "site": "reader local extra",
+    "from": "u64::from(le16(&local, 28))",
+    "to": "u64::from(le16(&local, 26))",
+    "witness": "stored-mixed-duplicate-nul",
+    "effect": "local name and extra lengths differ"
+  },
+  {
+    "site": "inflate remaining-input flag",
+    "from": "let flags = if self.comp_consumed < entry.compressed_size {",
+    "to": "let flags = if self.comp_consumed <= entry.compressed_size {",
+    "witness": "deflate-truncated-block",
+    "effect": "final input exhaustion must report miniz failure"
+  },
+  {
+    "site": "inflate ring mask",
+    "from": "(DICTIONARY_SIZE - 1)",
+    "to": "(DICTIONARY_SIZE - 2)",
+    "witness": "deflate-short-1",
+    "effect": "wrap after dictionary boundary"
+  },
+  {
+    "site": "inflate produced commit",
+    "from": "self.produced = self.produced.wrapping_add(out as u32);",
+    "to": "self.produced = out as u32;",
+    "witness": "deflate-all",
+    "effect": "cumulative count must survive chunk delivery"
+  },
+  {
+    "site": "hash multiplier",
+    "from": "wrapping_mul(16777619)",
+    "to": "wrapping_mul(16777617)",
+    "witness": "independent-stored-abc",
+    "effect": "stable FNV-1a"
+  }
+]

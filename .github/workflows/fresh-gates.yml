@@ -1,0 +1,220 @@
+name: Fresh Linux software checks
+
+on:
+  push:
+    branches: [main]
+  # The nightly full tier (docs/CI.md, "Tiers").
+  schedule:
+    - cron: '23 9 * * *'
+  workflow_dispatch:
+    inputs:
+      approved_commit:
+        description: Exact reviewed commit already in main history; empty uses workflow commit
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+# Every job runs only in the private repository: public-ci.yml is the public
+# repository's CI, on GitHub-hosted runners (docs/CI.md, "Public CI"). Visibility
+# is compared as JSON so a missing value never passes; a scheduled run's event
+# has no repository, so there this repository's ID decides.
+# No workflow-wide concurrency: the gate job's group depends on release-check.
+jobs:
+  # Is this run a release merge's push run (tools/gate_tier.py)? Its gate job is
+  # never cancelled. GitHub-hosted, so a push decides while the one self-hosted
+  # runner is busy and can cancel a nightly run at once; stock python3 and git,
+  # no toolchain and only the read-only default token.
+  release-check:
+    if: >-
+      (toJSON(github.event.repository.private) == 'true' ||
+      (github.event_name == 'schedule' && github.repository_id == '1400798123')) &&
+      github.repository == 'VargasDevelopment/newt' &&
+      github.ref == 'refs/heads/main' && github.actor == 'VargasDevelopment' &&
+      (github.event_name == 'push' || github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      EXPECTED_COMMIT: ${{ inputs.approved_commit || github.sha }}
+    outputs:
+      release: ${{ steps.release.outputs.release }}
+    steps:
+      # Complete history: the ancestry check reads main; the release rule, a first parent.
+      - name: Check out the commit to check with complete history
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ env.EXPECTED_COMMIT }}
+          fetch-depth: 0
+          persist-credentials: false
+          set-safe-directory: false
+      - name: Validate trusted main ancestry before running any project script
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED_COMMIT" ]]
+          git merge-base --is-ancestor "$EXPECTED_COMMIT" refs/remotes/origin/main
+      - name: Is this a release merge's push run?
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          release="$(python3 -B tools/gate_tier.py --release-push "$EXPECTED_COMMIT")"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+
+  fresh-gates:
+    needs: release-check
+    if: >-
+      (toJSON(github.event.repository.private) == 'true' ||
+      (github.event_name == 'schedule' && github.repository_id == '1400798123')) &&
+      github.repository == 'VargasDevelopment/newt' &&
+      github.ref == 'refs/heads/main' && github.actor == 'VargasDevelopment' &&
+      (github.event_name == 'push' || github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch')
+    # A newer push or nightly run cancels an older one. A release merge's push
+    # run is alone in a group of its own, so nothing cancels it and CI always
+    # finishes and tags that release.
+    concurrency:
+      group: ${{ needs.release-check.outputs.release == 'true' && format('newt-release-{0}', github.run_id) || format('newt-{0}-{1}', github.workflow, github.ref) }}
+      cancel-in-progress: true
+    runs-on: [self-hosted, linux, x64, newt]
+    # The gate's own budgets (tools/gate-time-budgets.json) stop it first.
+    timeout-minutes: 120
+    env:
+      EXPECTED_COMMIT: ${{ inputs.approved_commit || github.sha }}
+      # Set only after the owner approves the four rust/toolchain.json archives.
+      NEWT_RUST_ACQUISITION_APPROVED: ${{ vars.NEWT_RUST_ACQUISITION_APPROVED }}
+      PYTHONDONTWRITEBYTECODE: '1'
+      OPENSSL_CONF: /dev/null
+      RUNNER_TOOL_CACHE: ${{ github.workspace }}/.build/python-bootstrap/tool-cache
+      UV_CACHE_DIR: ${{ github.workspace }}/.build/python-bootstrap/cache
+      UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.build/python-bootstrap/python
+      UV_PYTHON_BIN_DIR: ${{ github.workspace }}/.build/python-bootstrap/bin
+      UV_TOOL_DIR: ${{ github.workspace }}/.build/python-bootstrap/tools
+      UV_TOOL_BIN_DIR: ${{ github.workspace }}/.build/python-bootstrap/tool-bin
+    steps:
+      - name: Record when the job started, for the gate's time budget
+        run: echo "NEWT_JOB_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+      - name: Check out exact authored commit, complete release history and release tags
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ env.EXPECTED_COMMIT }}
+          fetch-depth: 0
+          # The release gate refuses work built on an untagged release, so it reads tags.
+          fetch-tags: true
+          persist-credentials: false
+          set-safe-directory: false
+      - name: Validate trusted main ancestry before running any project script
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED_COMMIT" ]]
+          git merge-base --is-ancestor "$EXPECTED_COMMIT" refs/remotes/origin/main
+      - name: Check out official pinned FreeInk without recursive asset submodules
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          repository: Free-Ink/freeink-sdk
+          ref: cd6f5b831c8fad899723b6d406586f00c575f021
+          path: vendor/freeink-sdk
+          persist-credentials: false
+          set-safe-directory: false
+      - name: Preserve canonical official SDK origin spelling
+        run: git -C vendor/freeink-sdk remote set-url origin https://github.com/Free-Ink/freeink-sdk.git
+      - name: Pinned standard uv for workspace-local Python
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: '0.12.21' # Same uv version already in the native input lock.
+          checksum: '23f02075b652bb1df64178cfae41b5caf160822e720e2663568f3f5d63bc52c0'
+          download-from-astral-mirror: false
+          enable-cache: false
+          cache-python: false
+          tool-dir: ${{ env.UV_TOOL_DIR }}
+          tool-bin-dir: ${{ env.UV_TOOL_BIN_DIR }}
+      - name: Exact managed Python and real runtime checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e "$UV_PYTHON_INSTALL_DIR"
+          # uv 0.12.21 pins the baseline 20240909 CPython 3.12.6 archive SHA256:
+          # b080463e4f0c452e592cdac1ca97936a6a19bb3d9a64da669a50ca843fce0108
+          request=cpython-3.12.6-linux-x86_64-gnu
+          uv --no-config python install --no-bin "$request" \
+            --mirror https://github.com/astral-sh/python-build-standalone/releases/download
+          python_path="$(uv --no-config python find --managed-python --no-python-downloads "$request")"
+          "$python_path" -I -B - <<'PYTHON'
+          import bz2, ctypes, lzma, os, pathlib, sqlite3, ssl, subprocess, sys, venv, zlib
+          assert sys.version_info[:3] == (3, 12, 6)
+          root = pathlib.Path(os.environ['UV_PYTHON_INSTALL_DIR']).resolve()
+          assert pathlib.Path(sys.executable).resolve().is_relative_to(root)
+          probe = pathlib.Path(os.environ['GITHUB_WORKSPACE']) / '.build/python-bootstrap/probe-venv'
+          venv.EnvBuilder(with_pip=True, symlinks=True).create(probe)
+          subprocess.run([str(probe / 'bin/python'), '-I', '-B', '-c',
+                          'import ssl, sys, venv; assert sys.version_info[:3] == (3, 12, 6)'], check=True)
+          print('PASS exact workspace-local Python 3.12.6, stdlib and venv:', sys.executable)
+          PYTHON
+          test -x "$(dirname "$python_path")/python3"
+          echo "$(dirname "$python_path")" >> "$GITHUB_PATH"
+      - name: Reject unavailable runtime or changed source before acquisition
+        run: python3 -B tools/ci_environment.py --check-host
+      # Full tier: materialize every locked toolchain freshly. Per-push tier: reuse the
+      # last fresh materialization when it was made from these exact locks and every
+      # copied file still matches its recorded manifest (tools/ci_persist.py).
+      - name: Locked native, release, LLVM and static OpenSSL toolchains
+        run: python3 -B tools/ci_persist.py --expected-commit "$EXPECTED_COMMIT"
+      - name: Linux host gate and one clean native firmware check
+        run: python3 -B tools/ci_gate.py --expected-commit "$EXPECTED_COMMIT"
+
+  # The one job with a write token. It runs only after this push run's gate job
+  # passed and tags the commit that gate checked if that commit is the release.
+  # Never on a manual run: its head_sha can differ from the approved_commit it checked.
+  release-tag:
+    needs: fresh-gates
+    if: >-
+      success() && (toJSON(github.event.repository.private) == 'true' ||
+      (github.event_name == 'schedule' && github.repository_id == '1400798123')) &&
+      github.repository == 'VargasDevelopment/newt' &&
+      github.ref == 'refs/heads/main' && github.actor == 'VargasDevelopment' &&
+      github.event_name == 'push'
+    runs-on: [self-hosted, linux, x64, newt]
+    timeout-minutes: 10
+    permissions:
+      actions: read # release_tag.py reads this run's gate job through the API.
+      contents: write # It creates and pushes exactly one release tag.
+    env:
+      # The commit the gate job checked; on a push run, github.sha.
+      EXPECTED_COMMIT: ${{ inputs.approved_commit || github.sha }}
+    steps:
+      - name: Check out the checked commit, complete release history and release tags
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ env.EXPECTED_COMMIT }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+          set-safe-directory: false
+      - name: Validate trusted main ancestry before running any project script
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED_COMMIT" ]]
+          git merge-base --is-ancestor "$EXPECTED_COMMIT" refs/remotes/origin/main
+      # Standard library only, so the runner's python3, git and gh; no gate runs here.
+      - name: Tag the release if this run checked it
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        # Git gets the token from gh in this step only; no checkout stores it. Helpers
+        # add up across config files, so the empty entry first drops every inherited one:
+        # a store helper would save this token or answer with another credential. The
+        # script exports it, so the empty value never depends on how the runner passes env.
+        run: |
+          set -euo pipefail
+          export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= \
+            GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1='!gh auth git-credential'
+          python3 -B tools/release_tag.py --ci-run "$GITHUB_RUN_ID" "$EXPECTED_COMMIT"

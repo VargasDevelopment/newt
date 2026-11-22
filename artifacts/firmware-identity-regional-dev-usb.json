@@ -1,0 +1,46 @@
+{
+  "binary_sha256": "eac456875221cc07476afa15f4bdf92e1ad3bdc591507c59a0290dad57b8fe63",
+  "build_id": "722f552c49ac",
+  "dirty": false,
+  "features": [
+    "rust-app",
+    "dev-usb",
+    "wifi-update",
+    "embedded-sample"
+  ],
+  "firmware_version": "0.1.0-alpha.20",
+  "git_revision": "722f552c49acc19c221ed20d0cafcb2b107e451e",
+  "image": "rust-app",
+  "resource_identity": {
+    "authored_config_sha256": "096615ecb4a9dfcd2362fedc87f48bd6ec483dcf544d03f45e463676705c4f58",
+    "compiler_sha256": "969796a8d2b8b7d0207edbaea87105314a3cde7de3d6042f3cee7c1a2fe2623f",
+    "config_sha256": "e9b7ab73fe2b18bef72fb377c87119d9faf1a4575c526d5e80fbfdcda412d8b3",
+    "inputs_sha256": "2eac744ed8d7357f3d10541aed2597fc994c9153cb32a16170efecf5d8022d60",
+    "procedure_python": {
+      "cache_tag": "cpython-312",
+      "optimize": 0,
+      "platstdlib": "~/worktrees/newt-x3-port/.build/python-bootstrap/python/python/lib/python3.12",
+      "resolved_path": "~/worktrees/newt-x3-port/.build/python-bootstrap/python/python/bin/python3.12",
+      "runtime_root": "~/worktrees/newt-x3-port/.build/python-bootstrap/python/python",
+      "runtime_sha256": "1e8d70dbc1afc9dbc95f3c17e2ad16fc5ad548f07140d00a6daa1db1726f018a",
+      "sha256": "c7c1a234ed39ceef4bde5ee8d29db37f55b0f7de6339b82eff5812944ccb74da",
+      "stdlib": "~/worktrees/newt-x3-port/.build/python-bootstrap/python/python/lib/python3.12",
+      "version": "3.12.6 (main, Sep  9 2024, 22:11:19) [Clang 18.1.8 ]"
+    },
+    "procedures_sha256": "1e5ba082a4eae10959a7b2c2e3b0138fb8591a82dc6ba0dc03ade0a74a7d4ce6",
+    "python_interpreter": {
+      "cache_tag": "cpython-312",
+      "optimize": 0,
+      "platstdlib": "~/worktrees/newt-x3-port/.build/python-bootstrap/python/python/lib/python3.12",
+      "resolved_path": "~/worktrees/newt-x3-port/.build/python-bootstrap/python/python/bin/python3.12",
+      "runtime_root": "~/worktrees/newt-x3-port/.build/python-bootstrap/python/python",
+      "runtime_sha256": "1e8d70dbc1afc9dbc95f3c17e2ad16fc5ad548f07140d00a6daa1db1726f018a",
+      "sha256": "c7c1a234ed39ceef4bde5ee8d29db37f55b0f7de6339b82eff5812944ccb74da",
+      "stdlib": "~/worktrees/newt-x3-port/.build/python-bootstrap/python/python/lib/python3.12",
+      "version": "3.12.6 (main, Sep  9 2024, 22:11:19) [Clang 18.1.8 ]"
+    },
+    "toolchain_sha256": "86d7defdddd4bd11b987bca0f707f815ff46427d91f649301e5d1f45b478659f",
+    "variant": "regional-dev-usb"
+  },
+  "variant": "regional-dev-usb"
+}

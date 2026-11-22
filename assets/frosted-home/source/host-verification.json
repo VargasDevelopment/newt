@@ -1,0 +1,86 @@
+{
+  "limits": "Host render evidence. Actual X3 gray/AA, outline contrast, input binding and waveform untested.",
+  "screens": [
+    {
+      "file": "newt-frosted-cards-rounded.png",
+      "geometry": [
+        528,
+        792
+      ],
+      "levels": [
+        0,
+        85,
+        170,
+        255
+      ],
+      "sha256": "2fe56bc11690822aead0e60b744eaa4b9525d55ba036e7603f0fa1618317b565",
+      "passed": true
+    },
+    {
+      "file": "newt-frosted-cards-square.png",
+      "geometry": [
+        528,
+        792
+      ],
+      "levels": [
+        0,
+        85,
+        170,
+        255
+      ],
+      "sha256": "54e14ba8918c78fb679704289cf71fe776b211184db8e5191419070c71f4457c",
+      "passed": true
+    },
+    {
+      "file": "newt-frosted-card-comparison.png",
+      "geometry": [
+        1750,
+        1160
+      ],
+      "levels": "Host comparison",
+      "sha256": "cf335046d7be72a0264b8fe8864bbcce62f101c724de3d1559cb5200c48abb22",
+      "passed": true
+    }
+  ],
+  "metadata_pixel_bounds": [
+    {
+      "file": "newt-frosted-cards-rounded.png",
+      "ink_left": 51,
+      "ink_right": 293,
+      "column_right": 304,
+      "cover_left": 332
+    },
+    {
+      "file": "newt-frosted-cards-square.png",
+      "ink_left": 51,
+      "ink_right": 293,
+      "column_right": 304,
+      "cover_left": 332
+    }
+  ],
+  "metadata_typographic_metrics": [
+    {
+      "left": 50,
+      "limit": 254,
+      "right": 295.80078125,
+      "screen": "newt-frosted-cards-rounded",
+      "text": "Chapter 4 \u00b7 32% read",
+      "width": 245.80078125
+    },
+    {
+      "left": 50,
+      "limit": 254,
+      "right": 295.80078125,
+      "screen": "newt-frosted-cards-square",
+      "text": "Chapter 4 \u00b7 32% read",
+      "width": 245.80078125
+    }
+  ],
+  "controlled_comparison": {
+    "noncard_ops_identical": true,
+    "header_footer_pixels_identical": true,
+    "differences_confined_to_card_edges": true,
+    "difference_pixel_count": 6360
+  },
+  "text_bounds_failures": 0
+}

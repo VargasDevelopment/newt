@@ -1,0 +1,45 @@
+[package]
+name = "newt-parity"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+newt-core = { path = "../core" }
+
+[features]
+default = []
+xml-native = []
+ft-native = []
+
+[[bin]]
+name = "xml-session-host"
+path = "src/bin/xml-session-host.rs"
+required-features = ["xml-native"]
+
+[[bin]]
+name = "package-parsers-host"
+path = "src/bin/package-parsers-host.rs"
+required-features = ["xml-native"]
+
+[[bin]]
+name = "chapter-host"
+path = "src/bin/chapter-host.rs"
+required-features = ["xml-native"]
+
+[[bin]]
+name = "chapter-xml-host"
+path = "src/bin/chapter-xml-host.rs"
+required-features = ["xml-native"]
+
+[[bin]]
+name = "ft-font-host"
+path = "src/bin/ft-font-host.rs"
+required-features = ["ft-native"]
+
+[[bin]]
+name = "epub-admission-host"
+path = "src/bin/epub-admission-host.rs"
+required-features = ["xml-native"]

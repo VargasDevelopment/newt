@@ -1,0 +1,44 @@
+[
+  {
+    "name": "synthetic-slant",
+    "needle": "if self.oblique { 13763 } else { 0 }",
+    "replacement": "if self.oblique { 0 } else { 0 }",
+    "witness": "style"
+  },
+  {
+    "name": "linear-advance",
+    "needle": "advance26_6: linear(s.linear_advance),",
+    "replacement": "advance26_6: linear(s.linear_advance) + 64,",
+    "witness": "rectangle"
+  },
+  {
+    "name": "stream-budget",
+    "needle": "&& n <= self.budget",
+    "replacement": "&& n <= MAX_TABLE",
+    "witness": "budgets"
+  },
+  {
+    "name": "gsub-release",
+    "needle": "self.gsub.release();",
+    "replacement": "self.gsub.clear();",
+    "witness": "stream"
+  },
+  {
+    "name": "gpos-sign",
+    "needle": "self.backend.scale_x(units)",
+    "replacement": "self.backend.scale_x(-units)",
+    "witness": "rectangle"
+  },
+  {
+    "name": "missing-glyph-stage",
+    "needle": "return self.fail(GlyphFailure::MissingGlyph, 0);",
+    "replacement": "return self.fail(GlyphFailure::Load, 0);",
+    "witness": "failures"
+  },
+  {
+    "name": "bitmap-offset",
+    "needle": "yoff: (-s.top) as i16,",
+    "replacement": "yoff: (-s.top + 1) as i16,",
+    "witness": "rectangle"
+  }
+]

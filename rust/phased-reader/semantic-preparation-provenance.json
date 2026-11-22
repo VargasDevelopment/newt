@@ -1,0 +1,19 @@
+{
+  "status": "source-only-unexecuted",
+  "original_revision": "bc9ffda52b85f277e46c63718ac88d62fba5d368",
+  "original_sources": ["src/phased_reader.cpp", "src/phased_reader_semantics.cpp", "include/newt/phased_reader.h", "src/book_semantic_index.cpp", "include/newt/book_semantic_index.h"],
+  "sdk_revision": "cd6f5b831c8fad899723b6d406586f00c575f021",
+  "index_source": ".build/rust/staged-foundations/book-semantic-index/core/book_semantic_index.rs",
+  "index_copy_policy": "byte-identical generated assembly copy; parent seals input and output",
+  "actual_core_sources": ["rust/core/src/canonical.rs", "rust/core/src/admission.rs", "rust/core/src/xml_session.rs", "rust/core/src/css.rs"],
+  "actual_reader_sources": [".build/rust/staged-foundations/phased-reader/src/reader.rs", ".build/rust/staged-foundations/phased-reader/src/resources.rs"],
+  "native_closure_recipe": ".build/rust/phased-reader-native-preparation/check.py",
+  "license": "MIT",
+  "executed_validation": ["/usr/bin/rustfmt --edition 2024", "Python ast.parse syntax only"],
+  "compiled": false,
+  "tests_executed": false,
+  "comparison_executed": false,
+  "firmware": false,
+  "hardware": false,
+  "retained_index_attachment_implemented": false
+}

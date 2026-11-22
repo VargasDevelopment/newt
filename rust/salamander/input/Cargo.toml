@@ -1,0 +1,19 @@
+[package]
+name = "newt-input-policy"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+newt-core = { path = "../../core" }
+
+[features]
+default = ["rust-app", "dev-usb"]
+native-atomics = []
+rust-app = []
+dev-usb = []

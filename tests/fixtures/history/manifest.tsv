@@ -1,0 +1,8 @@
+# Historic sources the tests compare against, read through tests/history_fixtures.py.
+# Each file was copied from the named commit of Newt's private development
+# history, which the public repository does not carry. Its bytes are stored
+# once, as blobs/<sha256>, with no source extension.
+# commit	path	sha256	tests
+503006535a98be816f4bf1493f69d0e20db82df4	tools/code_health_resources.py	33919fda9028c66e48496ee62daedbd1238e6f74ebcdf51c09bb61fe922e2c52	python_runtime_test.py
+fe4c4fabd32bf66e485c341e7c5e3c21e8539725	platformio.ini	49d006b354452ed20634f3ac64d238aa49ec1b7e9098227789f247807027de7f	native_output_test.py
+fe4c4fabd32bf66e485c341e7c5e3c21e8539725	tools/firmware-build.py	c8b7ba94a3ecaa3eb7278674b89f8ff868c03087d9e795c21d1217a353f27f64	native_output_test.py

@@ -1,0 +1,261 @@
+#!/usr/bin/env python3
+"""Compile the approved local X3 toolchain. Never installs tools or uploads."""
+import argparse
+import configparser
+import io
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import subprocess
+import sys
+import time
+
+sys.dont_write_bytecode = True
+sys.pycache_prefix = None
+
+from native_output import owned_directory, owned_file, write_text
+
+ROOT = Path(__file__).resolve().parents[1]
+TOOLCHAIN = ROOT / ".toolchain"
+
+
+def require_build_scope(path: Path, development: bool = False, regional: bool = False) -> None:
+    config = configparser.ConfigParser(interpolation=None)
+    config.read_string(path.read_text())
+    if set(config.sections()) != {"platformio", "env:newt_x3"} or config.defaults():
+        raise RuntimeError("Firmware configuration differs from the approved single X3 target")
+    expected = {
+        "platform": "https://github.com/pioarduino/platform-espressif32/releases/download/55.03.37/platform-espressif32.zip",
+        "framework": "arduino", "board": "esp32-c3-devkitm-1",
+        "board_build.flash_mode": "dio", "board_upload.flash_size": "16MB",
+        "build_src_filter": "+<firmware/main.cpp> +<firmware/nvs_guard.cpp> +<src/*.cpp>",
+        "build_unflags": "-std=gnu++11",
+        "lib_deps": "\n".join((
+            "BoardConfig=symlink://vendor/freeink-sdk/libs/hardware/BoardConfig",
+            "EInkDisplay=symlink://vendor/freeink-sdk/libs/display/FreeInkDisplay",
+            "InputManager=symlink://vendor/freeink-sdk/libs/hardware/InputManager",
+            "BatteryMonitor=symlink://vendor/freeink-sdk/libs/hardware/BatteryMonitor",
+            "XteinkDetect=symlink://vendor/freeink-sdk/libs/hardware/XteinkDetect",
+            "PowerManager=symlink://vendor/freeink-sdk/libs/hardware/PowerManager",
+            "FreeInkFont=symlink://vendor/freeink-sdk/libs/font/FreeInkFont",
+            "FreeInkBook=symlink://vendor/freeink-sdk/libs/book/FreeInkBook",
+        )),
+    }
+    if regional:
+        expected["lib_deps"] = expected["lib_deps"].replace(
+            "EInkDisplay=symlink://vendor/freeink-sdk/", "EInkDisplay=symlink://.build/freeink-sdk/")
+    flags = shlex.split(config["env:newt_x3"].get("build_flags", ""))
+    approved_flags = {
+        "-std=gnu++2a", "-fstack-usage", "-DARDUINO_USB_MODE=1",
+        "-DARDUINO_USB_CDC_ON_BOOT=1", "-DEINK_DISPLAY_SINGLE_BUFFER_MODE=1",
+        "-DFREEINK_DEVICE_X3=1", "-DFREEINK_BOOK_SMALL=1",
+        *["-Wl,--wrap=" + name for name in (
+            "nvs_flash_init", "esp_partition_erase_range", "esp_partition_write",
+            "esp_partition_write_raw", "nvs_flash_erase", "nvs_flash_erase_partition",
+            "nvs_flash_erase_partition_ptr")],
+    }
+    if regional:
+        approved_flags.update(("-DNEWT_REGIONAL_HOME=1", "-DFREEINK_EXPERIMENTAL_REGIONAL_GRAY=1"))
+    if development:
+        identifiers = [flag for flag in flags if flag.startswith("-DNEWT_DEV_BUILD_ID=")]
+        suffix = "-regional-experiment" if regional else ""
+        if len(identifiers) != 1 or not re.fullmatch(
+                '-DNEWT_DEV_BUILD_ID="[0-9a-f]{12}' + suffix + '(?:-dirty)?"', identifiers[0]):
+            raise RuntimeError("Development identifier differs from the approved generated format")
+        approved_flags.update(("-DNEWT_DEV_USB=1", identifiers[0]))
+    if len(flags) != len(approved_flags) or set(flags) != approved_flags:
+        raise RuntimeError("Compiler/linker flags differ from the approved input and preservation scope")
+    allowed = set(expected) | {"monitor_speed", "build_src_filter", "build_unflags", "build_flags"}
+    target = config["env:newt_x3"]
+    if set(target) - allowed:
+        raise RuntimeError("Unapproved PlatformIO option; new dependencies/scripts require a scoped decision")
+    if any("${" in value for value in target.values()):
+        raise RuntimeError("Dynamic configuration expansion is outside the reviewed build scope")
+    for key in ("build_flags", "build_unflags"):
+        if any(token.startswith("!") for token in shlex.split(target.get(key, ""))):
+            raise RuntimeError("Executable compiler flag expressions are outside the reviewed build scope")
+    for key, value in expected.items():
+        if target.get(key, "").strip() != value:
+            raise RuntimeError(f"Build dependency configuration differs from the approved pin: {key}")
+    local = {
+        "default_envs": "newt_x3", "src_dir": ".", "include_dir": "include",
+        "core_dir": ".toolchain/platformio", "build_dir": ".pio/build",
+        "libdeps_dir": ".pio/libdeps",
+    }
+    if development:
+        local.update(build_dir=".pio/dev-usb/build", libdeps_dir=".pio/dev-usb/libdeps")
+    if regional:
+        prefix = ".pio/regional-dev-usb" if development else ".pio/regional"
+        local.update(build_dir=prefix+"/build", libdeps_dir=prefix+"/libdeps")
+    if dict(config["platformio"]) != local:
+        raise RuntimeError("Build paths differ from the approved project-local scope")
+
+
+def build_environment() -> dict[str, str]:
+    # Do not pass ambient build/package-manager settings into subprocesses.
+    # HOME retains its existing identity; all write/cache paths are explicit.
+    env = {"PATH": os.defpath, "LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8", "PYTHONDONTWRITEBYTECODE": "1"}
+    if "HOME" in os.environ:
+        env["HOME"] = os.environ["HOME"]
+    paths = {
+        "PLATFORMIO_CORE_DIR": TOOLCHAIN / "platformio",
+        "PLATFORMIO_CACHE_DIR": TOOLCHAIN / "cache/platformio",
+        "PIP_CACHE_DIR": TOOLCHAIN / "cache/pip",
+        "UV_CACHE_DIR": TOOLCHAIN / "cache/uv",
+        "XDG_CACHE_HOME": TOOLCHAIN / "cache/xdg",
+        "TMPDIR": TOOLCHAIN / "tmp",
+        "PIP_FIND_LINKS": TOOLCHAIN / "downloads",
+        "UV_FIND_LINKS": TOOLCHAIN / "downloads",
+        "PIP_CONSTRAINT": ROOT / "docs/toolchain-python.lock",
+        "UV_CONSTRAINT": ROOT / "docs/toolchain-python.lock",
+    }
+    env.update({key: str(value) for key, value in paths.items()})
+    env.update({
+        "PIP_CONFIG_FILE": "/dev/null", "PIP_NO_INDEX": "1", "UV_NO_INDEX": "1",
+        "UV_OFFLINE": "1", "UV_NO_BUILD_ISOLATION": "1",
+        "PIP_DISABLE_PIP_VERSION_CHECK": "1", "PYTHONDONTWRITEBYTECODE": "1",
+        "PLATFORMIO_SETTING_CHECK_PLATFORMIO_INTERVAL": "0",
+        "PLATFORMIO_SETTING_CHECK_PRUNE_SYSTEM_THRESHOLD": "0",
+        "SCONSFLAGS": "--no-site-dir",
+    })
+    env["PATH"] = str(TOOLCHAIN / "platformio/penv/bin") + os.pathsep + env["PATH"]
+    return env
+
+
+def require_toolchain() -> Path:
+    executable = TOOLCHAIN / "platformio/penv/bin/pio"
+    if not executable.is_file():
+        raise RuntimeError("Approved project-local toolchain missing; see docs/toolchain-proposal.md")
+    versions = {
+        "framework-arduinoespressif32": "3.3.7",
+        "framework-arduinoespressif32-libs": "5.5.0+sha.87912cd291",
+        "toolchain-riscv32-esp": "14.2.0+20251107",
+        "tool-esp_install": "5.3.4", "tool-esptoolpy": "5.1.2",
+        "tool-scons": "4.40801.0", "contrib-piohome": "3.4.4",
+    }
+    for package, version in versions.items():
+        path = TOOLCHAIN / "platformio/packages" / package
+        manifest = json.loads((path / "package.json").read_text())
+        if manifest.get("name") != package or manifest.get("version") != version:
+            raise RuntimeError(f"Local package differs from approved pin: {package}")
+        if not (path / ".piopm").is_file():
+            raise RuntimeError(f"Local package registration missing: {package}")
+    platform = TOOLCHAIN / "platformio/platforms/espressif32"
+    if not (platform / ".piopm").is_file():
+        raise RuntimeError("Local platform registration missing")
+    manifest = json.loads((platform / "platform.json").read_text())
+    if manifest.get("version") != "55.03.37":
+        raise RuntimeError("Local platform differs from approved pin")
+    return executable
+
+
+def build_command(executable: Path) -> list[str]:
+    # Copied venv entrypoints can retain another checkout's absolute shebang.
+    # Select this venv explicitly and ignore ambient Python search paths.
+    interpreter = executable.parent / "python"
+    if not interpreter.is_file():
+        raise RuntimeError("Approved project-local Python interpreter missing")
+    return [str(interpreter), "-I", "-B", str(executable), "run", "-e", "newt_x3"]
+
+
+def generated_config_destination(variant: str) -> Path:
+    return owned_file(ROOT, ROOT / ".build" / variant / "platformio.ini", create_parents=True)
+
+
+def require_native_output_directories(variant: str, environment: dict[str, str]) -> None:
+    prefix = ROOT / ".pio"
+    if variant != "default":
+        prefix /= variant
+    for directory in (prefix / "build/newt_x3", prefix / "libdeps/newt_x3"):
+        owned_directory(ROOT, directory, create=True)
+    for key in ("PLATFORMIO_CORE_DIR", "PLATFORMIO_CACHE_DIR", "PIP_CACHE_DIR",
+                "UV_CACHE_DIR", "XDG_CACHE_HOME", "TMPDIR"):
+        owned_directory(ROOT, Path(environment[key]), create=True)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--clean", action="store_true", help="clean build outputs before compiling")
+    parser.add_argument("--dev-usb", action="store_true", help="compile the explicitly enabled development bridge; never uploads")
+    parser.add_argument("--regional-home", action="store_true", help="compile the experimental tracked regional-gray patch; never uploads")
+    parser.add_argument("--check-config", action="store_true", help="read-only approved configuration preflight; no toolchain required")
+    parser.add_argument("--health-report", action="store_true", help="verify per-variant RAM/flash/stack ceilings and write a source-bound receipt; requires --clean")
+    args = parser.parse_args()
+    require_build_scope(ROOT / "platformio.ini")
+    if args.check_config:
+        if args.clean or args.dev_usb or args.regional_home or args.health_report:
+            parser.error("--check-config checks only the authored default configuration")
+        print("PASS: pinned dependency and build configuration")
+        return
+    if args.health_report and not args.clean:
+        parser.error("--health-report requires --clean so every compiler stack report is fresh")
+    if args.regional_home:
+        variant = "regional-dev-usb" if args.dev_usb else "regional"
+    else:
+        variant = "dev-usb" if args.dev_usb else "default"
+    build_prefix = ".pio/build" if variant == "default" else ".pio/"+variant+"/build"
+    env = build_environment()
+    require_native_output_directories(variant, env)
+    subprocess.run([sys.executable, "-B", str(ROOT / "tools/make-builtin-app.py"), "--check"],
+                   cwd=ROOT, env=env, check=True)
+    executable = require_toolchain()
+    command = build_command(executable)
+    effective_config = ROOT / "platformio.ini"
+    if args.dev_usb or args.regional_home:
+        config = configparser.ConfigParser(interpolation=None)
+        config.read(ROOT / "platformio.ini")
+        config["platformio"].update(build_dir=build_prefix, libdeps_dir=".pio/"+variant+"/libdeps")
+        if args.regional_home:
+            subprocess.run([sys.executable, "-B", str(ROOT / "tools/apply-freeink-patch.py")], cwd=ROOT, env=env, check=True)
+            config["env:newt_x3"]["lib_deps"] = config["env:newt_x3"]["lib_deps"].replace(
+                "EInkDisplay=symlink://vendor/freeink-sdk/", "EInkDisplay=symlink://.build/freeink-sdk/")
+            config["env:newt_x3"]["build_flags"] += '\n-DNEWT_REGIONAL_HOME=1\n-DFREEINK_EXPERIMENTAL_REGIONAL_GRAY=1'
+        checkpoint = subprocess.run(["git", "rev-parse", "--short=12", "HEAD"], cwd=ROOT,
+                                    check=True, capture_output=True, text=True).stdout.strip()
+        # Generated receipts do not change compiled source identity. All source,
+        # configuration, generated headers and authored app inputs still do.
+        dirty = subprocess.run(["git", "status", "--porcelain", "--", ".", ":(exclude)artifacts"], cwd=ROOT,
+                               check=True, capture_output=True, text=True).stdout
+        identifier = checkpoint + ("-regional-experiment" if args.regional_home else "") + ("-dirty" if dirty else "")
+        if args.dev_usb:
+            config["env:newt_x3"]["build_flags"] += '\n-DNEWT_DEV_USB=1\n-DNEWT_DEV_BUILD_ID=\\"' + identifier + '\\"'
+        generated = generated_config_destination(variant)
+        stream = io.StringIO()
+        config.write(stream)
+        write_text(ROOT, generated, stream.getvalue())
+        require_build_scope(generated, development=args.dev_usb, regional=args.regional_home)
+        command += ["--project-conf", str(generated)]
+        effective_config = generated
+    if args.health_report:
+        receipt = owned_file(ROOT, ROOT / f"artifacts/code-health-{variant}.json", create_parents=True)
+        from code_health import read_baseline
+        from code_health_resources import build_identity, build_report, check_resources
+        baseline = read_baseline(ROOT)
+    if args.clean:
+        subprocess.run([*command, "-t", "clean"], cwd=ROOT, env=env, check=True)
+    if args.health_report:
+        expected_identity = build_identity(ROOT, variant, effective_config)
+        started_ns = time.time_ns()
+    subprocess.run(command, cwd=ROOT, env=env, check=True)
+    verification = [sys.executable, "-B", str(ROOT / "tools/verify-nvs-guard.py")]
+    if args.dev_usb or args.regional_home:
+        verification += ["--elf", build_prefix+"/newt_x3/firmware.elf",
+                         "--output", "artifacts/"+variant+"-nvs-guard-link-verification.json"]
+    subprocess.run(verification, cwd=ROOT, env=env, check=True)
+    if args.health_report:
+        report = build_report(ROOT, variant, effective_config, started_ns, expected_identity)
+        write_text(ROOT, receipt, json.dumps(report, indent=2, sort_keys=True) + "\n")
+        failures = check_resources(ROOT, baseline, variant)
+        if failures:
+            raise RuntimeError("Resource ratchet failed:\n" + "\n".join(failures))
+        print(f"PASS: {variant} RAM/flash/selected static-stack ceilings; {receipt.relative_to(ROOT)}")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, TypeError, KeyError, RuntimeError, configparser.Error, subprocess.CalledProcessError) as error:
+        print(f"Firmware build stopped: {error}", file=sys.stderr)
+        sys.exit(1)

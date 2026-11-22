@@ -1,0 +1,119 @@
+[
+  {
+    "id": "clear-failed-init",
+    "file": "src/hyphenator.rs",
+    "find": "self.count = 0;",
+    "replace": "self.count = 1;",
+    "witness": "failed-reinit-0",
+    "reason": "failed null init must clear ready after a successful init",
+    "expected_occurrences": 1
+  },
+  {
+    "id": "max-pattern-bound",
+    "file": "src/hyphenator.rs",
+    "find": "(marked_len - start).min(usize::from(self.max_len))",
+    "replace": "(marked_len - start).min(255)",
+    "witness": "maxlen-cut",
+    "reason": "length-six exact key is excluded by maxlen five",
+    "expected_occurrences": 1
+  },
+  {
+    "id": "lower-bound",
+    "file": "src/hyphenator.rs",
+    "find": "key[depth] < c",
+    "replace": "key[depth] <= c",
+    "witness": "basic",
+    "reason": "lower bound must retain the equal key",
+    "expected_occurrences": 1
+  },
+  {
+    "id": "upper-bound",
+    "file": "src/hyphenator.rs",
+    "find": "key[depth] <= c",
+    "replace": "key[depth] < c",
+    "witness": "basic",
+    "reason": "upper bound must include the equal key",
+    "expected_occurrences": 1
+  },
+  {
+    "id": "max-merge",
+    "file": "src/hyphenator.rs",
+    "find": "weights[v] > values[start + v]",
+    "replace": "weights[v] != values[start + v]",
+    "witness": "maxmerge-even",
+    "reason": "later start bc weight one must not overwrite earlier abcd weight two",
+    "expected_occurrences": 1
+  },
+  {
+    "id": "odd-only",
+    "file": "src/hyphenator.rs",
+    "find": "values[v] & 1 == 0",
+    "replace": "values[v] == 0",
+    "witness": "maxmerge-even",
+    "reason": "even two suppresses offset two",
+    "expected_occurrences": 1
+  },
+  {
+    "id": "continuation",
+    "file": "src/hyphenator.rs",
+    "find": "word[pos] & 0xc0 == 0x80",
+    "replace": "word[pos] == 0xff",
+    "witness": "continuation-filter",
+    "reason": "all odd byte weights must still skip continuation-byte positions",
+    "expected_occurrences": 1
+  },
+  {
+    "id": "character-minima",
+    "file": "src/hyphenator.rs",
+    "find": "let left = char_index[pos];",
+    "replace": "let left = (pos as u8).min(char_count);",
+    "witness": "character-minima",
+    "reason": "five accented characters allow byte offset four, not byte offset two",
+    "expected_occurrences": 1
+  },
+  {
+    "id": "left-min",
+    "file": "src/hyphenator.rs",
+    "find": "if left < 2 ||",
+    "replace": "if left < 1 ||",
+    "witness": "word-bytes-5",
+    "reason": "all odd weights still require two characters on the left",
+    "expected_occurrences": 1
+  },
+  {
+    "id": "right-min",
+    "file": "src/hyphenator.rs",
+    "find": "char_count - left < 3",
+    "replace": "char_count - left < 2",
+    "witness": "word-bytes-5",
+    "reason": "all odd weights still require three characters on the right",
+    "expected_occurrences": 1
+  },
+  {
+    "id": "word-limit",
+    "file": "src/hyphenator.rs",
+    "find": "word.len() > 62",
+    "replace": "word.len() > 61",
+    "witness": "word-bytes-62",
+    "reason": "62-byte word must still match",
+    "expected_occurrences": 1
+  },
+  {
+    "id": "case-cyrillic-special",
+    "file": "src/hyphenator.rs",
+    "find": "return cp + 0x50;",
+    "replace": "return cp + 0x20;",
+    "witness": "fold-0400",
+    "reason": "U+0400 lower mapping is U+0450, independently encoded key",
+    "expected_occurrences": 1
+  },
+  {
+    "id": "cap",
+    "file": "src/hyphenator.rs",
+    "find": "output.len().min(255)",
+    "replace": "output.len().min(255).saturating_sub(1)",
+    "witness": "cap-one",
+    "reason": "a capacity of one must write the first break",
+    "expected_occurrences": 1
+  }
+]

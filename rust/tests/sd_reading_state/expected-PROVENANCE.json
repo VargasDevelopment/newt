@@ -1,0 +1,469 @@
+{
+ "origin": "one-time unchanged frozen C++ execution",
+ "cases": 22,
+ "source_sha256": {
+  "rust/tests/sd_reading_state/PROVENANCE.json": "a572e6aa81446d1fc0fe45beaf76e1fd2ff7179f382ce7e25d350bb2f1258203",
+  "rust/tests/sd_reading_state/oracle/adapter.cpp": "2e97c4795fc4200398db09ca45c75c2936d51ddefe410f17552dbe482677bb6a",
+  "rust/tests/sd_reading_state/original/firmware/nvs_blob_backend.h": "d61203884e431d75c07f622caa8b80094881d6484d2dc007f54ffbcf8267cccc",
+  "rust/tests/sd_reading_state/original/firmware/sd_resume_record.h": "d7ce3cffb51801eb07a6492802d9824709722cac216f24e08cf7244ba4e412c5",
+  "rust/tests/sd_reading_state/original/firmware/nvs_progress_backend.h": "f2786d0957f165237ff919ffb92025df85a7a4187f88c4eb52419944845dc188",
+  "rust/tests/sd_reading_state/original/firmware/durable_commit.h": "9788911919f56bc556d8cecc6d23710d7af82fc864585d697abc44cfb9e20992",
+  "rust/tests/sd_reading_state/original/firmware/reading_state_backend.h": "1eb6478c99d8a7ce550d0eea028beb45def4afc9d82fe6b7cc3bcc46e6f8605a",
+  "rust/tests/sd_reading_state/original/firmware/reader_save_trace.h": "f28f8c9e3213b0947984407ae6300a20577c8c3d2abb98061a0b8229ed7b6a53",
+  "rust/tests/sd_reading_state/original/firmware/progress_store.h": "d5eb5f534b4158350fcd073fb83b8d7e522db8d0d1454afe99d44f5b4a814384",
+  "rust/tests/sd_reading_state/original/firmware/durable_record_store.h": "cbd156c11ad0e9829d4f01599737b97a3becde19fc1fecc4a119cab949420f49",
+  "rust/tests/sd_reading_state/original/firmware/sd_state_record.h": "2a02ea4ae0a8ac5fdb4d7ee65325777ef2d742b4e51fb70a1393250bee2db5d0",
+  "rust/tests/sd_reading_state/original/firmware/sleep_resume_store.h": "2cb09b36273a78fdaaabfa1be8e3045e140c9ab88529150a5cd5805e406d7862",
+  "rust/tests/sd_reading_state/original/firmware/retained_state.h": "58114affc9e33a66303ae36de52b29807c6ef1ff905b2e44b4654f1289240eca",
+  "rust/tests/sd_reading_state/original/firmware/selected_book_store.h": "d5cf9652725416d871a780e9d5e34be2f804962bdbbf8176c8227beb7db74639",
+  "rust/tests/sd_reading_state/original/firmware/nvs_guard.h": "3eca9ecd4de3c7508cdc469fd632a79755f04b70b0d219b4b9ab0097d8bce47d",
+  "rust/tests/sd_reading_state/original/include/newt/reading_save_notice.h": "94684fafee1050cc3155432e4d5cfc38478b43b583b1ea4094c3c1c8302392e6",
+  "rust/tests/sd_reading_state/original/include/newt/time_zone.h": "d75c2508d605bec50177af01a91a4e734971cdac002afa9163801498cd579ac9",
+  "rust/tests/sd_reading_state/original/include/newt/reader_view.h": "db209741d70746f8a807612217f5a0ae73ba7e05444c763453816075509426d3",
+  "rust/tests/sd_reading_state/original/include/newt/app.h": "075e3432dd515c916a6124fd39d70a20ac51d3d1ab2fcb4a0d1271d9516f4827",
+  "rust/tests/sd_reading_state/original/include/newt/app_slot_identity.h": "89acb3c0c2b56b95dc090e12d65852316e9329977d153c202a2e51d648823626",
+  "rust/tests/sd_reading_state/original/include/newt/utf8.h": "4e31dcc0ba068e329fdd75d3a321d1922048f063676073e055d12dd11e8bcf42",
+  "rust/tests/sd_reading_state/original/include/newt/library_catalog.h": "259cc37915a3c67717cdff8e94f3a7b81e79b3f8d83814926d2d05f12df55b0a",
+  "rust/tests/sd_reading_state/original/include/newt/reading_progress.h": "6d6213a9943340f5357959cc16b11a2ad3b7e11a8191e7d64de2df31cb0605d8",
+  "rust/tests/sd_reading_state/oracle/shim/reader_revision_session.h": "b080db55302459d67c10de3e763fd47bb7beaa73d0447e38beb9371e0d53e93a",
+  "rust/tests/sd_reading_state/oracle/shim/sd_library.h": "61db26942607987cd7404f24981eaef3e64b62dddd5914341bbf3ad29ab51714",
+  "rust/tests/sd_reading_state/oracle/shim/nvs.h": "84296d2f1adccf1de0696ea0b928cb261f351acbc5c5649e9eb37aec066c8b41"
+ },
+ "commands": [
+  {
+   "command": [
+    ".toolchain/llvm/bin/clang++",
+    "--no-default-config",
+    "-std=c++17",
+    "-O1",
+    "-g",
+    "-fsanitize=address,undefined",
+    "-fno-omit-frame-pointer",
+    "-I",
+    "rust/tests/nvs_backend/oracle",
+    "rust/tests/nvs_backend/oracle.cpp",
+    "-o",
+    ".build/rust/merge-prep/capture-storage/run/nvs_backend"
+   ],
+   "cwd": "rust/tests/nvs_backend",
+   "stdin_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "log": "000",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/nvs_backend"
+   ],
+   "cwd": "rust/tests/nvs_backend",
+   "stdin_sha256": "22aaf1bcac5eb15eda938c43a861ee249e870d3120813a5c202c4e5bd2bd281b",
+   "log": "001",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".toolchain/llvm/bin/clang++",
+    "--no-default-config",
+    "-std=c++17",
+    "-O1",
+    "-g",
+    "-fsanitize=address,undefined",
+    "-fno-omit-frame-pointer",
+    "-I",
+    "rust/tests/nvs_guard/oracle/stubs",
+    "-I",
+    "rust/tests/nvs_guard/oracle",
+    "rust/tests/nvs_guard/oracle.cpp",
+    "-o",
+    ".build/rust/merge-prep/capture-storage/run/nvs_guard"
+   ],
+   "cwd": "rust/tests/nvs_guard",
+   "stdin_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "log": "002",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/nvs_guard"
+   ],
+   "cwd": "rust/tests/nvs_guard",
+   "stdin_sha256": "5142246a442300387caa604655f22baf484408cf8f0506a42529580e8454c65c",
+   "log": "003",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".toolchain/llvm/bin/clang++",
+    "--no-default-config",
+    "-std=c++17",
+    "-O1",
+    "-g",
+    "-Wall",
+    "-Wextra",
+    "-Werror",
+    "-DNEWT_DEV_USB=0",
+    "-DNEWT_READING_STATE_ROOT=\"data/newt-sd/Newt\"",
+    "-fsanitize=address,undefined",
+    "-fno-sanitize-recover=all",
+    "-fno-omit-frame-pointer",
+    "--ld-path=/usr/bin/x86_64-linux-gnu-ld.bfd",
+    "-Irust/tests/sd_reading_state/oracle/shim",
+    "-isystem",
+    "rust/tests/sd_reading_state/original/firmware",
+    "-isystem",
+    "rust/tests/sd_reading_state/original/include",
+    "-isystem",
+    "rust/tests/native_storage/original/firmware",
+    "-isystem",
+    "rust/tests/native_storage/original/sdk/libs/book/FreeInkBook/include",
+    "rust/tests/sd_reading_state/oracle/adapter.cpp",
+    "-o",
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle"
+   ],
+   "cwd": "rust",
+   "stdin_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "log": "004",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/fresh_create_write_read/boot0.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/fresh_create_write_read",
+   "stdin_sha256": "5a203885bb4c184e19f6a4929784dccf497c0fe05cabb938abb897d82907a001",
+   "log": "005",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/fresh_create_write_read/boot1.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/fresh_create_write_read",
+   "stdin_sha256": "018d93dec6a4126140fb87326ee790a8b5bd7e994f356b266e40accc5ec1c980",
+   "log": "006",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/legacy_read_only_then_migrate/boot0.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/legacy_read_only_then_migrate",
+   "stdin_sha256": "050383cc032ce33d85c6a3e54f47c5a9c6461e6da61e88798365bbaa98253cb3",
+   "log": "007",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/legacy_oversize_fails_closed/boot0.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/legacy_oversize_fails_closed",
+   "stdin_sha256": "51af452a290ad2b084d6db5ed21adbc57371eb2e227e72eeaf5f3db4824dcfe0",
+   "log": "008",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/lost_sync_reconciled/boot0.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/lost_sync_reconciled",
+   "stdin_sha256": "9305074e58d0ada55e219918e007d42ff00ccdb49860e404d22f8f0b711d7676",
+   "log": "009",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/lost_sync_reconciled/boot1.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/lost_sync_reconciled",
+   "stdin_sha256": "390997ea14746f8338d8cf7fd96b438ae1633af93cf558a4048d6ecf8b173e7d",
+   "log": "010",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/generation_order/boot0.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/generation_order",
+   "stdin_sha256": "ed2595eb8199ddc5af17fe33d5662930aae770090fad882c5f29356fc2b99936",
+   "log": "011",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/generation_order/boot1.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/generation_order",
+   "stdin_sha256": "53215891ecb4d0558f99251602f0089efa67ad8a4b47707c38d37916bdaff2e0",
+   "log": "012",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/foreign_and_damaged/boot0.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/foreign_and_damaged",
+   "stdin_sha256": "19716450c6f13fedd6773df6842624c1b44e78cb6165fefdbbac4c3afabc7378",
+   "log": "013",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/eintr_retry_bounded/boot0.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/eintr_retry_bounded",
+   "stdin_sha256": "10c20eb8d048cbb1784935138abf2ea0663316a249688a50f49d95f9543535c9",
+   "log": "014",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/eintr_retry_bounded/boot1.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/eintr_retry_bounded",
+   "stdin_sha256": "fab83dac13d33925027b54063c78169be77bcde4b675669c455717d93efb2a00",
+   "log": "015",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/short_transfers/boot0.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/short_transfers",
+   "stdin_sha256": "cc4c5bea9452dfda3d336d2ff147cc3181dc2b1a4641fc279f1570c085283b9d",
+   "log": "016",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/short_transfers/boot1.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/short_transfers",
+   "stdin_sha256": "390997ea14746f8338d8cf7fd96b438ae1633af93cf558a4048d6ecf8b173e7d",
+   "log": "017",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/medium_classification/boot0.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/medium_classification",
+   "stdin_sha256": "efb823a3a61f970b95960ccdf0a2f2a3fc6a55346fec30cbad97c80f65229118",
+   "log": "018",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/mount_refused/boot0.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/mount_refused",
+   "stdin_sha256": "f6a12607f0bf512be6e60a7e171a5c37ca8298321831145fe0dbc0d31b9e574b",
+   "log": "019",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/alloc_refused/boot0.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/alloc_refused",
+   "stdin_sha256": "fd88074d68d1d8eec21f32c55ce46eabb87647284ab4845712eed661e659149c",
+   "log": "020",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/barrier_failures/boot0.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/barrier_failures",
+   "stdin_sha256": "c839126c15676edaca86b51a4c2e1f64cc5ab1b4b809f92d0ba49bfdf986b1c4",
+   "log": "021",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/barrier_failures/boot1.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/barrier_failures",
+   "stdin_sha256": "9c17535b36c980c1bdaaa0c26525fbb4c45b4bb98f6989fa9847ff57e376e1e6",
+   "log": "022",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/barrier_failures/boot2.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/barrier_failures",
+   "stdin_sha256": "390997ea14746f8338d8cf7fd96b438ae1633af93cf558a4048d6ecf8b173e7d",
+   "log": "023",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/rename_failures/boot0.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/rename_failures",
+   "stdin_sha256": "863e7187124eebc235e2487a64350b65b5aac94b043d60004931c12cdb5aa6c9",
+   "log": "024",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/rename_failures/boot1.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/rename_failures",
+   "stdin_sha256": "2b71548a1bdfcdcfc5be8b6dc237bd27f96d3af1d4fb9ce4853840b0c4f13fea",
+   "log": "025",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/stats_damaged_repair/boot0.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/stats_damaged_repair",
+   "stdin_sha256": "e6230ed66cfd91b3c3e64a4e6567bf48109f33768d440a6f4b65b91804a52fa0",
+   "log": "026",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/stats_damaged_repair/boot1.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/stats_damaged_repair",
+   "stdin_sha256": "4d91b642dfdc33605dc8d39c4e27868f3bab8606db84da82369afd05911ae3c9",
+   "log": "027",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/stale_cluster_fill/boot0.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/stale_cluster_fill",
+   "stdin_sha256": "7d4fe4730c92e1a721dbaa0afa44cf527d73e20c989390ce6337cc79a323b928",
+   "log": "028",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/stale_cluster_fill/boot1.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/stale_cluster_fill",
+   "stdin_sha256": "390997ea14746f8338d8cf7fd96b438ae1633af93cf558a4048d6ecf8b173e7d",
+   "log": "029",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/listing/boot0.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/listing",
+   "stdin_sha256": "ecfb424a7ad237052c998ff5a756d9d78eeec32108240d08743dc362fec6121d",
+   "log": "030",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/state_folder/boot0.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/state_folder",
+   "stdin_sha256": "7770a51f88f688b300c79b4f613957ef7ae3e789f774514b095e0239c7121f22",
+   "log": "031",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/sync_failed_reopen_settles/boot0.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/sync_failed_reopen_settles",
+   "stdin_sha256": "7687dba14c2975bfbfa9a8d56b37650370fda79b73220b48a1a5dfa1dadcf5e1",
+   "log": "032",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/sync_failed_reopen_settles/boot1.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/sync_failed_reopen_settles",
+   "stdin_sha256": "390997ea14746f8338d8cf7fd96b438ae1633af93cf558a4048d6ecf8b173e7d",
+   "log": "033",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/keys_and_sizes/boot0.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/keys_and_sizes",
+   "stdin_sha256": "6076c9eb6f991f91778efc4807d68f7a0a79b3e8f98f827495639c4560b44441",
+   "log": "034",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/keys_and_sizes/boot1.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/keys_and_sizes",
+   "stdin_sha256": "d922bd98f7d2a1534065062a2df8c25961058d8f47da3e31b34d3268c029d431",
+   "log": "035",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/no_card_routing/boot0.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/no_card_routing",
+   "stdin_sha256": "5797d2a226eac004d09ca1d982efc2b81d3b2fec77292e943a524c89247fb105",
+   "log": "036",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/no_card_then_card/boot0.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/no_card_then_card",
+   "stdin_sha256": "54aff756a90095cce39092b66d2d9e6860abc8b7c832356698115fec12392fe1",
+   "log": "037",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/sd-oracle",
+    ".build/rust/merge-prep/capture-storage/run/non_routed_nvs_passthrough/boot0.state"
+   ],
+   "cwd": ".build/rust/merge-prep/capture-storage/run/non_routed_nvs_passthrough",
+   "stdin_sha256": "b4b1cf17beb3d1183d3f4111192b58bf71801e17adae988a79402e1065f0c762",
+   "log": "038",
+   "returncode": 0
+  }
+ ],
+ "fixture_sha256": "f1f392917cbe097744367b07a47ffd5c923b4d0ba258ceb7c78774402ab22c81"
+}

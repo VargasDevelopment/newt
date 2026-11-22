@@ -1,0 +1,16 @@
+[package]
+name = "newt-library-ui"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT AND OFL-1.1"
+publish = false
+
+[features]
+default = []
+host-probe = []
+
+[dependencies]
+newt-core = { path = "../core" }
+newt-ui-canvas = { path = "../ui-canvas" }
+newt-system-ui = { path = "../system-ui" }

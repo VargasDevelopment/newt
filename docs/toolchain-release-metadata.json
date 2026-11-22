@@ -1,0 +1,58 @@
+[
+  {
+    "name": "esp32-core-3.3.7-libs.tar.xz",
+    "size": 272921836,
+    "digest": "sha256:a67e82c5af501db31261b37cae4cf0270b9c08a8d73b68d867f825669e85a2f6",
+    "browser_download_url": "https://github.com/espressif/arduino-esp32/releases/download/3.3.7/esp32-core-3.3.7-libs.tar.xz",
+    "source": "espressif/arduino-esp32"
+  },
+  {
+    "name": "esp32-core-3.3.7.tar.xz",
+    "size": 20697240,
+    "digest": "sha256:9dd09b11ae75ba25b0610e76ff1265a4e59441cc5fdf3cb20dcd323904814186",
+    "browser_download_url": "https://github.com/espressif/arduino-esp32/releases/download/3.3.7/esp32-core-3.3.7.tar.xz",
+    "source": "espressif/arduino-esp32"
+  },
+  {
+    "name": "esptoolpy-v5.1.2.zip",
+    "size": 989,
+    "digest": "sha256:9ac8af54d61414e378a1efcd605de79c2e318efa8d791c0d24df48019cbd3074",
+    "browser_download_url": "https://github.com/pioarduino/registry/releases/download/0.0.1/esptoolpy-v5.1.2.zip",
+    "source": "pioarduino/registry"
+  },
+  {
+    "name": "riscv32-esp-elf-14.2.0_20251107.zip",
+    "size": 1642,
+    "digest": "sha256:33abc2866247754ccca35f75329a12d99cbb55baaec533d99ee5d373473daeaa",
+    "browser_download_url": "https://github.com/pioarduino/registry/releases/download/0.0.1/riscv32-esp-elf-14.2.0_20251107.zip",
+    "source": "pioarduino/registry"
+  },
+  {
+    "name": "scons-4.8.1.zip",
+    "size": 1054,
+    "digest": null,
+    "browser_download_url": "https://github.com/pioarduino/registry/releases/download/0.0.1/scons-4.8.1.zip",
+    "source": "pioarduino/registry"
+  },
+  {
+    "name": "esp_install-v5.3.4.zip",
+    "size": 54015,
+    "digest": "sha256:c85a91287a95c08f6605461db1c41dcbf35f19e2f362ca8e9c2c104c70d4f360",
+    "browser_download_url": "https://github.com/pioarduino/esp_install/releases/download/v5.3.4/esp_install-v5.3.4.zip",
+    "source": "pioarduino/esp_install"
+  },
+  {
+    "name": "riscv32-esp-elf-14.2.0_20251107-aarch64-apple-darwin.tar.gz",
+    "size": 584629596,
+    "digest": "sha256:c87e17eced80e82d971508f9a01ce602155e2b801a7e7dcbe648ace0f722fe9d",
+    "browser_download_url": "https://github.com/espressif/crosstool-NG/releases/download/esp-14.2.0_20251107/riscv32-esp-elf-14.2.0_20251107-aarch64-apple-darwin.tar.gz",
+    "source": "espressif/crosstool-NG"
+  },
+  {
+    "name": "riscv32-esp-elf-14.2.0_20251107-aarch64-apple-darwin.tar.xz",
+    "size": 288327120,
+    "digest": "sha256:cedfcdaf8f165bd3e11ca4ee46b71d5b561fab93407eb8203812f9c14b1c7714",
+    "browser_download_url": "https://github.com/espressif/crosstool-NG/releases/download/esp-14.2.0_20251107/riscv32-esp-elf-14.2.0_20251107-aarch64-apple-darwin.tar.xz",
+    "source": "espressif/crosstool-NG"
+  }
+]

@@ -1,0 +1,12 @@
+{
+  "sdk_commit": "cd6f5b831c8fad899723b6d406586f00c575f021",
+  "sha256": {
+    "libs/book/FreeInkBook/third_party/miniz/miniz.c": "e2c1aeb66eef9191d8c3feb164db2def2335a61d039bf04ed849f6b042433b30",
+    "libs/book/FreeInkBook/third_party/miniz/miniz.h": "b53b62ed122e559b8f679e3cb787a0b0035fe87a58f909da0e44931678f4e85f",
+    "libs/book/FreeInkBook/third_party/miniz/LICENSE": "6f20fa7672b00e2e975c291df737cf227addf3ad32e36fef3fe0f416e4664d3d",
+    "libs/book/FreeInkBook/include/epub/MinizConfig.h": "760cad4d8a00dffc8f0e61f7c5df95bd479514095167059502d3c83da229d1d5",
+    "libs/book/FreeInkBook/src/vendor/miniz_impl.c": "62d5a7524b9ff42b8f779191be05372e1a6a9a993ccda99fb454c7d50a83edd6",
+    "LICENSE": "17dea5079d9905fbbc8323cde7bfffd0f24185949c43a5daad5177022b796588",
+    "NOTICE": "1a45b9f057b415f84085d808bd12ec5df1296808ad14bd9583f2a585c84290ff"
+  }
+}

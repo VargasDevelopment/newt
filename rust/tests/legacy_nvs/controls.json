@@ -1,0 +1,51 @@
+[
+  {
+    "name": "erase-before-durable-sd",
+    "file": "firmware/nvs/reclaim.rs",
+    "old": "    let mut pending = false;",
+    "new": "    for entry in &candidates { let _ = erase(nvs, entry); }\n    let mut pending = false;",
+    "test": "source_and_card_failures_keep_legacy_and_block_a_partial_seed",
+    "witness": "legacy keys erased before durable SD confirmation"
+  },
+  {
+    "name": "prefix-only-admission",
+    "file": "firmware/nvs/reclaim.rs",
+    "old": "numbered_namespace(name, *b\"nb\", 13, true)",
+    "new": "{ let _ = numbered_namespace(name, *b\"nb\", 13, true); name.starts_with(\"nb\") }",
+    "test": "empty_scan_has_no_sd_io_or_record_reads",
+    "witness": "foreign namespace entered reclaim admission"
+  },
+  {
+    "name": "seed-skips-unmigrated",
+    "file": "native-storage/src/reading_state.rs",
+    "old": "if prefix == \"nb\" && self.state.facts.legacy_pending {",
+    "new": "if prefix == \"nb\" && self.state.facts.legacy_pending && false {",
+    "test": "source_and_card_failures_keep_legacy_and_block_a_partial_seed",
+    "witness": "incomplete legacy migration allowed statistics seed"
+  },
+  {
+    "name": "startup-reclaim-removed",
+    "file": "firmware/home_startup.rs",
+    "old": "home.preserve_legacy();",
+    "new": "let _ = Self::preserve_legacy;",
+    "kind": "startup",
+    "witness": "reclaim must precede first settings write"
+  },
+  {
+    "name": "startup-reclaim-after-settings",
+    "file": "firmware/home_startup.rs",
+    "old": "home.preserve_legacy();\n        home.begin();",
+    "new": "home.begin();\n        home.preserve_legacy();",
+    "kind": "startup",
+    "witness": "reclaim must precede first settings write"
+  },
+  {
+    "name": "start-failure-returns",
+    "file": "firmware/app_startup.rs",
+    "old": "Err(_) => stop(&mut log, Some((&mut board, logical)), \"storage unavailable\"),",
+    "new": "Err(error) => return StartFailure::Board(error),",
+    "kind": "start-failure",
+    "case": "panel",
+    "witness": "start failure log names its reason"
+  }
+]

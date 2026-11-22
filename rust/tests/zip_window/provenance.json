@@ -1,0 +1,65 @@
+[
+  {
+    "repository": ".",
+    "revision": "bc9ffda52b85f277e46c63718ac88d62fba5d368",
+    "source": "include/newt/zip_directory_window.h",
+    "frozen": "frozen/newt/zip_directory_window.h",
+    "sha256": "0870374c1af077ed048572530b76c0923cd7154cef5585ebe7b593729fd231fc"
+  },
+  {
+    "repository": ".",
+    "revision": "bc9ffda52b85f277e46c63718ac88d62fba5d368",
+    "source": "tests/zip_directory_window_test.cpp",
+    "frozen": "frozen/newt/zip_directory_window_test.cpp",
+    "sha256": "3cb49d33c3e3b297619001ea8f8e6fc7065c9e3af6061447cca3c8031ed5bf96"
+  },
+  {
+    "repository": ".",
+    "revision": "bc9ffda52b85f277e46c63718ac88d62fba5d368",
+    "source": "LICENSE",
+    "frozen": "licenses/Newt-LICENSE",
+    "sha256": "6ae1f762295ed73a4694bc0ad106735ad42c0ad5ff5c57573d70b73476862ec5"
+  },
+  {
+    "repository": "vendor/freeink-sdk",
+    "revision": "cd6f5b831c8fad899723b6d406586f00c575f021",
+    "source": "libs/font/FreeInkFont/include/FontArena.h",
+    "frozen": "frozen/sdk/libs/font/FreeInkFont/include/FontArena.h",
+    "sha256": "96e6f42834a9d961cf8f7af6f3530ec2a8f767cbdd1b67725282f99135e7d4b7"
+  },
+  {
+    "repository": "vendor/freeink-sdk",
+    "revision": "cd6f5b831c8fad899723b6d406586f00c575f021",
+    "source": "libs/book/FreeInkBook/include/BookArena.h",
+    "frozen": "frozen/sdk/libs/book/FreeInkBook/include/BookArena.h",
+    "sha256": "7fe4492f93d8c496b24b935504a1e6c5124062043413af2b8ea5f727ef112812"
+  },
+  {
+    "repository": "vendor/freeink-sdk",
+    "revision": "cd6f5b831c8fad899723b6d406586f00c575f021",
+    "source": "libs/book/FreeInkBook/include/BookStorage.h",
+    "frozen": "frozen/sdk/libs/book/FreeInkBook/include/BookStorage.h",
+    "sha256": "0885c8a100c62439a4fc0f701dfa83e561e95853ca5d29fe93d888793abb9bf0"
+  },
+  {
+    "repository": "vendor/freeink-sdk",
+    "revision": "cd6f5b831c8fad899723b6d406586f00c575f021",
+    "source": "libs/book/FreeInkBook/test/host/test_freeinkbook.cpp",
+    "frozen": "frozen/sdk/libs/book/FreeInkBook/test/host/test_freeinkbook.cpp",
+    "sha256": "314acd8da1bd4716b421f9250f3842c1d0a711c56df97b5aba468e629aaf884f"
+  },
+  {
+    "repository": "vendor/freeink-sdk",
+    "revision": "cd6f5b831c8fad899723b6d406586f00c575f021",
+    "source": "LICENSE",
+    "frozen": "frozen/sdk/LICENSE",
+    "sha256": "17dea5079d9905fbbc8323cde7bfffd0f24185949c43a5daad5177022b796588"
+  },
+  {
+    "repository": "vendor/freeink-sdk",
+    "revision": "cd6f5b831c8fad899723b6d406586f00c575f021",
+    "source": "NOTICE",
+    "frozen": "frozen/sdk/NOTICE",
+    "sha256": "1a45b9f057b415f84085d808bd12ec5df1296808ad14bd9583f2a585c84290ff"
+  }
+]

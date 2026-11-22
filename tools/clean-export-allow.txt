@@ -1,0 +1,7 @@
+# Exact scan exceptions for tools/clean_export.py: PATH<TAB>PATTERN<TAB>sha256:VALUE<TAB>REASON.
+# VALUE is the SHA-256 of the exact matched text (printf %s TEXT | sha256sum), so an
+# entry allows that one value in that one file, never another match of the pattern.
+# An entry that allows nothing at the exported revision fails the scan.
+tests/ci_toolchain_test.py	email	sha256:5ee7f232e24bafb495ae25818584330adbd5431f8e9d89e0dae596c663456f72	synthetic credential URL proving the lock rejects userinfo
+tests/ci_workflow_test.py	email	sha256:678a1e1d90f96e58ec5e7ce5e17d6c5d7a9a2126c754eb0eb2b691a402ccd45d	synthetic stored credential URL in a fixture
+rust/firmware/cover_session.rs	local-host	sha256:e645d7c99c5679b25c4a0ddbe42e34e38749c5fbf1b9232b722d3567d04aff6a	code member named local, not a host name

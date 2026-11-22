@@ -1,0 +1,3 @@
+# Keep the package store inside the checkout (AGENTS.md: tools stay project local).
+storeDir: ../.build/pnpm-store
+saveExact: true

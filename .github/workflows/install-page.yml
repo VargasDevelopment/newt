@@ -1,0 +1,93 @@
+name: Install page
+
+# The install page (installer/, docs/092-install-page.md) on the public
+# repository's GitHub Pages. A browser cannot download a release asset (GitHub
+# sends no CORS header), so the page carries its own copy of the latest
+# release's newt.bin, newt.manifest and NOTICES.txt, and its build refuses a
+# pair that disagrees. Each published release redeploys it from its own tag; a
+# manual run redeploys the latest. Like public-ci.yml, it runs only in the
+# public repository, on GitHub-hosted runners (docs/RELEASING.md, "Install page").
+on:
+  release:
+    types: [released]
+  workflow_dispatch:
+
+permissions: {}
+
+# One deployment at a time; a newer one waits rather than cancelling a deploy.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: >-
+      toJSON(github.event.repository.private) == 'false' &&
+      github.repository == 'VargasDevelopment/newt'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: The latest release and its three assets
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)\.(0|[1-9][0-9]*))?$ ]]
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/release" \
+            --pattern newt.bin --pattern newt.manifest --pattern NOTICES.txt
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Check out the page's source at that release
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: refs/tags/${{ steps.release.outputs.tag }}
+          persist-credentials: false
+          set-safe-directory: false
+      - name: Pinned Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.1'
+      - name: Installer packages exactly as installer/pnpm-lock.yaml pins them
+        shell: bash
+        working-directory: installer
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+        run: |
+          set -euo pipefail
+          corepack enable pnpm
+          corepack install --global pnpm@11.10.0
+          test "$(pnpm --version)" = 11.10.0
+          pnpm install --frozen-lockfile
+      # The build checks the pair as the page does: size, SHA-256, whole image, identity.
+      - name: Build the page with the release's pair
+        working-directory: installer
+        env:
+          NEWT_RELEASE: ${{ runner.temp }}/release
+        run: pnpm build
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: installer/dist
+
+  deploy:
+    needs: build
+    if: >-
+      toJSON(github.event.repository.private) == 'false' &&
+      github.repository == 'VargasDevelopment/newt'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # The only write: this deployment, to this repository's Pages.
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Deploy the site
+        id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

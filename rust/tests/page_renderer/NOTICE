@@ -1,0 +1,11 @@
+PageRenderer / FontChain derives from FreeInk SDK
+cd6f5b831c8fad899723b6d406586f00c575f021.
+Copyright (c) 2026 FreeInk. MIT; see rust/THIRD_PARTY.md.
+Capture-time paths, commits and hashes remain in PROVENANCE.json.
+The removed host reference used stb_truetype; no stb algorithm is embedded in Rust.
+
+This software is based in part on the work of the FreeType Team.
+The FreeType Project: https://www.freetype.org/ .
+The unmodified FreeType licence remains at
+vendor/freeink-sdk/libs/font/FreeInkFont/third_party/freetype/FTL.TXT.
+The native FreeType sources retain their copyright notices.

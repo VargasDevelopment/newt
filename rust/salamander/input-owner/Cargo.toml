@@ -1,0 +1,22 @@
+[package]
+name = "newt-native-input-owner"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+path = "../input/task_owner.rs"
+
+[dependencies]
+newt-core = { path = "../../core" }
+newt-input-policy = { path = "../input" }
+newt-c3-board = { path = "../board" }
+
+[features]
+default = ["native-input-task", "rust-app", "dev-usb"]
+native-input-task = []
+rust-app = ["newt-c3-board/rust-app"]
+dev-usb = []
+native-atomics = ["newt-input-policy/native-atomics"]

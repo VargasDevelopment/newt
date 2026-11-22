@@ -1,0 +1,142 @@
+[
+  {
+    "id": "constructor-capacity",
+    "path": "src/window.rs",
+    "anchor": "window.arena.capacity() - window.arena.used() >= WINDOW_BYTES",
+    "replacement": "window.arena.capacity() - window.arena.used() > WINDOW_BYTES",
+    "anchor_occurrences": 1,
+    "expectation": "cache-reread-and-boundary",
+    "status": "PENDING",
+    "requires": "Successful compile and valid protocol; exact expected trace/value mismatch only"
+  },
+  {
+    "id": "nonzero-probe",
+    "path": "src/window.rs",
+    "anchor": "window.probe(begin) == 0",
+    "replacement": "window.probe(begin) >= 0",
+    "anchor_occurrences": 1,
+    "expectation": "probe-fallback-1",
+    "status": "PENDING",
+    "requires": "Successful compile and valid protocol; exact expected trace/value mismatch only"
+  },
+  {
+    "id": "drop-mark",
+    "path": "src/window.rs",
+    "anchor": "self.arena.release(self.mark);",
+    "replacement": "self.arena.release(0);",
+    "anchor_occurrences": 1,
+    "expectation": "cache-reread-and-boundary",
+    "status": "PENDING",
+    "requires": "Successful compile and valid protocol; exact expected trace/value mismatch only"
+  },
+  {
+    "id": "yield-removed",
+    "path": "src/window.rs",
+    "anchor": "yield_fn(self.source);",
+    "replacement": "let _ = yield_fn;",
+    "anchor_occurrences": 1,
+    "expectation": "cache-reread-and-boundary",
+    "status": "PENDING",
+    "requires": "Successful compile and valid protocol; exact expected trace/value mismatch only"
+  },
+  {
+    "id": "cache-disabled",
+    "path": "src/window.rs",
+    "anchor": "if at < self.buffer_at || at - self.buffer_at >= self.valid as u64 {",
+    "replacement": "if true {",
+    "anchor_occurrences": 1,
+    "expectation": "cache-reread-and-boundary",
+    "status": "PENDING",
+    "requires": "Successful compile and valid protocol; exact expected trace/value mismatch only"
+  },
+  {
+    "id": "sticky-removed",
+    "path": "src/window.rs",
+    "anchor": "self.failed = true;",
+    "replacement": "self.failed = false;",
+    "anchor_occurrences": 1,
+    "expectation": "physical-bad-count-0",
+    "status": "PENDING",
+    "requires": "Successful compile and valid protocol; exact expected trace/value mismatch only"
+  },
+  {
+    "id": "size-check-removed",
+    "path": "src/window.rs",
+    "anchor": "self.source.size() != self.source_bytes || self.probe(at) != 0",
+    "replacement": "self.probe(at) != 0",
+    "anchor_occurrences": 1,
+    "expectation": "refill-invalidation-2",
+    "status": "PENDING",
+    "requires": "Successful compile and valid protocol; exact expected trace/value mismatch only"
+  },
+  {
+    "id": "post-refill-check-removed",
+    "path": "src/window.rs",
+    "anchor": "self.valid = take;\n                if !self.valid_source(at) {",
+    "replacement": "self.valid = take;\n                if false {",
+    "anchor_occurrences": 1,
+    "expectation": "refill-invalidation-1",
+    "status": "PENDING",
+    "requires": "Successful compile and valid protocol; exact expected trace/value mismatch only"
+  },
+  {
+    "id": "post-yield-check-removed",
+    "path": "src/window.rs",
+    "anchor": "yield_fn(self.source);\n            }\n            if !self.valid_source(at) {",
+    "replacement": "yield_fn(self.source);\n            }\n            if false {",
+    "anchor_occurrences": 1,
+    "expectation": "yield-invalidation-1",
+    "status": "PENDING",
+    "requires": "Successful compile and valid protocol; exact expected trace/value mismatch only"
+  },
+  {
+    "id": "zero-rejected",
+    "path": "src/window.rs",
+    "anchor": "if self.failed\n",
+    "replacement": "if bytes == 0 || self.failed\n",
+    "anchor_occurrences": 1,
+    "expectation": "empty-range-caches-but-does-not-read",
+    "status": "PENDING",
+    "requires": "Successful compile and valid protocol; exact expected trace/value mismatch only"
+  },
+  {
+    "id": "exact-count-rejected",
+    "path": "src/window.rs",
+    "anchor": "got <= 0 || got as usize > take",
+    "replacement": "got <= 0 || got as usize >= take",
+    "anchor_occurrences": 1,
+    "expectation": "cache-reread-and-boundary",
+    "status": "PENDING",
+    "requires": "Successful compile and valid protocol; exact expected trace/value mismatch only"
+  },
+  {
+    "id": "direct-cap-reduced",
+    "path": "src/window.rs",
+    "anchor": "let take = out.len().min(WINDOW_BYTES);",
+    "replacement": "let take = out.len().min(WINDOW_BYTES - 1);",
+    "anchor_occurrences": 1,
+    "expectation": "direct-requests-capped-at-4096",
+    "status": "PENDING",
+    "requires": "Successful compile and valid protocol; exact expected trace/value mismatch only"
+  },
+  {
+    "id": "release-clears-highwater",
+    "path": "src/arena.rs",
+    "anchor": "self.used = mark;",
+    "replacement": "self.used = mark;\n            self.high_water = mark;",
+    "anchor_occurrences": 1,
+    "expectation": "cache-reread-and-boundary",
+    "status": "PENDING",
+    "requires": "Successful compile and valid protocol; exact expected trace/value mismatch only"
+  },
+  {
+    "id": "oom-diagnostic-lost",
+    "path": "src/arena.rs",
+    "anchor": "self.failed_alloc_size = self.failed_alloc_size.max(size);",
+    "replacement": "self.failed_alloc_size = 0;",
+    "anchor_occurrences": 1,
+    "expectation": "oom-diagnostic-survives-window-drop",
+    "status": "PENDING",
+    "requires": "Successful compile and valid protocol; exact expected trace/value mismatch only"
+  }
+]

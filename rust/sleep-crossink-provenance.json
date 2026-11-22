@@ -1,0 +1,13 @@
+{
+  "reference": "bc9ffda52b85f277e46c63718ac88d62fba5d368",
+  "upstream_crossink_layout_reference": "9914146 (as attributed by pinned Newt sources; not independently fetched)",
+  "pinned_sha256": {
+    "include/newt/sleep_stats.h": "c77f7e3e93c929617d550a4a91761fc21a917aba72bc0c463f98abf7cac42b82",
+    "src/sleep_stats.cpp": "1da8cef44acb42faaee9f0eb1b456d14d441649d090f29e9fe4140d9dd9c9be3",
+    "include/newt/crossink_stats.h": "bb4ffa54c51d66bbf0d5cc6d0b2ed6c303cfc4a6ffe5fb55e7fb3853b627f416",
+    "src/crossink_stats.cpp": "6fcd6240208cf475a5618b92d837e3a376ffd5b99ee6d899ddc87c1d452bdbd3",
+    "include/newt/sleep_extras.h": "899cd1706465ae0e22dc37601a00caf4c3a2f62711d14aee523556d30600a7de",
+    "LICENSE": "6ae1f762295ed73a4694bc0ad106735ad42c0ad5ff5c57573d70b73476862ec5"
+  },
+  "validation": "source inspection and rustfmt only; no compile/test/gate executed"
+}

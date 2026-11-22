@@ -1,0 +1,26 @@
+{
+  "sdk_commit": "cd6f5b831c8fad899723b6d406586f00c575f021",
+  "acquisition": "local git show; no live working-tree source copied",
+  "files": [
+    {
+      "source": "libs/book/FreeInkBook/src/text/Hyphenator.cpp",
+      "file": "frozen/src/Hyphenator.cpp",
+      "sha256": "870575ef4e925f930ade2b9b877c01621f0a9470c138b9bec0c056f1bfb05076"
+    },
+    {
+      "source": "libs/book/FreeInkBook/include/text/Hyphenator.h",
+      "file": "frozen/include/text/Hyphenator.h",
+      "sha256": "34e247772414f27c2cd2b2f45362273b43eda50245cda4dbba0f843d4bfbf66f"
+    },
+    {
+      "source": "LICENSE",
+      "file": "LICENSE",
+      "sha256": "17dea5079d9905fbbc8323cde7bfffd0f24185949c43a5daad5177022b796588"
+    },
+    {
+      "source": "NOTICE",
+      "file": "NOTICE",
+      "sha256": "1a45b9f057b415f84085d808bd12ec5df1296808ad14bd9583f2a585c84290ff"
+    }
+  ]
+}

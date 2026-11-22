@@ -1,0 +1,142 @@
+[
+  {
+    "name": "output-reset",
+    "needle": ") -> Status {\n    *out = ImageInfo::default();\n",
+    "replacement": ") -> Status {\n    *out = ImageInfo {\n        width: 1,\n        ..ImageInfo::default()\n    };\n",
+    "witness": "unsupported-gif",
+    "discriminator": "Unknown width must reset to zero."
+  },
+  {
+    "name": "open-precedence",
+    "needle": "    let status = reader.open(entry);\n",
+    "replacement": "    let status = reader.open(entry);\n    if staging.len() < SKIP_BYTES {\n        return Status::OutOfMemory;\n    }\n",
+    "witness": "raw-open-precedence",
+    "discriminator": "Unsupported wins over staging OOM."
+  },
+  {
+    "name": "skip-admission",
+    "needle": "    }\n    if staging.len() < SKIP_BYTES {\n",
+    "replacement": "    }\n    if staging.len() <= SKIP_BYTES {\n",
+    "witness": "png-basic",
+    "discriminator": "1024 bytes is sufficient."
+  },
+  {
+    "name": "short-header-ok",
+    "needle": "    if !stream.exact(&mut hdr) {\n        return Status::Ok;\n",
+    "replacement": "    if !stream.exact(&mut hdr) {\n        return Status::IoError;\n",
+    "witness": "png-truncate-25",
+    "discriminator": "Short exact header returns Ok."
+  },
+  {
+    "name": "png-signature",
+    "needle": "    }\n    if &hdr[..8] == b\"\\x89PNG\\r\\n\\x1a\\n\" && &hdr[12..16] == b\"IHDR\" {\n",
+    "replacement": "    }\n    if &hdr[..7] == b\"\\x89PNG\\r\\n\\x1a\" && &hdr[12..16] == b\"IHDR\" {\n",
+    "witness": "png-invalid-byte-7",
+    "discriminator": "All eight signature bytes matter."
+  },
+  {
+    "name": "png-ihdr",
+    "needle": "    }\n    if &hdr[..8] == b\"\\x89PNG\\r\\n\\x1a\\n\" && &hdr[12..16] == b\"IHDR\" {\n",
+    "replacement": "    }\n    if &hdr[..8] == b\"\\x89PNG\\r\\n\\x1a\\n\" && &hdr[12..15] == b\"IHD\" {\n",
+    "witness": "png-invalid-byte-15",
+    "discriminator": "Complete IHDR tag is required."
+  },
+  {
+    "name": "png-positive",
+    "needle": "        let h = be32(&hdr[20..24]);\n        if w > 0 && h > 0 && w <= 0xffff && h <= 0xffff {\n",
+    "replacement": "        let h = be32(&hdr[20..24]);\n        if w <= 0xffff && h <= 0xffff && w <= 0xffff && h <= 0xffff {\n",
+    "witness": "png-dimensions-0-1",
+    "discriminator": "PNG rejects zero dimensions."
+  },
+  {
+    "name": "png-range",
+    "needle": "        let h = be32(&hdr[20..24]);\n        if w > 0 && h > 0 && w <= 0xffff && h <= 0xffff {\n",
+    "replacement": "        let h = be32(&hdr[20..24]);\n        if w > 0 && h > 0 && w <= 0x1ffff && h <= 0x1ffff {\n",
+    "witness": "png-dimensions-65536-1",
+    "discriminator": "Oversized PNG remains Unknown."
+  },
+  {
+    "name": "logical-replay",
+    "needle": "    if hdr[0] == 0xff && hdr[1] == 0xd8 {\n        let mut replay = Replay { bytes: &hdr[2..] };\n",
+    "replacement": "    if hdr[0] == 0xff && hdr[1] == 0xd8 {\n        let mut replay = Replay { bytes: &hdr[3..] };\n",
+    "witness": "jpeg-basic",
+    "discriminator": "Replay starts immediately after SOI."
+  },
+  {
+    "name": "standalone",
+    "needle": "            let marker = seg[1];\n            if marker == 0xd8 || (0xd0..=0xd7).contains(&marker) || marker == 0x01 {\n",
+    "replacement": "            let marker = seg[1];\n            if marker == 0xd8 || (0xd0..=0xd6).contains(&marker) || marker == 0x01 {\n",
+    "witness": "jpeg-standalone-d7",
+    "discriminator": "RST7 consumes no segment length."
+  },
+  {
+    "name": "sos-stop",
+    "needle": "            }\n            if marker == 0xd9 || marker == 0xda {\n",
+    "replacement": "            }\n            if marker == 0xd9 || marker == 0xdb {\n",
+    "witness": "jpeg-stop-da",
+    "discriminator": "SOS terminates marker walk."
+  },
+  {
+    "name": "exclude-c4",
+    "needle": "            let is_sof = (0xc0..=0xcf).contains(&marker)\n                && marker != 0xc4\n",
+    "replacement": "            let is_sof = (0xc0..=0xcf).contains(&marker)\n                && marker != 0xb0\n",
+    "witness": "jpeg-excluded-c4",
+    "discriminator": "Excluded SOF-range marker must be skipped."
+  },
+  {
+    "name": "exclude-c8",
+    "needle": "                && marker != 0xc4\n                && marker != 0xc8\n",
+    "replacement": "                && marker != 0xc4\n                && marker != 0xb0\n",
+    "witness": "jpeg-excluded-c8",
+    "discriminator": "Excluded SOF-range marker must be skipped."
+  },
+  {
+    "name": "exclude-cc",
+    "needle": "                && marker != 0xc8\n                && marker != 0xcc;\n",
+    "replacement": "                && marker != 0xc8\n                && marker != 0xb0;\n",
+    "witness": "jpeg-excluded-cc",
+    "discriminator": "Excluded SOF-range marker must be skipped."
+  },
+  {
+    "name": "progressive",
+    "needle": "                    out.width = be16(&sof[3..5]);\n                    out.progressive = marker == 0xc2;\n",
+    "replacement": "                    out.width = be16(&sof[3..5]);\n                    out.progressive = marker == 0xc1;\n",
+    "witness": "jpeg-progressive",
+    "discriminator": "Only SOF2 is progressive."
+  },
+  {
+    "name": "jpeg-zero-policy",
+    "needle": "                if replay.next(&mut stream, &mut sof) {\n                    out.kind = Kind::Jpeg;\n",
+    "replacement": "                if replay.next(&mut stream, &mut sof) {\n                    if be16(&sof[1..3]) != 0 {\n                        out.kind = Kind::Jpeg;\n                    }\n",
+    "witness": "jpeg-zero-dimensions",
+    "discriminator": "JPEG accepts zero dimensions."
+  },
+  {
+    "name": "sof-declared-length",
+    "needle": "                && marker != 0xcc;\n            if is_sof {\n",
+    "replacement": "                && marker != 0xcc;\n            if is_sof && len >= 7 {\n",
+    "witness": "jpeg-sof-short-declared-length",
+    "discriminator": "Original reads five SOF bytes regardless of declared length >=2."
+  },
+  {
+    "name": "scan-cap",
+    "needle": "        let mut seg = [0; 2];\n        while stream.consumed < MAX_JPEG_SCAN {\n",
+    "replacement": "        let mut seg = [0; 2];\n        while stream.consumed <= MAX_JPEG_SCAN {\n",
+    "witness": "jpeg-limit-at",
+    "discriminator": "Scan stops before starting a marker at 128KiB."
+  },
+  {
+    "name": "skip-quantum",
+    "needle": "        while len > 0 {\n            let want = len.min(SKIP_BYTES);\n",
+    "replacement": "        while len > 0 {\n            let want = len.min(SKIP_BYTES / 2);\n",
+    "witness": "jpeg-segment-boundary-2049",
+    "discriminator": "Source read trace preserves 1024-byte skip requests."
+  },
+  {
+    "name": "pending-skip",
+    "needle": "    ) -> bool {\n        let take = self.bytes.len().min(len);\n",
+    "replacement": "    ) -> bool {\n        let take = self.bytes.len().min(len.saturating_sub(1));\n",
+    "witness": "jpeg-segment-boundary-1",
+    "discriminator": "skipN consumes pending bytes before physical reads."
+  }
+]

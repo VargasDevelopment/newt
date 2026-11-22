@@ -1,0 +1,359 @@
+--- a/libs/book/FreeInkBook/third_party/pngle/pngle.h
++++ b/libs/book/FreeInkBook/third_party/pngle/pngle.h
+@@ -26,6 +26,7 @@
+ #define __PNGLE_H__
+ 
+ #include <stdint.h>
++#include <stddef.h>
+ 
+ #ifdef __cplusplus
+ extern "C" {
+@@ -44,7 +45,15 @@
+ // ----------------
+ // Basic interfaces
+ // ----------------
++// Allocator is copied into each instance; all decoder allocations use it.
++// Both callbacks must be supplied. Allocation must be zero-initialized.
++typedef struct {
++ void *user;
++ void *(*calloc_fn)(void *user, size_t count, size_t bytes);
++ void (*free_fn)(void *user, void *allocation);
++} pngle_allocator_t;
+ pngle_t *pngle_new();
++pngle_t *pngle_new_with_allocator(const pngle_allocator_t *allocator);
+ void pngle_destroy(pngle_t *pngle);
+ void pngle_reset(pngle_t *pngle); // clear its internal state (not applied to pngle_set_* functions)
+ const char *pngle_error(pngle_t *pngle);
+--- a/libs/book/FreeInkBook/third_party/pngle/pngle.c
++++ b/libs/book/FreeInkBook/third_party/pngle/pngle.c
+@@ -41,7 +41,7 @@
+ #endif
+ 
+ #define PNGLE_ERROR(s) (pngle->error = (s), pngle->state = PNGLE_STATE_ERROR, -1)
+-#define PNGLE_CALLOC(a, b, name) (debug_printf("[pngle] Allocating %zu bytes for %s\n", (size_t)(a) * (size_t)(b), (name)), calloc((size_t)(a), (size_t)(b)))
++#define PNGLE_CALLOC(a, b, name) (debug_printf("[pngle] Allocating %zu bytes for %s\n", (size_t)(a) * (size_t)(b), (name)), pngle->allocator.calloc_fn(pngle->allocator.user, (size_t)(a), (size_t)(b)))
+ 
+ #define PNGLE_UNUSED(x) (void)(x)
+ 
+@@ -70,6 +70,8 @@
+ 
+ // typedef struct _pngle_t pngle_t; // declared in pngle.h
+ struct _pngle_t {
++	pngle_allocator_t allocator;
++	int inflate_done;
+ 	pngle_ihdr_t hdr;
+ 
+ 	uint_fast8_t channels; // 0 indicates IHDR hasn't been processed yet
+@@ -141,10 +143,10 @@
+ 
+ static inline uint32_t read_uint32(const uint8_t *p)
+ {
+-	return (p[0] << 24)
+-	     | (p[1] << 16)
+-	     | (p[2] <<  8)
+-	     | (p[3] <<  0)
++	return ((uint32_t)p[0] << 24)
++	     | ((uint32_t)p[1] << 16)
++	     | ((uint32_t)p[2] <<  8)
++	     | ((uint32_t)p[3] <<  0)
+ 	;
+ }
+ 
+@@ -169,11 +171,11 @@
+ 	pngle->state = PNGLE_STATE_INITIAL;
+ 	pngle->error = "No error";
+ 
+-	if (pngle->scanline_ringbuf) free(pngle->scanline_ringbuf);
+-	if (pngle->palette) free(pngle->palette);
+-	if (pngle->trans_palette) free(pngle->trans_palette);
++	if (pngle->scanline_ringbuf) pngle->allocator.free_fn(pngle->allocator.user, pngle->scanline_ringbuf);
++	if (pngle->palette) pngle->allocator.free_fn(pngle->allocator.user, pngle->palette);
++	if (pngle->trans_palette) pngle->allocator.free_fn(pngle->allocator.user, pngle->trans_palette);
+ #ifndef PNGLE_NO_GAMMA_CORRECTION
+-	if (pngle->gamma_table) free(pngle->gamma_table);
++	if (pngle->gamma_table) pngle->allocator.free_fn(pngle->allocator.user, pngle->gamma_table);
+ #endif
+ 
+ 	pngle->scanline_ringbuf = NULL;
+@@ -183,6 +185,7 @@
+ 	pngle->gamma_table = NULL;
+ #endif
+ 
++	pngle->inflate_done = 0;
+ 	pngle->channels = 0; // indicates IHDR hasn't been processed yet
+ 	pngle->next_out = NULL; // indicates IDAT hasn't been processed yet
+ 
+@@ -194,21 +197,39 @@
+ 	tinfl_init(&pngle->inflator);
+ }
+ 
++static void *default_calloc(void *user, size_t count, size_t bytes)
++{
++ PNGLE_UNUSED(user);
++ return calloc(count, bytes);
++}
++
++static void default_free(void *user, void *allocation)
++{
++ PNGLE_UNUSED(user);
++ free(allocation);
++}
++
++pngle_t *pngle_new_with_allocator(const pngle_allocator_t *allocator)
++{
++ if (!allocator || !allocator->calloc_fn || !allocator->free_fn) return NULL;
++ pngle_t *pngle = (pngle_t *)allocator->calloc_fn(allocator->user, 1, sizeof(pngle_t));
++ if (!pngle) return NULL;
++ pngle->allocator = *allocator;
++ pngle_reset(pngle);
++ return pngle;
++}
++
+ pngle_t *pngle_new()
+ {
+-	pngle_t *pngle = (pngle_t *)PNGLE_CALLOC(1, sizeof(pngle_t), "pngle_t");
+-	if (!pngle) return NULL;
+-
+-	pngle_reset(pngle);
+-
+-	return pngle;
++ const pngle_allocator_t allocator = { NULL, default_calloc, default_free };
++ return pngle_new_with_allocator(&allocator);
+ }
+ 
+ void pngle_destroy(pngle_t *pngle)
+ {
+ 	if (pngle) {
+ 		pngle_reset(pngle);
+-		free(pngle);
++		pngle->allocator.free_fn(pngle->allocator.user, pngle);
+ 	}
+ }
+ 
+@@ -398,7 +419,7 @@
+ 
+ 	pngle->scanline_ringbuf_size = scanline_stride + bytes_per_pixel * 2; // 2 rooms for c/x and a
+ 
+-	if (pngle->scanline_ringbuf) free(pngle->scanline_ringbuf);
++	if (pngle->scanline_ringbuf) pngle->allocator.free_fn(pngle->allocator.user, pngle->scanline_ringbuf);
+ 	if ((pngle->scanline_ringbuf = (uint8_t *)PNGLE_CALLOC(pngle->scanline_ringbuf_size, 1, "scanline ringbuf")) == NULL) return PNGLE_ERROR("Insufficient memory");
+ 
+ 	pngle->drawing_x = interlace_off_x[pngle->interlace_pass];
+@@ -414,7 +435,7 @@
+ static int setup_gamma_table(pngle_t *pngle, uint32_t png_gamma)
+ {
+ #ifndef PNGLE_NO_GAMMA_CORRECTION
+-	if (pngle->gamma_table) free(pngle->gamma_table);
++	if (pngle->gamma_table) pngle->allocator.free_fn(pngle->allocator.user, pngle->gamma_table);
+ 
+ 	if (pngle->display_gamma <= 0) return 0; // disable gamma correction
+ 	if (png_gamma == 0) return 0;
+@@ -451,7 +472,8 @@
+ 		}
+ 
+ 		if (pngle->drawing_x >= pngle->hdr.width || pngle->drawing_y >= pngle->hdr.height) {
+-			if (pngle->interlace_pass == 0 || pngle->interlace_pass >= 7) return len; // Do nothing further
++			if (pngle->interlace_pass == 0) return PNGLE_ERROR("Too many scanline bytes");
++			if (pngle->interlace_pass >= 7) return len; // Interlaced final pass
+ 
+ 			// Interlace: Next pass
+ 			if (set_interlace_pass(pngle, pngle->interlace_pass + 1) < 0) return -1;
+@@ -603,6 +625,8 @@
+ 				debug_printf("[pngle] tinfl_decompress() failed with status %d!\n", status);
+ 				return PNGLE_ERROR("Failed to decompress the IDAT stream");
+ 			}
++
++			if (status == TINFL_STATUS_DONE) pngle->inflate_done = 1;
+ 
+ 			pngle->next_out   += out_bytes;
+ 			pngle->avail_out  -= out_bytes;
+@@ -790,6 +814,7 @@
+ 
+ 		case PNGLE_CHUNK_IEND:
+ 			if (pngle->next_out == NULL) return PNGLE_ERROR("No IDAT chunk is found");
++			if (!pngle->inflate_done) return PNGLE_ERROR("Incomplete IDAT stream");
+ 			if (pngle->chunk_remain > 0) return PNGLE_ERROR("Invalid IEND chunk size");
+ 			break;
+ 
+@@ -875,6 +900,7 @@
+ 	pngle_state_t last_state = pngle->state;
+ 
+ 	while (pos < len) {
++		if (pngle->state == PNGLE_STATE_EOF) break;
+ 		int r = pngle_feed_internal(pngle, (const uint8_t *)buf + pos, len - pos);
+ 		if (r < 0) return r; // error
+ 
+--- a/libs/book/FreeInkBook/include/render/ImageRenderer.h
++++ b/libs/book/FreeInkBook/include/render/ImageRenderer.h
+@@ -30,6 +30,15 @@
+ // (0 = black, 255 = white) and is valid only during the call.
+ using ImageRowFn = bool (*)(void* user, uint16_t y, const uint8_t* gray, uint16_t width);
+ 
++// Per-render allocator; no process-global hooks. Null callback pair uses libc.
++// pngReadChunkBytes must be 32..4096; 1024 bounds cover read scratch.
++struct ImageRenderOptions {
++  void* pngAllocatorUser = nullptr;
++  void* (*pngCalloc)(void*, size_t, size_t) = nullptr;
++  void (*pngFree)(void*, void*) = nullptr;
++  uint16_t pngReadChunkBytes = 4096;
++};
++
+ class ImageRenderer {
+  public:
+   // Renders `image` (a placement produced by layout or read from the page
+@@ -38,6 +47,9 @@
+   // heap for its scanline buffer.
+   static BookStatus render(BookSource& source, const ZipCatalog& zip, const PageImage& image,
+                            Arena& scratch, ImageRowFn rowFn, void* user);
++  static BookStatus render(BookSource& source, const ZipCatalog& zip, const PageImage& image,
++                           Arena& scratch, ImageRowFn rowFn, void* user,
++                           const ImageRenderOptions& options);
+ };
+ 
+ // Quantizes one grayscale row to 1 bit per pixel (MSB first, 1 = black)
+--- a/libs/book/FreeInkBook/src/render/ImageRenderer.cpp
++++ b/libs/book/FreeInkBook/src/render/ImageRenderer.cpp
+@@ -99,22 +99,28 @@
+   RowScaler scaler;
+   uint8_t* srcRow = nullptr;   // srcW grayscale accumulation
+   uint32_t currentY = 0;
++  uint32_t pixels = 0;
++  bool complete = false;
++  bool invalidRows = false;
+   bool unsupported = false;    // interlaced
+ };
+ 
+ void pngInitCallback(pngle_t* pngle, uint32_t w, uint32_t h) {
+   PngState* state = static_cast<PngState*>(pngle_get_user_data(pngle));
+-  (void)w;
+-  (void)h;
++  if (w != state->scaler.srcW || h != state->scaler.srcH) state->invalidRows = true;
+   if (pngle_get_ihdr(pngle)->interlace != 0) state->unsupported = true;
+ }
+ 
+ void pngDrawCallback(pngle_t* pngle, uint32_t x, uint32_t y, uint32_t w, uint32_t h,
+                      const uint8_t rgba[4]) {
+   PngState* state = static_cast<PngState*>(pngle_get_user_data(pngle));
+-  if (state->unsupported || state->scaler.stopped) return;
+-  (void)w;
+-  (void)h;
++  if (state->unsupported || state->scaler.stopped || state->invalidRows) return;
++  if (w != 1 || h != 1 || x != state->pixels % state->scaler.srcW ||
++      y != state->pixels / state->scaler.srcW || y >= state->scaler.srcH) {
++    state->invalidRows = true;
++    return;
++  }
++  ++state->pixels;
+   if (y != state->currentY) {
+     // Source row finished (pngle emits strictly in raster order when
+     // non-interlaced).
+@@ -124,9 +130,13 @@
+   if (x < state->scaler.srcW) state->srcRow[x] = rgbaToGray(rgba);
+ }
+ 
++void pngDoneCallback(pngle_t* pngle) {
++  static_cast<PngState*>(pngle_get_user_data(pngle))->complete = true;
++}
++
+ BookStatus renderPng(BookSource& source, const ZipEntry& entry, const PageImage& image,
+                      uint16_t srcW, uint16_t srcH, Arena& scratch, ImageRowFn rowFn,
+-                     void* user) {
++                     void* user, const ImageRenderOptions& options) {
+   PngState state;
+   state.scaler.srcW = srcW;
+   state.scaler.srcH = srcH;
+@@ -135,7 +145,7 @@
+   state.scaler.rowFn = rowFn;
+   state.scaler.user = user;
+   state.srcRow = static_cast<uint8_t*>(scratch.alloc(srcW, 1));
+-  uint8_t* readBuf = static_cast<uint8_t*>(scratch.alloc(4096, 1));
++  uint8_t* readBuf = static_cast<uint8_t*>(scratch.alloc(options.pngReadChunkBytes, 1));
+   if (!initScaler(state.scaler, scratch) || state.srcRow == nullptr || readBuf == nullptr) {
+     return BookStatus::OutOfMemory;
+   }
+@@ -145,32 +155,46 @@
+   BookStatus status = reader.open(source, entry, scratch);
+   if (status != BookStatus::Ok) return status;
+ 
+-  pngle_t* pngle = pngle_new();
++  const pngle_allocator_t allocator = {options.pngAllocatorUser, options.pngCalloc,
++                                       options.pngFree};
++  pngle_t* pngle = options.pngCalloc ? pngle_new_with_allocator(&allocator) : pngle_new();
+   if (pngle == nullptr) return BookStatus::OutOfMemory;
+   pngle_set_user_data(pngle, &state);
+   pngle_set_init_callback(pngle, pngInitCallback);
+   pngle_set_draw_callback(pngle, pngDrawCallback);
++  pngle_set_done_callback(pngle, pngDoneCallback);
+ 
+   status = BookStatus::Ok;
++  size_t pending = 0;
+   for (;;) {
+-    const int32_t n = reader.read(readBuf, 4096);
+-    if (n < 0) {
+-      status = BookStatus::IoError;
+-      break;
+-    }
+-    if (n == 0) break;
+-    if (pngle_feed(pngle, readBuf, static_cast<size_t>(n)) < 0) {
++    if (pending == options.pngReadChunkBytes) {
+       status = BookStatus::ParseError;
+       break;
+     }
+-    if (state.unsupported) {
+-      status = BookStatus::Unsupported;
+-      break;
+-    }
++    const int32_t n = reader.read(readBuf + pending, options.pngReadChunkBytes - pending);
++    if (n < 0) { status = BookStatus::IoError; break; }
++    if (n == 0) break;
++    if (state.complete) { status = BookStatus::ParseError; break; }
++    pending += static_cast<size_t>(n);
++    const int eaten = pngle_feed(pngle, readBuf, pending);
++    if (eaten < 0) { status = BookStatus::ParseError; break; }
++    pending -= static_cast<size_t>(eaten);
++    if (state.complete && pending != 0) { status = BookStatus::ParseError; break; }
++    memmove(readBuf, readBuf + eaten, pending);
++    if (state.unsupported) { status = BookStatus::Unsupported; break; }
++    if (state.invalidRows) { status = BookStatus::ParseError; break; }
+     if (state.scaler.stopped) break;
+   }
+   if (status == BookStatus::Ok && !state.scaler.stopped) {
+-    state.scaler.feedSourceRow(state.currentY, state.srcRow);  // flush last row
++    if (!state.complete || state.invalidRows ||
++        state.pixels != static_cast<uint32_t>(srcW) * srcH) {
++      status = BookStatus::Truncated;
++    } else {
++      state.scaler.feedSourceRow(state.currentY, state.srcRow);
++      if (!state.scaler.stopped && state.scaler.nextDst != state.scaler.dstH) {
++        status = BookStatus::Truncated;
++      }
++    }
+   }
+   pngle_destroy(pngle);
+   return status;
+@@ -713,6 +737,16 @@
+ BookStatus ImageRenderer::render(BookSource& source, const ZipCatalog& zip,
+                                  const PageImage& image, Arena& scratch, ImageRowFn rowFn,
+                                  void* user) {
++  return render(source, zip, image, scratch, rowFn, user, ImageRenderOptions{});
++}
++
++BookStatus ImageRenderer::render(BookSource& source, const ZipCatalog& zip,
++                                 const PageImage& image, Arena& scratch, ImageRowFn rowFn,
++                                 void* user, const ImageRenderOptions& options) {
++  if (rowFn == nullptr || options.pngReadChunkBytes < 32 || options.pngReadChunkBytes > 4096 ||
++      (options.pngCalloc == nullptr) != (options.pngFree == nullptr)) {
++    return BookStatus::Unsupported;
++  }
+   if (image.width == 0 || image.height == 0) return BookStatus::Unsupported;
+   const ZipEntry* entry = zip.find(image.href);
+   if (entry == nullptr) return BookStatus::NotFound;
+@@ -724,7 +758,7 @@
+     switch (info.kind) {
+       case ImageInfo::Kind::Png:
+         status = renderPng(source, *entry, image, info.width, info.height, scratch, rowFn,
+-                           user);
++                           user, options);
+         break;
+       case ImageInfo::Kind::Jpeg:
+         status = info.progressive

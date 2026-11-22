@@ -1,0 +1,24 @@
+[package]
+name = "newt-phased-reader"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+publish = false
+
+[features]
+dev-usb = ["newt-core/dev-usb"]
+native-host = []
+style-recapture-fixture = []
+
+[[bin]]
+name = "phased-reader-host"
+path = "host/main.rs"
+required-features = ["native-host"]
+
+[dependencies]
+newt-core = { path = "../core" }
+newt-reader-atlas = { path = "../reader-atlas" }
+newt-reader-navigation = { path = "../reader-navigation" }
+newt-phased-sink = { path = "../phased-sink" }
+newt-target-expat = { path = "../target-expat" }

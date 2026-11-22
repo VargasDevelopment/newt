@@ -1,0 +1,208 @@
+{
+  "baseline_execution_expected_sha256": "d90f0ff9b71f58b22db030a1d72b489dd383baa9de7ab88464f917f6099f7de7",
+  "baseline_groups": [
+    {
+      "action_class": "home_focus",
+      "protocol_request_to_terminal_ms": {
+        "max": 1302.9268328100443,
+        "n": 1,
+        "p50": 1302.9268328100443,
+        "p95": 1302.9268328100443
+      },
+      "refresh_class": "gray_full_direct_driver_tag",
+      "status_refresh_ms": {
+        "max": 1261,
+        "n": 1,
+        "p50": 1261,
+        "p95": 1261
+      },
+      "wrapper_completion_ms": {
+        "max": 1302.9506669845432,
+        "n": 1,
+        "p50": 1302.9506669845432,
+        "p95": 1302.9506669845432
+      }
+    },
+    {
+      "action_class": "home_focus",
+      "protocol_request_to_terminal_ms": {
+        "max": 583.9267910923809,
+        "n": 9,
+        "p50": 578.9004578255117,
+        "p95": 583.9267910923809
+      },
+      "refresh_class": "gray_island_driver_tag",
+      "status_refresh_ms": {
+        "max": 543,
+        "n": 9,
+        "p50": 543,
+        "p95": 543
+      },
+      "wrapper_completion_ms": {
+        "max": 583.9422079734504,
+        "n": 9,
+        "p50": 578.9227080531418,
+        "p95": 583.9422079734504
+      }
+    },
+    {
+      "action_class": "home_return",
+      "protocol_request_to_terminal_ms": {
+        "max": 1261.85491704382,
+        "n": 1,
+        "p50": 1261.85491704382,
+        "p95": 1261.85491704382
+      },
+      "refresh_class": "gray_full_direct_driver_tag",
+      "status_refresh_ms": {
+        "max": 1222,
+        "n": 1,
+        "p50": 1222,
+        "p95": 1222
+      },
+      "wrapper_completion_ms": {
+        "max": 1261.8742501363158,
+        "n": 1,
+        "p50": 1261.8742501363158,
+        "p95": 1261.8742501363158
+      }
+    },
+    {
+      "action_class": "library_entry",
+      "protocol_request_to_terminal_ms": {
+        "max": 1793.6523330863565,
+        "n": 1,
+        "p50": 1793.6523330863565,
+        "p95": 1793.6523330863565
+      },
+      "refresh_class": "unknown",
+      "status_refresh_ms": {
+        "max": 1649,
+        "n": 1,
+        "p50": 1649,
+        "p95": 1649
+      },
+      "wrapper_completion_ms": {
+        "max": 1793.6915000900626,
+        "n": 1,
+        "p50": 1793.6915000900626,
+        "p95": 1793.6915000900626
+      }
+    },
+    {
+      "action_class": "library_new_cover_group",
+      "protocol_request_to_terminal_ms": {
+        "max": 858.9674171525985,
+        "n": 2,
+        "p50": 848.9939579740167,
+        "p95": 858.9674171525985
+      },
+      "refresh_class": "unknown",
+      "status_refresh_ms": {
+        "max": 823,
+        "n": 2,
+        "p50": 814,
+        "p95": 823
+      },
+      "wrapper_completion_ms": {
+        "max": 858.9833748992532,
+        "n": 2,
+        "p50": 849.0104160737246,
+        "p95": 858.9833748992532
+      }
+    },
+    {
+      "action_class": "library_same_cover_group",
+      "protocol_request_to_terminal_ms": {
+        "max": 853.8337089121342,
+        "n": 6,
+        "p50": 849.7667079791427,
+        "p95": 853.8337089121342
+      },
+      "refresh_class": "unknown",
+      "status_refresh_ms": {
+        "max": 815,
+        "n": 6,
+        "p50": 813,
+        "p95": 815
+      },
+      "wrapper_completion_ms": {
+        "max": 853.8514170795679,
+        "n": 6,
+        "p50": 849.8036249075085,
+        "p95": 853.8514170795679
+      }
+    }
+  ],
+  "baseline_run": "completed existing 20-action Home/Library correctness navigation",
+  "binding_contract": [
+    "compiled source commit and exact image SHA256/bytes",
+    "successful full-flash readback/outside-approved-sectors-preserved installation receipt and normal-return receipt",
+    "exact HELLO build and fresh random protocol request identity after two matching boot handshakes",
+    "private exact selected device/port identity; never publish identifiers",
+    "helper source and complete dependency/expectation hashes, bounded scope grant",
+    "closed serial connection and protocol receipt; raw bytes remain private"
+  ],
+  "build": "29fffd243c63-regional-experiment",
+  "compiled_source": "29fffd243c63c0b75f19df33c247782aa2b8136b",
+  "contract_version": 1,
+  "endpoint_contract": {
+    "acknowledgement_timings": "ACCEPTED, CONSUMED and terminal response relative to same PRESS request audit timestamp",
+    "protocol_request_to_terminal_ms": "1000 * (matching terminal response audit.monotonic - PRESS request audit.monotonic); request trace is recorded immediately before host write, response trace when the full CRC-valid protocol line is decoded",
+    "request_identity": "exact boot/session/request_id in all three replies; not retained in sanitized baseline",
+    "required_reply_order": [
+      "ACCEPTED",
+      "CONSUMED",
+      "terminal"
+    ],
+    "status_refresh_ms": "Last completed firmware composition + blocking display/BUSY interval. May describe an earlier paint for NO_VISUAL_CHANGE; never reinterpret it as a new refresh",
+    "terminal_kinds": [
+      "RENDER_RETURN",
+      "NO_VISUAL_CHANGE"
+    ],
+    "wrapper_completion_ms": "1000 * (action.finished - action.started); host monotonic immediately before client.request(PRESS), immediately after validated ordered three replies; excludes follow-up STATUS/DIAG"
+  },
+  "helper_sha256": {
+    "journey.py": "702ac0d21c482d6e55d071627e04ad650e2743f546eb2b38d69f89ecb37adcb4",
+    "navigation.py": "62ac1521221ee5b0fae3a8959312409ea414d5191982b78bfcaf228f05d1e543"
+  },
+  "image_bytes": 1264000,
+  "image_sha256": "30323f13649b6a076c17a542d5ca5d9bf59de1644b1015c3b405ea46083221c4",
+  "later_reader_journey_helper_sha256": "a77be2d850833e914796086cad3fff86b553c1447886520bee0b9268dfbdd867",
+  "limits": [
+    "Software serial completion includes host/USB/protocol scheduling and firmware dispatch/display work.",
+    "No independent button-to-optical endpoint, ghosting, physical waveform or battery-only claim.",
+    "Idle Home/Library DIAG unchanged fields are not a fresh full NVS read; subsequent actual Read verified exact saved selection/anchor.",
+    "The 20 navigation actions form existing baseline evidence; future journeys should reuse correctness actions for latency instead of adding an independent framework.",
+    "Navigation provenance uses execution-time bindings; its shared journey helper/expectation were later revised for the separate reader correctness run."
+  ],
+  "outcome_contract": {
+    "capture": "software framebuffer proof only; retained privately; not optical latency",
+    "failure": "Preserve failed/unknown request with partial acknowledgment evidence and stop; never automatic retry, never latency pass from a failed correctness action",
+    "no_visual_change": "retain separately; no generation advance/paint claim",
+    "required": "action/name, exact ordered replies, terminal outcome, post-action STATUS and DIAG screen/anchor/ownership checks, generations, refresh classification and all timing fields"
+  },
+  "physical_optical_measurement": false,
+  "refresh_contract": {
+    "gray_full_direct_driver_tag": "8279_DIRECT_GRAY_DRF",
+    "gray_island_driver_tag": "8279_ISLAND_POF",
+    "mono_fast_api_mode": "[EPD] displayBuffer mode=2 off=[01]",
+    "mono_full_api_mode": "[EPD] displayBuffer mode=0 off=[01]",
+    "mono_half_api_mode": "[EPD] displayBuffer mode=1 off=[01]",
+    "unknown": "no unique classification, including missing or mixed tags; do not infer from screen, duration or refresh_ms",
+    "waveform_measured": false,
+    "window": "telemetry received during matching PRESS request; existing raw driver/API tags"
+  },
+  "sample_contract": {
+    "eligibility": "completed, validated correctness actions from declared baseline run only; do not mix host fixture, build, reset, battery state or endpoints",
+    "goals": "500/750/1000ms goals are distinct from current sampled baseline ceilings; baseline does not imply goal met",
+    "group_by": [
+      "action_class",
+      "refresh_class",
+      "endpoint_name"
+    ],
+    "method": "sorted nearest rank ceil(p*n), no interpolation; retain n and individual samples",
+    "small_sample_limit": "observed run only; n=1/2 groups have no distribution coverage"
+  },
+  "transport": "physical device USB serial"
+}

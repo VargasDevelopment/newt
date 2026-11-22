@@ -1,0 +1,28 @@
+[package]
+name = "newt-device-ui"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT AND OFL-1.1"
+publish = false
+
+[features]
+default = []
+host-probe = []
+dev-usb = ["dep:newt-wake-evidence"]
+
+[dependencies]
+newt-wake-evidence = { path = "../wake-evidence", optional = true }
+newt-core = { path = "../core" }
+newt-ui-canvas = { path = "../ui-canvas" }
+newt-system-ui = { path = "../system-ui" }
+newt-stage-home = { path = "../stage-home" }
+
+[[test]]
+name = "presentation"
+path = "../tests/device_ui/presentation.rs"
+
+[[test]]
+name = "wake-evidence"
+path = "../tests/wake_ui/evidence.rs"
+required-features = ["dev-usb"]

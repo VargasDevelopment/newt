@@ -1,0 +1,21 @@
+[package]
+name = "newt-reader-ui"
+version = "0.0.0"
+edition = "2024"
+license = "MIT AND OFL-1.1"
+publish = false
+[dependencies]
+newt-core = { path = "../core" }
+newt-ui-canvas = { path = "../ui-canvas" }
+newt-system-ui = { path = "../system-ui" }
+newt-phased-reader = { path = "../phased-reader" }
+newt-reader-navigation = { path = "../reader-navigation" }
+newt-device-ui = { path = "../device-ui" }
+
+newt-phased-sink = { path = "../phased-sink" }
+newt-target-expat = { path = "../target-expat" }
+
+[features]
+default = []
+native-host = []
+embedded-sample = []

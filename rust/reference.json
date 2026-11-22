@@ -1,0 +1,21 @@
+{
+  "commit": "bc9ffda52b85f277e46c63718ac88d62fba5d368",
+  "freeink_commit": "cd6f5b831c8fad899723b6d406586f00c575f021",
+  "oracle_trees": [
+    "include",
+    "firmware",
+    "src",
+    "tests/nvs_backend_shim"
+  ],
+  "oracle_sources": [
+    "src/reading_progress.cpp",
+    "src/reader_preferences.cpp",
+    "src/reading_stats.cpp",
+    "src/time_zone.cpp",
+    "src/library_catalog.cpp",
+    "src/sleep_stats.cpp",
+    "src/crossink_stats.cpp",
+    "src/stats_graph_data.cpp",
+    "src/book_days.cpp"
+  ]
+}

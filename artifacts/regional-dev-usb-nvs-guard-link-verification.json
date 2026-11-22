@@ -1,0 +1,487 @@
+{
+  "elf_sha256": "76be0133da3112d3e102751f3aefe9c625fdfa52098af065bcdcdb9c7ec970ac",
+  "startup_edges": {
+    "initArduino": [
+      "__udivdi3",
+      "__wrap_esp_partition_erase_range",
+      "__wrap_log_printf",
+      "__wrap_nvs_flash_init",
+      "btInUse",
+      "esp_bt_controller_mem_release",
+      "esp_log_level_set",
+      "esp_ota_get_running_partition",
+      "esp_ota_get_state_partition",
+      "esp_ota_mark_app_invalid_rollback_and_reboot",
+      "esp_ota_mark_app_valid_cancel_rollback",
+      "esp_partition_find_first",
+      "esp_timer_get_time",
+      "init",
+      "initArduino",
+      "initVariant",
+      "pathToFileName",
+      "verifyOta",
+      "verifyRollbackLater"
+    ],
+    "__wrap_nvs_flash_init": [
+      "_Unwind_Resume",
+      "__wrap_nvs_flash_init",
+      "auto (anonymous namespace)::guardCall<unsigned char (*)(NewtGuard*)>(unsigned char (*)(NewtGuard*))",
+      "newt_guard_finish_init",
+      "newt_guard_owner",
+      "nvs_flash_init",
+      "vPortEnterCritical",
+      "vPortExitCritical"
+    ]
+  },
+  "nvs_partition_edges": {
+    "nvs::NVSPartition::write(unsigned int, void const*, unsigned int)": [
+      "__wrap_esp_partition_write"
+    ],
+    "nvs::NVSPartition::write_raw(unsigned int, void const*, unsigned int)": [
+      "__wrap_esp_partition_write_raw"
+    ],
+    "nvs::NVSPartition::erase_range(unsigned int, unsigned int)": [
+      "__wrap_esp_partition_erase_range"
+    ]
+  },
+  "real_mutation_edges": {
+    "__wrap_esp_partition_erase_range": [
+      "esp_partition_erase_range"
+    ],
+    "__wrap_esp_partition_write": [
+      "esp_partition_write"
+    ],
+    "__wrap_esp_partition_write_raw": [
+      "esp_partition_write_raw"
+    ],
+    "esp_partition_write": [
+      "esp_partition_write"
+    ]
+  },
+  "whole_nvs_format_implementations_linked": false,
+  "wifi_fenced_flash_references": {
+    "nvs_open": [
+      "__wrap_nvs_open"
+    ],
+    "nvs_open_from_partition": [
+      "nvs_open"
+    ],
+    "nvs::NVSPartitionManager::open_handle(char const*, char const*, nvs_open_mode_t, nvs::NVSHandleSimple**)": [
+      "nvs_open_from_partition"
+    ],
+    "esp_partition_write": [
+      "__wrap_esp_partition_write"
+    ],
+    "esp_partition_write_raw": [
+      "__wrap_esp_partition_write_raw"
+    ],
+    "esp_partition_erase_range": [
+      "__wrap_esp_partition_erase_range"
+    ],
+    "esp_flash_write": [
+      "esp_core_dump_flash_custom_write",
+      "esp_partition_write",
+      "esp_partition_write_raw"
+    ],
+    "esp_flash_write_encrypted": [
+      "esp_core_dump_flash_custom_write",
+      "esp_partition_write"
+    ],
+    "esp_flash_erase_region": [
+      "esp_core_dump_write_prepare",
+      "esp_partition_erase_range"
+    ]
+  },
+  "update_mode_crash_output": {
+    "word": "newt::firmware::crashOutput",
+    "reading_boot": "0x52454144",
+    "gates": {
+      "__wrap_esp_panic_handler": {
+        "withheld": "prints the fixed line, sets the panic reset reason and calls panic_restart"
+      },
+      "__wrap_esp_backtrace_print": {
+        "withheld": "returns ESP_FAIL"
+      },
+      "newt_console_putc": {
+        "withheld": "drops the character"
+      }
+    },
+    "rom_print": {
+      "channel_1": "newt_console_putc",
+      "channel_2": null,
+      "init_step": "first, core 0, CORE stage"
+    },
+    "update_mode": {
+      "first_call": "nb_withhold_console",
+      "withholds": [
+        "esp_log_level_set",
+        "freopen",
+        "freopen",
+        "esp_vfs_unregister",
+        "esp_vfs_unregister",
+        "esp_vfs_unregister"
+      ],
+      "closed_paths": [
+        "/dev/console",
+        "/dev/uart",
+        "/dev/secondary"
+      ]
+    },
+    "console_registers": {
+      "code": [
+        "HWCDC::begin(unsigned long)",
+        "HWCDC::end()",
+        "HWCDC::flush()",
+        "HWCDC::isCDC_Connected()",
+        "HWCDC::write(unsigned char const*, unsigned int)",
+        "cdc0_write_char(char)",
+        "core::fmt::write",
+        "esp_sleep_isolate_digital_gpio",
+        "esp_sleep_start.constprop.0",
+        "esp_system_reset_modules_on_exit",
+        "flushTXBuffer(unsigned char const*, unsigned int)",
+        "gpio_config",
+        "gpio_config_as_analog",
+        "gpio_func_sel",
+        "gpio_hal_iomux_in",
+        "gpio_hal_iomux_out",
+        "gpio_output_disable",
+        "gpio_output_enable",
+        "gpio_pullup_dis",
+        "hw_cdc_isr_handler(void*)",
+        "ip6_output_if_src",
+        "log_printfv",
+        "nsc_wake_transmitter",
+        "panic_print_char",
+        "sleep_console_usj_pad_backup_and_disable",
+        "sleep_console_usj_pad_restore",
+        "system_early_init",
+        "uart0_write_char",
+        "uartAvailableForWrite",
+        "uartFlushTxOnly",
+        "usb_serial_jtag_ll_ena_intr_mask",
+        "usb_serial_jtag_rx_char_no_driver",
+        "usb_serial_jtag_sof_tick_hook",
+        "usb_serial_jtag_tx_char_no_driver",
+        "usb_serial_jtag_wait_tx_done_no_driver"
+      ],
+      "data": [
+        "newt_reader_atlas::data::kReaderAddedBitmap",
+        "newt_reader_atlas::data::kReaderBoldExtraBitmap",
+        "newt_ui_canvas::data::KERNS",
+        "s_context",
+        "s_panic_uart",
+        "uart_context"
+      ]
+    },
+    "merged_string_ranges": [
+      [
+        1008571616,
+        1008571626
+      ],
+      [
+        1008585032,
+        1008585051
+      ],
+      [
+        1008659724,
+        1008660236
+      ],
+      [
+        1008765790,
+        1008777689
+      ],
+      [
+        1008788864,
+        1008788874
+      ]
+    ],
+    "checked_decimal_power_ranges": [
+      [
+        1010152496,
+        1010152696
+      ]
+    ],
+    "referrers": {
+      "__wrap_esp_panic_handler": [
+        "panic_handler"
+      ],
+      "esp_panic_handler": [
+        "__wrap_esp_panic_handler"
+      ],
+      "__wrap_esp_backtrace_print": [
+        "esp_crosscore_isr",
+        "task_wdt_isr"
+      ],
+      "esp_backtrace_print": [
+        "__wrap_esp_backtrace_print"
+      ],
+      "newt::firmware::crashOutput": [
+        "__wrap_esp_backtrace_print",
+        "__wrap_esp_panic_handler",
+        "nb_allow_reading_crash_output",
+        "newt_console_putc"
+      ],
+      "print_state": [
+        "panic_handler"
+      ],
+      "print_abort_details": [
+        "esp_panic_handler"
+      ],
+      "panic_print_registers": [
+        "esp_backtrace_print",
+        "print_state"
+      ],
+      "panic_print_backtrace": [
+        "print_state"
+      ],
+      "print_assist_debug_details": [
+        "panic_soc_fill_info"
+      ],
+      "print_memprot_err_details": [
+        "panic_soc_fill_info"
+      ],
+      "panic_print_hex": [
+        "esp_panic_handler",
+        "panic_print_backtrace",
+        "panic_print_registers",
+        "print_assist_debug_details",
+        "print_memprot_err_details"
+      ],
+      "panic_print_dec": [
+        "esp_panic_handler",
+        "panic_print_registers"
+      ],
+      "panic_print_str": [
+        "__wrap_esp_panic_handler",
+        "esp_panic_handler",
+        "esp_panic_handler_increment_entry_count",
+        "panic_print_backtrace",
+        "panic_print_registers",
+        "print_abort_details",
+        "print_assist_debug_details",
+        "print_cache_err_details",
+        "print_memprot_err_details",
+        "print_state"
+      ],
+      "panic_print_char": [
+        "panic_print_dec",
+        "panic_print_hex",
+        "panic_print_str"
+      ],
+      "esp_core_dump_write": [
+        "esp_panic_handler"
+      ],
+      "esp_core_dump_write_elf_and_check": [
+        "esp_core_dump_write"
+      ],
+      "esp_core_dump_store": [
+        "esp_core_dump_write_elf_and_check"
+      ],
+      "esp_core_dump_do_write_elf_pass": [
+        "esp_core_dump_store"
+      ],
+      "esp_core_dump_write_prepare": [
+        "esp_core_dump_store"
+      ],
+      "esp_core_dump_write_end": [
+        "esp_core_dump_store"
+      ],
+      "esp_core_dump_write_data": [
+        "elf_add_note",
+        "elf_add_segment.constprop.0",
+        "elf_process_note_segment",
+        "elf_write_core_dump_note_cb",
+        "elf_write_note_header",
+        "esp_core_dump_do_write_elf_pass",
+        "esp_core_dump_store"
+      ],
+      "esp_core_dump_flash_custom_write": [
+        "esp_core_dump_write_data",
+        "esp_core_dump_write_end"
+      ],
+      "elf_add_note": [
+        "elf_add_regs",
+        "esp_core_dump_do_write_elf_pass"
+      ],
+      "elf_add_regs": [
+        "esp_core_dump_do_write_elf_pass"
+      ],
+      "elf_add_segment.constprop.0": [
+        "elf_save_task",
+        "esp_core_dump_do_write_elf_pass"
+      ],
+      "elf_process_note_segment": [
+        "esp_core_dump_do_write_elf_pass"
+      ],
+      "elf_save_task": [
+        "esp_core_dump_do_write_elf_pass"
+      ],
+      "elf_write_core_dump_note_cb": [
+        "esp_core_dump_do_write_elf_pass"
+      ],
+      "elf_write_note_header": [
+        "elf_add_note",
+        "esp_core_dump_do_write_elf_pass"
+      ],
+      "newt_console_putc": [
+        "__esp_system_init_fn_newt_console_gate()"
+      ],
+      "ets_install_putc1": [
+        "__esp_system_init_fn_newt_console_gate()"
+      ],
+      "ets_install_putc2": [
+        "__esp_system_init_fn_newt_console_gate()"
+      ],
+      "esp_rom_output_putc": [
+        "newt_console_putc"
+      ],
+      "esp_rom_output_tx_one_char": [
+        "esp_rom_output_putc"
+      ],
+      "ets_install_uart_printf": [],
+      "uart_tx_one_char2": [],
+      "usb_uart_tx_one_char": [],
+      "esp_rom_install_channel_putc": [],
+      "esp_rom_install_uart_printf": [],
+      "esp_rom_output_to_channels": [],
+      "esp_rom_vprintf": [],
+      "send_packet": [],
+      "UartDwnLdProc": [],
+      "uart_driver_install": [],
+      "usb_serial_jtag_driver_install": [],
+      "s_vfs_console": [
+        "esp_vfs_console_register"
+      ],
+      "s_vfs_uart": [
+        "esp_vfs_dev_uart_register",
+        "esp_vfs_uart_get_vfs"
+      ],
+      "s_vfs_jtag": [
+        "__esp_system_init_fn_init_vfs_usj_sec",
+        "esp_vfs_usb_serial_jtag_get_vfs"
+      ],
+      "esp_vfs_uart_get_vfs": [
+        "esp_vfs_console_register"
+      ],
+      "esp_vfs_usb_serial_jtag_get_vfs": [
+        "esp_vfs_console_register"
+      ],
+      "esp_vfs_console_register": [
+        "__esp_system_init_fn_init_vfs_console"
+      ],
+      "esp_vfs_dev_uart_register": [
+        "__esp_system_init_fn_init_vfs_uart"
+      ],
+      "nb_allow_reading_crash_output": [
+        "newt_native_input_owner::deferred_start::body"
+      ]
+    },
+    "aliases": {
+      "esp_core_dump_flash_write_data": "esp_core_dump_write_data",
+      "esp_core_dump_flash_write_end": "esp_core_dump_write_end",
+      "esp_core_dump_flash_write_prepare": "esp_core_dump_write_prepare",
+      "esp_core_dump_write_elf": "esp_core_dump_store",
+      "uart_tx_one_char": "esp_rom_output_tx_one_char",
+      "uart_vfs_dev_register": "esp_vfs_dev_uart_register"
+    },
+    "data_references": 0,
+    "limits": "Resolved code addresses, console register addresses built by lui or auipc, and 4-byte-aligned stored addresses in loaded data sections; an address computed at run time from other values is not seen, and the reviewed functions' own control flow is trusted as pinned IDF."
+  },
+  "sleep_boundary": {
+    "entry": "newt_app_image::app_power::enter_prepared_sleep",
+    "ordered_required_calls": [
+      "newt_c3_board::Board::try_sleep",
+      "newt_app_image::retained_runtime::record::stamp_rejection",
+      "newt_app_image::app_power::store_rejection",
+      "newt_c3_board::Board::restart"
+    ],
+    "native_try_calls": [
+      "esp_sleep_config_gpio_isolate",
+      "gpio_deep_sleep_hold_en",
+      "esp_deep_sleep_try_to_start"
+    ],
+    "rejection_stamp_word_offsets": [
+      28,
+      64
+    ],
+    "terminal_sleep_implementations_linked": false,
+    "retained": {
+      "symbol": "(anonymous namespace)::sleepWords",
+      "bytes": 68,
+      "section": ".rtc_noinit",
+      "section_flags": [
+        "ALLOC"
+      ],
+      "word_aligned": true,
+      "within_section": true
+    },
+    "rtc_retention": {
+      "development": false,
+      "bytes": 300,
+      "expected_bytes": 300,
+      "sections": {
+        ".rtc.text": 20,
+        ".rtc.force_fast": 0,
+        ".rtc_noinit": 208,
+        ".rtc.force_slow": 32,
+        ".rtc_reserved": 40
+      },
+      "records": {
+        "(anonymous namespace)::sleepWords": {
+          "symbol": "(anonymous namespace)::sleepWords",
+          "bytes": 68,
+          "section": ".rtc_noinit",
+          "section_flags": [
+            "ALLOC"
+          ],
+          "word_aligned": true,
+          "within_section": true
+        },
+        "(anonymous namespace)::sdResumeWords": {
+          "symbol": "(anonymous namespace)::sdResumeWords",
+          "bytes": 140,
+          "section": ".rtc_noinit",
+          "section_flags": [
+            "ALLOC"
+          ],
+          "word_aligned": true,
+          "within_section": true
+        }
+      },
+      "retained": {
+        "symbol": "(anonymous namespace)::sleepWords",
+        "bytes": 68,
+        "section": ".rtc_noinit",
+        "section_flags": [
+          "ALLOC"
+        ],
+        "word_aligned": true,
+        "within_section": true
+      },
+      "dev_token_store_proof": "not-linked"
+    },
+    "limits": "Compiled straight-line try/stamp/store/restart order and exact RTC layout; not physical sleep/wake proof."
+  },
+  "reader_loop_task": {
+    "symbol": "getArduinoLoopTaskStackSize()",
+    "strong_definition": true,
+    "stack_bytes": 20480,
+    "additional_dynamic_bytes": 12288,
+    "creator": "app_main",
+    "stack_argument": "a2",
+    "task_entry": "loopTask(void*)",
+    "limits": "Linked constant and task-argument flow only; runtime free heap, stack watermark and physical reading remain separate gates.",
+    "selected_open_frames": {
+      "frames": {
+        "newt_app_image::reader_image::open::<impl newt_app_image::reader_image::Runtime>::open_selected_profile": 480
+      },
+      "reserved_bytes": 480,
+      "ceiling_bytes": 672,
+      "limits": "Local profile and compiler-closure frames only; native-inclusive chains and device watermark remain separate."
+    }
+  },
+  "freertos_timer_task_and_rgb_path_linked": false,
+  "result": "PASS",
+  "limits": "Linked reachability only; host fault tests and native behavior are separate gates."
+}

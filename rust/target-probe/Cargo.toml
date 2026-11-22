@@ -1,0 +1,29 @@
+[package]
+name = "newt-target-probe"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+test = false
+doctest = false
+
+[dependencies]
+newt-wake-evidence = { path = "../wake-evidence", optional = true }
+newt-tiny-app = { path = "../tiny-app", optional = true }
+newt-core = { path = "../core" }
+newt-reader-atlas = { path = "../reader-atlas" }
+newt-reader-navigation = { path = "../reader-navigation" }
+newt-ui-canvas = { path = "../ui-canvas" }
+newt-system-ui = { path = "../system-ui" }
+newt-stage-home = { path = "../stage-home" }
+newt-library-ui = { path = "../library-ui" }
+newt-device-ui = { path = "../device-ui" }
+
+[features]
+default = []
+dev-usb = ["dep:newt-wake-evidence", "newt-device-ui/dev-usb"]
+tiny-app = ["dep:newt-tiny-app"]

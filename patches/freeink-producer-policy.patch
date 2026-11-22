@@ -1,0 +1,139 @@
+--- a/libs/book/FreeInkBook/include/BookStorage.h
++++ b/libs/book/FreeInkBook/include/BookStorage.h
+@@ -14,6 +14,20 @@
+ namespace freeink {
+ namespace book {
+ 
++// Newt producer-only processing policy. Borrowed from the source owner for
++// one synchronous attempt; no global mode or per-parser allocation. Ordinary
++// sources return null and retain the pinned parser behavior.
++#define FREEINK_XML_PROCESSING_POLICY 1
++class XmlProcessingPolicy {
++ public:
++  static constexpr uint32_t kPendingBytes = 4096;
++  virtual bool cancelled() = 0;
++  // Classify a returned failure before any subsequent cancellation poll.
++  virtual bool result(bool ok) { return ok; }
++ protected:
++  ~XmlProcessingPolicy() = default;
++};
++
+ // Random-access byte source for one open book file.
+ //
+ // readAt() returns the number of bytes actually read (which may be short at
+@@ -25,6 +39,7 @@
+   virtual ~BookSource() = default;
+   virtual int32_t readAt(uint64_t offset, void* dst, uint32_t len) = 0;
+   virtual uint64_t size() const = 0;
++  virtual XmlProcessingPolicy* xmlProcessingPolicy() const { return nullptr; }
+ };
+ 
+ // Writable store for one book's layout cache — flat file names inside a
+--- a/libs/book/FreeInkBook/include/epub/ZipCatalog.h
++++ b/libs/book/FreeInkBook/include/epub/ZipCatalog.h
+@@ -95,0 +96,3 @@
++  XmlProcessingPolicy* xmlProcessingPolicy() const {
++    return source_ != nullptr ? source_->xmlProcessingPolicy() : nullptr;
++  }
+--- a/libs/book/FreeInkBook/include/layout/ChapterLayout.h
++++ b/libs/book/FreeInkBook/include/layout/ChapterLayout.h
+@@ -187,5 +187,8 @@
+-  // Feeds the parse until at least `minNewPages` more pages were delivered to
+-  // the sink or the chapter ends (granularity is one input chunk, so it can
+-  // overshoot by a page). On the final step the layout tail is flushed and
+-  // done() becomes true. Returns Ok on progress, or the failure status.
+-  BookStatus step(uint32_t minNewPages);
++  // Feeds the parse until at least `minNewPages` more pages were delivered,
++  // `maxFeedChunks` input chunks were parsed, or the chapter ends. The default
++  // preserves the page-bounded reader behavior; a producer can request a
++  // finite input-work bound even when markup emits no page. Granularity is one
++  // input chunk, so a call can overshoot by a page. On the final step the
++  // layout tail is flushed and done() becomes true. Returns Ok on progress, or
++  // the failure status. No progress is made when either bound is zero.
++  BookStatus step(uint32_t minNewPages, uint32_t maxFeedChunks = UINT32_MAX);
+--- a/libs/book/FreeInkBook/src/layout/ChapterLayout.cpp
++++ b/libs/book/FreeInkBook/src/layout/ChapterLayout.cpp
+@@ -1939 +1939 @@
+-BookStatus ChapterLayoutSession::step(uint32_t minNewPages) {
++BookStatus ChapterLayoutSession::step(uint32_t minNewPages, uint32_t maxFeedChunks) {
+@@ -1945,0 +1946 @@
++  uint32_t feeds = 0;
+@@ -1948 +1949,2 @@
+-  while (!atEnd && !engine->stopParse && counting->pages() - startPages < minNewPages) {
++  while (!atEnd && !engine->stopParse && counting->pages() - startPages < minNewPages &&
++         feeds++ < maxFeedChunks) {
+--- a/libs/book/FreeInkBook/src/epub/XmlSax.cpp
++++ b/libs/book/FreeInkBook/src/epub/XmlSax.cpp
+@@ -27,11 +27,32 @@
+   static_cast<XmlHandler*>(userData)->onText(text, len);
+ }
+ 
++// Parser-as-handler argument keeps the ordinary handler in Expat's existing
++// user-data slot; producer callbacks need no allocated wrapper/context.
++void XMLCALL producerStart(void* parser, const XML_Char* name, const XML_Char** atts) {
++  startElement(XML_GetUserData(static_cast<XML_Parser>(parser)), name, atts);
++}
++void XMLCALL producerEnd(void* parser, const XML_Char* name) {
++  endElement(XML_GetUserData(static_cast<XML_Parser>(parser)), name);
++}
++void XMLCALL producerText(void* parser, const XML_Char* text, int len) {
++  characterData(XML_GetUserData(static_cast<XML_Parser>(parser)), text, len);
++}
++void XMLCALL producerDoctype(void* parser, const XML_Char*, const XML_Char*, const XML_Char*,
++                             int internalSubset) {
++  // Called before the internal subset is processed, including entity declarations.
++  if (internalSubset) XML_StopParser(static_cast<XML_Parser>(parser), XML_FALSE);
++}
++int XMLCALL producerExternal(XML_Parser, const XML_Char*, const XML_Char*, const XML_Char*,
++                             const XML_Char*) { return XML_STATUS_ERROR; }
++
+ }  // namespace
+ 
+ BookStatus XmlSaxSession::open(BookSource& source, const ZipEntry& entry, Arena& scratch,
+                                XmlHandler& handler, bool filterHtmlEntities) {
+   close();
++  auto* policy = source.xmlProcessingPolicy();
++  if (policy != nullptr && policy->cancelled()) return BookStatus::IoError;
+   handler_ = &handler;
+   bytesConsumed_ = 0;
+   finished_ = false;
+@@ -57,6 +78,13 @@
+   XML_SetUserData(parser, &handler);
+   XML_SetElementHandler(parser, startElement, endElement);
+   XML_SetCharacterDataHandler(parser, characterData);
++  if (policy != nullptr) {
++    XML_UseParserAsHandlerArg(parser);
++    XML_SetElementHandler(parser, producerStart, producerEnd);
++    XML_SetCharacterDataHandler(parser, producerText);
++    XML_SetStartDoctypeDeclHandler(parser, producerDoctype);
++    XML_SetExternalEntityRefHandler(parser, producerExternal);
++  }
+   parser_ = parser;
+   return BookStatus::Ok;
+ }
+@@ -65,12 +93,25 @@
+   if (atEnd != nullptr) *atEnd = finished_;
+   if (parser_ == nullptr || finished_) return BookStatus::Unsupported;
+ 
++  auto* policy = reader_.xmlProcessingPolicy();
++  if (policy != nullptr && policy->cancelled()) return BookStatus::IoError;
+   const int32_t n = filter_ != nullptr ? filter_->read(reader_, buf_, kParseChunk)
+                                        : reader_.read(buf_, kParseChunk);
+   if (n < 0) return BookStatus::IoError;
++  if (policy != nullptr) {
++    if (policy->cancelled()) return BookStatus::IoError;
++    const auto index = XML_GetCurrentByteIndex(static_cast<XML_Parser>(parser_));
++    const auto consumed = index < 0 ? uint64_t{0} : static_cast<uint64_t>(index);
++    // Include the entire next feed BEFORE parsing it: a retained attribute,
++    // comment, declaration or other token cannot grow then complete unboundedly.
++    if (consumed > bytesConsumed_ || bytesConsumed_ - consumed > XmlProcessingPolicy::kPendingBytes ||
++        static_cast<uint64_t>(n) > XmlProcessingPolicy::kPendingBytes - (bytesConsumed_ - consumed))
++      return BookStatus::Unsupported;
++  }
+   if (XML_Parse(static_cast<XML_Parser>(parser_), buf_, n, n == 0) == XML_STATUS_ERROR) {
+     return BookStatus::ParseError;
+   }
++  if (policy != nullptr && policy->cancelled()) return BookStatus::IoError;
+   bytesConsumed_ += static_cast<uint64_t>(n);
+   if (n == 0) {
+     finished_ = true;

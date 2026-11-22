@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "tiers": {
+    "push": {
+      "check_seconds": 720,
+      "ci_seconds": 1440,
+      "reason": "Owner targets 2026-10-31 (NEWT-19/NEWT-36 follow-up): a worker's local gate (the push tier plus the controls of the tests it changes) at most 8 minutes on an idle 16-thread host, and the per-push CI job at most 10 minutes. Neither fits today's push tier, which keeps every positive test. Measured: the push tier took 616 s for 5,305 CPU seconds on this 8-core, 16-thread host (a CI job overlapped its last minutes), with a 330-second longest chain; tools/ci_gate.py replayed on 8 pinned cores took 1,125 s before 1-2 minutes of setup. 12 and 24 minutes keep a loud failure on growth without failing every gate. Reaching 8 and 10 minutes needs about 1,500-2,200 CPU seconds moved out of the push tier, or for CI a 16-CPU cap (owner decision). tools/check.py checks its own run; tools/ci_gate.py checks the job from its first step."
+    },
+    "full": {
+      "check_seconds": 4800,
+      "ci_seconds": 6600,
+      "reason": "The full tier is today's complete fresh gate (every negative control, fresh objects, fresh toolchains). Main run 41217602095 took 3,427 s in the host gate and 76 min for the job on the 8-CPU cap; these leave 40% and 45% headroom, under the job's 120-minute timeout, so a run that outgrows them names its top offenders before GitHub stops it."
+    }
+  }
+}

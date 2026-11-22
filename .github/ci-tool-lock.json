@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "python": "3.12.6",
+  "xcode": "/Applications/Xcode_16.4.app/Contents/Developer",
+  "xcode_version": "16.4",
+  "xcode_build": "16F6",
+  "runner": "macos-15",
+  "architecture": "arm64",
+  "source": "Official LLVM GitHub release metadata llvmorg-22.1.8; Actions tag refs verified through GitHub API",
+  "actions": {
+    "actions/checkout": "34e114876b0b11c390a56381ad16ebd13914f8d5",
+    "actions/setup-python": "a26af69be951a213d495a4c3e4e4022e16d87065",
+    "actions/cache": "0400d5f644dc74513175e3cd8d07132dd4860809"
+  },
+  "llvm": {
+    "filename": "LLVM-22.1.8-macOS-ARM64.tar.xz",
+    "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-macOS-ARM64.tar.xz",
+    "size": 1479903744,
+    "sha256": "f260f4f7c0d430828a81ae8a3826a1d63fc0963ec2459489308cc23b1f7eab4f"
+  }
+}

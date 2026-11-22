@@ -1,0 +1,142 @@
+[
+  {
+    "id": "adler-prime",
+    "file": "src/lib.rs",
+    "before": "a %= 65521;",
+    "after": "a %= 65519;",
+    "expected_occurrences": 1,
+    "witness": "all-byte-values-stored-False",
+    "reason": "Independent abc Adler golden detects wrong modulus on larger all-byte-values stored corpus too; small abc alone does not reach modulus.",
+    "execution": "PENDING",
+    "type_preserving_intent": true
+  },
+  {
+    "id": "fixed-upper-length",
+    "file": "src/lib.rs",
+    "before": "self.literal.codes[144..256].fill(9);",
+    "after": "self.literal.codes[144..256].fill(8);",
+    "expected_occurrences": 1,
+    "witness": "all-byte-values-fixed-False",
+    "reason": "All byte values force upper fixed literals.",
+    "execution": "PENDING",
+    "type_preserving_intent": true
+  },
+  {
+    "id": "stored-complement",
+    "file": "src/lib.rs",
+    "before": "(!u16::from_le_bytes([self.raw[2], self.raw[3]])) as u32",
+    "after": "(u16::from_le_bytes([self.raw[2], self.raw[3]])) as u32",
+    "expected_occurrences": 1,
+    "witness": "hand-stored-abc",
+    "reason": "Hand stored header has LEN 3 and NLEN 65532.",
+    "execution": "PENDING",
+    "type_preserving_intent": true
+  },
+  {
+    "id": "trailer-byte-order",
+    "file": "src/lib.rs",
+    "before": "self.trailer = (self.trailer << 8) | b;",
+    "after": "self.trailer = (self.trailer >> 8) | (b << 24);",
+    "expected_occurrences": 1,
+    "witness": "hand-empty-zlib",
+    "reason": "Big-endian 00000001 must compare as 1.",
+    "execution": "PENDING",
+    "type_preserving_intent": true
+  },
+  {
+    "id": "trailer-repeat",
+    "file": "src/lib.rs",
+    "before": "&& self.adler != self.trailer",
+    "after": "&& self.adler == self.trailer",
+    "expected_occurrences": 1,
+    "witness": "hand-empty-zlib-bad-checksum",
+    "reason": "Corrupt trailer mismatch and repeated mismatch differ.",
+    "execution": "PENDING",
+    "type_preserving_intent": true
+  },
+  {
+    "id": "input-more-flag",
+    "file": "src/lib.rs",
+    "before": "flags & HAS_MORE_INPUT != 0",
+    "after": "flags & HAS_MORE_INPUT == 0",
+    "expected_occurrences": 1,
+    "witness": "hand-stored-abc",
+    "reason": "One-byte chunks force input starvation with more input promised.",
+    "execution": "PENDING",
+    "type_preserving_intent": true
+  },
+  {
+    "id": "final-block",
+    "file": "src/lib.rs",
+    "before": "if self.final_bits & 1 == 0 {",
+    "after": "if self.final_bits & 1 != 0 {",
+    "expected_occurrences": 1,
+    "witness": "hand-empty-fixed",
+    "reason": "Final empty fixed block must finish.",
+    "execution": "PENDING",
+    "type_preserving_intent": true
+  },
+  {
+    "id": "adler-initial",
+    "file": "src/lib.rs",
+    "before": "self.adler = 1;",
+    "after": "self.adler = 0;",
+    "expected_occurrences": 1,
+    "witness": "hand-empty-zlib",
+    "reason": "Empty stream checksum is initial one.",
+    "execution": "PENDING",
+    "type_preserving_intent": true
+  },
+  {
+    "id": "ring-source-distance",
+    "file": "src/lib.rs",
+    "before": "self.history_cursor.wrapping_sub(self.dist as usize) & mask",
+    "after": "self.history_cursor.wrapping_sub(self.dist as usize + 1) & mask",
+    "expected_occurrences": 1,
+    "witness": "all-byte-values-fixed-False",
+    "reason": "Overlapping distance-one match reads previous output byte.",
+    "execution": "PENDING",
+    "type_preserving_intent": true
+  },
+  {
+    "id": "huff-prefetch-byte",
+    "file": "src/lib.rs",
+    "before": "self.append(input[*pos]);",
+    "after": "self.append(input[*pos] ^ 1);",
+    "expected_occurrences": 1,
+    "witness": "all-byte-values-fixed-False",
+    "reason": "Wrong prefetched byte must change a varied stream. Prior resume proposal crashed under debug overflow checks and was not counted; regression fast-resume is covered separately.",
+    "execution": "PENDING",
+    "type_preserving_intent": true
+  },
+  {
+    "id": "resumed-huff-fast-selection",
+    "file": "src/lib.rs",
+    "before": "if self.huff_filling || input.len() - ip < 4 || end - op < 2 {",
+    "after": "if input.len() - ip < 4 || end - op < 2 {",
+    "witness": "suspended-huffman",
+    "expected_occurrences": 1,
+    "type_preserving_intent": true,
+    "execution": "PENDING"
+  },
+  {
+    "id": "resumed-copy-cursor",
+    "file": "src/lib.rs",
+    "before": "self.history_cursor.wrapping_sub(self.dist as usize) & mask",
+    "after": "op.wrapping_sub(self.dist as usize) & mask",
+    "witness": "saved-copy-cursor",
+    "expected_occurrences": 1,
+    "type_preserving_intent": true,
+    "execution": "PENDING"
+  },
+  {
+    "id": "fresh-bad-param-checksum",
+    "file": "src/lib.rs",
+    "before": "adler: 0,",
+    "after": "adler: 1,",
+    "witness": "fresh-bad-param",
+    "expected_occurrences": 1,
+    "type_preserving_intent": true,
+    "execution": "PENDING"
+  }
+]

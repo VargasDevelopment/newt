@@ -1,0 +1,447 @@
+[
+  {
+    "name": "newt-frosted-cards-square",
+    "width": 528,
+    "height": 792,
+    "ops": [
+      {
+        "type": "image",
+        "file": "assets/haze-cover-gray.png",
+        "x": 0,
+        "y": 0,
+        "w": 528,
+        "h": 792,
+        "smooth": false
+      },
+      {
+        "type": "text",
+        "x": 264,
+        "y": 31,
+        "text": "10:24 AM",
+        "size": 24,
+        "font": "Inter18pt-Regular",
+        "bold": false,
+        "anchor": "middle",
+        "fill": "black"
+      },
+      {
+        "type": "text",
+        "x": 500,
+        "y": 31,
+        "text": "Offline · 84%",
+        "size": 21,
+        "font": "Inter18pt-Regular",
+        "bold": false,
+        "anchor": "end",
+        "fill": "black"
+      },
+      {
+        "type": "image",
+        "file": "assets/newt-brand-reference.png",
+        "x": 28,
+        "y": 12,
+        "w": 86,
+        "h": 28,
+        "smooth": true,
+        "source_rect": [
+          200,
+          951,
+          628,
+          210
+        ],
+        "blend_mode": "multiply"
+      },
+      {
+        "type": "rect",
+        "x": 28,
+        "y": 64,
+        "w": 472,
+        "h": 327,
+        "r": 4,
+        "fill": "white",
+        "stroke": "none",
+        "sw": 2
+      },
+      {
+        "type": "rect",
+        "x": 28.5,
+        "y": 64.5,
+        "w": 471,
+        "h": 326,
+        "r": 4,
+        "fill": "none",
+        "stroke": "#555555",
+        "sw": 1
+      },
+      {
+        "type": "text",
+        "x": 50,
+        "y": 129,
+        "text": "The Secret",
+        "size": 36,
+        "font": "Inter18pt-Regular",
+        "bold": true,
+        "anchor": "start",
+        "fill": "black"
+      },
+      {
+        "type": "text",
+        "x": 50,
+        "y": 173,
+        "text": "Garden",
+        "size": 40,
+        "font": "Inter18pt-Regular",
+        "bold": true,
+        "anchor": "start",
+        "fill": "black"
+      },
+      {
+        "type": "image",
+        "file": "assets/fixture-cover.png",
+        "x": 332,
+        "y": 87,
+        "w": 148,
+        "h": 222,
+        "smooth": false
+      },
+      {
+        "type": "text",
+        "x": 50,
+        "y": 244,
+        "text": "Chapter 4 · 32% read",
+        "size": 24,
+        "font": "Inter18pt-Regular",
+        "bold": true,
+        "anchor": "start",
+        "fill": "black",
+        "max_width": 254
+      },
+      {
+        "type": "rect",
+        "x": 50,
+        "y": 267,
+        "w": 254,
+        "h": 4,
+        "r": 1,
+        "fill": "none",
+        "stroke": "black",
+        "sw": 1
+      },
+      {
+        "type": "rect",
+        "x": 50,
+        "y": 267,
+        "w": 81,
+        "h": 4,
+        "r": 1,
+        "fill": "black",
+        "stroke": "none",
+        "sw": 2
+      },
+      {
+        "type": "text",
+        "x": 50,
+        "y": 357,
+        "text": "Press Read to carry on.",
+        "size": 24,
+        "font": "Inter18pt-Regular",
+        "bold": false,
+        "anchor": "start",
+        "fill": "black"
+      },
+      {
+        "type": "rect",
+        "x": 28,
+        "y": 417,
+        "w": 472,
+        "h": 280,
+        "r": 4,
+        "fill": "white",
+        "stroke": "none",
+        "sw": 2
+      },
+      {
+        "type": "rect",
+        "x": 28.5,
+        "y": 417.5,
+        "w": 471,
+        "h": 279,
+        "r": 4,
+        "fill": "none",
+        "stroke": "#555555",
+        "sw": 1
+      },
+      {
+        "type": "path",
+        "commands": [
+          [
+            "M",
+            49,
+            442
+          ],
+          [
+            "L",
+            60,
+            451
+          ],
+          [
+            "L",
+            49,
+            460
+          ],
+          [
+            "Z"
+          ]
+        ],
+        "fill": "black",
+        "stroke": "none",
+        "sw": 2
+      },
+      {
+        "type": "text",
+        "x": 73,
+        "y": 462,
+        "text": "Morning Page",
+        "size": 32,
+        "font": "Inter18pt-Regular",
+        "bold": true,
+        "anchor": "start",
+        "fill": "black"
+      },
+      {
+        "type": "path",
+        "commands": [
+          [
+            "M",
+            73,
+            474
+          ],
+          [
+            "L",
+            479,
+            474
+          ]
+        ],
+        "fill": "none",
+        "stroke": "black",
+        "sw": 3
+      },
+      {
+        "type": "text",
+        "x": 73,
+        "y": 501,
+        "text": "Book, weather & what’s next",
+        "size": 25,
+        "font": "Inter18pt-Regular",
+        "bold": false,
+        "anchor": "start",
+        "fill": "black"
+      },
+      {
+        "type": "text",
+        "x": 73,
+        "y": 549,
+        "text": "Books",
+        "size": 32,
+        "font": "Inter18pt-Regular",
+        "bold": false,
+        "anchor": "start",
+        "fill": "black"
+      },
+      {
+        "type": "text",
+        "x": 73,
+        "y": 603,
+        "text": "Apps",
+        "size": 32,
+        "font": "Inter18pt-Regular",
+        "bold": false,
+        "anchor": "start",
+        "fill": "black"
+      },
+      {
+        "type": "text",
+        "x": 73,
+        "y": 657,
+        "text": "Your X3",
+        "size": 32,
+        "font": "Inter18pt-Regular",
+        "bold": false,
+        "anchor": "start",
+        "fill": "black"
+      },
+      {
+        "type": "text",
+        "x": 220,
+        "y": 656,
+        "text": "(Settings)",
+        "size": 24,
+        "font": "Inter18pt-Regular",
+        "bold": false,
+        "anchor": "start",
+        "fill": "black"
+      },
+      {
+        "type": "rect",
+        "x": 0,
+        "y": 742,
+        "w": 528,
+        "h": 50,
+        "r": 0,
+        "fill": "white",
+        "stroke": "none",
+        "sw": 2
+      },
+      {
+        "type": "rect",
+        "x": 48,
+        "y": 749,
+        "w": 94,
+        "h": 42,
+        "r": 7,
+        "fill": "none",
+        "stroke": "black",
+        "sw": 2
+      },
+      {
+        "type": "text",
+        "x": 95,
+        "y": 779,
+        "text": "Read",
+        "size": 28,
+        "font": "Inter18pt-Regular",
+        "bold": false,
+        "anchor": "middle",
+        "fill": "black"
+      },
+      {
+        "type": "rect",
+        "x": 154,
+        "y": 749,
+        "w": 94,
+        "h": 42,
+        "r": 7,
+        "fill": "none",
+        "stroke": "black",
+        "sw": 2
+      },
+      {
+        "type": "text",
+        "x": 201,
+        "y": 779,
+        "text": "Select",
+        "size": 28,
+        "font": "Inter18pt-Regular",
+        "bold": false,
+        "anchor": "middle",
+        "fill": "black"
+      },
+      {
+        "type": "rect",
+        "x": 284,
+        "y": 749,
+        "w": 94,
+        "h": 42,
+        "r": 7,
+        "fill": "none",
+        "stroke": "black",
+        "sw": 2
+      },
+      {
+        "type": "text",
+        "x": 331,
+        "y": 779,
+        "text": "Up",
+        "size": 28,
+        "font": "Inter18pt-Regular",
+        "bold": false,
+        "anchor": "middle",
+        "fill": "black"
+      },
+      {
+        "type": "rect",
+        "x": 390,
+        "y": 749,
+        "w": 94,
+        "h": 42,
+        "r": 7,
+        "fill": "none",
+        "stroke": "black",
+        "sw": 2
+      },
+      {
+        "type": "text",
+        "x": 437,
+        "y": 779,
+        "text": "Down",
+        "size": 28,
+        "font": "Inter18pt-Regular",
+        "bold": false,
+        "anchor": "middle",
+        "fill": "black"
+      }
+    ],
+    "context": "home",
+    "orientation": "portrait",
+    "grayCandidate": true,
+    "focus": "Morning Page",
+    "proposal": false,
+    "preview_variant": "restrained-square",
+    "branding_decision": "Small wordmark and square Home B selected by owner for implementation.",
+    "card_treatment": {
+      "radius": 4,
+      "stroke_width": 1,
+      "stroke_tone": 85
+    },
+    "header_treatment": "continuous backdrop; no bar/divider/block",
+    "clock": {
+      "display": "10:24 AM",
+      "fictional": true,
+      "live_rtc": false,
+      "anchor_center_x": 264
+    },
+    "content_shift_y": -23,
+    "logo_source": "libfile_18c7711790b88191b27507b5d131d0d3",
+    "metadata_column": {
+      "left": 50,
+      "right": 304,
+      "bar_width": 254,
+      "cover_left": 332,
+      "gap_to_cover": 28,
+      "font_size": 24
+    },
+    "button_labels": [
+      "Read",
+      "Select",
+      "Up",
+      "Down"
+    ],
+    "button_centers": [
+      95,
+      201,
+      331,
+      437
+    ],
+    "menu_items": [
+      "Morning Page",
+      "Books",
+      "Apps",
+      "Your X3"
+    ],
+    "your_x3_route": "Settings and device details",
+    "fixture": {
+      "book": "The Secret Garden",
+      "chapter": 4,
+      "whole_book_percent": 32,
+      "battery": 84,
+      "offline": true
+    },
+    "branding_role": "No Home pictogram; full branding remains suitable for splash/default sleep; original doodle remains an Easter egg.",
+    "approval": {
+      "status": "owner-selected-for-implementation",
+      "owner_quote": "Squarer FOR SURE. It is MUCH better than I expected. Also the alignment looks much better now. This UI is wonderful and what we should ship",
+      "source_scene": "../round10/home-scenes.json",
+      "drawing_operations_unchanged": true
+    }
+  }
+]

@@ -1,0 +1,137 @@
+{
+  "commit": "cd6f5b831c8fad899723b6d406586f00c575f021",
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha256": "17dea5079d9905fbbc8323cde7bfffd0f24185949c43a5daad5177022b796588"
+    },
+    {
+      "path": "libs/book/FreeInkBook/include/BookArena.h",
+      "sha256": "7fe4492f93d8c496b24b935504a1e6c5124062043413af2b8ea5f727ef112812"
+    },
+    {
+      "path": "libs/book/FreeInkBook/include/BookCatalog.h",
+      "sha256": "0e5b80407199ef475d3b7e7b8bd0f70158aea1d95e02ea335c7260904336d9dd"
+    },
+    {
+      "path": "libs/book/FreeInkBook/include/BookFont.h",
+      "sha256": "d301a9e5a786ca8d6f1e311ab851c473828eb52641f083ad11dc8d669e916985"
+    },
+    {
+      "path": "libs/book/FreeInkBook/include/BookProfile.h",
+      "sha256": "0fd7fcbd641952b65cdef4c5e791e8825045d69f1e18020e0468173c3d1713b2"
+    },
+    {
+      "path": "libs/book/FreeInkBook/include/BookStorage.h",
+      "sha256": "0885c8a100c62439a4fc0f701dfa83e561e95853ca5d29fe93d888793abb9bf0"
+    },
+    {
+      "path": "libs/book/FreeInkBook/include/BookTypes.h",
+      "sha256": "38479bbdc7c57d7ff1fbaf2cb5516b90b9d55563fc9676caa8edd9a2e008206f"
+    },
+    {
+      "path": "libs/book/FreeInkBook/include/FreeInkBook.h",
+      "sha256": "f037e471912293fce12aa7b78b6551e0eaf3120fc78b69057dcbcbd0161ccd13"
+    },
+    {
+      "path": "libs/book/FreeInkBook/include/cache/PageCache.h",
+      "sha256": "9bfba0684b2bdbcf1a6f13190525d8cc947918bdc9c1d2e875eedcb66e7899bf"
+    },
+    {
+      "path": "libs/book/FreeInkBook/include/css/Css.h",
+      "sha256": "2f7f4fe24e92b1332b342cfac83653a24a99fd67d70b06e6e2c686b86cb7f396"
+    },
+    {
+      "path": "libs/book/FreeInkBook/include/epub/Expat.h",
+      "sha256": "4dd5b3ae992c8a8b82d5bf91aa738cb9c7521354d20662f0cd1d0fa92b3570ee"
+    },
+    {
+      "path": "libs/book/FreeInkBook/include/epub/ImageProbe.h",
+      "sha256": "02951540dc9e6f634a173ad653fa81cf49fe376f482716032bfb1d6cc3155441"
+    },
+    {
+      "path": "libs/book/FreeInkBook/include/epub/MinizConfig.h",
+      "sha256": "760cad4d8a00dffc8f0e61f7c5df95bd479514095167059502d3c83da229d1d5"
+    },
+    {
+      "path": "libs/book/FreeInkBook/include/epub/PackageParsers.h",
+      "sha256": "f787adf227296b07ff576a1061c521069146d6f42f7667fac9798ba78cbccc1b"
+    },
+    {
+      "path": "libs/book/FreeInkBook/include/epub/XmlSax.h",
+      "sha256": "0056ac35ce24b9c1d896f067f79bd0086e2e3a53f01ae3900b9c6f599ca34040"
+    },
+    {
+      "path": "libs/book/FreeInkBook/include/epub/ZipCatalog.h",
+      "sha256": "44be3dce7253c36db12fa64b547b5a5862aaa8a1d832e6b7d45c47896ba03d82"
+    },
+    {
+      "path": "libs/book/FreeInkBook/include/layout/ChapterLayout.h",
+      "sha256": "f0567b9ad0322c6c44027faf7e7659e27e18b109ebe03b80e7c3a5a22eafeda6"
+    },
+    {
+      "path": "libs/book/FreeInkBook/include/render/ImageRenderer.h",
+      "sha256": "2b35ae986f3fd1175db8bd7b062692e0d43957c66501dd40892671875e7bf044"
+    },
+    {
+      "path": "libs/book/FreeInkBook/include/render/PageRenderer.h",
+      "sha256": "e6b4b5e80add92641041a644c80a74d5be0cfd076e8345e55087eca8c6a483c3"
+    },
+    {
+      "path": "libs/book/FreeInkBook/include/render/TtfFont.h",
+      "sha256": "c9426744fa0c81cf28d1581f00bdd18373d3f6a337a6dba9b9f7d426b1370be6"
+    },
+    {
+      "path": "libs/book/FreeInkBook/include/text/EntityFilter.h",
+      "sha256": "a5327ea3be836132a8766389a44bc9e38bd53e6a07469d8cd25400de1433565a"
+    },
+    {
+      "path": "libs/book/FreeInkBook/include/text/Hyphenator.h",
+      "sha256": "34e247772414f27c2cd2b2f45362273b43eda50245cda4dbba0f843d4bfbf66f"
+    },
+    {
+      "path": "libs/book/FreeInkBook/include/text/arab_shaping.h",
+      "sha256": "a242359d84e8d26d122b0362af01dff14ae24a352f7e510e0147f82cc61a26e2"
+    },
+    {
+      "path": "libs/book/FreeInkBook/include/text/hyph_en_us.h",
+      "sha256": "7aec1cfaa110e38d236dd5b3806eb22230df4fb22b925a2157c8f0d657b2d40d"
+    },
+    {
+      "path": "libs/book/FreeInkBook/src/epub/PackageParsers.cpp",
+      "sha256": "07604d7ca46c8c3e283534e6f97b43ca28241654254989e8ae2f3f51eda6c854"
+    },
+    {
+      "path": "libs/book/FreeInkBook/src/epub/XmlUtil.h",
+      "sha256": "209f10263afcc9465033d1dd38f1a9186c9eea110008180401059db66e410a19"
+    },
+    {
+      "path": "libs/book/FreeInkBook/src/epub/ZipCatalog.cpp",
+      "sha256": "27abccd275f811c18cb10515406e4e1c46afe4efe3759c49ad93c6542a317de0"
+    },
+    {
+      "path": "libs/book/FreeInkBook/src/text/EntityFilter.cpp",
+      "sha256": "a0443d27d857157ebc4708726a1be8f803446a798066370584626bc648941906"
+    },
+    {
+      "path": "libs/book/FreeInkBook/src/vendor/miniz_impl.c",
+      "sha256": "62d5a7524b9ff42b8f779191be05372e1a6a9a993ccda99fb454c7d50a83edd6"
+    },
+    {
+      "path": "libs/book/FreeInkBook/third_party/miniz/LICENSE",
+      "sha256": "6f20fa7672b00e2e975c291df737cf227addf3ad32e36fef3fe0f416e4664d3d"
+    },
+    {
+      "path": "libs/book/FreeInkBook/third_party/miniz/miniz.c",
+      "sha256": "e2c1aeb66eef9191d8c3feb164db2def2335a61d039bf04ed849f6b042433b30"
+    },
+    {
+      "path": "libs/book/FreeInkBook/third_party/miniz/miniz.h",
+      "sha256": "b53b62ed122e559b8f679e3cb787a0b0035fe87a58f909da0e44931678f4e85f"
+    },
+    {
+      "path": "libs/font/FreeInkFont/include/FontArena.h",
+      "sha256": "96e6f42834a9d961cf8f7af6f3530ec2a8f767cbdd1b67725282f99135e7d4b7"
+    }
+  ]
+}

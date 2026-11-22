@@ -1,0 +1,108 @@
+{
+  "version": 2,
+  "policy": {
+    "line_thresholds": {
+      "test": 700,
+      "tool": 500
+    }
+  },
+  "large_files": {},
+  "resources": {
+    "regional-dev-usb": {
+      "flash_bytes": 3635712,
+      "ram_bytes": 124096,
+      "wifi_lent_bytes": 22528,
+      "stack_bytes": {
+        "rust/firmware/native/entry.cpp::void loop()": 0,
+        "rust/firmware/native/entry.cpp::void setup()": 16,
+        "rust/target-expat/native/xml_budget.cpp::XML_ParserStruct* __wrap_XML_ParserCreate(const XML_Char*)": 32,
+        "rust/target-expat/native/xml_budget.cpp::void* {anonymous}::resize(void*, std::size_t)": 48,
+        "rust/firmware/reader_image_open.rs::newt_app_image::reader_image::open::<impl newt_app_image::reader_image::Runtime>::open_selected_profile": 656
+      }
+    }
+  },
+  "floors": {
+    "loop_stack_min_free_bytes": null,
+    "reading_heap_exception_min_free_bytes": 50468,
+    "reading_heap_min_free_bytes": 65536
+  },
+  "records": {
+    "flash_bytes": {
+      "source_revision": "4544ace35ee85a76130303d90c5c6c0fe39921ab",
+      "before": 3635424,
+      "after": 3635712,
+      "reason": "#365 / NEWT-69: newcomer copy for the first public release (What's new, Settings hints, Switch firmware, Update's Wi-Fi setup row, card-folder notes, one clock wording, plain install confirm). Measured by a clean firmware-build.py --health-report of 4544ace3: 3,635,424 -> 3,635,712 B (+288 B over the ceiling; whole-string trims measured larger, dropping the two hints left +192 B). 3,635,712 B is below the 7,016,448 B usable limit, leaving 3,380,736 B. RTC 300 -> 300 (unchanged). RAM 124,096, lend 22,528, frames, floors and exclusions unchanged.",
+      "reviewer": "owner-approved 2026-11-22 (#365)"
+    },
+    "ram_bytes": {
+      "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
+      "before": 125312,
+      "after": 124096,
+      "reason": "NRUST-86 daily image switches from C++ to full regional Rust with DEV USB, Stage, Wi-Fi/update and sample. Measured clean build at af09edbda9d8a7aed153ba1abe0723e5edf19513. RAM uses the same code_health_sram accounting: 125312 to 124096; RTC 300 to 300; lend stays 22528. Floors and the already approved Rust 20480-byte task are unchanged. Keep the four linked C++ selections at measured 0/16/32/48 and the Rust open-profile including closures at 656 (existing 672 guard unchanged). 518 absent C++ selections retain their last values in history and are re-proved against every current ELF. inputs_sha256 hashes declared source bytes, not HEAD; code_health_flash_policy.adoption_failures binds adopted inputs and raised values, and rust_image_measurements.verify binds the per-run HEAD/ELF. This full clean/resource PASS rebinds the adopted-input evidence with unchanged resource measurements.",
+      "reviewer": "Lead NRUST-86 resource rulings 2026-11-16/17; independent candidate review pending"
+    },
+    "wifi_lent_bytes": {
+      "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
+      "before": 22528,
+      "after": 22528,
+      "reason": "NRUST-86 daily image switches from C++ to full regional Rust with DEV USB, Stage, Wi-Fi/update and sample. Measured clean build at af09edbda9d8a7aed153ba1abe0723e5edf19513. RAM uses the same code_health_sram accounting: 125312 to 124096; RTC 300 to 300; lend stays 22528. Floors and the already approved Rust 20480-byte task are unchanged. Keep the four linked C++ selections at measured 0/16/32/48 and the Rust open-profile including closures at 656 (existing 672 guard unchanged). 518 absent C++ selections retain their last values in history and are re-proved against every current ELF. inputs_sha256 hashes declared source bytes, not HEAD; code_health_flash_policy.adoption_failures binds adopted inputs and raised values, and rust_image_measurements.verify binds the per-run HEAD/ELF. This full clean/resource PASS rebinds the adopted-input evidence with unchanged resource measurements.",
+      "reviewer": "Lead NRUST-86 resource rulings 2026-11-16/17; independent candidate review pending"
+    },
+    "rust/firmware/native/entry.cpp::void loop()": {
+      "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
+      "before": 192,
+      "after": 0,
+      "reason": "NRUST-86 daily image switches from C++ to full regional Rust with DEV USB, Stage, Wi-Fi/update and sample. Measured clean build at af09edbda9d8a7aed153ba1abe0723e5edf19513. RAM uses the same code_health_sram accounting: 125312 to 124096; RTC 300 to 300; lend stays 22528. Floors and the already approved Rust 20480-byte task are unchanged. Keep the four linked C++ selections at measured 0/16/32/48 and the Rust open-profile including closures at 656 (existing 672 guard unchanged). 518 absent C++ selections retain their last values in history and are re-proved against every current ELF. inputs_sha256 hashes declared source bytes, not HEAD; code_health_flash_policy.adoption_failures binds adopted inputs and raised values, and rust_image_measurements.verify binds the per-run HEAD/ELF. This full clean/resource PASS rebinds the adopted-input evidence with unchanged resource measurements.",
+      "reviewer": "Lead NRUST-86 resource rulings 2026-11-16/17; independent candidate review pending"
+    },
+    "rust/firmware/native/entry.cpp::void setup()": {
+      "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
+      "before": 464,
+      "after": 16,
+      "reason": "NRUST-86 daily image switches from C++ to full regional Rust with DEV USB, Stage, Wi-Fi/update and sample. Measured clean build at af09edbda9d8a7aed153ba1abe0723e5edf19513. RAM uses the same code_health_sram accounting: 125312 to 124096; RTC 300 to 300; lend stays 22528. Floors and the already approved Rust 20480-byte task are unchanged. Keep the four linked C++ selections at measured 0/16/32/48 and the Rust open-profile including closures at 656 (existing 672 guard unchanged). 518 absent C++ selections retain their last values in history and are re-proved against every current ELF. inputs_sha256 hashes declared source bytes, not HEAD; code_health_flash_policy.adoption_failures binds adopted inputs and raised values, and rust_image_measurements.verify binds the per-run HEAD/ELF. This full clean/resource PASS rebinds the adopted-input evidence with unchanged resource measurements.",
+      "reviewer": "Lead NRUST-86 resource rulings 2026-11-16/17; independent candidate review pending"
+    },
+    "rust/target-expat/native/xml_budget.cpp::XML_ParserStruct* __wrap_XML_ParserCreate(const XML_Char*)": {
+      "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
+      "before": 32,
+      "after": 32,
+      "reason": "NRUST-86 daily image switches from C++ to full regional Rust with DEV USB, Stage, Wi-Fi/update and sample. Measured clean build at af09edbda9d8a7aed153ba1abe0723e5edf19513. RAM uses the same code_health_sram accounting: 125312 to 124096; RTC 300 to 300; lend stays 22528. Floors and the already approved Rust 20480-byte task are unchanged. Keep the four linked C++ selections at measured 0/16/32/48 and the Rust open-profile including closures at 656 (existing 672 guard unchanged). 518 absent C++ selections retain their last values in history and are re-proved against every current ELF. inputs_sha256 hashes declared source bytes, not HEAD; code_health_flash_policy.adoption_failures binds adopted inputs and raised values, and rust_image_measurements.verify binds the per-run HEAD/ELF. This full clean/resource PASS rebinds the adopted-input evidence with unchanged resource measurements.",
+      "reviewer": "Lead NRUST-86 resource rulings 2026-11-16/17; independent candidate review pending"
+    },
+    "rust/target-expat/native/xml_budget.cpp::void* {anonymous}::resize(void*, std::size_t)": {
+      "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
+      "before": 48,
+      "after": 48,
+      "reason": "NRUST-86 daily image switches from C++ to full regional Rust with DEV USB, Stage, Wi-Fi/update and sample. Measured clean build at af09edbda9d8a7aed153ba1abe0723e5edf19513. RAM uses the same code_health_sram accounting: 125312 to 124096; RTC 300 to 300; lend stays 22528. Floors and the already approved Rust 20480-byte task are unchanged. Keep the four linked C++ selections at measured 0/16/32/48 and the Rust open-profile including closures at 656 (existing 672 guard unchanged). 518 absent C++ selections retain their last values in history and are re-proved against every current ELF. inputs_sha256 hashes declared source bytes, not HEAD; code_health_flash_policy.adoption_failures binds adopted inputs and raised values, and rust_image_measurements.verify binds the per-run HEAD/ELF. This full clean/resource PASS rebinds the adopted-input evidence with unchanged resource measurements.",
+      "reviewer": "Lead NRUST-86 resource rulings 2026-11-16/17; independent candidate review pending"
+    },
+    "rust/firmware/reader_image_open.rs::newt_app_image::reader_image::open::<impl newt_app_image::reader_image::Runtime>::open_selected_profile": {
+      "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
+      "before": null,
+      "after": 656,
+      "reason": "NRUST-86 daily image switches from C++ to full regional Rust with DEV USB, Stage, Wi-Fi/update and sample. Measured clean build at af09edbda9d8a7aed153ba1abe0723e5edf19513. RAM uses the same code_health_sram accounting: 125312 to 124096; RTC 300 to 300; lend stays 22528. Floors and the already approved Rust 20480-byte task are unchanged. Keep the four linked C++ selections at measured 0/16/32/48 and the Rust open-profile including closures at 656 (existing 672 guard unchanged). 518 absent C++ selections retain their last values in history and are re-proved against every current ELF. inputs_sha256 hashes declared source bytes, not HEAD; code_health_flash_policy.adoption_failures binds adopted inputs and raised values, and rust_image_measurements.verify binds the per-run HEAD/ELF. This full clean/resource PASS rebinds the adopted-input evidence with unchanged resource measurements.",
+      "reviewer": "Lead NRUST-86 resource rulings 2026-11-16/17; independent candidate review pending"
+    },
+    "loop_stack_min_free_bytes": {
+      "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
+      "before": null,
+      "after": null,
+      "reason": "Set at the Rust switch, NRUST-86, af09edbd: unchanged from the C++ floor.",
+      "reviewer": "Lead NRUST-86 resource rulings 2026-11-16/17"
+    },
+    "reading_heap_exception_min_free_bytes": {
+      "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
+      "before": 50468,
+      "after": 50468,
+      "reason": "Set at the Rust switch, NRUST-86, af09edbd: unchanged from the C++ floor.",
+      "reviewer": "Lead NRUST-86 resource rulings 2026-11-16/17"
+    },
+    "reading_heap_min_free_bytes": {
+      "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
+      "before": 65536,
+      "after": 65536,
+      "reason": "Set at the Rust switch, NRUST-86, af09edbd: unchanged from the C++ floor.",
+      "reviewer": "Lead NRUST-86 resource rulings 2026-11-16/17"
+    }
+  }
+}

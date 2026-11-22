@@ -1,0 +1,13 @@
+[package]
+name = "newt-nvs-guard"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+newt-core = { path = "../../core" }

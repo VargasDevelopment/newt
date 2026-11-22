@@ -1,0 +1,5 @@
+# Tracked paths tools/clean_export.py leaves out of a public snapshot.
+# One entry per line: PATH<TAB>REASON. A PATH ending in "/" omits that directory.
+# An entry that matches nothing at the exported revision fails the export.
+# Prefer fixing or removing a file in the repository: the public repository
+# continues from this snapshot, so an omission must never hide a live leak.

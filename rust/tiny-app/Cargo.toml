@@ -1,0 +1,15 @@
+[package]
+name = "newt-tiny-app"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT AND OFL-1.1"
+publish = false
+[features]
+default = []
+host-probe = []
+[dependencies]
+newt-device-ui = { path = "../device-ui" }
+newt-core = { path = "../core" }
+newt-system-ui = { path = "../system-ui" }
+newt-ui-canvas = { path = "../ui-canvas" }

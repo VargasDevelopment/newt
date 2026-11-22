@@ -1,0 +1,57 @@
+[
+  [
+    "wake-already-awake",
+    "if state.screen == Screen::Sleeping { state.screen = sleep_destination(state.resume_screen); }",
+    "state.screen = sleep_destination(state.resume_screen);"
+  ],
+  [
+    "epub-resume",
+    "screen == Screen::EpubReading",
+    "screen == Screen::Reading"
+  ],
+  [
+    "home-last",
+    "Action::Next if state.selected < 2",
+    "Action::Next if state.selected < 1"
+  ],
+  [
+    "reading-last",
+    "Action::Next if state.page < 2",
+    "Action::Next if state.page < 1"
+  ],
+  [
+    "fifth-select",
+    "state.about_presses < 5",
+    "state.about_presses < 4"
+  ],
+  [
+    "preserve-unconfirmed",
+    "matches!(state.settings_notice, SettingsNotice::Saved | SettingsNotice::FormatSaved)",
+    "state.settings_notice != SettingsNotice::None"
+  ],
+  [
+    "close-notice",
+    "state.settings_notice = SettingsNotice::None;\n}",
+    "let _ = &state.settings_notice;\n}"
+  ],
+  [
+    "about-counter-reset",
+    "    state.about_presses = 0;\n    match action {",
+    "    let _ = &state.about_presses;\n    match action {"
+  ],
+  [
+    "days-window-wrap",
+    "(back + 1) % 64",
+    "(back + 1) % 63"
+  ],
+  [
+    "invalid-view-default",
+    "_ => StatsGraphView::Summary,",
+    "_ => { let _ = StatsGraphView::Summary; StatsGraphView::Days },"
+  ],
+  [
+    "books-route",
+    "HomeSection::Books => Screen::Library",
+    "HomeSection::Books => Screen::Reading"
+  ]
+]

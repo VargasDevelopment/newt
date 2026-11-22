@@ -1,0 +1,621 @@
+{
+  "revision": "bc9ffda52b85f277e46c63718ac88d62fba5d368",
+  "sdk_revision": "cd6f5b831c8fad899723b6d406586f00c575f021",
+  "sdk_sources": {
+    "LICENSE": {
+      "bytes": 1064,
+      "sha256": "17dea5079d9905fbbc8323cde7bfffd0f24185949c43a5daad5177022b796588"
+    },
+    "libs/book/FreeInkBook/include/BookFont.h": {
+      "bytes": 980,
+      "sha256": "d301a9e5a786ca8d6f1e311ab851c473828eb52641f083ad11dc8d669e916985"
+    },
+    "libs/font/FreeInkFont/include/Font.h": {
+      "bytes": 3776,
+      "sha256": "4b03ce7ea73dc460e344327fd1ae8b2bc216ddca24e982b1460a78d4391d57c9"
+    }
+  },
+  "sources": {
+    "LICENSE": {
+      "bytes": 1070,
+      "sha256": "6ae1f762295ed73a4694bc0ad106735ad42c0ad5ff5c57573d70b73476862ec5",
+      "git_blob": "3dd2081ad1b12c91fb9f965c1bd7e1f8e517584c"
+    },
+    "src/reader_font.cpp": {
+      "bytes": 15528,
+      "sha256": "d995eda3b392f401bb8a44c1ebf98a3e095cd802cccaac7a694c2b63c9c041e1",
+      "git_blob": "5204aa959309aa1a2954a11077ae8ae7a39135b6"
+    },
+    "src/reader_font_data.inc": {
+      "bytes": 2797781,
+      "sha256": "d06c02a0d9fddb7c3ea78ef4e1fa15d03538c3e9c54185f87491567a9bd022bc",
+      "git_blob": "7e6d0a9363baafd34839761f2f404f2befc6f96a"
+    },
+    "include/newt/reader_font.h": {
+      "bytes": 2186,
+      "sha256": "dfe4ccd103a6543cfd6a68da080f78f54ebde210a68053f3bbf63ea13a489d72",
+      "git_blob": "5b3168ac9320f813b670514ff937e31bdee0fd08"
+    },
+    "include/newt/reader_view.h": {
+      "bytes": 1369,
+      "sha256": "db209741d70746f8a807612217f5a0ae73ba7e05444c763453816075509426d3",
+      "git_blob": "4a5ff977386317cf37efbb0f5d2741b1f54ae044"
+    },
+    "tools/make-reader-font.py": {
+      "bytes": 24914,
+      "sha256": "22d6e0db8805755bc33e2c78250e14ec0876c20b8a07795f48b0e364760cf1a6",
+      "git_blob": "d5173f1a18940066e7ed8c534a37203ccb12827f"
+    },
+    "tools/reader_font_extension.py": {
+      "bytes": 9014,
+      "sha256": "e62e5f04bf027d1a0b083569d3e9c155777f0de81e022626e270a39b84d27c7a",
+      "git_blob": "39782d9bb4ae311fa0b8428a738dabc12a2c4aeb"
+    },
+    "tools/import_reader_coverage.py": {
+      "bytes": 8398,
+      "sha256": "3dc636bdb28ceb107efb91c81cdb286a272d5872b351387e4ceb1e0db28b800c",
+      "git_blob": "6b48f5d146f9fad02751b28f2e27441149d91006"
+    },
+    "assets/fonts/README.md": {
+      "bytes": 28993,
+      "sha256": "76a2ffd7716cb815996a0446f74a1861681e4d5deeaee4aa088fcaaebf34f99b",
+      "git_blob": "35dcc1fdae18e2e192625d71665c269b7e9e475e"
+    },
+    "assets/fonts/OFL.txt": {
+      "bytes": 4520,
+      "sha256": "22a8255ae2b234f8c98bdb0950659b1ac761e2427055011d42e5e02de6cdfe24",
+      "git_blob": "13bfb96544836366eb081a123b412f3ce4ba2cbf"
+    },
+    "assets/fonts/Noto-math-OFL.txt": {
+      "bytes": 4380,
+      "sha256": "403a95275b469061b7d4371c328e0ada3bc7d63328abe2e88aad5cd243b2fe21",
+      "git_blob": "8d0233915288c80e1d1ca9e164a76bdcae2ddc45"
+    },
+    "assets/fonts/Noto-sans-OFL.txt": {
+      "bytes": 4396,
+      "sha256": "cee9892f9f0cc8fe882c9e9537ee6a89621d86ee7ceaf70b02e2b2b1c25c061a",
+      "git_blob": "6843f31878c9945e1e71e1baa275546b4eefead8"
+    },
+    "assets/fonts/Noto-symbols-OFL.txt": {
+      "bytes": 4383,
+      "sha256": "b118dd41337806a5d4797052c77caf3bd096aed783e5eb21b4d11154351e1ac0",
+      "git_blob": "7c95767f5c669c448148e7e6c8fc4ee2c85128b1"
+    },
+    "assets/fonts/sources.json": {
+      "bytes": 9926,
+      "sha256": "412081e18b577bd7777d99d1de8bdb661ae8b08813512dedc26dc48628f83b4e",
+      "git_blob": "bc3eced1dc472eb2371bd75e08671b3929d1e948"
+    },
+    "assets/fonts/NewtReadingAtlas.json": {
+      "bytes": 148745,
+      "sha256": "07ce73fab52bab378d811690e367e213d3c9004e01bf34ffc12e91e307fbc773",
+      "git_blob": "8219a5f3693db10d06be379ac3706174a1f26f8e"
+    },
+    "assets/fonts/NewtReadingAtlasBold.json": {
+      "bytes": 124660,
+      "sha256": "2161d078dcd696b23907370fc65a046d2b04cd877605a56db02a3c548553a60e",
+      "git_blob": "9f627d510b6fafcbb91bf29e71d86a0046d21558"
+    },
+    "assets/fonts/NewtReadingAtlasItalic.json": {
+      "bytes": 120411,
+      "sha256": "292d5dbca4efb81a12269189a17b36ee5fca6571bda4ae0510ef5c6c638fb042",
+      "git_blob": "fe43ca5c5daf3271884dff8c4859cc7080f00f40"
+    },
+    "assets/fonts/NewtReadingAtlasBoldItalic.json": {
+      "bytes": 127480,
+      "sha256": "d2274585eb5762fb2faf5ca89e6d05ce4ee089123c40096b52089c990e5032a4",
+      "git_blob": "d2f810bb91058e128b34284c67733e25bfdb9661"
+    }
+  },
+  "arrays": [
+    {
+      "cpp": "kReaderBitmap",
+      "rust": "kReaderBitmap",
+      "type": "u8",
+      "count": 7515,
+      "record_bytes": 1,
+      "flash_bytes": 7515,
+      "values_sha256": "9b9e4c949d8c819cd610fce22eaa64dbb7388b0a8c11d2c7924e12c3603de469"
+    },
+    {
+      "cpp": "kReaderGlyphs",
+      "rust": "kReaderGlyphs",
+      "type": "AtlasGlyph",
+      "count": 95,
+      "record_bytes": 8,
+      "flash_bytes": 760,
+      "values_sha256": "8f3fdf60f51a24a6a002173a207ad30625a2a83a4b27996b8316cc26f92c42ea"
+    },
+    {
+      "cpp": "kReaderKerning",
+      "rust": "kReaderKerning",
+      "type": "AtlasKern",
+      "count": 899,
+      "record_bytes": 4,
+      "flash_bytes": 3596,
+      "values_sha256": "c9ebc8b8ce6318b5ffa5af30ea07f5779a1e28afc86a816b6482c833fbd0e60c"
+    },
+    {
+      "cpp": "kReaderExtraCodepoints",
+      "rust": "kReaderExtraCodepoints",
+      "type": "u16",
+      "count": 246,
+      "record_bytes": 2,
+      "flash_bytes": 492,
+      "values_sha256": "f02b8f7e281a56cd29a81f9b4707ae6e2d9936cf12cd0693ae5f87582cb11627"
+    },
+    {
+      "cpp": "kReaderExtraBitmap",
+      "rust": "kReaderExtraBitmap",
+      "type": "u8",
+      "count": 23598,
+      "record_bytes": 1,
+      "flash_bytes": 23598,
+      "values_sha256": "3c9466f955d68b3355d3290089c8df9da0b9e217437f1ee626dc849950c9619d"
+    },
+    {
+      "cpp": "kReaderExtraGlyphs",
+      "rust": "kReaderExtraGlyphs",
+      "type": "AtlasGlyph",
+      "count": 246,
+      "record_bytes": 8,
+      "flash_bytes": 1968,
+      "values_sha256": "14587af1e9b3ba62c5aee5debfdc96820f4fdde315c48740b1bc1666da320907"
+    },
+    {
+      "cpp": "kReaderKernClasses",
+      "rust": "kReaderKernClasses",
+      "type": "AtlasKernClasses",
+      "count": 341,
+      "record_bytes": 2,
+      "flash_bytes": 682,
+      "values_sha256": "904010dbf11dbc80f179df4425923f7e4a9432bfe25fe5fff9a57031fcde6f3e"
+    },
+    {
+      "cpp": "kReaderKernRows",
+      "rust": "kReaderKernRows",
+      "type": "u16",
+      "count": 98,
+      "record_bytes": 2,
+      "flash_bytes": 196,
+      "values_sha256": "da80ae53a3d6c966d5c11a9a537a790817b980d8b571440b769cde368788c5eb"
+    },
+    {
+      "cpp": "kReaderKernCols",
+      "rust": "kReaderKernCols",
+      "type": "u8",
+      "count": 982,
+      "record_bytes": 1,
+      "flash_bytes": 982,
+      "values_sha256": "6d3d07f450af6fd331a496513f2033313373624913891ffd2e06247bd1c6ea80"
+    },
+    {
+      "cpp": "kReaderKernValues",
+      "rust": "kReaderKernValues",
+      "type": "i8",
+      "count": 982,
+      "record_bytes": 1,
+      "flash_bytes": 982,
+      "values_sha256": "b4ccef967135bd99f59f9b840dfbafe9a6d2463da88171916c44226b905a01e6"
+    },
+    {
+      "cpp": "kReaderBoldBitmap",
+      "rust": "kReaderBoldBitmap",
+      "type": "u8",
+      "count": 8330,
+      "record_bytes": 1,
+      "flash_bytes": 8330,
+      "values_sha256": "478c70919aa4e91155e6e78d3acf61f3b2834ed8d66b976b5742e3e9c7e9a698"
+    },
+    {
+      "cpp": "kReaderBoldExtraBitmap",
+      "rust": "kReaderBoldExtraBitmap",
+      "type": "u8",
+      "count": 26569,
+      "record_bytes": 1,
+      "flash_bytes": 26569,
+      "values_sha256": "b6387e0e69ce097646a40af65f38650c88e22ca90dd510bcb38b0d79a26334d8"
+    },
+    {
+      "cpp": "kReaderBoldGlyphs",
+      "rust": "kReaderBoldGlyphs",
+      "type": "AtlasGlyph",
+      "count": 95,
+      "record_bytes": 8,
+      "flash_bytes": 760,
+      "values_sha256": "2e91f32a9acf9a2d8b6d6fca408617829571c71f11b4cf32cebb304cbdbad183"
+    },
+    {
+      "cpp": "kReaderBoldExtraGlyphs",
+      "rust": "kReaderBoldExtraGlyphs",
+      "type": "AtlasGlyph",
+      "count": 246,
+      "record_bytes": 8,
+      "flash_bytes": 1968,
+      "values_sha256": "cfe91842d87afb44dd5be4803a164372f6c2c2e77566fb6e5e6c981e30e2d54e"
+    },
+    {
+      "cpp": "kReaderItalicBitmap",
+      "rust": "kReaderItalicBitmap",
+      "type": "u8",
+      "count": 7973,
+      "record_bytes": 1,
+      "flash_bytes": 7973,
+      "values_sha256": "1f2a35ce2d84f3fd006c4f9af6d1c614869df3d4175f5ad39b6bde0370a5d005"
+    },
+    {
+      "cpp": "kReaderItalicExtraBitmap",
+      "rust": "kReaderItalicExtraBitmap",
+      "type": "u8",
+      "count": 24826,
+      "record_bytes": 1,
+      "flash_bytes": 24826,
+      "values_sha256": "7294f9f106bcd8139ff7baf8eff09e07539ee5412a1e859cb0864a48f24e9ab0"
+    },
+    {
+      "cpp": "kReaderItalicGlyphs",
+      "rust": "kReaderItalicGlyphs",
+      "type": "AtlasGlyph",
+      "count": 95,
+      "record_bytes": 8,
+      "flash_bytes": 760,
+      "values_sha256": "83608dad1c2d84c73e6842b79f4ac7771303c5c167a2b3cc0623547ad45ecc80"
+    },
+    {
+      "cpp": "kReaderItalicExtraGlyphs",
+      "rust": "kReaderItalicExtraGlyphs",
+      "type": "AtlasGlyph",
+      "count": 246,
+      "record_bytes": 8,
+      "flash_bytes": 1968,
+      "values_sha256": "03abbf82c1149ff1831e62d4603f73e70153abe2fc2f76e83dad8cb15990dfa2"
+    },
+    {
+      "cpp": "kReaderBoldItalicBitmap",
+      "rust": "kReaderBoldItalicBitmap",
+      "type": "u8",
+      "count": 8540,
+      "record_bytes": 1,
+      "flash_bytes": 8540,
+      "values_sha256": "c9e870006a7074f75b6d0808ddf02ff63959a6672eff6691cccf60628578355e"
+    },
+    {
+      "cpp": "kReaderBoldItalicExtraBitmap",
+      "rust": "kReaderBoldItalicExtraBitmap",
+      "type": "u8",
+      "count": 27764,
+      "record_bytes": 1,
+      "flash_bytes": 27764,
+      "values_sha256": "ebe4e3054407ccb84cf268532d9ec7ca15ce80832d6dc3233c63dc2e01b6d753"
+    },
+    {
+      "cpp": "kReaderBoldItalicGlyphs",
+      "rust": "kReaderBoldItalicGlyphs",
+      "type": "AtlasGlyph",
+      "count": 95,
+      "record_bytes": 8,
+      "flash_bytes": 760,
+      "values_sha256": "d6c8689c76a7960faabd9308ec90dd48cf40445b4b5d7436f42c33f792be3dbf"
+    },
+    {
+      "cpp": "kReaderBoldItalicExtraGlyphs",
+      "rust": "kReaderBoldItalicExtraGlyphs",
+      "type": "AtlasGlyph",
+      "count": 246,
+      "record_bytes": 8,
+      "flash_bytes": 1968,
+      "values_sha256": "a6267ac6c67cfa63176fd2daf4803183bbecb6a07e047f0174b112e52626528c"
+    },
+    {
+      "cpp": "kReaderStyleKernClasses",
+      "rust": "kReaderStyleKernClasses",
+      "type": "AtlasKernClasses",
+      "count": 341,
+      "record_bytes": 2,
+      "flash_bytes": 682,
+      "values_sha256": "c818a8c2fddfcd5abc527c33aba130348c35707ede1ef0a23ede89c8fecbf281"
+    },
+    {
+      "cpp": "kReaderBoldKernRows",
+      "rust": "kReaderBoldKernRows",
+      "type": "u16",
+      "count": 85,
+      "record_bytes": 2,
+      "flash_bytes": 170,
+      "values_sha256": "e41155aa7a16276c8e4fc4d84bc813c612f7d0b8d36972db560910a42c22ecac"
+    },
+    {
+      "cpp": "kReaderBoldKernCols",
+      "rust": "kReaderBoldKernCols",
+      "type": "u8",
+      "count": 944,
+      "record_bytes": 1,
+      "flash_bytes": 944,
+      "values_sha256": "115aaefeed7fb8ef23e1967614d85e2d033ddc83250954fb175a6d14667fe3b4"
+    },
+    {
+      "cpp": "kReaderBoldKernValues",
+      "rust": "kReaderBoldKernValues",
+      "type": "i8",
+      "count": 944,
+      "record_bytes": 1,
+      "flash_bytes": 944,
+      "values_sha256": "30d2c501e9299f9f29391ba444a88c2d00ba4ed8413fe07666bb6c1cf047b2ba"
+    },
+    {
+      "cpp": "kReaderItalicKernRows",
+      "rust": "kReaderItalicKernRows",
+      "type": "u16",
+      "count": 85,
+      "record_bytes": 2,
+      "flash_bytes": 170,
+      "values_sha256": "f0f61f5f5e6b354bfe476c153efc72895761ba8dbe74c68a7864c62ca557e348"
+    },
+    {
+      "cpp": "kReaderItalicKernCols",
+      "rust": "kReaderItalicKernCols",
+      "type": "u8",
+      "count": 943,
+      "record_bytes": 1,
+      "flash_bytes": 943,
+      "values_sha256": "3c955906bcd6549bd5f5038d0ecab4c3ff9d7626f387e3898e71926833e0e934"
+    },
+    {
+      "cpp": "kReaderItalicKernValues",
+      "rust": "kReaderItalicKernValues",
+      "type": "i8",
+      "count": 943,
+      "record_bytes": 1,
+      "flash_bytes": 943,
+      "values_sha256": "3117f91adbe46332f7ad0edfbbe030117093e26f624db8c0bf42283df1d8381d"
+    },
+    {
+      "cpp": "kReaderAddedCodepoints",
+      "rust": "kReaderAddedCodepoints",
+      "type": "u16",
+      "count": 1700,
+      "record_bytes": 2,
+      "flash_bytes": 3400,
+      "values_sha256": "25f0d94e7fa080f8e2fbf24a135de6bc8a7ea03e525fe45cfc1d1eb491c0be5b"
+    },
+    {
+      "cpp": "kReaderAddedBitmap",
+      "rust": "kReaderAddedBitmap",
+      "type": "u8",
+      "count": 502378,
+      "record_bytes": 1,
+      "flash_bytes": 502378,
+      "values_sha256": "072bd497a3caaf84cb3e63f7d6c69e6e9ed3ab9aa8b4f28eb7a1c282abb51553"
+    },
+    {
+      "cpp": "kAddedRegularGlyphs",
+      "rust": "kAddedRegularGlyphs",
+      "type": "AtlasGlyph",
+      "count": 1700,
+      "record_bytes": 8,
+      "flash_bytes": 13600,
+      "values_sha256": "1d75b972356f46215a70b19c32b2ccabc77b16e56240525d250e6d9c0c9502ff"
+    },
+    {
+      "cpp": "kAddedRegularOffsets",
+      "rust": "kAddedRegularOffsets",
+      "type": "u32",
+      "count": 1700,
+      "record_bytes": 4,
+      "flash_bytes": 6800,
+      "values_sha256": "4201698dfcf82623f370ae69b067ed6044119735874181058dcf1ff94a04f512"
+    },
+    {
+      "cpp": "kAddedRegularClasses",
+      "rust": "kAddedRegularClasses",
+      "type": "AddedKernClasses",
+      "count": 2041,
+      "record_bytes": 4,
+      "flash_bytes": 8164,
+      "values_sha256": "02e2fcc6f59ecd9e21356223adbfce65b341e5f71926d87216befa1b5775e13a"
+    },
+    {
+      "cpp": "kAddedRegularRows",
+      "rust": "kAddedRegularRows",
+      "type": "u16",
+      "count": 168,
+      "record_bytes": 2,
+      "flash_bytes": 336,
+      "values_sha256": "c51ca417e691510de96fa7bdbdcd670d01fd311e3ae7c300330a8257de3911d7"
+    },
+    {
+      "cpp": "kAddedRegularCols",
+      "rust": "kAddedRegularCols",
+      "type": "u16",
+      "count": 1416,
+      "record_bytes": 2,
+      "flash_bytes": 2832,
+      "values_sha256": "9908e28e503d65b7b682d4db4bcbf45e0dc9e43cde616de5fdc5eb8da9fe7d4c"
+    },
+    {
+      "cpp": "kAddedRegularValues",
+      "rust": "kAddedRegularValues",
+      "type": "i8",
+      "count": 1416,
+      "record_bytes": 1,
+      "flash_bytes": 1416,
+      "values_sha256": "23f01a3eeb00077e6d078b12c2e56ff5e000d701337eb45a0d9aa4a3e952cf0f"
+    },
+    {
+      "cpp": "kAddedBoldGlyphs",
+      "rust": "kAddedBoldGlyphs",
+      "type": "AtlasGlyph",
+      "count": 1700,
+      "record_bytes": 8,
+      "flash_bytes": 13600,
+      "values_sha256": "7b6ae83230f41c585499dc47293232fee47fda58cba25f1e834a25ed64a503ba"
+    },
+    {
+      "cpp": "kAddedBoldOffsets",
+      "rust": "kAddedBoldOffsets",
+      "type": "u32",
+      "count": 1700,
+      "record_bytes": 4,
+      "flash_bytes": 6800,
+      "values_sha256": "7c6b349d96dd855cdaf12eca57b527617ddf50dfb72bde93611809a33a89fa49"
+    },
+    {
+      "cpp": "kAddedBoldClasses",
+      "rust": "kAddedBoldClasses",
+      "type": "AddedKernClasses",
+      "count": 2041,
+      "record_bytes": 4,
+      "flash_bytes": 8164,
+      "values_sha256": "100d4377f1f9b84a3d82c9854aabba1ad129e756e09989269279cf5803621bce"
+    },
+    {
+      "cpp": "kAddedBoldRows",
+      "rust": "kAddedBoldRows",
+      "type": "u16",
+      "count": 169,
+      "record_bytes": 2,
+      "flash_bytes": 338,
+      "values_sha256": "b8ca60c837e1a856f563c74ac90e3ecf9f1a32e2040e1aa46b97d00ef1e69fa8"
+    },
+    {
+      "cpp": "kAddedBoldCols",
+      "rust": "kAddedBoldCols",
+      "type": "u16",
+      "count": 1427,
+      "record_bytes": 2,
+      "flash_bytes": 2854,
+      "values_sha256": "fa413fc5c6159e9d643312e26ee675c6756f142ca0024159468e427466462bbb"
+    },
+    {
+      "cpp": "kAddedBoldValues",
+      "rust": "kAddedBoldValues",
+      "type": "i8",
+      "count": 1427,
+      "record_bytes": 1,
+      "flash_bytes": 1427,
+      "values_sha256": "b8c02a1f3619753a13e896bc702552c3e4402b3b795df63d0219df0ae833307b"
+    },
+    {
+      "cpp": "kAddedItalicGlyphs",
+      "rust": "kAddedItalicGlyphs",
+      "type": "AtlasGlyph",
+      "count": 1700,
+      "record_bytes": 8,
+      "flash_bytes": 13600,
+      "values_sha256": "2f5281f9a12f07e7629b7acc4e5650c25f5883f3ea92e858fecac75489be3a28"
+    },
+    {
+      "cpp": "kAddedItalicOffsets",
+      "rust": "kAddedItalicOffsets",
+      "type": "u32",
+      "count": 1700,
+      "record_bytes": 4,
+      "flash_bytes": 6800,
+      "values_sha256": "01f7e577e1ac0d24cd4590bd3e9d423be3e18f104f409ba3d6a745f028e0ac77"
+    },
+    {
+      "cpp": "kAddedItalicClasses",
+      "rust": "kAddedItalicClasses",
+      "type": "AddedKernClasses",
+      "count": 2041,
+      "record_bytes": 4,
+      "flash_bytes": 8164,
+      "values_sha256": "662b7fcb78485e751ef47bf48b254402b060c767bb3ba98c96d951d4eddd7ef6"
+    },
+    {
+      "cpp": "kAddedItalicRows",
+      "rust": "kAddedItalicRows",
+      "type": "u16",
+      "count": 169,
+      "record_bytes": 2,
+      "flash_bytes": 338,
+      "values_sha256": "64f48015367a9650d2b85604e9ac2a127eea35191b5f762ea05a1193f31677e5"
+    },
+    {
+      "cpp": "kAddedItalicCols",
+      "rust": "kAddedItalicCols",
+      "type": "u16",
+      "count": 1482,
+      "record_bytes": 2,
+      "flash_bytes": 2964,
+      "values_sha256": "a2c7a4af7f17d71362423d777202f7e68f78bb310dee11780604071e3de91597"
+    },
+    {
+      "cpp": "kAddedItalicValues",
+      "rust": "kAddedItalicValues",
+      "type": "i8",
+      "count": 1482,
+      "record_bytes": 1,
+      "flash_bytes": 1482,
+      "values_sha256": "f47e5cae94cd3ceb8358bf1c1b7301beb4e23cc3ab939e9a776df90833c43f7a"
+    },
+    {
+      "cpp": "kAddedBoldItalicGlyphs",
+      "rust": "kAddedBoldItalicGlyphs",
+      "type": "AtlasGlyph",
+      "count": 1700,
+      "record_bytes": 8,
+      "flash_bytes": 13600,
+      "values_sha256": "eaf659a95cf31cd19b8db65d3004c688367f797370878fc871de988b97687483"
+    },
+    {
+      "cpp": "kAddedBoldItalicOffsets",
+      "rust": "kAddedBoldItalicOffsets",
+      "type": "u32",
+      "count": 1700,
+      "record_bytes": 4,
+      "flash_bytes": 6800,
+      "values_sha256": "4400b511d7ecce0b26ab92fee106e6f27f1b972c7b40b20814e0382086da44de"
+    },
+    {
+      "cpp": "kAddedBoldItalicClasses",
+      "rust": "kAddedBoldItalicClasses",
+      "type": "AddedKernClasses",
+      "count": 2041,
+      "record_bytes": 4,
+      "flash_bytes": 8164,
+      "values_sha256": "662b7fcb78485e751ef47bf48b254402b060c767bb3ba98c96d951d4eddd7ef6"
+    },
+    {
+      "cpp": "kAddedBoldItalicRows",
+      "rust": "kAddedBoldItalicRows",
+      "type": "u16",
+      "count": 169,
+      "record_bytes": 2,
+      "flash_bytes": 338,
+      "values_sha256": "9241f7ef8e2876cf50355901e7c2e055a48c10f18f38504954228bdd5367caf9"
+    },
+    {
+      "cpp": "kAddedBoldItalicCols",
+      "rust": "kAddedBoldItalicCols",
+      "type": "u16",
+      "count": 1486,
+      "record_bytes": 2,
+      "flash_bytes": 2972,
+      "values_sha256": "7f01f404c5a30dddf127be9a39b03dd49fc69580d89300ce883bf283b3357498"
+    },
+    {
+      "cpp": "kAddedBoldItalicValues",
+      "rust": "kAddedBoldItalicValues",
+      "type": "i8",
+      "count": 1486,
+      "record_bytes": 1,
+      "flash_bytes": 1486,
+      "values_sha256": "a92a4e518e97887fa89a429b9295d615071a39beada5e3996b1bc9e2996be38e"
+    }
+  ],
+  "data_rs_sha256": "7a7de96c0e1f7340cfaab2b57c1af5da436981d27216dc7dc6a0a88b97217cfa",
+  "determinism": "two in-memory conversions byte-identical; not a runtime test",
+  "flash_table_bytes": 788406,
+  "shared_classes": {
+    "canonical": "kAddedItalicClasses",
+    "alias": "kAddedBoldItalicClasses",
+    "elements": 2041,
+    "saved_bytes": 8164
+  },
+  "atlas_input": {
+    "path": "source/reader_font_data.inc.zlib",
+    "encoding": "zlib",
+    "sha256": "d06c02a0d9fddb7c3ea78ef4e1fa15d03538c3e9c54185f87491567a9bd022bc"
+  }
+}

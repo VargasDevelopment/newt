@@ -1,0 +1,31 @@
+{
+  "status": "canonical scoped owner harness; execution status belongs to receipts",
+  "canonical_identity_supplied_by_root": "3b9b42d3",
+  "license": "MIT",
+  "policy_source_unchanged": true,
+  "production_patch_files": [
+    "rust/salamander/nvs_guard/exports.rs",
+    "rust/salamander/nvs_guard/integration.h",
+    "rust/salamander/nvs_guard/sdk_glue.cpp"
+  ],
+  "retained_inputs_sha256": {
+    "LICENSE": "6ae1f762295ed73a4694bc0ad106735ad42c0ad5ff5c57573d70b73476862ec5"
+  },
+  "preparation_checks_performed": [
+    "Python AST parse of recipe.py",
+    "system rustfmt --check --edition 2024 on five Rust source files",
+    "byte comparison of unchanged policy copies",
+    "SHA256 and LOC metadata"
+  ],
+  "proposed_host_scenarios": 41,
+  "proposed_ownership_controls": 2,
+  "policy_controls_reused_separately": 20,
+  "policy_units_reused_separately": 9,
+  "firmware": false,
+  "hardware": false,
+  "target_kernel_implementation_audited": false,
+  "target_concurrency_exercised": false,
+  "new_dependencies": false,
+  "live_hash_role": "actual source_inventory outputs from parent seal; not required expected inputs",
+  "packet_sha256": {}
+}

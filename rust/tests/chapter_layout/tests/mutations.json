@@ -1,0 +1,122 @@
+[
+  {
+    "id": "feed-zero",
+    "path": "core/session.rs",
+    "old": "feeds < max_feeds",
+    "new": "feeds <= max_feeds",
+    "witness": "producer-zero",
+    "family": "layout"
+  },
+  {
+    "id": "skip-finish",
+    "path": "core/session.rs",
+    "old": "            let finished = self.stream.with_source(|source, parser|\n                operation(source, parser, engine, LayoutOperation::Finish));",
+    "new": "            let finished = true;",
+    "witness": "single",
+    "family": "layout"
+  },
+  {
+    "id": "hyphen-miss",
+    "path": "core/engine.rs",
+    "old": "if n == 0 {\n            return 0;\n        }",
+    "new": "if n == 0 {\n            // mutant: still measure the impossible opportunity\n        }",
+    "witness": "hyphenation-miss",
+    "family": "layout"
+  },
+  {
+    "id": "wrapper-stale-eof",
+    "path": "core/xml_session.rs",
+    "old": "*end = self.stream.finished;",
+    "new": "let _ = end; // mutant: leave stale caller EOF",
+    "witness": "fresh-eof-reset",
+    "family": "xml"
+  },
+  {
+    "id": "attribute-copy-budget",
+    "path": "core/session.rs",
+    "old": "impl Handler for OperationHandler<'_, '_, '_> {\n    fn start_element(&mut self, n: &[u8], atts: &mut dyn Attributes) {\n        self.engine.start(self.backend, n,",
+    "new": "impl Handler for OperationHandler<'_, '_, '_> {\n    fn start_element(&mut self, n: &[u8], atts: &mut dyn Attributes) {\n        while let Some((_, value)) = atts.next() {\n            if value.len() > 65536 { self.engine.failed = true; return; }\n        }\n        self.engine.start(self.backend, n,",
+    "witness": "large-suppressed-attribute",
+    "family": "layout"
+  },
+  {
+    "id": "collector-unused-href-budget",
+    "path": "core/images.rs",
+    "old": "        let Some(src) = atts.local(b\"src\").or_else(|| atts.local(b\"href\")) else {",
+    "new": "        if atts.local(b\"href\").is_some_and(|v| v.len() > 65536) { return; }\n        let Some(src) = atts.local(b\"src\").or_else(|| atts.local(b\"href\")) else {",
+    "witness": "large-unused-image-href",
+    "family": "layout"
+  },
+  {
+    "id": "cached-unknown-reprobe",
+    "path": "core/images.rs",
+    "old": "            p.info\n        } else {",
+    "new": "            if p.info.kind == Kind::Unknown {\n                let e = catalog.find(path)?; self.probe_entry(&e)\n            } else { p.info }\n        } else {",
+    "witness": "image-unknown",
+    "family": "layout"
+  },
+  {
+    "id": "producer-cancel-suppressed",
+    "path": "core/xml_session.rs",
+    "old": "        self.0.cancelled()",
+    "new": "        false",
+    "witness": "cancel-0",
+    "family": "xml"
+  },
+  {
+    "id": "producer-pending-unbounded",
+    "path": "core/xml_session.rs",
+    "old": "consumed <= count && count - consumed <= 4096 && next <= 4096 - (count - consumed)",
+    "new": "consumed <= count && count - consumed <= 8192 && next <= 8192 - (count - consumed)",
+    "witness": "pending-attribute",
+    "family": "xml"
+  },
+  {
+    "id": "margin-root-scale",
+    "path": "core/engine.rs",
+    "old": "u32::from(self.state().size) * d.margin_left_pct as u32 / 100",
+    "new": "100 * d.margin_left_pct as u32 / 100",
+    "witness": "inline-margin",
+    "family": "layout"
+  },
+  {
+    "id": "focus-cross-ligature",
+    "path": "core/engine.rs",
+    "old": "if self.params.focus && (self.storage.levels[pos] ^ self.storage.levels[*i]) & 64 != 0 {",
+    "new": "if false && self.params.focus && (self.storage.levels[pos] ^ self.storage.levels[*i]) & 64 != 0 {",
+    "witness": "focus",
+    "family": "layout"
+  },
+  {
+    "id": "soft-hyphen-lost",
+    "path": "core/engine.rs",
+    "old": "self.last_shy = cp == 0xad;",
+    "new": "self.last_shy = false;",
+    "witness": "soft-hyphen",
+    "family": "layout"
+  },
+  {
+    "id": "compressed-cjk-stretch",
+    "path": "core/engine.rs",
+    "old": "} else if prev != 0 && cjk(prev) && cjk(cp) && compression(prev, cp, 2) == 0 {",
+    "new": "} else if prev != 0 && cjk(prev) && cjk(cp) {",
+    "witness": "compressed-cjk-justification",
+    "family": "layout"
+  },
+  {
+    "id": "lam-uncovered-consume",
+    "path": "core/arabic.rs",
+    "old": "if lig != 0 && font.covers(lig) {",
+    "new": "if lig != 0 && { let _ = &font; true } {",
+    "witness": "arabic-uncovered",
+    "family": "layout"
+  },
+  {
+    "id": "char-anchor-byte-count",
+    "path": "core/engine.rs",
+    "old": ".wrapping_add(count(&self.storage.text[..r.start]))",
+    "new": ".wrapping_add(r.start as u32)",
+    "witness": "multibyte-locators",
+    "family": "layout"
+  }
+]
