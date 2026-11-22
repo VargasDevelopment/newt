@@ -7,6 +7,10 @@
 
 <p align="center">Firmware for the Xteink X3 e-reader.</p>
 
+<p align="center">
+  <img src="docs/photo-desk-sleep.jpg" alt="An X3 running Newt asleep on a desk beside a notebook and a mug" width="720">
+</p>
+
 Newt is a calm, offline-first reader for your X3. It installs into the X3's
 spare app slot, so the firmware you run today stays on the device, and
 Newt's Settings can restart into it.
@@ -15,14 +19,19 @@ Newt is early alpha software. Expect rough edges, and please
 [report what you find](https://github.com/VargasDevelopment/newt/issues).
 
 <p align="center">
-  <img src="docs/screen-home.png" alt="Home: Pride and Prejudice, 48% read, with Books, Apps and Settings" width="160">
-  <img src="docs/screen-books.png" alt="Books: four public-domain books with their covers" width="160">
-  <img src="docs/screen-reader.png" alt="A page of Pride and Prejudice in the reader" width="160">
-  <img src="docs/screen-settings.png" alt="Settings" width="160">
-  <img src="docs/screen-sleep.png" alt="The sleep screen with the book's title and progress" width="160">
+  <img src="docs/photo-hand-sleep.jpg" alt="A hand beside the X3 on Newt's sleep screen" height="240">
+  <img src="docs/photo-reading.jpg" alt="A finger on the X3's page button while reading" height="240">
+  <img src="docs/photo-desk-reading.jpg" alt="The X3 open to a book on a desk" height="240">
 </p>
 
-<p align="center"><sub>Home, Books, the reader, Settings and the sleep screen, rendered from the real firmware by the host preview. Books and covers are from <a href="https://standardebooks.org">Standard Ebooks</a>' U.S. public-domain editions; the sleep screen has Book progress on.</sub></p>
+<p align="center">
+  <img src="docs/photo-home.jpg" alt="Home, held in hand: the book being read, with Books, Apps and Settings" width="200">
+  <img src="docs/photo-books.jpg" alt="Books: a grid of covers" width="200">
+  <img src="docs/photo-reading-settings.jpg" alt="Reading settings over a page: orientation, slim progress bar and full refresh" width="200">
+  <img src="docs/photo-whats-new.jpg" alt="What's new after an update" width="200">
+</p>
+
+<p align="center"><sub>Home, Books, Reading settings and What's new on an X3.</sub></p>
 
 ## What works today
 
@@ -45,6 +54,18 @@ Newt is early alpha software. Expect rough edges, and please
   water break.
 
 Reading never needs a network. Wi-Fi is used only for updates.
+
+## Screens
+
+<p align="center">
+  <img src="docs/screen-home.png" alt="Home: Pride and Prejudice, 48% read, with Books, Apps and Settings" width="160">
+  <img src="docs/screen-books.png" alt="Books: four public-domain books with their covers" width="160">
+  <img src="docs/screen-reader.png" alt="A page of Pride and Prejudice in the reader" width="160">
+  <img src="docs/screen-settings.png" alt="Settings" width="160">
+  <img src="docs/screen-sleep.png" alt="The sleep screen with the book's title and progress" width="160">
+</p>
+
+<p align="center"><sub>Home, Books, the reader, Settings and the sleep screen, rendered from the real firmware by the host preview. Books and covers are from <a href="https://standardebooks.org">Standard Ebooks</a>' U.S. public-domain editions; the sleep screen has Book progress on.</sub></p>
 
 ## Device support
 
