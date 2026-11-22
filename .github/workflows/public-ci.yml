@@ -87,7 +87,7 @@ jobs:
           mkdir -p "$UV_TOOL_BIN_DIR"
           unzip -p "$wheel" uv-0.12.21.data/scripts/uv > "$UV_TOOL_BIN_DIR/uv"
           chmod 755 "$UV_TOOL_BIN_DIR/uv"
-          test "$("$UV_TOOL_BIN_DIR/uv" --no-config --version)" = 'uv 0.12.21'
+          test "$("$UV_TOOL_BIN_DIR/uv" --no-config --version)" = 'uv 0.12.21 (x86_64-unknown-linux-gnu)'
           echo "$UV_TOOL_BIN_DIR" >> "$GITHUB_PATH"
       - name: Exact managed Python and real runtime checks
         shell: bash
