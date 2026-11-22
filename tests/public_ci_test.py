@@ -64,7 +64,8 @@ class PublicWorkflow(unittest.TestCase):
         self.assertNotIn('pull_request_target', self.text)
         self.assertEqual(self.workflow['permissions'], {'contents': 'read'})
         self.assertEqual(list(self.workflow['jobs']), ['check', 'gate', 'release-tag', 'nightly'])
-        tokens = ('Tag the release if this run checked it', 'Push the nightly tag and publish its pre-release')
+        tokens = ('Tag the release if this run checked it', "Stamp main's tip with the nightly version",
+                  'Push the nightly tag and publish its pre-release')
         for name, job in self.workflow['jobs'].items():
             self.assertEqual(job['runs-on'], 'ubuntu-24.04', name)
             self.assertEqual('permissions' in job, name in ('release-tag', 'nightly'), name)
@@ -254,7 +255,8 @@ class PublicWorkflow(unittest.TestCase):
         jobs = self.workflow['jobs']
         job = jobs['nightly']
         self.assertEqual(job['needs'], 'gate')
-        self.assertEqual(job['concurrency'], {'group': 'nightly', 'cancel-in-progress': 'false'})
+        # Every queued run waits its turn: a later-queued stale run never replaces the current one.
+        self.assertEqual(job['concurrency'], {'group': 'nightly', 'cancel-in-progress': 'false', 'queue': 'max'})
         base = {'repository': 'VargasDevelopment/newt', 'ref': 'refs/heads/main', 'actor': 'VargasDevelopment',
                 'cancelled': False, **where(PUBLIC, 'push')}
         self.assertFalse(trust_expression(job['if'])({**base, 'success': False}))  # never without a passed gate
@@ -275,17 +277,19 @@ class PublicWorkflow(unittest.TestCase):
         # Only a manual run forces a nightly with no image change.
         run = steps["Stamp main's tip with the nightly version"]['run']
         self.assertIn('if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then force=(--force); fi', run)
-        self.assertIn('python3 -B tools/nightly.py stamp "${force[@]}" >> "$GITHUB_OUTPUT"', run)
+        self.assertIn('python3 -B tools/nightly.py stamp --repository "$GITHUB_REPOSITORY" "${force[@]}" >> '
+                      '"$GITHUB_OUTPUT"', run)
         # The one firmware build exactly as the gate's native part makes it, then the checked publish.
         build = steps['Build the stamped commit as a release is built']['run'].splitlines()
         python = Path(sys.executable)
         self.assertEqual([command for _, command in ci_gate.commands(ROOT, python, 'push', 'native')],
                          [[str(python), flag, str(ROOT / script), *rest] for _, flag, script, *rest in map(str.split, build)])
+        # The stamp reads releases; the publish pushes the tag itself, after every check.
+        self.assertEqual(steps["Stamp main's tip with the nightly version"]['env']['GH_TOKEN'], '${{ github.token }}')
         publish = steps['Push the nightly tag and publish its pre-release']
-        self.assertEqual(publish['env']['GH_TOKEN'], '${{ github.token }}')
-        self.assertEqual(publish['run'].splitlines()[-2:], [
-            'git push --no-follow-tags origin "refs/tags/v$VERSION:refs/tags/v$VERSION"',
-            'python3 -B tools/release_publish.py --prerelease --publish'])
+        self.assertEqual(publish['env'], {'GH_TOKEN': '${{ github.token }}'})
+        self.assertEqual(publish['run'].splitlines()[-1], 'python3 -B tools/release_publish.py --prerelease --publish')
+        self.assertNotIn('git push', publish['run'])
         for name in names[stamp + 1:]:
             self.assertEqual(steps[name]['if'], "steps.stamp.outputs.version != ''", name)
 

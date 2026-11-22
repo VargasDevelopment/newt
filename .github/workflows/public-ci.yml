@@ -291,7 +291,8 @@ jobs:
   # run's gate passed on main: stamp main's tip with the nightly version, build
   # it as a release is built and publish it as a GitHub pre-release, which only
   # devices with Test builds on read. A push that changes nothing the image is
-  # built from since the last nightly publishes none; a manual run always does.
+  # built from since the last published nightly publishes none; a manual run
+  # always does. A run whose commit is no longer main's tip publishes nothing.
   nightly:
     needs: gate
     if: >-
@@ -301,12 +302,16 @@ jobs:
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
     timeout-minutes: 120
-    # One at a time, so two nightlies never take the same number.
+    # One at a time, so two nightlies never take the same number. Every queued
+    # run waits its turn (queue: max) instead of a later-queued, possibly stale
+    # run replacing the pending one; each stale run then skips at its tip check.
     concurrency:
       group: nightly
       cancel-in-progress: false
+      queue: max
     permissions:
       contents: write # It pushes exactly one nightly tag and publishes its pre-release.
+    # Only the stamp step (release reads) and the publish step get the token; the build never does.
     env:
       EXPECTED_COMMIT: ${{ github.sha }}
       NEWT_RUST_ACQUISITION_APPROVED: ${{ vars.NEWT_RUST_ACQUISITION_APPROVED }}
@@ -411,6 +416,7 @@ jobs:
         id: stamp
         shell: bash
         env:
+          GH_TOKEN: ${{ github.token }}
           GIT_AUTHOR_NAME: github-actions[bot]
           GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
           GIT_COMMITTER_NAME: github-actions[bot]
@@ -419,22 +425,22 @@ jobs:
           set -euo pipefail
           force=()
           if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then force=(--force); fi
-          python3 -B tools/nightly.py stamp "${force[@]}" >> "$GITHUB_OUTPUT"
+          python3 -B tools/nightly.py stamp --repository "$GITHUB_REPOSITORY" "${force[@]}" >> "$GITHUB_OUTPUT"
       - name: Build the stamped commit as a release is built
         if: steps.stamp.outputs.version != ''
         run: |
           python3 -B tools/firmware-build.py --clean
           python3 -B tools/firmware-build.py --clean --health-report
+      # release_publish.py makes every check, rechecks main's tip, then pushes the
+      # one tag and publishes; it publishes nothing if main has moved on.
       - name: Push the nightly tag and publish its pre-release
         if: steps.stamp.outputs.version != ''
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.stamp.outputs.version }}
         # As in the release-tag job, Git gets the token from gh in this step only.
         run: |
           set -euo pipefail
           export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= \
             GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1='!gh auth git-credential'
-          git push --no-follow-tags origin "refs/tags/v$VERSION:refs/tags/v$VERSION"
           python3 -B tools/release_publish.py --prerelease --publish

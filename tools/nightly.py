@@ -8,18 +8,21 @@ ever carries it. The job then builds the stamped commit like any release, pushes
 the tag and publishes the build as a GitHub pre-release with
 release_publish.py --prerelease.
 
-The version is <next>-dev.YYYYMMDD.N. <next> is the patch after the main
-commit's own release, so the next release outranks every nightly built on it;
-YYYYMMDD is the UTC day; N counts that day's nightly tags for <next>. Devices
-hold at most 23 characters of a version, so a longer one is refused. A push
-that changes nothing the image is built from since the last nightly gets none.
+The version is <next>-dev.YYYYMMDD.N. <next> is the patch after the core of the
+main commit's own version (0.2.1-rc.1 gives 0.2.2); YYYYMMDD is the UTC day; N
+follows every nightly tag of <next> that day, published or not. Devices hold at
+most 23 characters of a version, so a longer one is refused. A push that changes
+nothing the image is built from since the last published nightly gets none; a
+tag with no published release (none, or only a draft) never counts as one.
 
-  nightly.py stamp            (CI's nightly job; prints version=VERSION, empty when skipped)
-  nightly.py stamp --force    (a manual run: stamp even with no image change)
+  nightly.py stamp --repository OWNER/NAME [--force]
+      (CI's nightly job; prints version=VERSION, empty when skipped; --force for a manual run)
 """
 import argparse
 from datetime import datetime, timezone
+import json
 import re
+import shlex
 import subprocess
 import sys
 
@@ -33,13 +36,15 @@ CONFIG = '.cz.toml'
 VERSION_LINES = {CONFIG: ('version = "', '"'), VERSION_HEADER: ('#define NEWT_FIRMWARE_VERSION "', '"')}
 # Paths the image is never built from; a change anywhere else builds a new nightly.
 NOT_IMAGE = ('.github/', 'docs/', 'installer/', 'tests/', 'rust/tests/', 'rust/host/')
+# The firmware toolchain locks live under docs/ but choose what builds the image.
+IMAGE_DOCS = re.compile(r'docs/toolchain-[^/]+\.(?:json|lock)')
 TAG = re.compile(r'v([0-9]+)\.([0-9]+)\.([0-9]+)-dev\.([0-9]{8})\.([1-9][0-9]*)')
 
 
 def next_release(release):
-    """The patch after a stable release, which every nightly built on it sorts below."""
-    found = re.fullmatch(r'([0-9]+)\.([0-9]+)\.([0-9]+)', release)
-    require(found is not None, f'Nightlies build on a stable release; this commit is {release}')
+    """The patch after a version's core, which every nightly built on it sorts below."""
+    found = re.fullmatch(r'([0-9]+)\.([0-9]+)\.([0-9]+)(?:-[0-9A-Za-z.-]+)?', release)
+    require(found is not None, f'{release} is not a release version')
     major, minor, patch = map(int, found.groups())
     return f'{major}.{minor}.{patch + 1}'
 
@@ -97,24 +102,62 @@ def stamp_source(root, commit):
     return source if nightly and sorted(changed) == sorted(VERSION_LINES) and same else None
 
 
+def published(repository, tag, answer=None):
+    """The tag's published release, or None when GitHub answers 404: no release, or only a draft,
+    which this endpoint never shows. Any other answer, or none at all, raises, so a failed read
+    never passes for "not published". `answer` runs gh (tests give gh-shaped answers)."""
+    command = ['gh', 'api', '--include', f'repos/{repository}/releases/tags/{tag}']
+    reply = (answer or (lambda command: subprocess.run(command, capture_output=True)))(command)
+    found = re.match(rb'HTTP/\S+ ([0-9]{3})[^\n]*\n.*?\r?\n\r?\n(.*)\Z', reply.stdout, re.DOTALL)
+    status = int(found[1]) if found else None
+    if status == 404:
+        return None
+    require(status == 200 and reply.returncode == 0,
+            f'{shlex.join(command)} failed (HTTP {status}): {reply.stderr.decode().strip()}')
+    release = json.loads(found[2])
+    require(release.get('tag_name') == tag, f'GitHub answered {tag} with release {release.get("tag_name")}')
+    return None if release.get('draft') is not False else release
+
+
+def push_tag(root, tag, source):
+    """Pushes a nightly's tag, its one irreversible step, after every check; returns False instead
+    when origin's main has moved on from `source`, the stamped commit (its own run publishes). Main's
+    tip being `source` also means its declared version is the one stamped."""
+    if git_output(root, 'ls-remote', 'origin', 'refs/heads/main').split('\t')[0] != source:
+        return False
+    git_output(root, 'push', '--no-follow-tags', 'origin', f'refs/tags/{tag}:refs/tags/{tag}')
+    return True
+
+
+def notes(repository, main, subject, release):
+    """A nightly's notes above its identity: what it is and the main commit it builds."""
+    return ('## Test build\n\n'
+            'A nightly build of main for devices with Test builds on. It has had no bench or hardware check.\n\n'
+            f'- Built from: {subject} ({main})\n'
+            f'- Changes since {release}: https://github.com/{repository}/compare/v{release}...{main}\n')
+
+
 def image_changes(root, since, head):
     """Paths changed from `since` to `head` that the image may be built from."""
     changed = git_output(root, 'diff', '--name-only', since, head).splitlines()
-    return [path for path in changed if not path.startswith(NOT_IMAGE) and not ('/' not in path and path.endswith('.md'))]
+    return [path for path in changed if IMAGE_DOCS.fullmatch(path) or not (
+        path.startswith(NOT_IMAGE) or ('/' not in path and path.endswith('.md')))]
 
 
-def last_source(root, tags):
-    """The main commit the newest nightly tag stamps, or None."""
-    newest = nightly_tags(tags)[-1:]
-    if not newest:
-        return None
-    major, minor, patch, day, n = newest[0]
-    return stamp_source(root, resolve_commit(root, f'refs/tags/v{major}.{minor}.{patch}-dev.{day:08d}.{n}'))
+def last_source(root, tags, published):
+    """The main commit the newest published nightly stamps, or None. Only a release GitHub shows
+    published for the tag counts: a tag whose publish failed must not suppress the next nightly."""
+    for major, minor, patch, day, n in reversed(nightly_tags(tags)):
+        tag = f'v{major}.{minor}.{patch}-dev.{day:08d}.{n}'
+        if published(tag) is not None:
+            return stamp_source(root, resolve_commit(root, 'refs/tags/' + tag))
+    return None
 
 
-def stamp(root=ROOT, today=None, force=False):
-    """Commits and tags the nightly of HEAD, main's tip; returns its version, or None when the image
-    has not changed since the last nightly."""
+def stamp(published, root=ROOT, today=None, force=False):
+    """Commits and tags the nightly of HEAD, main's tip; returns its version, or None when main has
+    moved on or the image has not changed since the last published nightly. `published(tag)` reads
+    GitHub."""
     head = resolve_commit(root, 'HEAD')
     live = git_output(root, 'ls-remote', 'origin', 'refs/heads/main').split('\t')[0]
     if live != head:
@@ -122,9 +165,10 @@ def stamp(root=ROOT, today=None, force=False):
         return None
     require(resolve_commit(root, DESTINATION) == head, 'origin/main here is not origin\'s main: git fetch origin')
     tags = git_output(root, 'tag', '--list', 'v*-dev.*').split()
-    since = last_source(root, tags)
-    if not force and since is not None and is_ancestor(root, since, head) and not image_changes(root, since, head):
-        print(f'No nightly: nothing the image is built from changed since the last one ({since})', file=sys.stderr)
+    since = None if force else last_source(root, tags, published)
+    if since is not None and is_ancestor(root, since, head) and not image_changes(root, since, head):
+        print(f'No nightly: nothing the image is built from changed since the last published one ({since})',
+              file=sys.stderr)
         return None
     day = (today or datetime.now(timezone.utc)).strftime('%Y%m%d')
     version = nightly_version(committed_release(root, head)[0], day, tags)
@@ -141,11 +185,13 @@ def stamp(root=ROOT, today=None, force=False):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     commands = parser.add_subparsers(dest='command', required=True)
-    commands.add_parser('stamp', help="stamp main's tip").add_argument(
-        '--force', action='store_true', help='stamp even when the image has not changed since the last nightly')
+    command = commands.add_parser('stamp', help="stamp main's tip")
+    command.add_argument('--repository', required=True, help='where nightlies are published (OWNER/NAME)')
+    command.add_argument('--force', action='store_true',
+                         help='stamp even when the image has not changed since the last published nightly')
     args = parser.parse_args(argv)
     try:
-        version = stamp(force=args.force)
+        version = stamp(lambda tag: published(args.repository, tag), force=args.force)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         print(f'Nightly stopped: {error}', file=sys.stderr)
         return 1

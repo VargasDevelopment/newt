@@ -416,19 +416,23 @@ pre-releases. A nightly has had no bench or hardware check.
 **When.** Public CI's `nightly` job runs after the `gate` job passes on an
 owner push to `main`, and by hand (Actions, "Public CI", Run workflow on
 `main`). A push builds a nightly only when something the image is built from
-changed since the last one: a change only to `.github/`, `docs/`,
-`installer/`, `tests/`, `rust/tests/`, `rust/host/` or a top-level `*.md`
-gets none. A manual run always builds one. If `main` has moved on by the time
-the job starts, it builds nothing; the newer push's own run does.
+changed since the last published nightly: a change only to `.github/`,
+`docs/` (but for the `docs/toolchain-*` locks, which choose the firmware
+toolchain), `installer/`, `tests/`, `rust/tests/`, `rust/host/` or a
+top-level `*.md` gets none. Only a nightly GitHub shows published for its tag
+counts: a tag whose publish failed, or that has only a draft, never
+suppresses the next one. A manual run always builds one. Runs wait their turn
+one at a time (`concurrency` with `queue: max`, so a later-queued run never
+replaces a pending one). A run whose commit is no longer `main`'s tip builds
+and publishes nothing; the newer commit's own run does.
 
-**Version.** `<next>-dev.YYYYMMDD.N`. `<next>` is the patch after the
-version `main` declares (`0.2.0` gives `0.2.1`), so the next release outranks
-every nightly built on the current one. `YYYYMMDD` is the UTC day, and `N`
-counts that day's nightly tags for `<next>`, from 1: `0.2.1-dev.20261122.1`.
+**Version.** `<next>-dev.YYYYMMDD.N`. `<next>` is the patch after the core
+of the version `main` declares (`0.2.0` gives `0.2.1`, and `0.2.1-rc.1` gives
+`0.2.2`). `YYYYMMDD` is the UTC day, and `N` follows every nightly tag of
+`<next>` that day, published or not, from 1: `0.2.1-dev.20261122.1`.
 Devices hold at most 23 characters of a version (the image's identity block,
 the manifest and the seen-build record), so the stamp and the publish refuse a
-longer one; the job fails rather than cut it. Nightlies build only on a stable
-version; while `main` declares a prerelease, the job fails.
+longer one; the job fails rather than cut it.
 
 **How.** `tools/nightly.py stamp` writes the nightly version into `.cz.toml`
 and `firmware_version.h` and commits only that change on top of `main`'s tip,
@@ -436,7 +440,7 @@ then tags that commit `v<version>` (annotated, naming its source). No branch
 carries the stamp commit, and the release gate refuses a nightly version on
 any branch. The job builds the stamped commit as a release is built
 (`tools/firmware-build.py --clean`, then `--clean --health-report`), so its
-build ID is the stamp commit's. Then it pushes the one tag and runs
+build ID is the stamp commit's. Then it runs
 `tools/release_publish.py --prerelease --publish`, which holds a nightly to
 every release rule except these:
 
@@ -447,15 +451,23 @@ every release rule except these:
 - Its notes are short: a Test build heading, the source commit and its
   subject, and a compare link from the last release, then the build's
   identity. No What's new.
-- It is published with `make_latest=false`, then must read back as the
-  newest release, flagged pre-release, not Latest, with exactly its three
-  assets.
+- Its release state comes only from release objects addressed by tag or
+  id, never a list position or `/releases/latest`. Every check runs before
+  the one step that cannot be undone: the tool pushes the tag itself, after
+  every check and after confirming `main`'s tip is still the stamp's source
+  (otherwise it publishes nothing). It publishes with `make_latest=false`,
+  then reads back only the release it created, by id: its tag, the
+  pre-release flag (GitHub never makes a pre-release Latest) and exactly its
+  three assets.
 
-The install page follows only published releases (`release: released`),
-which a pre-release never fires, and the release tag tooling and
-`cz bump` ignore nightly tags. CI keeps every nightly; nothing deletes one.
-If the publish fails after the tag was pushed, the tag stays, and the next
-push with no image change gets no nightly: run the workflow by hand.
+A stable release published while a nightly is in flight may sit below that
+nightly for devices with Test builds on, until the next nightly, built on the
+new release, outranks it. The install page follows only published releases
+(`release: released`), which a pre-release never fires, and the release tag
+tooling and `cz bump` ignore nightly tags. CI keeps every nightly; nothing
+deletes one. If the publish fails after the tag was pushed, the tag stays
+without a release; the next push that changes the image, or a manual run,
+builds the next number.
 
 ## Install page
 

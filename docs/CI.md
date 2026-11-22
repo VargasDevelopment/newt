@@ -335,8 +335,9 @@ The workflow default and the gate job have `contents: read`. Public CI has two
 write permissions, each a job's own `contents: write`. The small `release-tag`
 job (with `actions: read`) tags each release, so nobody has to remember
 ([RELEASING.md](RELEASING.md#tag-the-release)). The `nightly` job pushes one
-nightly tag and publishes its pre-release; its token reaches only that one
-step, after the build, the same way as below
+nightly tag and publishes its pre-release; its token reaches only the step
+that stamps (to read releases) and, after the build, the step that publishes,
+which gets it the same way as below
 ([RELEASING.md](RELEASING.md#nightly-test-builds)). The `release-tag` job runs
 only in a push run, after its gate job passed, on the same runner with the
 same guards. It

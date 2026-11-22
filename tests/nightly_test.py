@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """tools/nightly.py in disposable repositories with a local bare origin: the
-nightly version, the stamp commit and its tag, which pushes get none, the exact
-stamp release_publish.py trusts, and that nightly tags never confuse the release
-tools or Commitizen. --negative-controls removes each guard in a copy of its tool
+nightly version, the stamp commit and its tag, which pushes get none (judged
+from published releases, read through release_publish.GitHub with gh-shaped
+answers), the exact stamp release_publish.py trusts, and that nightly tags never
+confuse the release tools or Commitizen. --negative-controls removes each guard in a copy of its tool
 and requires its test to fail. Never tags or pushes the checkout."""
 import argparse
 from contextlib import redirect_stderr
 from datetime import datetime, timezone
 import io
+import json
 import os
 from pathlib import Path
 import shutil
@@ -31,6 +33,18 @@ import release_tools as release
 from release_tools_test import fixture_version
 
 DAY = datetime(2026, 11, 22, 23, 59, tzinfo=timezone.utc)
+REPOSITORY = 'VargasDevelopment/newt'
+
+
+def gh_answer(status, release=None):
+    """gh api --include's whole answer as gh gives it: status line, headers, blank line, body; exit 1
+    unless 2xx. Status None is no answer at all (the network failed)."""
+    if status is None:
+        return subprocess.CompletedProcess([], 1, b'', b'error connecting to api.github.com')
+    body = json.dumps(release if release is not None else {'message': 'Not Found', 'status': str(status)})
+    head = f'HTTP/2.0 {status} {"OK" if status == 200 else "Error"}\nContent-Type: application/json\n'
+    return subprocess.CompletedProcess([], 0 if status == 200 else 1, (head + '\n' + body).encode(),
+                                       b'' if status == 200 else f'gh: Error (HTTP {status})'.encode())
 FILES = ('.cz.toml', 'requirements-release.txt', release.VERSION_HEADER, 'tools/changelog.md.j2')
 
 
@@ -57,6 +71,21 @@ class NightlyTests(unittest.TestCase):
         self.git('commit', '-qm', 'chore(release): 0.1.0 -> 0.2.0')
         self.git('tag', '-a', 'v0.2.0', '-m', 'Newt firmware 0.2.0')
         self.main = self.push()
+        # GitHub's releases by tag: {tag: draft?}. Its tag endpoint shows a draft as 404.
+        self.releases = {}
+
+    def published(self, tag):
+        return nightly.published(REPOSITORY, tag, lambda command: self.answer(command[-1].rsplit('/', 1)[1]))
+
+    def answer(self, tag):
+        if self.releases.get(tag) is False:
+            return gh_answer(200, {'id': 1, 'tag_name': tag, 'draft': False, 'prerelease': True})
+        return gh_answer(404)
+
+    def release(self, version, draft=False):
+        """Pushes the nightly's tag and gives it a release (only a draft, if `draft`)."""
+        self.git('push', '-q', 'origin', f'refs/tags/v{version}')
+        self.releases['v' + version] = draft
 
     def git(self, *arguments):
         return subprocess.run(['git', *arguments], cwd=self.root, env=self.environment, check=True,
@@ -79,7 +108,7 @@ class NightlyTests(unittest.TestCase):
 
     def stamp(self, force=False):
         with redirect_stderr(io.StringIO()):
-            return nightly.stamp(self.root, DAY, force)
+            return nightly.stamp(self.published, self.root, DAY, force)
 
     def test_the_version_is_the_next_patch_numbered_per_day(self):
         self.assertEqual(nightly.nightly_version('0.2.0', '20261122', []), '0.2.1-dev.20261122.1')
@@ -87,8 +116,10 @@ class NightlyTests(unittest.TestCase):
                 'v0.3.1-dev.20261122.9', 'v0.2.1', 'v0.2.1-dev.20261122.x', 'v0.2.1-dev.20261122.03']
         self.assertEqual(nightly.nightly_version('0.2.0', '20261122', tags), '0.2.1-dev.20261122.4')
         self.assertEqual(nightly.nightly_version('0.2.0', '20261123', tags), '0.2.1-dev.20261123.1')
-        with self.assertRaisesRegex(ValueError, 'stable release'):
-            nightly.nightly_version('0.3.0-alpha.1', '20261122', [])
+        # A pre-release's core decides: the patch after it.
+        self.assertEqual(nightly.nightly_version('0.2.1-rc.1', '20261122', []), '0.2.2-dev.20261122.1')
+        with self.assertRaisesRegex(ValueError, 'not a release version'):
+            nightly.nightly_version('0.2', '20261122', [])
         # Devices hold 23 characters of a version: the 23rd fits, a 24th is refused, never cut.
         self.assertEqual(nightly.nightly_version('10.10.10', '20261122', []), '10.10.11-dev.20261122.1')
         with self.assertRaisesRegex(ValueError, 'longer than the image identity holds .23 characters'):
@@ -110,23 +141,65 @@ class NightlyTests(unittest.TestCase):
         self.assertEqual(self.git('rev-parse', 'origin/main'), self.main)
 
     def test_only_a_change_the_image_is_built_from_gets_a_nightly(self):
-        self.stamp()
-        self.git('push', '-q', 'origin', 'refs/tags/v0.2.1-dev.20261122.1')
+        self.release(self.stamp())
         for path in ('docs/RELEASING.md', 'tests/x_test.py', 'README.md', '.github/workflows/x.yml'):
             with self.subTest(path):
                 self.change(path, f'docs: change {path}')
                 self.assertIsNone(self.stamp())
         self.assertEqual(self.stamp(force=True), '0.2.1-dev.20261122.2')
         self.change('rust/core/src/x.rs', 'fix(core): change the image')
-        self.assertEqual(self.stamp(), '0.2.1-dev.20261122.3')
+        self.release(self.stamp())
         self.change('vendor/sdk.txt', 'build: change an input')
-        self.assertEqual(self.stamp(), '0.2.1-dev.20261122.4')
+        self.release(self.stamp())
+        # The firmware toolchain locks live under docs/ but choose what builds the image.
+        self.change('docs/toolchain-linux-lock.json', 'build(toolchain): change a lock')
+        self.assertEqual(self.stamp(), '0.2.1-dev.20261122.5')
+
+    def test_only_a_published_nightly_counts_as_the_last_one(self):
+        # A tag whose publish failed, then one with only a draft: neither suppresses the next nightly,
+        # and the number still follows every tag. Each run starts, as CI's does, at main's tip.
+        def run():
+            self.git('checkout', '-q', '--detach', 'origin/main')
+            return self.stamp()
+        self.git('push', '-q', 'origin', f'refs/tags/v{run()}')
+        self.release(run(), draft=True)
+        self.assertEqual(run(), '0.2.1-dev.20261122.3')
+        self.release('0.2.1-dev.20261122.3')
+        self.assertIsNone(run())
 
     def test_no_nightly_once_main_has_moved_on(self):
         self.change('rust/a.rs', 'fix(core): one')
         self.change('rust/b.rs', 'fix(core): two')
         self.git('checkout', '-q', '--detach', 'HEAD^')
         self.assertIsNone(self.stamp(force=True))
+        # Nor is its tag pushed if main moves on after the stamp: the check comes right before the push.
+        self.git('checkout', '-q', '--detach', 'origin/main')
+        version, source = self.stamp(), self.git('rev-parse', 'origin/main')
+        self.change('rust/c.rs', 'fix(core): three')
+        self.assertFalse(nightly.push_tag(self.root, 'v' + version, source))
+        self.assertEqual(self.git('ls-remote', '--tags', 'origin', '*-dev.*'), '')
+        self.assertTrue(nightly.push_tag(self.root, 'v' + version, self.git('rev-parse', 'origin/main')))
+        self.assertIn(f'refs/tags/v{version}', self.git('ls-remote', '--tags', 'origin'))
+
+    def test_a_release_by_tag_is_read_by_its_http_status(self):
+        tag, seen = 'v0.2.1-dev.20261122.1', []
+        def read(status, release=None):
+            def answer(command):
+                seen.append(command)
+                return gh_answer(status, release)
+            return nightly.published(REPOSITORY, tag, answer)
+        published = {'id': 7, 'tag_name': tag, 'draft': False, 'prerelease': True}
+        self.assertEqual(read(200, published), published)
+        self.assertEqual(seen[0], ['gh', 'api', '--include', f'repos/{REPOSITORY}/releases/tags/{tag}'])
+        # 404 is "none published": no release, or only a draft, which this endpoint never shows.
+        self.assertIsNone(read(404))
+        self.assertIsNone(read(200, {**published, 'draft': True}))
+        # Anything else, or no answer, never passes for "not published".
+        for status in (500, 403, None):
+            with self.subTest(status), self.assertRaisesRegex(ValueError, f'HTTP {status}'):
+                read(status)
+        with self.assertRaisesRegex(ValueError, 'answered'):
+            read(200, {**published, 'tag_name': 'v0.2.0'})
 
     def stamp_of(self, source, version, extra=None):
         """A hand-made commit on `source` with `version` in the version files (and `extra` changed)."""
@@ -176,12 +249,28 @@ CONTROLS = (
     ('nightly.py', '    taken = [n for', '    taken = [] and [n for', 'test_the_version_is_the_next_patch_numbered_per_day'),
     ('nightly.py', '    require(len(version) < NEWT_VERSION_BYTES,', '    require(True,',
      'test_the_version_is_the_next_patch_numbered_per_day'),
-    ('nightly.py', "    require(found is not None, f'Nightlies", "    require(True, f'Nightlies",
+    ('nightly.py', "([0-9]+)(?:-[0-9A-Za-z.-]+)?', release)", "([0-9]+)', release)",
      'test_the_version_is_the_next_patch_numbered_per_day'),
-    ('nightly.py', '    if not force and since is not None and', '    if False and since is not None and',
+    ('nightly.py', "    require(found is not None, f'{release} is not", "    require(True, f'{release} is not",
+     'test_the_version_is_the_next_patch_numbered_per_day'),
+    ('nightly.py', '    if since is not None and', '    if False and since is not None and',
      'test_only_a_change_the_image_is_built_from_gets_a_nightly'),
-    ('nightly.py', "if not path.startswith(NOT_IMAGE) and", 'if', 'test_only_a_change_the_image_is_built_from_gets_a_nightly'),
+    ('nightly.py', 'if IMAGE_DOCS.fullmatch(path) or not (', 'if True or not (',
+     'test_only_a_change_the_image_is_built_from_gets_a_nightly'),
+    ('nightly.py', 'if IMAGE_DOCS.fullmatch(path) or not (', 'if not (',
+     'test_only_a_change_the_image_is_built_from_gets_a_nightly'),
+    ('nightly.py', '        if published(tag) is not None:', '        if True:',
+     'test_only_a_published_nightly_counts_as_the_last_one'),
     ('nightly.py', '    if live != head:', '    if False:', 'test_no_nightly_once_main_has_moved_on'),
+    ('nightly.py', "    if git_output(root, 'ls-remote', 'origin', 'refs/heads/main').split('\\t')[0] != source:",
+     '    if False:', 'test_no_nightly_once_main_has_moved_on'),
+    ('nightly.py', '    if status == 404:', '    if False:', 'test_a_release_by_tag_is_read_by_its_http_status'),
+    ('nightly.py', '    require(status == 200 and reply.returncode == 0,', '    require(True,',
+     'test_a_release_by_tag_is_read_by_its_http_status'),
+    ('nightly.py', "    return None if release.get('draft') is not False else release", '    return release',
+     'test_a_release_by_tag_is_read_by_its_http_status'),
+    ('nightly.py', "    require(release.get('tag_name') == tag,", '    require(True,',
+     'test_a_release_by_tag_is_read_by_its_http_status'),
     ('nightly.py', "sorted(changed) == sorted(VERSION_LINES) and same else None", 'True else None',
      'test_the_source_of_anything_but_an_exact_stamp_is_none'),
     ('nightly.py', "        nightly = re.fullmatch(NIGHTLY, version) and version.startswith(",
