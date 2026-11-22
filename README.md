@@ -22,7 +22,7 @@ Newt is early alpha software. Expect rough edges, and please
   <img src="docs/screen-sleep.png" alt="The sleep screen with the book's title and progress" width="160">
 </p>
 
-<p align="center"><sub>Home, Books, the reader, Settings and the sleep screen, rendered from the real firmware by the host preview. Books are public-domain <a href="https://standardebooks.org">Standard Ebooks</a> editions.</sub></p>
+<p align="center"><sub>Home, Books, the reader, Settings and the sleep screen, rendered from the real firmware by the host preview. Books and covers are from <a href="https://standardebooks.org">Standard Ebooks</a>' U.S. public-domain editions; the sleep screen has Book progress on.</sub></p>
 
 ## What works today
 
