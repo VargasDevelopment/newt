@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3635712,
+      "flash_bytes": 3638976,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "4544ace35ee85a76130303d90c5c6c0fe39921ab",
-      "before": 3635424,
-      "after": 3635712,
-      "reason": "#365 / NEWT-69: newcomer copy for the first public release (What's new, Settings hints, Switch firmware, Update's Wi-Fi setup row, card-folder notes, one clock wording, plain install confirm). Measured by a clean firmware-build.py --health-report of 4544ace3: 3,635,424 -> 3,635,712 B (+288 B over the ceiling; whole-string trims measured larger, dropping the two hints left +192 B). 3,635,712 B is below the 7,016,448 B usable limit, leaving 3,380,736 B. RTC 300 -> 300 (unchanged). RAM 124,096, lend 22,528, frames, floors and exclusions unchanged.",
-      "reviewer": "owner-approved 2026-11-22 (#365)"
+      "source_revision": "0e06bba6305a668741178b2a109edab1fcf29972",
+      "before": 3635712,
+      "after": 3638976,
+      "reason": "NEWT-99 / NEWT-113: the first-Newt page (mascot port), the hidden Developer page with its Test builds switch, the durable newt_builds SD record and the one-release list parsing for the test-build update check. Measured by a clean firmware-build.py --clean --health-report of 0e06bba6: 3,638,976 B (+3,264 B over the 3,635,712 B ceiling; +3,952 B over main's committed measurement, 3,635,024 B). 3,377,472 B stay below the 7,016,448 B usable limit. RTC 300 -> 300 (unchanged). RAM 124,096, lend 22,528, frames, floors and exclusions unchanged.",
+      "reviewer": "owner review pending (test-build channel PR)"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
