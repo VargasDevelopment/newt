@@ -323,8 +323,8 @@ passing build authorizes another device or agent publication.
    with one request. (`gh release create` without `--draft` does those steps
    itself, and deletes the release when the publish answer is lost, even if
    GitHub published it.)
-6. The notes, in plain words: the What's new lines this update adds: those the
-   newest release already published in the same repository lacked, so a first
+6. The notes, in plain words: the What's new lines this update adds: those no
+   published release notes in the same repository have shown yet, so a first
    release there lists them all, then the build's identity: version, full
    source commit, 12-hex build ID, `newt.bin` size and SHA-256. The CHANGELOG
    stays out: it describes internal work. No links into the source

@@ -50,7 +50,6 @@ NOTICES = 'docs/NOTICES.txt'
 # NOTICES.txt marks each item that still needs the owner's decision with this.
 DRAFT = 'DRAFT: needs owner approval'
 WHATS_NEW = 'rust/device-ui/whats_new_notes.h'
-LEGACY_WHATS_NEW = 'include/newt/whats_new_notes.h'
 EMAIL = re.compile(rb'[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}')
 
 
@@ -144,9 +143,9 @@ class GitHub:
         return self.api(f'repos/{self.repository}/releases/latest')
 
     def all_releases(self):
-        """Every release here, drafts included, as {tag_name, draft, prerelease, published_at, id}."""
+        """Every release here, drafts included, as {tag_name, draft, body}."""
         rows = self.run(['gh', 'api', '--paginate', f'repos/{self.repository}/releases?per_page=100',
-                         '--jq', '.[] | {tag_name, draft, prerelease, published_at, id} | tojson'])
+                         '--jq', '.[] | {tag_name, draft, body} | tojson'])
         return [json.loads(row) for row in rows.splitlines()]
 
 
@@ -194,18 +193,12 @@ def whats_new(header):
             for date, lines in re.findall(r'\{\s*("[^"]*")\s*,\s*\{(.*?)\}\s*\}', header, re.DOTALL)]
 
 
-def newest_published(releases, tag):
-    """The tag of the latest release other than `tag` that devices could have shown, or None. GitHub orders
-    its list by creation time, which a bulk import ties, so this goes by publication time, then id."""
-    shown = [release for release in releases
-             if not release['draft'] and not release['prerelease'] and release['tag_name'] != tag]
-    return max(shown, key=lambda release: (release['published_at'], release['id']))['tag_name'] if shown else None
-
-
-def notes_at(git, commit):
-    """Older release tags predate the shared data path; retain their history."""
-    header = git.show(commit, WHATS_NEW)
-    return header if header is not None else (git.show(commit, LEGACY_WHATS_NEW) or '')
+def announced(releases, tag):
+    """Every What's new line that the published notes here, other than `tag`'s, already showed readers."""
+    return {line for release in releases if not release['draft'] and release['tag_name'] != tag
+            for section in re.findall(r"^## What's new\n(.*?)(?=^## |\Z)",
+                                      (release['body'] or '').replace('\r\n', '\n'), re.MULTILINE | re.DOTALL)
+            for line in re.findall(r'^- (.+)$', section, re.MULTILINE)}
 
 
 def render_notes(version, commit, build, image, news):
@@ -333,15 +326,10 @@ def plan(image, receipt, bench_receipt=None, prerelease=False, git=None, github=
     refusals += bench_refusals(bench_receipt, version, build, image, manifest)
     header = git.show(commit, WHATS_NEW)
     require(header is not None, f'{commit} has no {WHATS_NEW}')
-    # News is what this repository's readers have not seen: the repository's own previous release, not the
-    # previous git tag, which a first release here (or the hop) may never have published.
-    previous = newest_published(github.all_releases(), tag)
-    base = previous and git.tag_commit(previous)
-    if previous and base is None:
-        refusals.append(f'{repository} last published {previous}, but tag {previous} is not here to show what it '
-                        'already said: git fetch origin --tags')
-    shipped = whats_new(notes_at(git, base)) if base else []
-    news = list(dict.fromkeys(line for update in whats_new(header) if update not in shipped for line in update[1]))
+    # News is what this repository's published notes have not yet shown. Git tags are no guide: the public
+    # export put every older tag on one commit, and a first release here (or the hop) has other readers.
+    shown = announced(github.all_releases(), tag)
+    news = list(dict.fromkeys(line for _, lines in whats_new(header) for line in lines if line not in shown))
     notes = render_notes(version, commit, build, image, news)
     # Until its firmware reads it, the source repository is private and its links 404.
     if source != SOURCE_REPOSITORY and re.search(r'VargasDevelopment/newt(?!-releases)', notes):
