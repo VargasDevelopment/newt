@@ -15,6 +15,22 @@ Source-import closure for PR #16: immutable checkpoint
 authorship and subjects through an explicit bounded frozen-source import exception. New integration commits remain strictly conventional;
 no firmware version, tag or installed image is changed by that closure.
 
+## v0.3.0
+
+### Feat
+- **update**: offer test builds behind a hidden Developer page (NEWT-99, NEWT-113, #15)
+- **update**: offer test builds behind a hidden Developer page (NEWT-99, NEWT-113)
+- **update**: offer test builds behind a hidden Developer page (NEWT-99, NEWT-113)
+- **release**: stamp and publish nightly test builds (NEWT-99)
+### Fix
+- **installer**: send stock firmware to the install page, not CrossPoint
+- **release**: verify a nightly's draft before its tag push, and keep the stable /releases/latest asset check (NEWT-99)
+- **release**: read nightly state by tag or id and push its tag last (NEWT-99)
+- **release**: list What's new lines the repository's published notes have not shown (NEWT-77, #9)
+- **release**: take shown What's new lines from the repository's published notes (NEWT-77)
+- **release**: measure news from the latest published release and refuse an unfetched base (NEWT-77)
+- **release**: list What's new since the repository's own previous release (NEWT-77)
+
 ## v0.2.0
 
 ### Feat
