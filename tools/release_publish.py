@@ -81,12 +81,6 @@ class Git:
         shown = subprocess.run(['git', 'show', f'{commit}:{path}'], cwd=self.root, capture_output=True, text=True)
         return None if shown.returncode else shown.stdout
 
-    def previous_tag(self, commit):
-        """The newest release tag on the commit's first parent's history, or None."""
-        found = subprocess.run(['git', 'describe', '--tags', '--abbrev=0', '--match', 'v[0-9]*', commit + '^'],
-                               cwd=self.root, capture_output=True, text=True)
-        return found.stdout.strip() or None
-
 
 def update_repository(source):
     """Read the shipped Rust URL; duplicate or changed declarations fail closed."""
@@ -148,6 +142,12 @@ class GitHub:
 
     def latest(self):
         return self.api(f'repos/{self.repository}/releases/latest')
+
+    def previous_release(self, tag):
+        """The newest published release other than `tag`, or None. GitHub lists releases newest first."""
+        tags = self.run(['gh', 'api', '--paginate', f'repos/{self.repository}/releases?per_page=100',
+                         '--jq', f'.[] | select(.draft | not) | select(.tag_name != "{tag}") | .tag_name']).split()
+        return tags[0].decode() if tags else None
 
 
 @dataclass
@@ -325,7 +325,9 @@ def plan(image, receipt, bench_receipt=None, prerelease=False, git=None, github=
     refusals += bench_refusals(bench_receipt, version, build, image, manifest)
     header = git.show(commit, WHATS_NEW)
     require(header is not None, f'{commit} has no {WHATS_NEW}')
-    previous = git.previous_tag(commit)
+    # News is what this repository's readers have not seen: the repository's own previous release, not the
+    # previous git tag, which a first release here (or the hop) may never have published.
+    previous = github.previous_release(tag)
     shipped = whats_new(notes_at(git, previous)) if previous else []
     news = list(dict.fromkeys(line for update in whats_new(header) if update not in shipped for line in update[1]))
     notes = render_notes(version, commit, build, image, news)

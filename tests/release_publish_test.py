@@ -97,16 +97,14 @@ class FakeGit:
     def show(self, commit, path):
         return self.files.get((commit, path))
 
-    def previous_tag(self, commit):
-        return PREVIOUS
 
 
 class FakeGitHub:
     """One repository as GitHub keeps it. `answer` is what the publish PATCH does: 'ok', 'lost' (GitHub
     publishes, the answer never arrives) or 'failed' (nothing changes). It has no delete."""
 
-    def __init__(self, answer='ok', corrupt=False, tags=None):
-        self.answer, self.corrupt, self.tags = answer, corrupt, dict(tags or {})
+    def __init__(self, answer='ok', corrupt=False, tags=None, previous=PREVIOUS):
+        self.answer, self.corrupt, self.tags, self.previous = answer, corrupt, dict(tags or {}), previous
         self.releases, self.blobs, self.created, self.patched = {}, {}, [], []
 
     def add(self, tag, files, draft=True, name=None, body=None, prerelease=False):
@@ -147,6 +145,12 @@ class FakeGitHub:
             self.tags.setdefault(self.releases[release_id]['tag_name'], REVISION)
         if self.answer != 'ok':
             raise subprocess.CalledProcessError(1, 'gh api -X PATCH')
+
+    def previous_release(self, tag):
+        """Releases published here win; `previous` stands for older ones this fake does not hold."""
+        published = [release['tag_name'] for release in self.releases.values()
+                     if not release['draft'] and release['tag_name'] != tag]
+        return published[-1] if published else self.previous
 
     def latest(self):
         published = [release for release in self.releases.values() if not release['draft']]
@@ -205,6 +209,17 @@ class ReleasePublishTests(unittest.TestCase):
         size = f'- newt.bin: {len(IMAGE):,} bytes, SHA-256 {sha(IMAGE)}\n'
         self.assertEqual(release.notes, NOTES + size)
         self.assertEqual(self.plan().notes, release.notes)
+
+    def test_notes_list_what_this_repository_has_not_published(self):
+        # A first release here lists every current note, even if an unpublished tag carried them already.
+        first = self.plan(github=FakeGitHub(previous=None)).notes
+        shipped = '- Update in Settings installs Newt from the SD card.\n'
+        self.assertIn(shipped, first)
+        self.assertNotIn(shipped, self.plan().notes)
+        # A rerun after GitHub published this release still measures from the release before it.
+        github = FakeGitHub()
+        github.add(TAG, {}, draft=False)
+        self.assertEqual(self.plan(github=github).notes, self.plan().notes)
 
     def test_legacy_notes_are_only_read_for_previous_releases(self):
         expected = self.plan().notes
