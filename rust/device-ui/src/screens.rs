@@ -526,3 +526,7 @@ pub fn render_device_ui(
         DevicePage::Diagnostics => diagnostics(frame, bar, info),
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/device_ui/version_label.rs"]
+mod tests;
