@@ -31,7 +31,8 @@ focused `--suite ui` runs the preview tests on that firmware host build.
 CI picks the tier itself (`tools/gate_tier.py`): a commit whose `.cz.toml`
 version differs from its first parent's (a release merge), a scheduled or a
 manual run takes `full`; a pull request takes `local`, a candidate like any
-other; any other push takes `push`. Nothing lowers it. The
+other; any other push takes `push`. Nothing lowers it. Public CI checks a
+pull request that changes only docs in the [docs lane](#docs-lane) instead. The
 release-tag job tags only the release merge its own run checked, after that
 run's gate job passed, so a release is never tagged without a full-tier pass.
 
@@ -110,7 +111,7 @@ or CI duration.
 `.github/workflows/public-ci.yml` is the public repository's CI. It runs the
 same gate on GitHub-hosted runners (4 vCPU, 16 GB RAM, about 14 GB free disk),
 split into parallel jobs, so a pull request's checks finish in about 10
-minutes. It runs on every pull request into `main` (forks included; the gate
+minutes, or about 2 in the [docs lane](#docs-lane). It runs on every pull request into `main` (forks included; the gate
 compares a candidate with `origin/main`), every push to `main` and nightly,
 and by hand (`workflow_dispatch`, the full tier); there is no
 `pull_request_target`.
@@ -155,12 +156,46 @@ than in the tool lock, whose hash keys the toolchain caches;
 gate (`tools/ci_gate.py --part I/7`, which runs `tools/check.py --shard I/7`)
 and `native`, the plain clean compile and the one clean
 `firmware-build.py --clean --health-report` build. The `gate` job always runs
-where public CI runs and passes only when every job it needs succeeded, so a
-failed, cancelled or skipped part fails it rather than skipping it; it is the
-one check to require and the one the release-tag job reads. Each part has the tier's whole CI job budget
+where public CI runs and passes only when its lane's jobs succeeded
+([Docs lane](#docs-lane)), so a failed, cancelled or skipped part fails it
+rather than skipping it; it is the one check to require and the one the
+release-tag job reads. Each part has the tier's whole CI job budget
 (`tools/gate-time-budgets.json`); no budget is split or edited. A pull
 request that changes a test also runs that test's negative controls (the
 `local` tier) in the part that holds them, so it can take longer.
+
+**Docs lane.** A pull request that changes only docs skips the toolchain
+and the gate's parts. The first job, `classify` (`tools/docs_lane.py`,
+standard library only), lists every path the pull request changes since its
+merge base with `main`, a rename as both its old and its new path. The lane is
+`docs` only when every path is `README.md` or a `.md`, `.png` or `.jpg` file
+directly in `docs/`, as a regular file or deleted. This is an allowlist:
+`CHANGELOG.md` (release-managed), `docs/toolchain-*` (they choose the
+toolchain) and every other path take `full`, and so does a change set it
+cannot list. A pull request runs its base's copy of the classifier, never its
+own, so a change cannot choose its lane; a base without one takes `full`.
+Pushes, nightly and manual runs always take `full`, so `release-tag` and
+`nightly` never follow the docs lane.
+
+In the docs lane the `check` job is skipped and the `docs` job runs instead:
+
+- the release gate as `check.py` runs it (Conventional Commits and the
+  release-tag guard), with the pinned Commitizen alone
+  (`ci_environment.py --prepare-release`);
+- a links check: each relative link or image in a changed Markdown file, and
+  each link from any tracked Markdown file to a changed path, must name a
+  tracked file or folder (no anchors, no network);
+- every gate check that reads docs text (`DOCS_CHECKS`).
+  `tests/docs_lane_test.py` guards that list: a Python source that names a
+  lane path or the `docs` folder in a string literal must be in it, or listed
+  with the reason it is not a docs check. A path built at run time, or a
+  reader that is not Python, escapes that scan.
+
+`gate` passes only when `classify` chose a lane and that lane's job succeeded
+while the other was skipped: `check` for `full`, `docs` for `docs`. Branch
+protection still requires only `gate`. One lane's job is always skipped,
+which makes `success()` false for every later job, so `release-tag` and
+`nightly` read `needs.gate.result` instead.
 
 **Shards come from the gate's own plan.** `tools/gate_tier.py` `shard()` takes
 the tier's plan, keeps every phase with the phases it runs `after` in one

@@ -28,14 +28,50 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # The gate, split into parallel parts: the host gate's shards, cut from its own
-  # plan (tools/gate_tier.py), and the one clean firmware build.
-  check:
+  # Which lane this run takes (tools/docs_lane.py): docs for a pull request that
+  # changes only docs, full for everything else, or when that can't be worked out.
+  classify:
     # Visibility, compared as JSON so a missing value never passes. A scheduled
     # run's event has no repository, so there the private repository's ID decides.
     if: >-
       toJSON(github.event.repository.private) == 'false' ||
       (github.event_name == 'schedule' && github.repository_id != '1400798123')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      lane: ${{ steps.lane.outputs.lane }}
+    steps:
+      - name: Check out the pull request's head with the history back to its base
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          set-safe-directory: false
+      # Standard library only, so the runner's python3; no toolchain. A pull request
+      # runs its base's classifier, never its own, so a change cannot choose its
+      # lane; a base without one, and every other event, takes the full gate.
+      - name: Docs lane or full gate
+        id: lane
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]] &&
+             git show "$BASE:tools/docs_lane.py" > "$RUNNER_TEMP/docs_lane.py"; then
+            python3 -I -B "$RUNNER_TEMP/docs_lane.py" classify --event "$GITHUB_EVENT_NAME" --base "$BASE" --head "$HEAD" >> "$GITHUB_OUTPUT"
+          else
+            echo lane=full >> "$GITHUB_OUTPUT"
+          fi
+
+  # The gate, split into parallel parts: the host gate's shards, cut from its own
+  # plan (tools/gate_tier.py), and the one clean firmware build.
+  check:
+    needs: classify
+    if: >-
+      needs.classify.outputs.lane == 'full' &&
+      (toJSON(github.event.repository.private) == 'false' ||
+      (github.event_name == 'schedule' && github.repository_id != '1400798123'))
     runs-on: ubuntu-24.04
     # Each part's own tier budget (tools/gate-time-budgets.json) stops it first.
     timeout-minutes: 120
@@ -216,34 +252,116 @@ jobs:
             ${{ github.workspace }}/../newt-ci-store/gate-phase-seconds.json
           key: host-objects-${{ strategy.job-index }}-${{ github.sha }}
 
+  # A docs pull request's checks in place of the gate's parts (docs/CI.md, "Docs
+  # lane"): the release gate, links, and every check that reads docs text.
+  docs:
+    needs: classify
+    if: >-
+      needs.classify.outputs.lane == 'docs' &&
+      (toJSON(github.event.repository.private) == 'false' ||
+      (github.event_name == 'schedule' && github.repository_id != '1400798123'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      BASE: ${{ github.event.pull_request.base.sha }}
+      EXPECTED_COMMIT: ${{ github.event.pull_request.head.sha }}
+      PYTHONDONTWRITEBYTECODE: '1'
+      OPENSSL_CONF: /dev/null
+      UV_CACHE_DIR: ${{ github.workspace }}/.build/python-bootstrap/cache
+      UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.build/python-bootstrap/python
+      UV_PYTHON_BIN_DIR: ${{ github.workspace }}/.build/python-bootstrap/bin
+      UV_TOOL_DIR: ${{ github.workspace }}/.build/python-bootstrap/tools
+      UV_TOOL_BIN_DIR: ${{ github.workspace }}/.build/python-bootstrap/tool-bin
+    # The setup steps are the check job's own (tests/public_ci_test.py).
+    steps:
+      - name: Check out the exact commit, complete release history and release tags
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ env.EXPECTED_COMMIT }}
+          fetch-depth: 0
+          # The release gate refuses work built on an untagged release, so it reads tags.
+          fetch-tags: true
+          persist-credentials: false
+          set-safe-directory: false
+      # The uv wheel docs/toolchain-linux-lock.json pins, so no third-party action.
+      - name: Locked uv for workspace-local Python
+        shell: bash
+        run: |
+          set -euo pipefail
+          wheel="$RUNNER_TEMP/uv.whl"
+          curl --fail --silent --show-error --location --proto '=https' --output "$wheel" \
+            https://files.pythonhosted.org/packages/c6/2b/8700206efe193fc279fe32c11ab9a502c8364e7882e3f6f36a00a6cc8af7/uv-0.12.21-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+          echo "0083454d25479f1cd03547c8c98c235b4af92bd07f0e61c3eae5d1cbb0c1834c  $wheel" | sha256sum --check --strict
+          mkdir -p "$UV_TOOL_BIN_DIR"
+          unzip -p "$wheel" uv-0.12.21.data/scripts/uv > "$UV_TOOL_BIN_DIR/uv"
+          chmod 755 "$UV_TOOL_BIN_DIR/uv"
+          test "$("$UV_TOOL_BIN_DIR/uv" --no-config --version)" = 'uv 0.12.21 (x86_64-unknown-linux-gnu)'
+          echo "$UV_TOOL_BIN_DIR" >> "$GITHUB_PATH"
+      - name: Exact managed Python and real runtime checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e "$UV_PYTHON_INSTALL_DIR"
+          # uv 0.12.21 pins the baseline 20240909 CPython 3.12.6 archive SHA256:
+          # b080463e4f0c452e592cdac1ca97936a6a19bb3d9a64da669a50ca843fce0108
+          request=cpython-3.12.6-linux-x86_64-gnu
+          uv --no-config python install --no-bin "$request" \
+            --mirror https://github.com/astral-sh/python-build-standalone/releases/download
+          python_path="$(uv --no-config python find --managed-python --no-python-downloads "$request")"
+          "$python_path" -I -B - <<'PYTHON'
+          import bz2, ctypes, lzma, os, pathlib, sqlite3, ssl, subprocess, sys, venv, zlib
+          assert sys.version_info[:3] == (3, 12, 6)
+          root = pathlib.Path(os.environ['UV_PYTHON_INSTALL_DIR']).resolve()
+          assert pathlib.Path(sys.executable).resolve().is_relative_to(root)
+          probe = pathlib.Path(os.environ['GITHUB_WORKSPACE']) / '.build/python-bootstrap/probe-venv'
+          venv.EnvBuilder(with_pip=True, symlinks=True).create(probe)
+          subprocess.run([str(probe / 'bin/python'), '-I', '-B', '-c',
+                          'import ssl, sys, venv; assert sys.version_info[:3] == (3, 12, 6)'], check=True)
+          print('PASS exact workspace-local Python 3.12.6, stdlib and venv:', sys.executable)
+          PYTHON
+          test -x "$(dirname "$python_path")/python3"
+          echo "$(dirname "$python_path")" >> "$GITHUB_PATH"
+      - name: Pinned release tools alone (tools/ci_environment.py)
+        run: python3 -B tools/ci_environment.py --prepare-release
+      - name: The docs lane's checks (tools/docs_lane.py)
+        run: python3 -B tools/docs_lane.py check --base "$BASE"
+
   # One check for branch protection and the release-tag evidence
   # (tools/release_tag.py). It always runs where public CI runs, so a failed,
-  # cancelled or skipped dependency makes it fail rather than skip; it passes
-  # only when every job it needs succeeded.
+  # cancelled or skipped dependency makes it fail rather than skip. It passes
+  # only when the lane was chosen and that lane's job succeeded: check for full,
+  # docs for docs, with the other skipped.
   gate:
-    needs: check
+    needs: [classify, check, docs]
     if: >-
       always() && (toJSON(github.event.repository.private) == 'false' ||
       (github.event_name == 'schedule' && github.repository_id != '1400798123'))
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Every job the gate needs succeeded
+      - name: The lane's jobs succeeded
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: |
           python3 -I -B -c '
           import json, os, sys
-          results = {name: job["result"] for name, job in json.loads(os.environ["NEEDS"]).items()}
-          print(results)
-          sys.exit(not results or any(result != "success" for result in results.values()))'
+          needs = json.loads(os.environ["NEEDS"])
+          results = {name: job["result"] for name, job in needs.items()}
+          lane = needs.get("classify", {}).get("outputs", {}).get("lane")
+          expected = {"classify": "success", "check": "success" if lane == "full" else "skipped",
+                      "docs": "success" if lane == "docs" else "skipped"}
+          print(f"lane {lane}: {results}")
+          sys.exit(lane not in ("docs", "full") or results != expected)'
 
   # The one job with a write token, as in fresh-gates.yml: after this push run's
   # gate passed, it tags the commit that run checked if that commit is the release.
+  # Both publishing jobs read gate's own result: success() also needs every
+  # ancestor to succeed, and one lane's job is always skipped.
   release-tag:
     needs: gate
     if: >-
-      success() && toJSON(github.event.repository.private) == 'false' &&
+      !cancelled() && needs.gate.result == 'success' &&
+      toJSON(github.event.repository.private) == 'false' &&
       github.repository == 'VargasDevelopment/newt' &&
       github.ref == 'refs/heads/main' && github.actor == 'VargasDevelopment' &&
       github.event_name == 'push'
@@ -296,7 +414,8 @@ jobs:
   nightly:
     needs: gate
     if: >-
-      success() && toJSON(github.event.repository.private) == 'false' &&
+      !cancelled() && needs.gate.result == 'success' &&
+      toJSON(github.event.repository.private) == 'false' &&
       github.repository == 'VargasDevelopment/newt' &&
       github.ref == 'refs/heads/main' && github.actor == 'VargasDevelopment' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')

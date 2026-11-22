@@ -137,15 +137,8 @@ def prepare_openssl(root, record, cache, llvm):
                    cwd=root, env={**environment, 'PYTHONDONTWRITEBYTECODE': '1'}, check=True)
 
 
-def prepare(root):
-    tools, release = settings(root)
-    require_host(tools)
-    cache = owned_directory(root, root / '.build/ci-downloads', create=True)
-    records = [*release['artifacts'], tools['llvm']]
-    linux = tools.get('target') == 'linux-x86_64'
-    if linux:
-        records.append(tools['openssl'])
-    validate_cache(root, cache, records)
+def prepare_release(root, release, cache, linux):
+    """A fresh .release-venv from the locked wheels: the release gate's Commitizen."""
     wheel_paths = [acquire(root, cache, record) for record in release['artifacts']]
     release_directory = root / '.release-venv'
     if release_directory.exists() or release_directory.is_symlink():
@@ -156,6 +149,18 @@ def prepare(root):
     python = release_directory / 'bin/python'
     subprocess.run(installation_command(python, wheel_paths), cwd=root, check=True)
     subprocess.run([str(python), '-I', '-B', '-m', 'pip', '--isolated', 'check'], cwd=root, check=True)
+
+
+def prepare(root):
+    tools, release = settings(root)
+    require_host(tools)
+    cache = owned_directory(root, root / '.build/ci-downloads', create=True)
+    records = [*release['artifacts'], tools['llvm']]
+    linux = tools.get('target') == 'linux-x86_64'
+    if linux:
+        records.append(tools['openssl'])
+    validate_cache(root, cache, records)
+    prepare_release(root, release, cache, linux)
     archive = acquire(root, cache, tools['llvm'])
     destination = root / '.toolchain/llvm'
     if destination.exists() or destination.is_symlink():
@@ -187,6 +192,8 @@ def main():
     action.add_argument('--plan', action='store_true', help='Read-only exact input inventory; no downloads')
     action.add_argument('--prepare', action='store_true', help='Hosted-only scoped materialization')
     action.add_argument('--check-host', action='store_true', help='Hosted runtime/source preflight before acquisition')
+    action.add_argument('--prepare-release', action='store_true',
+                        help="Hosted-only release tools alone, for the docs lane (tools/docs_lane.py)")
     args = parser.parse_args()
     if args.plan:
         tools, release = settings(ROOT)
@@ -197,6 +204,13 @@ def main():
         from ci_gate import committed_source
         committed_source(ROOT, os.environ['EXPECTED_COMMIT'])
         print('PASS exact hosted runtime and committed source before acquisition', flush=True)
+    elif args.prepare_release:
+        tools, release = settings(ROOT)
+        require_host(tools)
+        cache = owned_directory(ROOT, ROOT / '.build/ci-downloads', create=True)
+        validate_cache(ROOT, cache, release['artifacts'])
+        prepare_release(ROOT, release, cache, tools.get('target') == 'linux-x86_64')
+        print('PASS fresh pinned release tools alone', flush=True)
     else:
         prepare(ROOT)
 

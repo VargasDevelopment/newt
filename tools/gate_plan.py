@@ -32,7 +32,7 @@ QUICK = ("bench_flash_test.py --negative-controls", "bench_flash_layouts_test.py
          "python_runtime_test.py", "reading_acceptance_test.py", "reading_latency_test.py",
          "reading_latency_ready_test.py", "host_objects_test.py", "host_object_reuse_test.py",
          "page_entry_fatfs_test.py", "software_gate_shadow_test.py", "ci_toolchain_test.py",
-         "ci_workflow_test.py", "public_ci_test.py", "ci_persist_test.py", "gate_runner_test.py", "gate_tier_test.py", "gate_performance_test.py", "host_wide_jobs_test.py", "gate_stop_test.py", "procedure_closure_test.py",
+         "ci_workflow_test.py", "public_ci_test.py", "docs_lane_test.py", "ci_persist_test.py", "gate_runner_test.py", "gate_tier_test.py", "gate_performance_test.py", "host_wide_jobs_test.py", "gate_stop_test.py", "procedure_closure_test.py",
          "code_health.py", "native_sleep_guard_test.py",
          "native_reader_stack_test.py", "native_rollback_hook_test.py", "native_timer_task_test.py", "native_flash_writers_test.py", "native_crash_output_test.py", "wifi_link_test.py", "next_boot_test.py", "heap_clear_test.py", "build_scope_test.py", "rust_app_build_test.py",
          "freeink_patch_destination_test.py", "toolchain_share_test.py",
@@ -96,7 +96,7 @@ def plan(profile: str, fresh_objects: bool, controls=None) -> list[Phase]:
     for script in ("code_health_test.py", "code_health_resources_test.py", "code_health_capacity_test.py", "code_health_lent_test.py",
                    "code_health_procedure_cache_test.py", "python_runtime_test.py", "reading_acceptance_test.py",
                    "reading_latency_test.py", "reading_latency_ready_test.py", "host_objects_test.py", "host_object_reuse_test.py",
-                   "software_gate_shadow_test.py", "ci_toolchain_test.py", "ci_workflow_test.py", "public_ci_test.py", "ci_persist_test.py", "native_fixture_roots_test.py", "host_scratch_inputs_test.py",
+                   "software_gate_shadow_test.py", "ci_toolchain_test.py", "ci_workflow_test.py", "public_ci_test.py", "docs_lane_test.py", "ci_persist_test.py", "native_fixture_roots_test.py", "host_scratch_inputs_test.py",
                    "gate_runner_test.py", "gate_tier_test.py", "gate_performance_test.py", "host_wide_jobs_test.py", "gate_stop_test.py", "procedure_closure_test.py"):
         test(script)
     run(ROOT / "tools/code_health.py")

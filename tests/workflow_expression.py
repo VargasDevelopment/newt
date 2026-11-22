@@ -27,13 +27,16 @@ def loose_equal(left, right):
 def trust_expression(expression):
     """Evaluate a job's actual small workflow `if` expression. Unknown syntax fails
     closed, rather than testing a separate policy implementation. A context path
-    such as github.event.repository.private reads values['event.repository.private'];
+    such as github.event.repository.private reads values['event.repository.private'],
+    and needs.classify.outputs.lane reads values['needs.classify.outputs.lane'];
     None stands for a value the event does not carry."""
     text = re.sub(r'!(?!=)', ' not ', expression.replace('&&', ' and ').replace('||', ' or '))
     syntax = ast.parse(text.strip(), mode='eval')
     def path(node):
         if isinstance(node, ast.Name) and node.id == 'github':
             return []
+        if isinstance(node, ast.Name) and node.id == 'needs':
+            return ['needs']
         if isinstance(node, ast.Attribute):
             return [*path(node.value), node.attr]
         raise AssertionError('Unreviewed workflow trust expression')
