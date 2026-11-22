@@ -17,7 +17,7 @@ const UNREADABLE: &[u8] = b"The saved app could not be read. Please preserve its
 const DAMAGED: &[u8] = b"The saved app did not pass its integrity check.";
 
 /// Tiny's decoder alone interprets payloads.
-struct X3Payload;
+pub(crate) struct X3Payload;
 impl Payload for X3Payload {
     fn hash(&mut self, bytes: &[u8], digest: &mut [u8; 32]) -> bool {
         crate::reader_hash::package_hash(bytes, digest)
