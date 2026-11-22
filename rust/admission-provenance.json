@@ -1,0 +1,19 @@
+{
+  "reference": "bc9ffda52b85f277e46c63718ac88d62fba5d368",
+  "source_license": "MIT",
+  "sources": {
+    "include/newt/utf8.h": {
+      "sha256": "4e31dcc0ba068e329fdd75d3a321d1922048f063676073e055d12dd11e8bcf42",
+      "bytes": 1256
+    },
+    "include/newt/zip_record_rules.h": {
+      "sha256": "5146d6fde1626f29f9031298c3eb918d32d9eae4b609e68ec8ed0b6e4a763507",
+      "bytes": 3636
+    },
+    "LICENSE": {
+      "sha256": "6ae1f762295ed73a4694bc0ad106735ad42c0ad5ff5c57573d70b73476862ec5",
+      "bytes": 1070
+    }
+  },
+  "validation": "static-only; no compiler, cargo, tests, controls, gates, target build or device run"
+}

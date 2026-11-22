@@ -1,0 +1,63 @@
+{
+  "task": "NRUST-19",
+  "reference": "bc9ffda52b85f277e46c63718ac88d62fba5d368",
+  "license": "MIT",
+  "sources": [
+    {
+      "path": "include/newt/stats_graph_data.h",
+      "sha256": "7a8cafac813ea2484d35595b0cd34754985f6eb34d39451d22e2baea0c49f213",
+      "bytes": 8068
+    },
+    {
+      "path": "src/stats_graph_data.cpp",
+      "sha256": "62439b42d383d47664e3692ac5c6d828521d99a30358b535f8d9d79554bd1fa1",
+      "bytes": 7051
+    },
+    {
+      "path": "src/book_days.cpp",
+      "sha256": "f998268c938db29b0686f1b7b4bed41202de5dc17ffdc8baf3451765d000c10c",
+      "bytes": 10806
+    },
+    {
+      "path": "include/newt/reading_stats.h",
+      "sha256": "84b57bacc2f5e2f4c4291761fc6b6de138a52114fbac1307334ddc7752d6ab7a",
+      "bytes": 12859
+    },
+    {
+      "path": "src/reading_stats.cpp",
+      "sha256": "631298e88f037826e33b62b7f7ffc89ccefba2ba326c6ff80fe30cb11ec765ef",
+      "bytes": 23943
+    },
+    {
+      "path": "include/newt/crossink_stats.h",
+      "sha256": "bb4ffa54c51d66bbf0d5cc6d0b2ed6c303cfc4a6ffe5fb55e7fb3853b627f416",
+      "bytes": 3985
+    },
+    {
+      "path": "src/crossink_stats.cpp",
+      "sha256": "6fcd6240208cf475a5618b92d837e3a376ffd5b99ee6d899ddc87c1d452bdbd3",
+      "bytes": 8839
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "6ae1f762295ed73a4694bc0ad106735ad42c0ad5ff5c57573d70b73476862ec5",
+      "bytes": 1070
+    }
+  ],
+  "reused_modules": ".build/rust/staged-foundations/combined-integration/rust/core/src/{reading_stats,stats_clock,crossink_stats}.rs",
+  "validation": "unexecuted",
+  "reused_source_hashes": [
+    {
+      "path": ".build/rust/staged-foundations/combined-integration/rust/core/src/reading_stats.rs",
+      "sha256": "06186f523f0a8e1bae7e9b4951a2e29bd5915ed19f73c7f8bde4b87d10c829fd"
+    },
+    {
+      "path": ".build/rust/staged-foundations/combined-integration/rust/core/src/stats_clock.rs",
+      "sha256": "316d0cc15c07a611c3f972aaa156366a74541bee16cb89c19f0874196cf1ad41"
+    },
+    {
+      "path": ".build/rust/staged-foundations/combined-integration/rust/core/src/crossink_stats.rs",
+      "sha256": "20fb5fbaaf47cb8307027001bb1673de8a86598f0d1fd76466e82757f7c8eed3"
+    }
+  ]
+}

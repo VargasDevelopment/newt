@@ -1,0 +1,86 @@
+{
+  "INTEGRATION.md": {
+    "sha256": "54e1aca71e6b609506773bec36e596474347881910772ecf0c5166bc33563c93",
+    "base_sha256": null
+  },
+  "LICENSE": {
+    "sha256": "17dea5079d9905fbbc8323cde7bfffd0f24185949c43a5daad5177022b796588",
+    "base_sha256": null
+  },
+  "NOTICE": {
+    "sha256": "921a93785a6598871f20ae6ba7fb94381e86ad259ffe740419efe0095475489f",
+    "base_sha256": null
+  },
+  "PROVENANCE.json": {
+    "sha256": "0a5b18c2768ced961004ee57e535e4c874c34c15db7552a5c63dfbd7467802f0",
+    "base_sha256": null
+  },
+  "rust/core/src/xml_session.rs": {
+    "sha256": "4f379c34e12b213babaab0952abec42f3d70895351478a16bd24aef1bbec782a",
+    "base_sha256": "a3fe39c19e4402d703ccf92797b04ef9980dcd1a5f4fd69389ae9088e13cad4f"
+  },
+  "rust/core/tests/xml_session_lifecycle.rs": {
+    "sha256": "8b8b2873213a77a6691026d2844e6b97c6f469f763ae4b4a05b0c3580e638ca5",
+    "base_sha256": "b29cfc71b6c833a3e9278240385d22dbd283c5c599b3c6f5e43d96486cf82f82"
+  },
+  "rust/host/src/bin/xml-session-host.rs": {
+    "sha256": "74880c473910c0ce4257f17acfa56610c5e58e1064227c77d4cc0ae98c02f50e",
+    "base_sha256": "57237539a7e33ff01b8d767b90fa03b9e6bc74cba12ea0ffec77d9a8236fc057"
+  },
+  "rust/host/src/xml_session/expat.rs": {
+    "sha256": "78c349670e75043edc3ad8a3b5142db4e43b26fc7ace2831894bed8f0082b195",
+    "base_sha256": "2ab59541754166594fa6f187660ec143c730578a5b9cfaea60871bd06105d561"
+  },
+  "rust/host/src/xml_session/native_tests.rs": {
+    "sha256": "12a1def0ad9fa806630e5c6ff87f77369382966d8d18dc171b29364f85dbbe97",
+    "base_sha256": "7a53f9a58c45ab85cdf1c1c9d9c8b092a2c96363b77a4bdd3d9ea2b767abb8f1"
+  },
+  "rust/target-probe/src/xml_session_probe.rs": {
+    "sha256": "c69c69ee211e3d69f068c6bfc57aa70fb1f1eb68ddd7d1dc823366829d743814",
+    "base_sha256": "2559772712ed0bf8941b3051ee9ab01094ec5ff1c88c45eae78097eaef29c7c1"
+  },
+  "rust/tests/xml_session/expat_bridge.c": {
+    "sha256": "38fe9df1dfd3da94c03bb1c72b2e07a6372efcfe0675432a019e5d47735487eb",
+    "base_sha256": "d09d8f45aca292012951527186cfb51f406320e88e3a7dedf10a7af0944dd14d"
+  },
+  "rust/tests/xml_session/producer/OWNERSHIP.md": {
+    "sha256": "4506890628ae83be65fde3fa985e80d3a2cc751cca5e800c05178d6dda0bc1a1",
+    "base_sha256": null
+  },
+  "rust/tests/xml_session/producer/gate.py": {
+    "sha256": "1378de59af88082bfc5e0746cb988727ace08e3f65dad9e924bb8403796f1915",
+    "base_sha256": null
+  },
+  "rust/tests/xml_session/producer/mutations.json": {
+    "sha256": "eacfdeb9ba18d25ddb9c4be3fac6738ca3db2ff681cf2d4419112446b58ee174",
+    "base_sha256": null
+  },
+  "rust/tests/xml_session/producer/oracle.cpp": {
+    "sha256": "25d95667c95b0653c6bb7574af29905bba43f63927b7da825113d0a73f675e2c",
+    "base_sha256": null
+  },
+  "rust/tests/xml_session/producer/protocol.py": {
+    "sha256": "e90fc32017c127962eb6017995bb7617fe933c71e86365d8d94beb1de23a5650",
+    "base_sha256": null
+  },
+  "rust/tests/xml_session/producer/recipe.py": {
+    "sha256": "317181f1fcab2bc818f07c9d6bd6d6c4f26662de6504c1ebaa8f8f48382c0237",
+    "base_sha256": null
+  },
+  "rust/tests/xml_session/producer/rejection.py": {
+    "sha256": "3c385eb099fe89d792345734f924cba6da49528d36cf3c6223e8a4c45fdf5829",
+    "base_sha256": null
+  },
+  "rust/tests/xml_session/producer/vectors.py": {
+    "sha256": "a0eab92c667166ca35e1ef40064578faa8efbba0103a34c5b09dd292e9de8888",
+    "base_sha256": null
+  },
+  "rust/tests/xml_session/source_bindings.json": {
+    "sha256": "f64a6ce5fef3893e9a7482eb25875c10ad490a1081dbe64785baf052b33984bc",
+    "base_sha256": "584cdb8312f1330f6426a04b507d627b6b71dc047dadfa7bc89aaf5f06a149eb"
+  },
+  "rust/xml_session_gate.py": {
+    "sha256": "59fe7131fdcb1c8ade4c6a67cc337375ca5073affcae71096498ffac67933286",
+    "base_sha256": "065d4ed0ca16342ce26bc0501c0be7557d011f4aaf07f598b79505de2ef194d5"
+  }
+}

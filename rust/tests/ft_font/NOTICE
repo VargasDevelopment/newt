@@ -1,0 +1,11 @@
+FtFont policy derives from FreeInk SDK cd6f5b831c8fad899723b6d406586f00c575f021.
+Copyright (c) 2026 FreeInk. MIT; see rust/THIRD_PARTY.md.
+The Newt reference is bc9ffda52b85f277e46c63718ac88d62fba5d368 (MIT).
+Original wrapper and vendor hashes remain in the provenance records.
+FreeType is an explicit native C dependency under its original terms.
+This software is based in part on the work of the FreeType Team.
+The FreeType Project: https://www.freetype.org/ .
+Full terms: vendor/freeink-sdk/libs/font/FreeInkFont/third_party/freetype/FTL.TXT
+and vendor/freeink-sdk/libs/font/FreeInkFont/third_party/freetype/LICENSE.TXT.
+No original C++ FtFont/Gpos/Gsub policy implementation is linked.
+Original synthetic fixture and host/gate code: MIT (root LICENSE).

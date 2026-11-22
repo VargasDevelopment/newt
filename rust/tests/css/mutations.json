@@ -1,0 +1,122 @@
+[
+  {
+    "name": "space-vt",
+    "file": "src/lib.rs",
+    "needle": "b'\\r' | 12)",
+    "replacement": "b'\\r' | 12 | 11)",
+    "witness": "space-11",
+    "discriminator": "C rejects VT as whitespace; mutant sets size to 200."
+  },
+  {
+    "name": "keyword-root",
+    "file": "src/lib.rs",
+    "needle": "d.size_pct = keyword;",
+    "replacement": "d.size_pct = keyword; d.size_root_relative = false;",
+    "witness": "stale-root",
+    "discriminator": "C retains root flag 1; mutant clears it."
+  },
+  {
+    "name": "numeric-root",
+    "file": "src/lib.rs",
+    "needle": "d.size_root_relative = root;",
+    "replacement": "d.size_root_relative = root & false;",
+    "witness": "all-fields",
+    "discriminator": "C rem sets root flag 1; mutant cannot."
+  },
+  {
+    "name": "first-weight-byte",
+    "file": "src/lib.rs",
+    "needle": "v[0] >= b'6'",
+    "replacement": "v[0] > b'6'",
+    "witness": "weight-first-byte",
+    "discriminator": "600garbage is bold in C, normal in mutant."
+  },
+  {
+    "name": "fraction-digits",
+    "file": "src/lib.rs",
+    "needle": "div < 1000",
+    "replacement": "div < 10000",
+    "witness": "fraction-limit",
+    "discriminator": "Fourth fractional digit is unit garbage in C; mutant accepts it."
+  },
+  {
+    "name": "pct-rounding",
+    "file": "src/lib.rs",
+    "needle": "frac / div } else { 0 }",
+    "replacement": "frac } else { 0 }",
+    "witness": "percent-truncate",
+    "discriminator": "199.999% yields 199 in C; mutant clamps 400."
+  },
+  {
+    "name": "eight-class-cap",
+    "file": "src/lib.rs",
+    "needle": ".take(8)",
+    "replacement": ".take(7)",
+    "witness": "eight-classes",
+    "discriminator": "Eighth class sets weight 1 in C; mutant leaves -1."
+  },
+  {
+    "name": "specificity",
+    "file": "src/lib.rs",
+    "needle": "for pass in 0..3 {",
+    "replacement": "for pass in (0..3).rev() {",
+    "witness": "specificity",
+    "discriminator": "C final size 200; reversed passes final size 400."
+  },
+  {
+    "name": "star-match",
+    "file": "src/lib.rs",
+    "needle": "                r.elem_hash != 0\n",
+    "replacement": "                true\n",
+    "witness": "star-rejected",
+    "discriminator": "C rejects stored wildcard; mutant sets display_none=1."
+  },
+  {
+    "name": "rule-cap",
+    "file": "src/lib.rs",
+    "needle": "pub const MAX_RULES: usize = 512;",
+    "replacement": "pub const MAX_RULES: usize = 511;",
+    "witness": "rule-cap",
+    "discriminator": "C retains 512 rules; mutant retains 511."
+  },
+  {
+    "name": "ignored-text-hash",
+    "file": "src/lib.rs",
+    "needle": "self.content_hash = fold_hash(self.content_hash, css);",
+    "replacement": "self.content_hash = fold_hash(self.content_hash, &[]);",
+    "witness": "ignored-hash",
+    "discriminator": "C hashes ignored at-rule bytes; mutant keeps seed."
+  },
+  {
+    "name": "sheet-cap",
+    "file": "src/lib.rs",
+    "needle": "entry.uncompressed_size > MAX_SHEET_BYTES",
+    "replacement": "entry.uncompressed_size >= MAX_SHEET_BYTES",
+    "witness": "sheet-cap-65536",
+    "discriminator": "C reads exactly 65536; mutant skips and increments count."
+  },
+  {
+    "name": "skip-wrap",
+    "file": "src/lib.rs",
+    "needle": "self.skipped.wrapping_add(1)",
+    "replacement": "self.skipped.saturating_add(1)",
+    "witness": "skip-wrap",
+    "discriminator": "C wraps 65536 skips to 0; mutant reports 65535."
+  },
+  {
+    "name": "text-plus-one",
+    "file": "src/lib.rs",
+    "needle": "if text.len() < len + 1 {",
+    "replacement": "if text.len() < len {",
+    "witness": "text-oom-exact",
+    "discriminator": "C requires unused extra byte; mutant reads with exact length."
+  },
+  {
+    "name": "io-error",
+    "file": "src/lib.rs",
+    "needle": "return Status::IoError;",
+    "replacement": "return Status::OutOfMemory;",
+    "witness": "raw-truncated",
+    "discriminator": "C read error status 1; mutant emits 7."
+  }
+]

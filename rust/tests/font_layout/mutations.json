@@ -1,0 +1,104 @@
+[
+  {
+    "name": "sign",
+    "needle": "set.u16(4 + low * width + advance) as u16 as i16",
+    "replacement": "set.u16(4 + low * width + advance) as u16 as i32",
+    "witness": "pair-list"
+  },
+  {
+    "name": "coverage2",
+    "needle": "2 if view.has(4, count * 6) => {",
+    "replacement": "3 if view.has(4, count * 6) => {",
+    "witness": "pair-coverage2"
+  },
+  {
+    "name": "class2",
+    "needle": "if glyph >= view.u16(at) && glyph <= view.u16(at + 2) {",
+    "replacement": "if glyph > view.u16(at) && glyph <= view.u16(at + 2) {",
+    "witness": "matrix-class2"
+  },
+  {
+    "name": "value-width",
+    "needle": "let len2 = vf2.count_ones() as usize * 2;",
+    "replacement": "let len2 = (vf2 & 15).count_ones() as usize * 2;",
+    "witness": "widths-multi"
+  },
+  {
+    "name": "advance-offset",
+    "needle": "let advance = (vf1 & 3).count_ones() as usize * 2;",
+    "replacement": "let advance = 0usize;",
+    "witness": "widths-7-65535"
+  },
+  {
+    "name": "zero-precedence",
+    "needle": "if let Some(value) = pair(sub, seq[0], seq[1]) {\n                        return Some(value);\n                    }",
+    "replacement": "if let Some(value) = pair(sub, seq[0], seq[1]) { if value != 0 { return Some(value); } }",
+    "witness": "first-zero"
+  },
+  {
+    "name": "required",
+    "needle": "if required != 0xffff {",
+    "replacement": "if required == 0xffff {",
+    "witness": "P-required"
+  },
+  {
+    "name": "latin-preference",
+    "needle": "let lang = if usable(latin) { latin } else { fallback };",
+    "replacement": "let lang = if usable(fallback) { fallback } else { latin };",
+    "witness": "P-latin-suppresses-fallback"
+  },
+  {
+    "name": "rlig",
+    "needle": "tag != u32::from_be_bytes(*b\"rlig\")",
+    "replacement": "tag != u32::from_be_bytes(*b\"xxxx\")",
+    "witness": "rlig"
+  },
+  {
+    "name": "extension-kind",
+    "needle": "let extension = if kern { 9 } else { 7 };",
+    "replacement": "let extension = if kern { 8 } else { 6 };",
+    "witness": "P-extension"
+  },
+  {
+    "name": "ligature-components",
+    "needle": "matched = matched && ligature.u16(4 + (component - 1) * 2) == glyph;",
+    "replacement": "matched = matched && ligature.u16(4 + (component - 1) * 2) != glyph;",
+    "witness": "ligature-three"
+  },
+  {
+    "name": "feature-cap",
+    "needle": "if index >= self.features.u16(0) || !step(&mut self.work) {",
+    "replacement": "if index >= self.features.u16(0).min(8192) || !step(&mut self.work) {",
+    "witness": "P-late-feature"
+  },
+  {
+    "name": "lookup-cap",
+    "needle": "if index >= self.lookups.u16(0) as usize {\n                continue;\n            }",
+    "replacement": "if index >= self.lookups.u16(0).min(8192) as usize { continue; }",
+    "witness": "P-late-lookup"
+  },
+  {
+    "name": "work-budget",
+    "needle": "*work <= 4096",
+    "replacement": "*work <= 8192",
+    "witness": "work-cap"
+  },
+  {
+    "name": "gsub-zero-feature-continuation",
+    "needle": "if let Some(value) = self.feature(self.lang.u16(6 + i * 2), seq, kern) {\n                if kern || value != 0 {\n                    return value;\n                }\n            }",
+    "replacement": "if let Some(value) = self.feature(self.lang.u16(6 + i * 2), seq, kern) {\n                return value;\n            }",
+    "witness": "ligature-zero-next-feature"
+  },
+  {
+    "name": "coverage-cap-boundary",
+    "needle": "fn coverage(view: View<'_>, glyph: u32) -> Option<usize> {\n    let count = view.u16(2).min(8192) as usize;",
+    "replacement": "fn coverage(view: View<'_>, glyph: u32) -> Option<usize> {\n    let count = view.u16(2).min(8191) as usize;",
+    "witness": "coverage-boundary"
+  },
+  {
+    "name": "coverage-cap-removed",
+    "needle": "fn coverage(view: View<'_>, glyph: u32) -> Option<usize> {\n    let count = view.u16(2).min(8192) as usize;",
+    "replacement": "fn coverage(view: View<'_>, glyph: u32) -> Option<usize> {\n    let count = view.u16(2) as usize;",
+    "witness": "coverage-cap"
+  }
+]

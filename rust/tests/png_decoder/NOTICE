@@ -1,0 +1,7 @@
+Rust translations derive from FreeInk ImageRenderer.cpp (Copyright (c) 2026
+FreeInk, MIT) and pngle.c (Copyright 2019 kikuchan, MIT), pinned at
+cd6f5b831c8fad899723b6d406586f00c575f021. See rust/THIRD_PARTY.md.
+The canonical pngle terms are at
+vendor/freeink-sdk/libs/book/FreeInkBook/third_party/pngle/LICENSE.
+The removed host reference also linked miniz and TJpgDec. Their original
+terms remain in the canonical SDK; no reference implementation is compiled.

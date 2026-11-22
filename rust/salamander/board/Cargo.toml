@@ -1,0 +1,24 @@
+[package]
+name = "newt-c3-board"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+newt-core = { path = "../../core" }
+newt-input-policy = { path = "../input" }
+newt-native-io = { path = "../native_io" }
+newt-reader-ui = { path = "../../reader-ui" }
+newt-phased-reader = { path = "../../phased-reader" }
+newt-phased-sink = { path = "../../phased-sink" }
+newt-sdk-heap = { path = "../sdk-heap" }
+
+[features]
+default = ["rust-app"]
+rust-app = []
+embedded-sample = []

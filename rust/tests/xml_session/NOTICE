@@ -1,0 +1,13 @@
+NRUST-38 borrowed XML session
+
+Rust XmlSaxSession derives from FreeInk SDK XmlSax.cpp/h at
+cd6f5b831c8fad899723b6d406586f00c575f021.
+Copyright (c) 2026 FreeInk. MIT; see rust/THIRD_PARTY.md.
+PROVENANCE.json retains capture-time file names, commits and hashes.
+
+Expat: Copyright (c) 1998-2000 Thai Open Source Software Center Ltd and Clark Cooper;
+Copyright (c) 2001-2025 Expat maintainers.
+Full terms: vendor/freeink-sdk/libs/book/FreeInkBook/third_party/expat/COPYING.
+Miniz: vendor/freeink-sdk/libs/book/FreeInkBook/third_party/miniz/LICENSE.
+The historical Newt bc9ffda5 producer-policy provenance is retained separately;
+it is not a compiled reference implementation.

@@ -1,0 +1,44 @@
+[
+  {
+    "id": "io-status",
+    "before": "if n < 0 {\n            return Status::IoError;",
+    "after": "if n < 0 {\n            return Status::ParseError;",
+    "witness": "io-failure"
+  },
+  {
+    "id": "parse-count",
+    "before": "if !parsed {\n            return Status::ParseError;\n        }",
+    "after": "if !parsed {\n            self.bytes_consumed = self.bytes_consumed.wrapping_add(n as u64);\n            return Status::ParseError;\n        }",
+    "witness": "mismatch"
+  },
+  {
+    "id": "premature-finished",
+    "before": "if n == 0 {\n            self.finished = true;",
+    "after": "if n > 0 {\n            self.finished = true;",
+    "witness": "attributes"
+  },
+  {
+    "id": "ignore-one-shot-stop",
+    "before": "while !at_end && !session.stop_requested()",
+    "after": "while !at_end",
+    "witness": "initial-stop"
+  },
+  {
+    "id": "stop-stepped",
+    "before": "        self.feed_chunk_with(at_end, |_, backend, bytes, last| {",
+    "after": "        if handler.stop_parse() { return Status::Unsupported; }\n        self.feed_chunk_with(at_end, |_, backend, bytes, last| {",
+    "witness": "stepped-stop"
+  },
+  {
+    "id": "close-count",
+    "before": "// Count deliberately survives close, matching the source.",
+    "after": "self.bytes_consumed = 0;",
+    "witness": "attributes"
+  },
+  {
+    "id": "bypass-filter",
+    "before": "filter.read(&mut self.reader, buffer.as_mut_slice())",
+    "after": "{ let _ = filter; self.reader.read(buffer.as_mut_slice()) }",
+    "witness": "html-entity"
+  }
+]

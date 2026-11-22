@@ -1,0 +1,39 @@
+{
+  "source_commit": "cd6f5b831c8fad899723b6d406586f00c575f021",
+  "patch_sha256": "625f704676bd8b92275c838a93e524b63a830ad39bbe456ab2d70148404e2ed2",
+  "license": "MIT; Copyright (c) 2026 FreeInk; LICENSE retained in generated SDK",
+  "files": {
+    "libs/display/FreeInkDisplay/include/FreeInkDisplay.h": {
+      "source_sha256": "fdff6bac2385111247ebff35f69660ebff20c60f0c842a6791cd2dd52cd4ca1f",
+      "patched_sha256": "2c1ae7c2838c171d77ca870a5304c92f2dc91fa0b561b7acb6f282c7130c3905"
+    },
+    "libs/display/FreeInkDisplay/include/GrayscaleCapabilities.h": {
+      "source_sha256": "f37cee3ec6f4035d8f2cd141c1cc9ad8bbfbc0ff43f11eb7c0f0d25fef01b855",
+      "patched_sha256": "3be45ded716d42d764e479c416f12fa0d6919d700211b331c18665a1299d6735"
+    },
+    "libs/display/FreeInkDisplay/src/FreeInkDisplay.cpp": {
+      "source_sha256": "e4b9494d3a0cfd862c645e0075cd2207379588ec97c59d02fd4230b386f6275e",
+      "patched_sha256": "3688d668981c88f9e5b14f0eec236894baf66e82b74bd5a23c9b148e20728012"
+    },
+    "libs/display/FreeInkDisplay/src/driver/PanelDriver.h": {
+      "source_sha256": "afdad1bb7b0362d808c128a714b664b6f04014c6e2398cd7aa0f68848fcd5d69",
+      "patched_sha256": "d8618f548ed82ad130ad41180de4e6afec95310fcfda3fe32e3e878e9c49a8e1"
+    },
+    "libs/display/FreeInkDisplay/src/driver/Uc8253X3Driver.cpp": {
+      "source_sha256": "cda612cb5fb25e1d7f28c9521845863117dba268f649e4d92cf2d6df14c64641",
+      "patched_sha256": "e5680546475459639d1be18f4c9a9a815ae2e69bf01cef1c0aebfe6517c3d2ce"
+    },
+    "libs/display/FreeInkDisplay/src/driver/Uc8253X3Driver.h": {
+      "source_sha256": "6c0cfda5838016fec0d6abe54edd31045669345550d055bea411c742013de2dc",
+      "patched_sha256": "0d7fee339b1b9e1c2423a35d5537e9357e29d05ebe931d2fa5fcd88e0e73c541"
+    },
+    "libs/display/FreeInkDisplay/src/driver/Uc8279Driver.cpp": {
+      "source_sha256": "fc40536b92d0403e20501755af7bd73d36bdd32377649dc7ff8023ade877e6da",
+      "patched_sha256": "3f857f441f0c1d8ec80145be3f972925b4baecdd9c3d7597a4efc999d2a487f7"
+    },
+    "libs/display/FreeInkDisplay/src/driver/Uc8279Driver.h": {
+      "source_sha256": "b73243bf5f7ece6e28d20f43846e3bab0eb2e796e7a26ee9aec0799f5ad5e297",
+      "patched_sha256": "c7bfb0537ec3d8cb067c7eab7290f438bedb3ce65d2f27465420dc6861b0c7a8"
+    }
+  }
+}

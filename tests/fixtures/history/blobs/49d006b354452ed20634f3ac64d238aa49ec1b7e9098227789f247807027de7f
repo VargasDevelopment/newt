@@ -1,0 +1,45 @@
+; Compile only. See docs/BRINGUP.md before connecting or flashing hardware.
+; Pinned to FreeInk's own platformio.sample.ini at cd6f5b831c8fad899723b6d406586f00c575f021.
+[platformio]
+default_envs = newt_x3
+src_dir = .
+include_dir = include
+core_dir = .toolchain/platformio
+build_dir = .pio/build
+libdeps_dir = .pio/libdeps
+
+[env:newt_x3]
+platform = https://github.com/pioarduino/platform-espressif32/releases/download/55.03.37/platform-espressif32.zip
+framework = arduino
+board = esp32-c3-devkitm-1
+board_build.flash_mode = dio
+; The pinned builder reads upload.flash_size for image metadata. The reference
+; sample's build.flash_size leaves the dev board's 4MB default in the header.
+board_upload.flash_size = 16MB
+monitor_speed = 115200
+build_src_filter = +<firmware/main.cpp> +<firmware/nvs_guard.cpp> +<src/*.cpp>
+build_unflags = -std=gnu++11
+build_flags =
+  -std=gnu++2a
+  -fstack-usage
+  -DARDUINO_USB_MODE=1
+  -DARDUINO_USB_CDC_ON_BOOT=1
+  -DEINK_DISPLAY_SINGLE_BUFFER_MODE=1
+  -DFREEINK_DEVICE_X3=1
+  -DFREEINK_BOOK_SMALL=1
+  -Wl,--wrap=nvs_flash_init
+  -Wl,--wrap=esp_partition_erase_range
+  -Wl,--wrap=esp_partition_write
+  -Wl,--wrap=esp_partition_write_raw
+  -Wl,--wrap=nvs_flash_erase
+  -Wl,--wrap=nvs_flash_erase_partition
+  -Wl,--wrap=nvs_flash_erase_partition_ptr
+lib_deps =
+  BoardConfig=symlink://vendor/freeink-sdk/libs/hardware/BoardConfig
+  EInkDisplay=symlink://vendor/freeink-sdk/libs/display/FreeInkDisplay
+  InputManager=symlink://vendor/freeink-sdk/libs/hardware/InputManager
+  BatteryMonitor=symlink://vendor/freeink-sdk/libs/hardware/BatteryMonitor
+  XteinkDetect=symlink://vendor/freeink-sdk/libs/hardware/XteinkDetect
+  PowerManager=symlink://vendor/freeink-sdk/libs/hardware/PowerManager
+  FreeInkFont=symlink://vendor/freeink-sdk/libs/font/FreeInkFont
+  FreeInkBook=symlink://vendor/freeink-sdk/libs/book/FreeInkBook

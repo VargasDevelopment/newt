@@ -1,0 +1,52 @@
+[
+  {
+    "file": "core/src/admission.rs",
+    "mutation": "skip local header rule",
+    "witness": "local_mismatch_precedes_encryption: Unsupported becomes Encrypted"
+  },
+  {
+    "file": "core/src/admission.rs",
+    "mutation": "omit local/central name comparison",
+    "witness": "every_member_name_must_match: Unsupported becomes Ok"
+  },
+  {
+    "file": "core/src/admission.rs",
+    "mutation": "change flags=0 in central rule call to flags",
+    "witness": "declared-budget-before-flags: matching encrypted local/central headers with declared4194305 bytes; baseline Unsupported becomes Encrypted because the central size rule is bypassed"
+  },
+  {
+    "file": "core/src/admission.rs",
+    "mutation": "remove declared+1 expansion probe",
+    "witness": "required-excess-deflate: Unsupported becomes Ok before XML"
+  },
+  {
+    "file": "core/src/canonical.rs",
+    "mutation": "remove duplicate loop",
+    "witness": "duplicate-before-required emits MemberBegin instead of rejecting before payload"
+  },
+  {
+    "file": "core/src/canonical.rs",
+    "mutation": "parse nav XML in validate_selection",
+    "witness": "valid-nav-not-parsed changes Ok to ParseError"
+  },
+  {
+    "file": "core/src/canonical.rs",
+    "mutation": "skip required expansion",
+    "witness": "required-short-deflate changes Truncated to XML parser status and loses Stream events"
+  },
+  {
+    "file": "core/src/admission.rs",
+    "mutation": "remove resets after admit",
+    "witness": "success and catalog name OOM retain nonzero catalog.used"
+  },
+  {
+    "file": "core/src/admission.rs",
+    "mutation": "yield on zero read",
+    "witness": "exact stream trace gains Y on EOF; scheduled zero probe gains Y"
+  },
+  {
+    "file": "core/src/admission.rs",
+    "mutation": "finish returns consumed==length without probe",
+    "witness": "deflated chapter with extra output falsely finishes true"
+  }
+]

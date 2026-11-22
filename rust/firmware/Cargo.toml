@@ -1,0 +1,47 @@
+[package]
+name = "newt-app-image"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+path = "lib.rs"
+crate-type = ["staticlib"]
+
+[dependencies]
+newt-core = { path = "../core" }
+newt-sdk-heap = { path = "../salamander/sdk-heap" }
+newt-native-storage = { path = "../native-storage" }
+newt-reader-atlas = { path = "../reader-atlas" }
+newt-reader-navigation = { path = "../reader-navigation" }
+newt-reader-ui = { path = "../reader-ui" }
+newt-phased-reader = { path = "../phased-reader" }
+newt-phased-sink = { path = "../phased-sink" }
+newt-target-expat = { path = "../target-expat" }
+newt-ui-canvas = { path = "../ui-canvas" }
+newt-system-ui = { path = "../system-ui" }
+newt-stage-home = { path = "../stage-home" }
+newt-library-ui = { path = "../library-ui" }
+newt-library-current = { path = "../library-current" }
+newt-library-current-ui = { path = "../library-current-ui" }
+newt-device-ui = { path = "../device-ui" }
+newt-tiny-app = { path = "../tiny-app" }
+newt-c3-board = { path = "../salamander/board" }
+newt-input-policy = { path = "../salamander/input" }
+newt-native-input-owner = { path = "../salamander/input-owner" }
+newt-native-io = { path = "../salamander/native_io" }
+newt-nvs-guard = { path = "../salamander/nvs_guard" }
+newt-wake-evidence = { path = "../wake-evidence" }
+
+[features]
+# TODO #295: retire the fixture-only whole-book entry.
+checkpoint-fixture = []
+default = ["rust-app", "dev-usb"]
+rust-app = ["newt-c3-board/rust-app"]
+# The first bench image is reading-only by owner decision.
+wifi-update = []
+dev-usb = ["newt-device-ui/dev-usb", "newt-core/dev-usb", "newt-native-storage/dev-usb", "newt-phased-reader/dev-usb"]
+# Owner-excluded from the bench image; proof follows its first image check.
+embedded-sample = ["newt-c3-board/embedded-sample", "newt-reader-ui/embedded-sample"]

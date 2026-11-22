@@ -1,0 +1,86 @@
+{
+ "origin": "one-time unchanged frozen C++ execution",
+ "cases": 1,
+ "source_sha256": {
+  "rust/tests/nvs_guard/oracle_text.cpp": "3c9824d9afc95bdff44f02c0eaf60740863adf2a4ff5eac84b0efe309c18acef",
+  "rust/tests/nvs_guard/cases.tsv": "5142246a442300387caa604655f22baf484408cf8f0506a42529580e8454c65c",
+  "rust/tests/nvs_guard/oracle_probe.cpp": "28f37d85b2315d05d3db2d25b2ea5c8ce4421c0596e078a3eac4491c35a570d7",
+  "rust/tests/nvs_guard/oracle.cpp": "cbc6f77acac5d68f4abd4d9576194aafdd649e36725cd0bdc8990cec38bd448e",
+  "rust/tests/nvs_guard/oracle/reading_save_notice.cpp": "418b0e757217032bb1b7e309f3866d0e1834686419289b73d82ca2f605f06699",
+  "rust/tests/nvs_guard/oracle/nvs_guard.cpp": "a000fa98eaef66405ebab14f902cb507a1a77f8e26515def3c88118daf89315d",
+  "rust/tests/nvs_guard/oracle/nvs_guard.h": "3eca9ecd4de3c7508cdc469fd632a79755f04b70b0d219b4b9ab0097d8bce47d",
+  "rust/tests/nvs_guard/oracle/stubs/nvs_flash.h": "6ce9cf4549dce1e64968750ca34bfa1cb381d4fd622b3e3fc2027c2615555c17",
+  "rust/tests/nvs_guard/oracle/stubs/nvs.h": "4328135dc0ba2521abb39d2a93b6f7894b2d7f954cec26909a2af112ea7f5a2a",
+  "rust/tests/nvs_guard/oracle/stubs/esp_partition.h": "b8ad2f5d068a994bf92fdef9bf43c29806ed882d414612b7a56c6842183cf687",
+  "rust/tests/nvs_guard/oracle/newt/reading_save_notice.h": "94684fafee1050cc3155432e4d5cfc38478b43b583b1ea4094c3c1c8302392e6",
+  "rust/tests/nvs_guard/oracle/stubs/newt/app.h": "0c53b892f2e3d92c4d2473275613ed7150f1b3197cde12cc7dfe95345d63be7f",
+  "rust/tests/nvs_guard/owner/host/fixture.cpp": "7b614cb394aa3e86e6d19391231e5d87f622ef469514f4d1d359995f06fd0518",
+  "rust/tests/nvs_guard/owner/host/stubs/esp_idf_version.h": "7b9ccaeb12da28f9b999daa642c76ec769de23e0e78e3e6e43409f324cd81cbb",
+  "rust/tests/nvs_guard/owner/host/stubs/sdkconfig.h": "8318c472b904910375ecb7aee70a6f371ae79200b579add88f250e5f5f97da04",
+  "rust/tests/nvs_guard/owner/host/stubs/freertos/FreeRTOS.h": "3478b1e58efd55564435617e0da1a0bc8a611a1301013d273e9ede6713093279",
+  "rust/tests/nvs_guard/owner/host/stubs/freertos/portmacro.h": "54c7283986d4cff562abfff9c7120080d6e5a8e659d5d5211277f6319d8af54a"
+ },
+ "commands": [
+  {
+   "command": [
+    ".toolchain/llvm/bin/clang++",
+    "--no-default-config",
+    "-std=c++17",
+    "-O1",
+    "-g",
+    "-fsanitize=address,undefined",
+    "-fno-omit-frame-pointer",
+    "-I",
+    "rust/tests/nvs_backend/oracle",
+    "rust/tests/nvs_backend/oracle.cpp",
+    "-o",
+    ".build/rust/merge-prep/capture-storage/run/nvs_backend"
+   ],
+   "cwd": "rust/tests/nvs_backend",
+   "stdin_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "log": "000",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/nvs_backend"
+   ],
+   "cwd": "rust/tests/nvs_backend",
+   "stdin_sha256": "22aaf1bcac5eb15eda938c43a861ee249e870d3120813a5c202c4e5bd2bd281b",
+   "log": "001",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".toolchain/llvm/bin/clang++",
+    "--no-default-config",
+    "-std=c++17",
+    "-O1",
+    "-g",
+    "-fsanitize=address,undefined",
+    "-fno-omit-frame-pointer",
+    "-I",
+    "rust/tests/nvs_guard/oracle/stubs",
+    "-I",
+    "rust/tests/nvs_guard/oracle",
+    "rust/tests/nvs_guard/oracle.cpp",
+    "-o",
+    ".build/rust/merge-prep/capture-storage/run/nvs_guard"
+   ],
+   "cwd": "rust/tests/nvs_guard",
+   "stdin_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "log": "002",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/nvs_guard"
+   ],
+   "cwd": "rust/tests/nvs_guard",
+   "stdin_sha256": "5142246a442300387caa604655f22baf484408cf8f0506a42529580e8454c65c",
+   "log": "003",
+   "returncode": 0
+  }
+ ],
+ "fixture_sha256": "09b540fa718c7b5f457a6a9c452a1108fdc6dc1c487c59e6206fb2e7998f08e5"
+}

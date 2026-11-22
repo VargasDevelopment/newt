@@ -1,0 +1,198 @@
+[
+  {
+    "name": "unknown-replacement",
+    "file": "src/lib.rs",
+    "old": "map_or(\"\ufffd\", |(_, s)| *s)",
+    "new": "map_or(\"?\", |(_, s)| *s)",
+    "witness": "F 26756e6b6e6f776e3b 512 -1 -1 0 9",
+    "required": "type-preserving semantic stdout mismatch against OriginalCpp after successful compile"
+  },
+  {
+    "name": "numeric-passthrough",
+    "file": "src/lib.rs",
+    "old": "name.first() == Some(&b'#')",
+    "new": "name.first() == Some(&b'!')",
+    "witness": "F 262331323b 512 -1 -1 0 9",
+    "required": "type-preserving semantic stdout mismatch against OriginalCpp after successful compile"
+  },
+  {
+    "name": "builtin-case",
+    "file": "src/lib.rs",
+    "old": "b\"quot\", b\"apos\"",
+    "new": "b\"quot\", b\"APOS\"",
+    "witness": "F 2661706f733b 512 -1 -1 0 9",
+    "required": "type-preserving semantic stdout mismatch against OriginalCpp after successful compile"
+  },
+  {
+    "name": "name-cap",
+    "file": "src/lib.rs",
+    "old": "self.entity_len >= 10",
+    "new": "self.entity_len >= 9",
+    "witness": "F 26313233343536373839303b 512 -1 -1 0 32",
+    "required": "type-preserving semantic stdout mismatch against OriginalCpp after successful compile"
+  },
+  {
+    "name": "raw-pull-boundary",
+    "file": "src/lib.rs",
+    "old": "reader.pull(&mut self.raw)",
+    "new": "reader.pull(&mut self.raw[..511])",
+    "witness": "F 6161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161 512 -1 -1 0 512",
+    "required": "type-preserving semantic stdout mismatch against OriginalCpp after successful compile"
+  },
+  {
+    "name": "error-not-eof",
+    "file": "src/lib.rs",
+    "old": "if n < 0 || n as usize > 512 {\n                    return -1;",
+    "new": "if n < 0 || n as usize > 512 {\n                    return 0;",
+    "witness": "F 6162 1 1 -7 0 4",
+    "required": "type-preserving semantic stdout mismatch against OriginalCpp after successful compile"
+  },
+  {
+    "name": "reset-eof-state",
+    "file": "src/lib.rs",
+    "old": "self.source_done = false;",
+    "new": "self.source_done = true;",
+    "witness": "F 61 512 -1 -1 0 r,1",
+    "required": "type-preserving semantic stdout mismatch against OriginalCpp after successful compile"
+  },
+  {
+    "name": "reset-pending-state",
+    "file": "src/lib.rs",
+    "old": "self.pending_len = 0;\n        self.pending_pos = 0;",
+    "new": "self.pending_len = self.pending_len.wrapping_add(0);\n        self.pending_pos = 0;",
+    "witness": "F 266d646173683b58 512 -1 -1 0 1,r,4",
+    "required": "type-preserving semantic stdout mismatch against OriginalCpp after successful compile"
+  },
+  {
+    "name": "yen-table",
+    "file": "src/lib.rs",
+    "old": "(b\"yen\", \"\u00a5\")",
+    "new": "(b\"yen\", \"?\")",
+    "witness": "F 2679656e3b 512 -1 -1 0 8",
+    "required": "type-preserving semantic stdout mismatch against OriginalCpp after successful compile"
+  },
+  {
+    "name": "last-colon",
+    "file": "src/lib.rs",
+    "old": "qname.iter().rposition(|b| *b == b':')",
+    "new": "qname.iter().position(|b| *b == b':')",
+    "witness": "L 613a623a63 63",
+    "required": "type-preserving semantic stdout mismatch against OriginalCpp after successful compile"
+  },
+  {
+    "name": "first-attribute",
+    "file": "src/lib.rs",
+    "old": ".find(|(n, _)| local_is(n, local))",
+    "new": ".rfind(|(n, _)| local_is(n, local))",
+    "witness": "A local 6b 613a6b 31 6b 32",
+    "required": "type-preserving semantic stdout mismatch against OriginalCpp after successful compile"
+  },
+  {
+    "name": "ascii-four-space",
+    "file": "src/lib.rs",
+    "old": "matches!(b, b' ' | b'\\t' | b'\\n' | b'\\r')",
+    "new": "matches!(b, b' ' | b'\\t' | b'\\n' | b'\\r' | 11)",
+    "witness": "H 780b79 79",
+    "required": "type-preserving semantic stdout mismatch against OriginalCpp after successful compile"
+  },
+  {
+    "name": "capture-cap",
+    "file": "src/lib.rs",
+    "old": "pub const MAX_TEXT_CAPTURE: usize = 255;",
+    "new": "pub const MAX_TEXT_CAPTURE: usize = 254;",
+    "witness": "T a787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878",
+    "required": "type-preserving semantic stdout mismatch against OriginalCpp after successful compile"
+  },
+  {
+    "name": "trim-preserves-len",
+    "file": "src/lib.rs",
+    "old": "self.buf[stop] = 0;",
+    "new": "self.buf[stop] = 0;\n        self.len = stop;",
+    "witness": "T a206120 t",
+    "required": "type-preserving semantic stdout mismatch against OriginalCpp after successful compile",
+    "rust_file": "core/src/xml_input/events.rs"
+  },
+  {
+    "name": "encryption-element-local",
+    "file": "src/lib.rs",
+    "old": "if !local_is(name, b\"EncryptionMethod\")",
+    "new": "if local_is(name, b\"EncryptionMethod\")",
+    "witness": "E local 783a456e6372797074696f6e4d6574686f64 416c676f726974686d 626164",
+    "required": "type-preserving semantic stdout mismatch against OriginalCpp after successful compile",
+    "rust_file": "core/src/xml_input/events.rs"
+  },
+  {
+    "name": "font-adobe-exception",
+    "file": "src/lib.rs",
+    "old": "b\"http://ns.adobe.com/pdf/enc#RC\"",
+    "new": "b\"http://ns.adobe.com/pdf/enc#rc\"",
+    "witness": "E local 456e6372797074696f6e4d6574686f64 416c676f726974686d 687474703a2f2f6e732e61646f62652e636f6d2f7064662f656e63235243",
+    "required": "type-preserving semantic stdout mismatch against OriginalCpp after successful compile",
+    "rust_file": "core/src/xml_input/events.rs"
+  },
+  {
+    "name": "generic-encryption-sticky",
+    "file": "src/lib.rs",
+    "old": "self.content_encrypted = true;",
+    "new": "self.content_encrypted = false;",
+    "witness": "E exact 456e6372797074696f6e4d6574686f64 416c676f726974686d 626164",
+    "required": "type-preserving semantic stdout mismatch against OriginalCpp after successful compile",
+    "rust_file": "core/src/xml_input/events.rs"
+  },
+  {
+    "name": "percent-byte",
+    "file": "src/lib.rs",
+    "old": "Some(a * 16 + b)",
+    "new": "Some(a * 15 + b)",
+    "witness": "P 32 null 253631 1",
+    "required": "type-preserving semantic stdout mismatch against OriginalCpp after successful compile"
+  },
+  {
+    "name": "percent-after-nul-bound",
+    "file": "src/lib.rs",
+    "old": "if decoded_len + 1 >= MAX_PATH",
+    "new": "if decoded_len + 2 >= MAX_PATH",
+    "witness": "P 1024 null 78787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878 1",
+    "required": "type-preserving semantic stdout mismatch against OriginalCpp after successful compile"
+  },
+  {
+    "name": "parent-removes-slash",
+    "file": "src/lib.rs",
+    "old": "let bit = 31 - bits.leading_zeros() as usize;",
+    "new": "let bit = 32 - bits.leading_zeros() as usize;",
+    "witness": "P 32 612f62 2e2e2f63 1",
+    "required": "type-preserving semantic stdout mismatch against OriginalCpp after successful compile"
+  },
+  {
+    "name": "absolute-base-selection",
+    "file": "src/lib.rs",
+    "old": "if absolute {",
+    "new": "if !absolute {",
+    "witness": "P 32 612f62 2f63 1",
+    "required": "type-preserving semantic stdout mismatch against OriginalCpp after successful compile"
+  },
+  {
+    "name": "dir-failure-output",
+    "file": "src/lib.rs",
+    "old": "if len >= out.len() {\n        return false;",
+    "new": "if len >= out.len() {\n        if !out.is_empty() { out[0] = 0; }\n        return false;",
+    "witness": "D 6162632f64 3",
+    "required": "type-preserving semantic stdout mismatch against OriginalCpp after successful compile"
+  },
+  {
+    "name": "path-copy-terminator",
+    "file": "src/lib.rs",
+    "old": "let joined_len = joined.len;",
+    "new": "let joined_len = joined.len + 1;",
+    "witness": "P 32 null 6162 1",
+    "required": "type-preserving semantic stdout mismatch against OriginalCpp after successful compile"
+  },
+  {
+    "name": "normalized-arena-extent",
+    "file": "src/lib.rs",
+    "old": "let result = arena.alloc(joined_len + 1, 1)?;",
+    "new": "let result = arena.alloc(decoded_len + 1, 1)?;",
+    "witness": "P 4 null 61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161612f2e2e2f622366 1",
+    "required": "type-preserving semantic stdout mismatch against OriginalCpp after successful compile"
+  }
+]

@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "contract_sha256": "c4024b4dd02a557958158285a4502f9530bd10c95d8b9c1bbcddbf5aafaee416",
+  "approved_baseline_sha256": null,
+  "review": null,
+  "groups": [],
+  "goals_ms": [500, 750, 1000],
+  "comparison_statistics": ["p50", "p95", "max"]
+}

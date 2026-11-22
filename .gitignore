@@ -1,0 +1,13 @@
+.build/
+.pio/
+.toolchain
+.release-venv/
+__pycache__/
+*.pyc
+artifacts/**/*.pbm
+artifacts/*.png
+artifacts/*.svg
+artifacts/*-qa/
+installer/node_modules/
+installer/dist/
+installer/dist-gallery/

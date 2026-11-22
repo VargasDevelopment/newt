@@ -1,0 +1,10 @@
+{
+  "rust-lld": {
+    "path": ".toolchain/rust/toolchain/lib/rustlib/x86_64-unknown-linux-gnu/bin/rust-lld",
+    "sha256": "ed7d2923baca14739c3df6ce3393ba07116e7f529b785bcec2d1e25f90d28173"
+  },
+  "native-ld": {
+    "path": ".toolchain/rust/toolchain/lib/rustlib/x86_64-unknown-linux-gnu/bin/gcc-ld/ld.lld",
+    "sha256": "8d61f2f2e4460947ad324693a1e23f80920dad95ca161b5cd84c4d08c34fcf99"
+  }
+}

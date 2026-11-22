@@ -1,0 +1,23 @@
+{
+  "source_commit": "cd6f5b831c8fad899723b6d406586f00c575f021",
+  "patch_sha256": "ecc9c4752d31c5b8490f3901dc6f8dc310983cb13936add5ac78222be9637846",
+  "license": "SDK MIT and pngle MIT; original LICENSE and copyright headers retained",
+  "files": {
+    "libs/book/FreeInkBook/third_party/pngle/pngle.h": {
+      "source_sha256": "d8aa264f80cdd884c02ca1e28b696e8bbfbc16074c9c5265fcec4463f563bb17",
+      "patched_sha256": "ce9b9757e31b1f365b29f26c6d51c521543a21c78b4b8e7020622276c1756709"
+    },
+    "libs/book/FreeInkBook/third_party/pngle/pngle.c": {
+      "source_sha256": "2458965314e3b4a5b9daaa0bccf163e93db653f9a5b1f08128a04c132f9dd21b",
+      "patched_sha256": "435460fd85594d8d6a9055a16750a68d4d3fe8fd226c293e59aa4ddf43857d1b"
+    },
+    "libs/book/FreeInkBook/include/render/ImageRenderer.h": {
+      "source_sha256": "2b35ae986f3fd1175db8bd7b062692e0d43957c66501dd40892671875e7bf044",
+      "patched_sha256": "050005540d5233784f1b4a5702a462e50d7608da3fda9535c8c58075c762bdfa"
+    },
+    "libs/book/FreeInkBook/src/render/ImageRenderer.cpp": {
+      "source_sha256": "38999eefa0152d10596b55d1a94ecaa7af4194c7beb59383c1a7fd9d1779f20d",
+      "patched_sha256": "0f790b6295871f537a9a16a2c429a47ce0e2936df8109461052edc7ceec771b2"
+    }
+  }
+}

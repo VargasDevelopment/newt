@@ -1,0 +1,132 @@
+//! NWTR v1 progress records and modular two-slot arbitration.
+//! Source: include/newt/reading_progress.h and src/reading_progress.cpp.
+use crate::wire::{crc32, get32, put32};
+
+pub const BYTES: usize = 52;
+pub const NAMESPACE: &str = "newt_reader";
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Locator {
+    pub spine: u32,
+    pub character: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Progress {
+    pub sequence: u32,
+    /// RAM only, deliberately excluded from the wire encoding.
+    pub session_milliseconds: u32,
+    pub book: u64,
+    pub locator: Locator,
+    pub active_milliseconds: u64,
+    pub forward_pages: u32,
+    pub qualified_sessions: u32,
+}
+
+/// Frozen SampleReader initialProgress: only this book's saved session enters
+/// its tracker. Both embedded and external storage use this same value policy.
+pub fn initial_progress(saved: Progress, identity: u64) -> Progress {
+    if saved.book == identity { saved }
+    else { Progress { book: identity, ..Progress::default() } }
+}
+
+impl Progress {
+    pub fn encode(&self) -> Option<[u8; BYTES]> {
+        if self.book == 0 {
+            return None;
+        }
+        let mut bytes = [0; BYTES];
+        bytes[..4].copy_from_slice(b"NWTR");
+        put32(&mut bytes, 4, 1);
+        put32(&mut bytes, 8, self.sequence);
+        bytes[12..20].copy_from_slice(&self.book.to_le_bytes());
+        put32(&mut bytes, 20, self.locator.spine);
+        put32(&mut bytes, 24, self.locator.character);
+        bytes[28..36].copy_from_slice(&self.active_milliseconds.to_le_bytes());
+        put32(&mut bytes, 36, self.forward_pages);
+        put32(&mut bytes, 40, self.qualified_sessions);
+        let checksum = crc32(&bytes[..48]);
+        put32(&mut bytes, 48, checksum);
+        Some(bytes)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != BYTES
+            || &bytes[..4] != b"NWTR"
+            || get32(bytes, 4) != 1
+            || get32(bytes, 44) != 0
+            || get32(bytes, 48) != crc32(&bytes[..48])
+        {
+            return None;
+        }
+        let book = u64::from_le_bytes(bytes[12..20].try_into().ok()?);
+        if book == 0 {
+            return None;
+        }
+        Some(Self {
+            sequence: get32(bytes, 8),
+            session_milliseconds: 0,
+            book,
+            locator: Locator {
+                spine: get32(bytes, 20),
+                character: get32(bytes, 24),
+            },
+            active_milliseconds: u64::from_le_bytes(bytes[28..36].try_into().ok()?),
+            forward_pages: get32(bytes, 36),
+            qualified_sessions: get32(bytes, 40),
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Selection {
+    None,
+    First(Progress),
+    Second(Progress),
+    Ambiguous,
+}
+
+pub fn select(first: &[u8], second: &[u8]) -> Selection {
+    match (Progress::decode(first), Progress::decode(second)) {
+        (None, None) => Selection::None,
+        (Some(a), None) => Selection::First(a),
+        (None, Some(b)) => Selection::Second(b),
+        (Some(a), Some(b)) => {
+            let delta = a.sequence.wrapping_sub(b.sequence);
+            if delta == 0x8000_0000 || (delta == 0 && first != second) {
+                Selection::Ambiguous
+            } else if delta < 0x8000_0000 {
+                Selection::First(a)
+            } else {
+                Selection::Second(b)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SavePlan {
+    pub target_slot: usize,
+    pub value: Progress,
+}
+
+/// Planning alone does not acknowledge a save. The durable store must still
+/// reject present-but-unreadable storage, commit, and verify exact readback.
+pub fn plan(first: &[u8], second: &[u8], proposed: Progress) -> Option<SavePlan> {
+    if proposed.book == 0 {
+        return None;
+    }
+    let (target_slot, sequence) = match select(first, second) {
+        Selection::None => (0, 1),
+        Selection::First(value) => (1, value.sequence.wrapping_add(1)),
+        Selection::Second(value) => (0, value.sequence.wrapping_add(1)),
+        Selection::Ambiguous => return None,
+    };
+    Some(SavePlan {
+        target_slot,
+        value: Progress {
+            sequence,
+            ..proposed
+        },
+    })
+}

@@ -1,0 +1,16 @@
+{
+  "core/package_parsers.rs": "core/src/package_parsers.rs",
+  "integration/core/src/xml_session.rs": "core/src/xml_session.rs",
+  "integration/host/src/xml_session/expat.rs": "host/src/xml_session/expat.rs",
+  "host/package-parsers-host.rs": "host/src/bin/package-parsers-host.rs",
+  "host/native_tests.rs": "host/src/package_parsers/native_tests.rs",
+  "target-probe/package_parsers_probe.rs": "target-probe/src/package_parsers_probe.rs",
+  "package_parsers_gate.py": "package_parsers_gate.py",
+  "oracle/main.cpp": "tests/package_parsers/oracle/main.cpp",
+  "PROVENANCE.json": "tests/package_parsers/PROVENANCE.json",
+  "tests/vectors.py": "tests/package_parsers/vectors.py",
+  "tests/protocol_controls.py": "tests/package_parsers/protocol_controls.py",
+  "tests/protocol.py": "tests/package_parsers/protocol.py",
+  "tests/mutations.json": "tests/package_parsers/mutations.json",
+  "tests/rejection.py": "tests/package_parsers/rejection.py"
+}

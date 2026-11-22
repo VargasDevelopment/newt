@@ -1,0 +1,40 @@
+{
+  "task": "NRUST-39",
+  "sdk_commit": "cd6f5b831c8fad899723b6d406586f00c575f021",
+  "newt_commit": "bc9ffda52b85f277e46c63718ac88d62fba5d368",
+  "baseline": ".build/rust/staged-foundations/xml-session-integration/rust",
+  "baseline_provenance_sha256": "3e9c9545a6a0483f55b0cfb72f9a50f0900f3a13f303200743f5e31e840e19a5",
+  "authenticated_reference": {
+    "source_commit": "cd6f5b831c8fad899723b6d406586f00c575f021",
+    "patch_sha256": "aee12fff9e0cdf2d141bdfd650d91182552a98913abe8818dbedf08102aa4bd7",
+    "license": "FreeInk SDK MIT; original LICENSE, NOTICE and copyright headers retained",
+    "purpose": "Opt-in producer XML processing, returned-result settlement and per-step feed limits; ordinary sources retain pinned behavior; no added object fields or global policy state.",
+    "files": {
+      "libs/book/FreeInkBook/include/BookStorage.h": {
+        "source_sha256": "0885c8a100c62439a4fc0f701dfa83e561e95853ca5d29fe93d888793abb9bf0",
+        "patched_sha256": "a46d7e31c9bd919fed457356e6371d6501b21c5be4002a5e735aec1f77e29568"
+      },
+      "libs/book/FreeInkBook/include/epub/ZipCatalog.h": {
+        "source_sha256": "44be3dce7253c36db12fa64b547b5a5862aaa8a1d832e6b7d45c47896ba03d82",
+        "patched_sha256": "67a66b8f3a1151184ab98e9c33a29171d4b1501d87a4f5c7aecdd29ae08c4b9e"
+      },
+      "libs/book/FreeInkBook/include/layout/ChapterLayout.h": {
+        "source_sha256": "f0567b9ad0322c6c44027faf7e7659e27e18b109ebe03b80e7c3a5a22eafeda6",
+        "patched_sha256": "f2f98b2a510ebb8d00bb6c36d31a454d9c1ced5a6652902835f5abef4f47132b"
+      },
+      "libs/book/FreeInkBook/src/layout/ChapterLayout.cpp": {
+        "source_sha256": "edc96c6ed010471a4f7fd692659c445fd2aed30c285b1523c027e72afb2ce1f1",
+        "patched_sha256": "42e5a5500881baa06413cc22b4e80d8ab4e4ba8f4e198fd739cf7bff594ec083"
+      },
+      "libs/book/FreeInkBook/src/epub/XmlSax.cpp": {
+        "source_sha256": "5b0d34961f3e8f69017c75b47e58ca7b683ee197bf45b27a552b11bce0cc7ee3",
+        "patched_sha256": "e51c18feff05a6f6b0f948a342f2687c8884b55a0b8f0a3d97368bd9c54bc29d"
+      }
+    }
+  },
+  "recipe": "rust/tests/xml_session/producer/recipe.py",
+  "ordinary_oracle": "unchanged tests/xml_session/oracle/main.cpp and pristine frozen SDK from baseline",
+  "producer_oracle": "isolated SDK copy with authenticated BookStorage.h, ZipCatalog.h, XmlSax.cpp hunks only",
+  "license": "FreeInk SDK MIT; LICENSE and NOTICE preserved; Expat notices in pristine baseline closure",
+  "verification": "source only; Python AST parsing and rustfmt; no builds or tests executed"
+}

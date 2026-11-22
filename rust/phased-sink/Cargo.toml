@@ -1,0 +1,12 @@
+[package]
+name = "newt-phased-sink"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+publish = false
+
+[dependencies]
+newt-core = { path = "../core" }
+newt-reader-atlas = { path = "../reader-atlas" }
+newt-reader-navigation = { path = "../reader-navigation" }

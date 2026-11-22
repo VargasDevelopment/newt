@@ -1,0 +1,28 @@
+# E-mail addresses tools/clean_export.py accepts anywhere: ADDRESS<TAB>REASON.
+# Only public identities: GitHub noreply commit identities and upstream authors
+# that published notices name. Reserved domains (example.com, .invalid, .test)
+# are never personal and need no entry.
+6808194+VargasDevelopment@users.noreply.github.com	public commit identity
+noreply@anthropic.com	public co-author trailer identity
+info@e-szigno.hu	certificate authority contact in the pinned Mozilla CA bundle notice
+Todd.Miller@courtesan.com	upstream author in docs/NOTICES.txt
+Xavier.Leroy@inria.fr	upstream author in docs/NOTICES.txt
+alex@elvisti.kiev.ua	upstream author in docs/NOTICES.txt
+andrew@FreeBSD.ORG	upstream author in docs/NOTICES.txt
+das@FreeBSD.ORG	upstream author in docs/NOTICES.txt
+deischen@FreeBSD.org	upstream author in docs/NOTICES.txt
+dimitar@dinux.eu	upstream author in docs/NOTICES.txt
+ed@FreeBSD.org	upstream author in docs/NOTICES.txt
+imp@freebsd.org	upstream author in docs/NOTICES.txt
+j@w1.fi	upstream author in docs/NOTICES.txt
+jeff@freebsd.org	upstream author in docs/NOTICES.txt
+jhb@FreeBSD.org	upstream author in docs/NOTICES.txt
+jon@beniston.com	upstream author in docs/NOTICES.txt
+kettenis@phys.uva.nl	upstream author in docs/NOTICES.txt
+mike@FreeBSD.org	upstream author in docs/NOTICES.txt
+paul@pjrc.com	upstream author in docs/NOTICES.txt
+peter@freebsd.org	upstream author in docs/NOTICES.txt
+phantom@FreeBSD.org	upstream author in docs/NOTICES.txt
+softwaresupport@superh.com	upstream author in docs/NOTICES.txt
+stcarrez@nerim.fr	upstream author in docs/NOTICES.txt
+support@ftdichip.com	upstream author in docs/NOTICES.txt

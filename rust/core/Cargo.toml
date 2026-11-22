@@ -1,0 +1,20 @@
+[package]
+name = "newt-core"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT AND Unlicense"
+publish = false
+
+[features]
+dev-usb = []
+
+[dependencies]
+salamander-device = { path = "../salamander/device" }
+
+# Needs the shared slot vectors, so only tests/slot_vectors_test.py runs it
+# (with them and its negative controls); a plain cargo test skips it.
+[[test]]
+name = "slot_vectors"
+path = "../tests/slot_vectors/vectors.rs"
+test = false

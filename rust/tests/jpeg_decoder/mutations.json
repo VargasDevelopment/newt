@@ -1,0 +1,86 @@
+[
+  {
+    "id": "jpeg-dc-negative-rounding-45",
+    "old": "self.w.block[0]/256+128",
+    "new": "(self.w.block[0]>>8)+128",
+    "witness": "dc--1",
+    "path": "core/src/jpeg/mod.rs"
+  },
+  {
+    "id": "jpeg-zigzag-axis-45",
+    "old": "let i=ZIG[z];self.w.block[i]",
+    "new": "let i=z;self.w.block[i]",
+    "witness": "ac-two-axes",
+    "path": "core/src/jpeg/mod.rs"
+  },
+  {
+    "id": "jpeg-restart-dc-carry-45",
+    "old": "self.bits=0;self.dc=[0;3];rst=0;",
+    "new": "self.bits=0;rst=0;",
+    "witness": "restart-1",
+    "path": "core/src/jpeg/mod.rs"
+  },
+  {
+    "id": "jpeg-gray-byte-wrap-45",
+    "old": "self.w.mcu[b*64+(py%8)*8+px%8] as u8",
+    "new": "self.w.mcu[b*64+(py%8)*8+px%8].clamp(0,255) as u8",
+    "witness": "dc-2040",
+    "path": "core/src/jpeg/mod.rs"
+  },
+  {
+    "id": "jpeg-band-flush-stop-45",
+    "old": "self.flush(self.filled);self.filled",
+    "new": "self.filled",
+    "witness": "row-band-overwrite-stop",
+    "path": "core/src/jpeg/renderer.rs"
+  },
+  {
+    "id": "jpeg-box-shift-dimension-45",
+    "old": "(sum>>(scale*2)) as u8",
+    "new": "(sum>>scale) as u8",
+    "witness": "False-17-1-True",
+    "path": "core/src/jpeg/mod.rs"
+  },
+  {
+    "id": "baseline-higher-ac-10703-zero",
+    "old": "mul(t12,10703)",
+    "new": "mul(t12,0)",
+    "witness": "baseline-10703-witness",
+    "path": "core/src/jpeg/mod.rs"
+  },
+  {
+    "id": "progressive-level-shift",
+    "old": "128+dc/8",
+    "new": "127+dc/8",
+    "witness": "prog-independent-(3, 3)",
+    "path": "core/src/jpeg/progressive.rs"
+  },
+  {
+    "id": "progressive-restart-reset",
+    "old": "pred=[0;4];since=0;",
+    "new": "since=0;",
+    "witness": "prog-restart-1",
+    "path": "core/src/jpeg/progressive.rs"
+  },
+  {
+    "id": "progressive-last-endpoint",
+    "old": "if i+1==dst",
+    "new": "if false",
+    "witness": "prog-independent-(1, 1)",
+    "path": "core/src/jpeg/progressive.rs"
+  },
+  {
+    "id": "progressive-stop",
+    "old": "if !rs.feed(",
+    "new": "if rs.feed(",
+    "witness": "prog-independent-stop",
+    "path": "core/src/jpeg/progressive.rs"
+  },
+  {
+    "id": "progressive-quant",
+    "old": "quant[y.tq]",
+    "new": "1u16",
+    "witness": "prog-options-{'quant': 2}",
+    "path": "core/src/jpeg/progressive.rs"
+  }
+]

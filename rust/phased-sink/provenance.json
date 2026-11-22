@@ -1,0 +1,17 @@
+{
+  "reference": "bc9ffda52b85f277e46c63718ac88d62fba5d368",
+  "originals": {
+    "src/phased_reader_sink.h": "b921db606085424a1ded66d223f5fc7427a4e606b6f510cef187291a9f8cf358",
+    "include/newt/phased_reader.h": "368b447b0c8a06e30350632ad2fd4774912fbb7b2578b4def21f4ff4ac2861f1",
+    "LICENSE": "6ae1f762295ed73a4694bc0ad106735ad42c0ad5ff5c57573d70b73476862ec5"
+  },
+  "reused": [
+    "rust/reader-atlas/provenance.json",
+    "rust/tests/reader_atlas/original",
+    "rust/tests/xml_session/frozen",
+    "../reader-navigation/original",
+    "rust/core/src/chapter_layout"
+  ],
+  "license": "MIT AND OFL-1.1",
+  "evidence": "source only; no execution"
+}

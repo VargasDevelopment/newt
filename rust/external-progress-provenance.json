@@ -1,0 +1,39 @@
+{
+  "cpp_commit": "bc9ffda52b85f277e46c63718ac88d62fba5d368",
+  "rust_commit": "f3a135bc5f0dd8ce0824395463c79abd4bbe8586",
+  "license": "MIT; retained LICENSE",
+  "cpp_source_sha256": {
+    "firmware/external_progress_store.h": "2fbaa8d3bca0fdcaadd32423f3f43a38138889366926c9e3445d9b5462c36c1d",
+    "firmware/progress_store.h": "d5eb5f534b4158350fcd073fb83b8d7e522db8d0d1454afe99d44f5b4a814384",
+    "firmware/durable_commit.h": "9788911919f56bc556d8cecc6d23710d7af82fc864585d697abc44cfb9e20992",
+    "firmware/reader_save_trace.h": "f28f8c9e3213b0947984407ae6300a20577c8c3d2abb98061a0b8229ed7b6a53",
+    "include/newt/reading_progress.h": "6d6213a9943340f5357959cc16b11a2ad3b7e11a8191e7d64de2df31cb0605d8",
+    "src/reading_progress.cpp": "82e5cb6c154203708f6ffc6a5329f17b67f14f85714cd544842bd91fcbde4c7b",
+    "LICENSE": "6ae1f762295ed73a4694bc0ad106735ad42c0ad5ff5c57573d70b73476862ec5"
+  },
+  "rust_source_sha256": {
+    "rust/core/src/durable.rs": "8cbc512cdadf4d37a0ca26d2c34e0a46ee0efaf9c1580ccdbbf2db44a094a52a",
+    "rust/core/src/progress_store.rs": "29ee9672377c5caa5b119db4e8644d4e21675ab73fc3395933ffd9cf37bc26c0",
+    "rust/core/src/progress.rs": "cf90c75ef45f7fd2bb3c178325393b31dc5fc4b21a5808732ceeb04fbc294610",
+    "rust/core/src/wire.rs": "6a4b8cc36b710dc25a09a2d4726f709ceece7871cb3cf8a5da35b9aa59c8bbb7",
+    "rust/core/src/lib.rs": "c8f62e24b9beba1eb9268b5a2fa1a7fd118081289ce5e2d3a5a30abb9cce9de4",
+    "rust/host/Cargo.toml": "f17be0b2561d0958bb2ea50b3defb60ced019bce227b99f727de29764e01351d"
+  },
+  "observed_integration_base_sha256": {
+    "rust/core/src/durable.rs": "8cbc512cdadf4d37a0ca26d2c34e0a46ee0efaf9c1580ccdbbf2db44a094a52a",
+    "rust/core/src/progress_store.rs": "29ee9672377c5caa5b119db4e8644d4e21675ab73fc3395933ffd9cf37bc26c0",
+    "rust/core/src/progress.rs": "cf90c75ef45f7fd2bb3c178325393b31dc5fc4b21a5808732ceeb04fbc294610",
+    "rust/core/src/wire.rs": "6a4b8cc36b710dc25a09a2d4726f709ceece7871cb3cf8a5da35b9aa59c8bbb7",
+    "rust/core/src/lib.rs": "8d9f140a04b1557c629ee38030b721069f46c4c595a6446ab650e279cce75d94",
+    "rust/host/Cargo.toml": "f17be0b2561d0958bb2ea50b3defb60ced019bce227b99f727de29764e01351d"
+  },
+  "evidence": {
+    "rustfmt": "passed; syntax formatting only",
+    "python_py_compile": "passed; no tests executed",
+    "compilation": "PENDING",
+    "parity": "PENDING",
+    "mutations": "PENDING; proposed edits must compile before counting",
+    "target": "PENDING",
+    "hardware": "PENDING; no device touched"
+  }
+}

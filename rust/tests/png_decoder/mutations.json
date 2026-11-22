@@ -1,0 +1,119 @@
+[
+  {
+    "id": "43-VALIDATION-CRC-POLY",
+    "path": "core/src/pngle.rs",
+    "old": "0xedb88320",
+    "new": "0xedb88321",
+    "witness": "family: independent then normalized-differential (both bit modes)",
+    "rationale": "Valid IHDR CRC must pass; altered polynomial rejects it.",
+    "status": "pending root execution: fresh build and admitted clean protocol mismatch required"
+  },
+  {
+    "id": "43-VALIDATION-SUB-RECONSTRUCT",
+    "path": "core/src/pngle.rs",
+    "old": "byte.wrapping_add(add)",
+    "new": "byte.wrapping_sub(add)",
+    "witness": "family: independent then normalized-differential (both bit modes)",
+    "rationale": "Sub-filter reconstructed channels differ at x=1.",
+    "status": "pending root execution: fresh build and admitted clean protocol mismatch required"
+  },
+  {
+    "id": "43-VALIDATION-SAMPLE-ROUND",
+    "path": "core/src/pngle.rs",
+    "old": "u32::from(v[i]) * 255 + max / 2",
+    "new": "u32::from(v[i]) * 255",
+    "witness": "family: independent then normalized-differential (both bit modes)",
+    "rationale": "16-bit sample rescaling loses half-up rounding.",
+    "status": "pending root execution: fresh build and admitted clean protocol mismatch required"
+  },
+  {
+    "id": "43-VALIDATION-TRNS-RGB",
+    "path": "core/src/pngle.rs",
+    "old": "if transparent(&v[..3]) { 0 } else { max as u16 }",
+    "new": "if transparent(&v[..3]) { max as u16 } else { 0 }",
+    "witness": "family: independent then normalized-differential (both bit modes)",
+    "rationale": "First authored RGB sample matches tRNS and must have zero alpha.",
+    "status": "pending root execution: fresh build and admitted clean protocol mismatch required"
+  },
+  {
+    "id": "43-VALIDATION-PAETH-TIE",
+    "path": "core/src/pngle.rs",
+    "old": "if pa <= pb && pa <= pc",
+    "new": "if pa < pb && pa < pc",
+    "witness": "family: independent then normalized-differential (both bit modes)",
+    "rationale": "At x=1,y=1 a=0,b=3,c=2 gives p=1: native chooses a=0; strict tie condition chooses c=2, changing sample 100 to 102.",
+    "status": "pending root execution: fresh build and admitted clean protocol mismatch required"
+  },
+  {
+    "id": "43-VALIDATION-GAMMA-EXP",
+    "path": "core/src/pngle.rs",
+    "old": "100000.0 / f64::from(gamma) / self.display_gamma",
+    "new": "100000.0 / f64::from(gamma) * self.display_gamma",
+    "witness": "family: independent then normalized-differential (both bit modes)",
+    "rationale": "Nonzero grayscale samples use inverse display gamma.",
+    "status": "pending root execution: fresh build and admitted clean protocol mismatch required"
+  },
+  {
+    "id": "43-VALIDATION-CALLBACK-SIZE",
+    "path": "core/src/pngle.rs",
+    "old": "(DX[self.pass] - OX[self.pass]).min(self.header.width - self.x)",
+    "new": "DX[self.pass].min(self.header.width - self.x)",
+    "witness": "family: independent then normalized-differential (both bit modes)",
+    "rationale": "Adam7 pass 2 callback width subtracts its x offset.",
+    "status": "pending root execution: fresh build and admitted clean protocol mismatch required"
+  },
+  {
+    "id": "43-VALIDATION-WRAPPER-INTERLACE",
+    "path": "core/src/image_renderer.rs",
+    "old": "self.unsupported = h.interlace != 0;",
+    "new": "self.unsupported = h.interlace > 1;",
+    "witness": "family: independent then normalized-differential (both bit modes)",
+    "rationale": "Wrapper must return Unsupported before publishing rows.",
+    "status": "pending root execution: fresh build and admitted clean protocol mismatch required"
+  },
+  {
+    "id": "43-VALIDATION-WHITE-BLEND",
+    "path": "core/src/image_renderer.rs",
+    "old": "(255 - ((255 - gray) * u32::from(p[3])) / 255) as u8",
+    "new": "((gray * u32::from(p[3])) / 255) as u8",
+    "witness": "family: independent then normalized-differential (both bit modes)",
+    "rationale": "Transparent pixels must blend over white rather than black.",
+    "status": "pending root execution: fresh build and admitted clean protocol mismatch required"
+  },
+  {
+    "id": "43-VALIDATION-SCALER-BAND",
+    "path": "core/src/image_renderer.rs",
+    "old": "u64::from(self.next + 1) * u64::from(self.src_h)",
+    "new": "u64::from(self.next) * u64::from(self.src_h)",
+    "witness": "family: independent then normalized-differential (both bit modes)",
+    "rationale": "Changing the band boundary emits white before any source contribution.",
+    "status": "pending root execution: fresh build and admitted clean protocol mismatch required"
+  },
+  {
+    "id": "43-VALIDATION-SCALER-COUNT-WRAP",
+    "path": "core/src/image_renderer.rs",
+    "old": "self.counts[dx].wrapping_add(1)",
+    "new": "self.counts[dx].saturating_add(1)",
+    "witness": "family: independent then normalized-differential (both bit modes)",
+    "rationale": "66049 samples wrap the native uint16 count; saturation changes output.",
+    "status": "pending root execution: fresh build and admitted clean protocol mismatch required"
+  },
+  {
+    "id": "43-VALIDATION-GRAY-WEIGHT",
+    "path": "core/src/image_renderer.rs",
+    "old": "u32::from(p[0]) * 299",
+    "new": "u32::from(p[0]) * 199",
+    "witness": "family: normalized RGBA rows",
+    "rationale": "A changed luminance coefficient must produce a canonical clean row mismatch; stop-flag unit-only proposal is not counted.",
+    "status": "pending root execution: fresh build and admitted clean protocol mismatch required"
+  },
+  {
+    "id": "43-VALIDATION-PINNED-BACKGROUND-SPELLING",
+    "path": "core/src/pngle.rs",
+    "old": "b\"BKGD\" => {",
+    "new": "b\"bKGD\" => {",
+    "witness": "family: independent then normalized-differential (both bit modes)",
+    "rationale": "The pinned numeric chunk constant recognizes uppercase BKGD; lowercase indexed bKGD must remain ignored with black default background.",
+    "status": "pending root execution: fresh build and admitted clean protocol mismatch required"
+  }
+]

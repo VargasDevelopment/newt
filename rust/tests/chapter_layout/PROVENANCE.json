@@ -1,0 +1,6 @@
+{
+  "sdk_commit": "cd6f5b831c8fad899723b6d406586f00c575f021",
+  "newt_commit": "bc9ffda52b85f277e46c63718ac88d62fba5d368",
+  "frozen_source_provenance": "tests/page_renderer/PROVENANCE.json",
+  "note": "Reuses identical original SDK source closure already pinned for PageRenderer. All five producer patch files are separately authenticated. MIT plus original Unicode and native Expat/libunibreak notices retained. Host seams are explicit; no linked firmware/native target acceptance."
+}

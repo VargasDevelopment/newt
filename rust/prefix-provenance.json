@@ -1,0 +1,8 @@
+{
+  "reference": "bc9ffda52b85f277e46c63718ac88d62fba5d368",
+  "source": "firmware/frame_adapter.h",
+  "source_sha256": "624995f2e06541af73f8503166d2cce41194486f01b1a7ba673da32d81721c1e",
+  "integration_base": "image-probe-integration final candidate, composed after accepted 5b6ac715",
+  "rust_frame_before_sha256": "0def679690bde5ade27163972d218d6c0b90ce14a0e0833619cf3c2227536db3",
+  "scope": "Safe equivalent prefix indexing candidate; complete latest engine gate and measured timings pending."
+}

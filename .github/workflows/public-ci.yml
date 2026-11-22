@@ -1,0 +1,283 @@
+name: Public CI
+
+# The public repository's CI, on GitHub-hosted runners only (docs/CI.md,
+# "Public CI"). Its jobs run only in a public repository and fresh-gates.yml's
+# only in the private one, so this workflow never bills the private repository
+# and never reaches the self-hosted runner. A pull request, from a fork too,
+# runs here with the read-only token and no secret.
+on:
+  # Only pull requests into main: the gate compares a candidate with origin/main
+  # (tools/gate_tier.py), so another base would select the wrong controls.
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  # The nightly full tier (docs/CI.md, "Tiers").
+  schedule:
+    - cron: '47 9 * * *'
+
+permissions:
+  contents: read
+
+# A newer push to a pull request cancels its older run. Every main push and
+# nightly run finishes, so a release merge's run always tags it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  # The gate, split into parallel parts: the host gate's shards, cut from its own
+  # plan (tools/gate_tier.py), and the one clean firmware build.
+  check:
+    # Visibility, compared as JSON so a missing value never passes. A scheduled
+    # run's event has no repository, so there the private repository's ID decides.
+    if: >-
+      toJSON(github.event.repository.private) == 'false' ||
+      (github.event_name == 'schedule' && github.repository_id != '1400798123')
+    runs-on: ubuntu-24.04
+    # Each part's own tier budget (tools/gate-time-budgets.json) stops it first.
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ['0/7', '1/7', '2/7', '3/7', '4/7', '5/7', '6/7', native]
+    env:
+      EXPECTED_COMMIT: ${{ github.sha }}
+      PART: ${{ matrix.part }}
+      # Set only after the owner approves the four rust/toolchain.json archives.
+      NEWT_RUST_ACQUISITION_APPROVED: ${{ vars.NEWT_RUST_ACQUISITION_APPROVED }}
+      PYTHONDONTWRITEBYTECODE: '1'
+      OPENSSL_CONF: /dev/null
+      UV_CACHE_DIR: ${{ github.workspace }}/.build/python-bootstrap/cache
+      UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.build/python-bootstrap/python
+      UV_PYTHON_BIN_DIR: ${{ github.workspace }}/.build/python-bootstrap/bin
+      UV_TOOL_DIR: ${{ github.workspace }}/.build/python-bootstrap/tools
+      UV_TOOL_BIN_DIR: ${{ github.workspace }}/.build/python-bootstrap/tool-bin
+    steps:
+      - name: Record when the job started, for the gate's time budget
+        run: echo "NEWT_JOB_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+      - name: Check out the exact commit, complete release history and release tags
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ env.EXPECTED_COMMIT }}
+          fetch-depth: 0
+          # The release gate refuses work built on an untagged release, so it reads tags.
+          fetch-tags: true
+          persist-credentials: false
+          set-safe-directory: false
+      - name: Check out official pinned FreeInk without recursive asset submodules
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          repository: Free-Ink/freeink-sdk
+          ref: cd6f5b831c8fad899723b6d406586f00c575f021
+          path: vendor/freeink-sdk
+          persist-credentials: false
+          set-safe-directory: false
+      - name: Preserve canonical official SDK origin spelling
+        run: git -C vendor/freeink-sdk remote set-url origin https://github.com/Free-Ink/freeink-sdk.git
+      # The uv wheel docs/toolchain-linux-lock.json pins, so no third-party action.
+      - name: Locked uv for workspace-local Python
+        shell: bash
+        run: |
+          set -euo pipefail
+          wheel="$RUNNER_TEMP/uv.whl"
+          curl --fail --silent --show-error --location --proto '=https' --output "$wheel" \
+            https://files.pythonhosted.org/packages/c6/2b/8700206efe193fc279fe32c11ab9a502c8364e7882e3f6f36a00a6cc8af7/uv-0.12.21-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+          echo "0083454d25479f1cd03547c8c98c235b4af92bd07f0e61c3eae5d1cbb0c1834c  $wheel" | sha256sum --check --strict
+          mkdir -p "$UV_TOOL_BIN_DIR"
+          unzip -p "$wheel" uv-0.12.21.data/scripts/uv > "$UV_TOOL_BIN_DIR/uv"
+          chmod 755 "$UV_TOOL_BIN_DIR/uv"
+          test "$("$UV_TOOL_BIN_DIR/uv" --no-config --version)" = 'uv 0.12.21'
+          echo "$UV_TOOL_BIN_DIR" >> "$GITHUB_PATH"
+      - name: Exact managed Python and real runtime checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e "$UV_PYTHON_INSTALL_DIR"
+          # uv 0.12.21 pins the baseline 20240909 CPython 3.12.6 archive SHA256:
+          # b080463e4f0c452e592cdac1ca97936a6a19bb3d9a64da669a50ca843fce0108
+          request=cpython-3.12.6-linux-x86_64-gnu
+          uv --no-config python install --no-bin "$request" \
+            --mirror https://github.com/astral-sh/python-build-standalone/releases/download
+          python_path="$(uv --no-config python find --managed-python --no-python-downloads "$request")"
+          "$python_path" -I -B - <<'PYTHON'
+          import bz2, ctypes, lzma, os, pathlib, sqlite3, ssl, subprocess, sys, venv, zlib
+          assert sys.version_info[:3] == (3, 12, 6)
+          root = pathlib.Path(os.environ['UV_PYTHON_INSTALL_DIR']).resolve()
+          assert pathlib.Path(sys.executable).resolve().is_relative_to(root)
+          probe = pathlib.Path(os.environ['GITHUB_WORKSPACE']) / '.build/python-bootstrap/probe-venv'
+          venv.EnvBuilder(with_pip=True, symlinks=True).create(probe)
+          subprocess.run([str(probe / 'bin/python'), '-I', '-B', '-c',
+                          'import ssl, sys, venv; assert sys.version_info[:3] == (3, 12, 6)'], check=True)
+          print('PASS exact workspace-local Python 3.12.6, stdlib and venv:', sys.executable)
+          PYTHON
+          test -x "$(dirname "$python_path")/python3"
+          echo "$(dirname "$python_path")" >> "$GITHUB_PATH"
+      - name: Reject unavailable runtime or changed source before acquisition
+        run: python3 -B tools/ci_environment.py --check-host
+      # The installer's type check, vitest and controls are host-gate phases
+      # (tests/installer_test.py), so every host part has its packages.
+      - name: Pinned Node for the installer checks
+        if: matrix.part != 'native'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.22.1'
+      - name: Installer packages exactly as installer/pnpm-lock.yaml pins them
+        if: matrix.part != 'native'
+        shell: bash
+        working-directory: installer
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+        run: |
+          set -euo pipefail
+          corepack enable pnpm
+          corepack install --global pnpm@11.10.0
+          test "$(pnpm --version)" = 11.10.0
+          pnpm install --frozen-lockfile
+      - name: Which tier this run takes (tools/gate_tier.py)
+        id: tier
+        shell: bash
+        run: |
+          set -euo pipefail
+          tier="$(python3 -B tools/gate_tier.py --ci-tier "$EXPECTED_COMMIT")"
+          echo "tier=$tier" >> "$GITHUB_OUTPUT"
+      # Caches never stand in for a check: tools/ci_hosted.py reuses restored
+      # toolchains only after they match the manifest recorded when they were
+      # made, and every raw archive a fresh materialization reads is rechecked
+      # against its pin. Only main pushes and nightly runs save caches.
+      - name: Restore the toolchains a fresh run made from these locks
+        id: trees
+        if: steps.tier.outputs.tier != 'full'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .toolchain
+            !.toolchain/downloads
+            .release-venv
+            .build/ci-toolchain.json
+          key: toolchains-${{ hashFiles('docs/toolchain-linux-lock.json', '.github/ci-release-linux-lock.json', '.github/ci-tool-linux-lock.json', 'rust/toolchain.json', 'tools/rust-toolchain.py', 'tools/ci_toolchain.py', 'tools/ci_environment.py', 'tools/ci_persist.py', 'tools/ci_hosted.py') }}
+      - name: Restore the raw locked archives
+        id: raw
+        if: steps.trees.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .toolchain/downloads
+            .build/ci-downloads
+            .build/ci-rust-downloads
+          key: raw-${{ hashFiles('docs/toolchain-linux-lock.json', '.github/ci-release-linux-lock.json', '.github/ci-tool-linux-lock.json', 'rust/toolchain.json', 'tools/rust-toolchain.py') }}
+      - name: Locked native, release, LLVM and static OpenSSL toolchains
+        run: python3 -B tools/ci_hosted.py --expected-commit "$EXPECTED_COMMIT"
+      - name: Save the raw locked archives
+        if: steps.raw.outcome == 'success' && steps.raw.outputs.cache-hit != 'true' && github.event_name != 'pull_request'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .toolchain/downloads
+            .build/ci-downloads
+            .build/ci-rust-downloads
+          key: raw-${{ hashFiles('docs/toolchain-linux-lock.json', '.github/ci-release-linux-lock.json', '.github/ci-tool-linux-lock.json', 'rust/toolchain.json', 'tools/rust-toolchain.py') }}
+      # Before any gate runs, so the cache holds exactly what the record describes.
+      - name: Save the fresh toolchains
+        if: steps.trees.outputs.cache-hit != 'true' && github.event_name != 'pull_request'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .toolchain
+            !.toolchain/downloads
+            .release-venv
+            .build/ci-toolchain.json
+          key: toolchains-${{ hashFiles('docs/toolchain-linux-lock.json', '.github/ci-release-linux-lock.json', '.github/ci-tool-linux-lock.json', 'rust/toolchain.json', 'tools/rust-toolchain.py', 'tools/ci_toolchain.py', 'tools/ci_environment.py', 'tools/ci_persist.py', 'tools/ci_hosted.py') }}
+      # Host objects carry their own complete keys and are rechecked on every hit
+      # (tools/host_objects.py); the full tier starts from none. The last phase
+      # seconds only order starts. tools/ci_gate.py moves both in and out of this store.
+      - name: Restore this part's host objects from main's latest run
+        if: steps.tier.outputs.tier != 'full' && matrix.part != 'native'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ github.workspace }}/../newt-ci-store/host-objects
+            ${{ github.workspace }}/../newt-ci-store/gate-phase-seconds.json
+          key: host-objects-${{ strategy.job-index }}-${{ github.sha }}
+          restore-keys: host-objects-${{ strategy.job-index }}-
+      - name: This part of the gate
+        run: python3 -B tools/ci_gate.py --expected-commit "$EXPECTED_COMMIT" --part "$PART"
+      - name: Save this part's host objects
+        if: success() && github.event_name == 'push' && steps.tier.outputs.tier != 'full' && matrix.part != 'native'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ github.workspace }}/../newt-ci-store/host-objects
+            ${{ github.workspace }}/../newt-ci-store/gate-phase-seconds.json
+          key: host-objects-${{ strategy.job-index }}-${{ github.sha }}
+
+  # One check for branch protection and the release-tag evidence
+  # (tools/release_tag.py). It always runs where public CI runs, so a failed,
+  # cancelled or skipped dependency makes it fail rather than skip; it passes
+  # only when every job it needs succeeded.
+  gate:
+    needs: check
+    if: >-
+      always() && (toJSON(github.event.repository.private) == 'false' ||
+      (github.event_name == 'schedule' && github.repository_id != '1400798123'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every job the gate needs succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          python3 -I -B -c '
+          import json, os, sys
+          results = {name: job["result"] for name, job in json.loads(os.environ["NEEDS"]).items()}
+          print(results)
+          sys.exit(not results or any(result != "success" for result in results.values()))'
+
+  # The one job with a write token, as in fresh-gates.yml: after this push run's
+  # gate passed, it tags the commit that run checked if that commit is the release.
+  release-tag:
+    needs: gate
+    if: >-
+      success() && toJSON(github.event.repository.private) == 'false' &&
+      github.repository == 'VargasDevelopment/newt' &&
+      github.ref == 'refs/heads/main' && github.actor == 'VargasDevelopment' &&
+      github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read # release_tag.py reads this run's gate job through the API.
+      contents: write # It creates and pushes exactly one release tag.
+    env:
+      EXPECTED_COMMIT: ${{ github.sha }}
+    steps:
+      - name: Check out the checked commit, complete release history and release tags
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ env.EXPECTED_COMMIT }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+          set-safe-directory: false
+      - name: Validate trusted main ancestry before running any project script
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED_COMMIT" ]]
+          git merge-base --is-ancestor "$EXPECTED_COMMIT" refs/remotes/origin/main
+      # Standard library only, so the runner's python3, git and gh; no gate runs here.
+      - name: Tag the release if this run checked it
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        # Git gets the token from gh in this step only; no checkout stores it. Helpers
+        # add up across config files, so the empty entry first drops every inherited one:
+        # a store helper would save this token or answer with another credential. The
+        # script exports it, so the empty value never depends on how the runner passes env.
+        run: |
+          set -euo pipefail
+          export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= \
+            GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1='!gh auth git-credential'
+          python3 -B tools/release_tag.py --ci-run "$GITHUB_RUN_ID" "$EXPECTED_COMMIT"

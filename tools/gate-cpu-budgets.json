@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "default_seconds": 360,
+  "default_reason": "NEWT-36 r2 cold/loaded calibration: unchanged turn quick measured 227 CPU seconds, checkpoint identity 224, and warm cover job 215. A 360-second default gives at least 1.5x the worst cold observation (and covers the observed roughly 30% variation). New phases inherit this reviewed default.",
+  "critical_path_seconds": 360,
+  "critical_path_reason": "NEWT-36 r2: the longest single phase gets the same 360 CPU seconds, at least 1.5x the worst observed cold/loaded unchanged phase (227 seconds). Split independent work when it exceeds this ceiling; the former 240-second ceiling had insufficient cold-run margin.",
+  "phases": {
+    "bench_flash_test.py --negative-controls": {
+      "seconds": 60,
+      "reason": "Merged ff1793eb no-device bench guard matrix measured 9.089 CPU seconds with negative controls and cache reuse disabled. A 60-second base allowance leaves over sixfold margin; scratch-isolated fakes require no hardware lease or serial I/O."
+    }
+  },
+  "fresh_objects_multiplier": 3.3333333333333335,
+  "fresh_objects_reason": "The deliberately cache-disabled 15-variant idle-save witness measured 629.723 CPU seconds before sharding. Retain its explicit 1200-second per-phase/ceiling allowance (over 90% margin), independent of the ordinary cold-cache 360-second calibration. --fresh-objects disables reuse throughout a run; it is different from an initially empty reusable cache."
+}

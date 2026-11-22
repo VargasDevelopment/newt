@@ -1,0 +1,65 @@
+[
+  {
+    "id": "ignore-open-before-reset",
+    "path": "core/src/xml_session.rs",
+    "before": "// Producer open poll precedes progress reset.\n        if self.policy.cancelled() {\n            return Status::IoError;\n        }",
+    "after": "// Producer open poll precedes progress reset.\n        if self.policy.cancelled() && self.finished {\n            return Status::IoError;\n        }",
+    "witness": "cancel-0"
+  },
+  {
+    "id": "ignore-pre-read",
+    "path": "core/src/xml_session.rs",
+    "before": "// Producer pre-read poll.\n        if self.policy.cancelled() {\n            return Status::IoError;\n        }",
+    "after": "// Producer pre-read poll.\n        if self.policy.cancelled() && self.finished {\n            return Status::IoError;\n        }",
+    "witness": "cancel-1"
+  },
+  {
+    "id": "ignore-post-read",
+    "path": "core/src/xml_session.rs",
+    "before": "// Producer post-read poll follows I/O failure.\n        if self.policy.cancelled() {\n            return Status::IoError;\n        }",
+    "after": "// Producer post-read poll follows I/O failure.\n        if self.policy.cancelled() && self.finished {\n            return Status::IoError;\n        }",
+    "witness": "cancel-2"
+  },
+  {
+    "id": "ignore-post-parse",
+    "path": "core/src/xml_session.rs",
+    "before": "// Producer post-parse poll follows parse failure.\n        if self.policy.cancelled() {\n            return Status::IoError;\n        }",
+    "after": "// Producer post-parse poll follows parse failure.\n        if self.policy.cancelled() && self.finished {\n            return Status::IoError;\n        }",
+    "witness": "cancel-3"
+  },
+  {
+    "id": "pending-off-by-one",
+    "path": "core/src/xml_session.rs",
+    "before": "next <= 4096 - (count - consumed)",
+    "after": "next < 4096 - (count - consumed)",
+    "witness": "pending-exact"
+  },
+  {
+    "id": "pending-disabled",
+    "path": "core/src/xml_session.rs",
+    "before": "if !self\n            .policy\n            .permits_feed(self.backend, self.bytes_consumed, n as u64)",
+    "after": "if n < 0 && !self\n            .policy\n            .permits_feed(self.backend, self.bytes_consumed, n as u64)",
+    "witness": "pending-attribute"
+  },
+  {
+    "id": "dtd-not-rejected",
+    "path": "target-expat/native/expat_bridge.c",
+    "before": "if (subset) XML_StopParser((XML_Parser)parser, XML_FALSE);",
+    "after": "if (subset < 0) XML_StopParser((XML_Parser)parser, XML_FALSE);",
+    "witness": "internal-dtd"
+  },
+  {
+    "id": "io-precedence",
+    "path": "core/src/xml_session.rs",
+    "before": "        if n < 0 {\n            return Status::IoError;\n        }\n        // Producer post-read poll follows I/O failure.\n        if self.policy.cancelled() {\n            return Status::IoError;\n        }",
+    "after": "        // Incorrectly poll before classifying a failed read.\n        if self.policy.cancelled() {\n            return Status::IoError;\n        }\n        if n < 0 {\n            return Status::IoError;\n        }",
+    "witness": "io-before-cancel"
+  },
+  {
+    "id": "parse-precedence",
+    "path": "core/src/xml_session.rs",
+    "before": "        if !parsed {\n            return Status::ParseError;\n        }\n        // Producer post-parse poll follows parse failure.",
+    "after": "        if !parsed {\n            if self.policy.cancelled() { return Status::IoError; }\n            return Status::ParseError;\n        }\n        // Producer post-parse poll follows parse failure.",
+    "witness": "parse-before-cancel"
+  }
+]

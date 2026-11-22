@@ -1,0 +1,442 @@
+"""Checked C3 build receipts; static frames are not runtime stack bounds."""
+import hashlib
+import json
+from pathlib import Path
+import re
+import struct
+import subprocess
+import sys
+
+VARIANTS = ("default", "dev-usb", "regional", "regional-dev-usb")
+RAM_CAPACITY = 321296  # Actual shared alias region in the pinned C3 linker map.
+APP_PARTITION_CAPACITY = 1310720
+LIMITATION = "Shared SRAM occupancy includes linker padding; RTC is separate. Individual compiler frames exclude heap, call chains and runtime peaks."
+
+
+def build_directory(root, variant):
+    if variant not in VARIANTS:
+        raise ValueError(f"Unknown resource variant: {variant}")
+    prefix = ".pio/build" if variant == "default" else f".pio/{variant}/build"
+    return Path(root) / prefix / "newt_x3"
+
+
+def configuration(root, variant):
+    build_directory(root, variant)
+    return Path(root) / ("platformio.ini" if variant == "default" else f".build/{variant}/platformio.ini")
+
+
+def sha256(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def tree_hash(root, paths):
+    digest = hashlib.sha256()
+    for path in sorted(set(paths)):
+        digest.update(path.relative_to(root).as_posix().encode() + b"\0")
+        digest.update(bytes.fromhex(sha256(path)))
+    return digest.hexdigest()
+
+
+def input_files(directory, include_python_cache=False):
+    """Whole approved input roots: include names and compiler roles are unrestricted."""
+    if directory.is_symlink():
+        raise ValueError(f"Compiler input directory symlink is unsupported: {directory}")
+    if not directory.is_dir():
+        raise ValueError(f"Missing build input directory: {directory}")
+    excluded = {".git"} if include_python_cache else {".git", "__pycache__"}
+    entries = [path for path in directory.rglob("*")
+               if not excluded.intersection(path.relative_to(directory).parts)]
+    owned_root = directory.resolve()
+    # Directory aliases can retarget among owned trees without changing the
+    # file list or bytes hashed by rglob. Require canonical directory ownership.
+    for path in entries:
+        if not path.is_symlink():
+            continue
+        if path.is_dir():
+            raise ValueError(f"Compiler input directory symlink is unsupported: {path}")
+        if (not path.exists() or not path.resolve().is_relative_to(owned_root)
+                or excluded.intersection(path.resolve().relative_to(owned_root).parts)):
+            raise ValueError(f"Compiler input symlink escapes its owned root: {directory}")
+    return [path for path in entries if path.is_file()]
+
+
+def identity_inputs(root, variant):
+    """One complete ownership set for hashing and actual compiler dependency checks."""
+    root = Path(root)
+    build_directory(root, variant)
+    directories = ["src", "include", "firmware", "assets", "apps", "patches", "vendor/freeink-sdk"]
+    if variant.startswith("regional"):
+        directories.append(".build/freeink-sdk")
+    inputs = []
+    for directory in directories:
+        inputs.extend(input_files(root / directory))
+    # The sole source-root prose exclusion is this reviewed, noncompiled proposal.
+    inputs = [path for path in inputs if path != root / "firmware/home_refresh_proposal.md"]
+    compiler_paths = input_files(root / ".toolchain/platformio/packages/toolchain-riscv32-esp")
+    toolchain_inputs = list((root / ".toolchain/platformio/packages").glob("*/package.json"))
+    platform = root / ".toolchain/platformio/platforms/espressif32"
+    toolchain_inputs.extend(input_files(platform, include_python_cache=True))
+    toolchain_inputs.extend(platform / name for name in
+                            ("platform.json", "platform.py", "boards/esp32-c3-devkitm-1.json"))
+    # Package versions do not make mutable local source/archive content immutable.
+    # This acquired libs package contains C3 only; caches/downloads stay outside.
+    for directory in (".toolchain/platformio/packages/framework-arduinoespressif32",
+                      ".toolchain/platformio/packages/framework-arduinoespressif32-libs"):
+        toolchain_inputs.extend(input_files(root / directory))
+    # Build drivers and installed Python dependencies can change compilation even
+    # when their version manifests stay unchanged. Bytecode is executable input.
+    for directory in (".toolchain/platformio/penv/lib",
+                      ".toolchain/platformio/packages/tool-scons",
+                      ".toolchain/platformio/packages/tool-esptoolpy",
+                      ".toolchain/platformio/packages/tool-esp_install"):
+        toolchain_inputs.extend(input_files(root / directory, include_python_cache=True))
+    penv = root / ".toolchain/platformio/penv"
+    entrypoints = [penv / name for name in ("bin/pio", "bin/platformio", "pyvenv.cfg")]
+    if any(not path.resolve().is_relative_to(penv.resolve()) for path in entrypoints):
+        raise ValueError("Build driver symlink escapes its owned root")
+    toolchain_inputs.extend(entrypoints)
+    if any(not path.is_file() for path in toolchain_inputs):
+        raise ValueError("Missing pinned build driver input")
+    if not inputs or len(toolchain_inputs) < 2:
+        raise ValueError("Missing compiled input or pinned toolchain manifests")
+    groups = {"inputs_sha256": inputs, "compiler_sha256": compiler_paths, "toolchain_sha256": toolchain_inputs}
+    project_root = root.resolve()
+    if any(not path.resolve().is_relative_to(project_root) for files in groups.values() for path in files):
+        raise ValueError("Compiler input root escapes the isolated project")
+    return groups
+
+
+def interpreter_identity(root):
+    """Fingerprint the venv interpreter without granting it compiler ownership."""
+    executable = Path(root) / ".toolchain/platformio/penv/bin/python"
+    return {"resolved_path": str(executable.resolve(strict=True)), "sha256": sha256(executable)}
+
+
+def procedure_files(root, variant):
+    # Native build/collection and code-health verification, including their
+    # authored subprocess/import helpers. These do not grant compiler ownership.
+    if sys.pycache_prefix is not None:
+        raise ValueError("Authored procedure cache prefix must use the project-local default")
+    names = ["firmware-build.py", "code_health.py", "code_health_resources.py", "native_output.py", "verify-nvs-guard.py",
+             "make-builtin-app.py", "newt_package.py", "make-reader-fixture.py", "make-reader-font.py",
+             "make-frosted-home.py", "make-sleep-brand.py"]
+    if variant.startswith("regional"):
+        names.append("apply-freeink-patch.py")
+    directory = root / "tools"
+    paths = [directory / name for name in names]
+    # Both Frosted and sleep-brand checks import this already source-bound helper.
+    paths.append(root / "assets/frosted-home/source/png_tools.py")
+    if directory.is_symlink() or any(path.is_symlink() or not path.is_file() for path in paths):
+        raise ValueError("Missing or symlinked authored build procedure")
+    caches = []
+    for source in paths:
+        cache_directory = source.parent / "__pycache__"
+        if cache_directory.is_symlink() or (cache_directory.exists() and not cache_directory.is_dir()):
+            raise ValueError("Authored procedure cache directory must be canonical")
+        # -B suppresses writes, but Python can still execute existing bytecode.
+        # Bind tagged/optimized variants and adjacent legacy bytecode only for
+        # the actual procedure stems, leaving unrelated caches outside identity.
+        candidates = [source.with_suffix(".pyc"), *cache_directory.glob(source.stem + ".*.pyc")]
+        for path in candidates:
+            if path.is_symlink() or (path.exists() and not path.is_file()):
+                raise ValueError("Authored procedure cache must be a regular owned file")
+            if path.is_file():
+                caches.append(path)
+    return paths + caches
+
+
+def build_identity(root, variant, config_path=None):
+    """Capture before a clean build and compare again before issuing its receipt."""
+    root = Path(root)
+    config = configuration(root, variant)
+    if config_path is not None and Path(config_path).resolve() != config.resolve():
+        raise ValueError("Resource evidence requires the canonical variant configuration")
+    groups = identity_inputs(root, variant)
+    return {"variant": variant,
+            "authored_config_sha256": sha256(root / "platformio.ini"),
+            "config_sha256": sha256(config),
+            "procedures_sha256": tree_hash(root, procedure_files(root, variant)),
+            "python_interpreter": interpreter_identity(root),
+            **{key: tree_hash(root, files) for key, files in groups.items()}}
+
+
+def ram_sections(text):
+    sections = {}
+    for line in text.splitlines():
+        fields = line.split()
+        if fields and (fields[0].startswith((".dram", ".iram")) or fields[0] == ".noinit"):
+            if len(fields) != 3 or not fields[1].isdigit() or not fields[2].isdigit():
+                raise ValueError("Invalid C3 size section")
+            name, size = fields[0], int(fields[1])
+            if name in sections:
+                raise ValueError(f"Duplicate SRAM section: {name}")
+            if name in {".dram0.data", ".dram0.bss", ".iram0.text", ".iram0.data", ".iram0.bss",
+                        ".iram0.vectors", ".iram0.text_end", ".dram0.heap_start", ".noinit"}:
+                sections[name] = size
+            elif name != ".dram0.dummy":
+                raise ValueError(f"Unaccounted C3 SRAM section: {name}")
+    if not {".dram0.data", ".dram0.bss", ".iram0.text"} <= sections.keys():
+        raise ValueError("Missing C3 SRAM sections")
+    return sections
+
+
+def ram_measurements(text, memory_map):
+    regions = {}
+    for name, origin, length in re.findall(r"^(iram0_0_seg|dram0_0_seg)\s+(0x[0-9a-fA-F]+)\s+(0x[0-9a-fA-F]+)\s", memory_map, re.MULTILINE):
+        if name in regions:
+            raise ValueError("Duplicate shared SRAM linker region")
+        regions[name] = (int(origin, 16), int(length, 16))
+    if regions != {"iram0_0_seg": (0x40380000, RAM_CAPACITY), "dram0_0_seg": (0x3FC80000, RAM_CAPACITY)}:
+        raise ValueError("Missing or changed pinned shared SRAM linker capacity")
+    sections, intervals, rtc = ram_sections(text), [], {}
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) != 3 or not fields[1].isdigit() or not fields[2].isdigit():
+            continue
+        name, size, address = fields[0], int(fields[1]), int(fields[2])
+        if name.startswith(".rtc"):
+            if name not in {".rtc.text", ".rtc.data", ".rtc.bss", ".rtc.force_fast", ".rtc.force_slow", ".rtc_noinit", ".rtc_reserved"}:
+                raise ValueError(f"Unaccounted RTC section: {name}")
+            if name in rtc or not 0x50000000 <= address <= address + size <= 0x50002000:
+                raise ValueError("Invalid RTC accounting")
+            rtc[name] = size
+        if name == ".dram0.dummy":
+            if address != 0x3FC80000 or size > RAM_CAPACITY:
+                raise ValueError("Invalid shared SRAM alias padding")
+            continue
+        in_pool = any(origin <= address < origin + capacity for origin, capacity in regions.values())
+        if name in sections:
+            expected = regions["iram0_0_seg" if name.startswith(".iram") else "dram0_0_seg"][0]
+            start = address - expected
+            if not 0 <= start <= start + size <= RAM_CAPACITY:
+                raise ValueError(f"SRAM section outside pinned region: {name}")
+            if size:
+                intervals.append((start, start + size))
+        elif size and in_pool:
+            raise ValueError(f"Unaccounted SRAM-resident section: {name}")
+    intervals.sort()
+    if not intervals or any(right[0] < left[1] for left, right in zip(intervals, intervals[1:])):
+        raise ValueError("Invalid overlapping shared SRAM accounting")
+    occupied = intervals[-1][1]
+    return {"ram_sections": sections, "ram_bytes": occupied, "ram_alignment_bytes": occupied - sum(sections.values()),
+            "ram_capacity_bytes": RAM_CAPACITY, "rtc_sections": rtc, "rtc_bytes": sum(rtc.values())}
+
+
+def partition_capacity(data):
+    capacities = []
+    if len(data) < 32 or len(data) % 32:
+        raise ValueError("Invalid built partition table")
+    for offset in range(0, len(data), 32):
+        magic, kind, subtype, start, size, label, flags = struct.unpack_from("<HBBII16sI", data, offset)
+        if magic in (0xFFFF, 0xEBEB):
+            break
+        if magic != 0x50AA or size == 0:
+            raise ValueError("Invalid built partition entry")
+        if kind == 0:
+            capacities.append(size)
+    if not capacities:
+        raise ValueError("Missing application partition")
+    # A single image must fit every application slot in this pinned table.
+    return min(capacities)
+
+
+def stack_frames(root, paths):
+    frames = {}
+    for path in paths:
+        for line in path.read_text().splitlines():
+            fields = line.split("\t")
+            if len(fields) != 3 or not fields[1].isdigit() or fields[2] not in ("static", "dynamic", "dynamic,bounded"):
+                raise ValueError(f"Invalid compiler stack measurement in {path.name}")
+            match = re.fullmatch(r"(.*):\d+:\d+:(.+)", fields[0])
+            if not match:
+                raise ValueError(f"Invalid compiler stack identifier in {path.name}")
+            source = Path(match[1])
+            if source.is_absolute():
+                try:
+                    source = source.resolve().relative_to(Path(root).resolve())
+                except ValueError:
+                    continue
+            if not source.parts or source.parts[0] not in ("src", "include", "firmware") or ".." in source.parts:
+                continue
+            key = source.as_posix() + "::" + match[2]
+            value = {"bytes": int(fields[1]), "kind": fields[2]}
+            old = frames.get(key)
+            if old is None or value["bytes"] > old["bytes"]:
+                frames[key] = value
+            if old and old["kind"] == "dynamic":
+                frames[key]["kind"] = "dynamic"
+            if value["kind"] == "dynamic":
+                frames[key]["kind"] = "dynamic"
+    if not frames:
+        raise ValueError("Missing authored compiler stack frames")
+    return frames
+
+
+def artifact_paths(root, variant):
+    """The outputs required for every canonical variant receipt and verification."""
+    root = Path(root)
+    directory = build_directory(root, variant)
+    stack_paths = [directory / "src" / source.relative_to(root).with_suffix(".cpp.su")
+                   for source in [root / "firmware/main.cpp", root / "firmware/nvs_guard.cpp", *sorted((root / "src").glob("*.cpp"))]]
+    objects = sorted(directory.rglob("*.o"))
+    # Source filters are pinned by firmware-build; authored objects cannot vanish
+    # along with their dependency proof and leave a seemingly complete receipt.
+    required = [path.with_suffix(".o") for path in stack_paths]
+    if not objects or any(path not in objects for path in required):
+        raise ValueError("Missing compiled authored object/dependency evidence")
+    archive = directory / "libFrameworkArduino.a"
+    return ([directory / name for name in ("firmware.elf", "firmware.bin", "firmware.map", "partitions.bin")]
+            + stack_paths + objects + [path.with_suffix(".d") for path in objects]
+            + ([archive] if archive.is_file() else []))
+
+
+def dependency_files(root, path):
+    """Parse GCC Make rules, including continuations and escaped path characters."""
+    lines = path.read_text().replace("\\\r\n", "").replace("\\\n", "").splitlines()
+    dependencies = set()
+    for index, line in enumerate(lines):
+        if not line.strip():
+            continue
+        tokens = re.findall(r"(?:\\.|[^\s\\:])+|:", line)
+        if tokens.count(":") != 1 or tokens.index(":") != 1:
+            raise ValueError(f"Invalid compiler dependency rule: {path}")
+        tokens = [re.sub(r"\\(.)", r"\1", token).replace("$$", "$") for token in tokens]
+        target = (root / tokens[0]).resolve()
+        if index == 0:
+            if target != path.with_suffix(".o").resolve() or len(tokens) < 3:
+                raise ValueError(f"Missing compiler dependency closure: {path}")
+            dependencies.update((root / name).resolve() for name in tokens[2:])
+        elif len(tokens) != 2:
+            raise ValueError(f"Unexpected secondary compiler dependency rule: {path}")
+    if not dependencies:
+        raise ValueError(f"Missing compiler dependencies: {path}")
+    return dependencies
+
+
+def require_dependency_ownership(root, variant, paths):
+    groups = identity_inputs(root, variant)
+    owned = {path.resolve() for files in groups.values() for path in files}
+    proofs = [path for path in paths if path.suffix == ".d"]
+    dependencies = set().union(*(dependency_files(root, path) for path in proofs))
+    for path in dependencies:
+        if path not in owned or not path.is_file():
+            raise ValueError(f"Unbound or missing compiler dependency: {path}")
+    objects = {path.resolve() for path in paths if path.suffix == ".o"}
+    directory = build_directory(root, variant)
+    archive = (directory / "libFrameworkArduino.a").resolve()
+    loads = re.findall(r"^LOAD (.+)$", (directory / "firmware.map").read_text(), re.MULTILINE)
+    if not loads:
+        raise ValueError("Missing actual linker input evidence")
+    for name in loads:
+        path = (root / name).resolve()
+        generated_archive = path == archive and any(obj.parent == directory.resolve() / "FrameworkArduino" for obj in objects)
+        if not path.is_file() or not (path in owned or path in objects or generated_archive):
+            raise ValueError(f"Unbound or missing linker input: {path}")
+
+
+def measure_outputs(root, variant, paths):
+    """Read measurements from actual outputs, never from editable receipt fields."""
+    root = Path(root)
+    require_dependency_ownership(root, variant, paths)
+    directory = build_directory(root, variant)
+    size = root / ".toolchain/platformio/packages/toolchain-riscv32-esp/bin/riscv32-esp-elf-size"
+    memory = ram_measurements(subprocess.run([str(size), "-A", str(directory / "firmware.elf")],
+                                            check=True, capture_output=True, text=True).stdout,
+                              (directory / "firmware.map").read_text())
+    return {**memory, "flash_bytes": (directory / "firmware.bin").stat().st_size,
+            "flash_capacity_bytes": partition_capacity((directory / "partitions.bin").read_bytes()),
+            "stack_bytes": stack_frames(root, [path for path in paths if path.suffix == ".su"])}
+
+
+def build_report(root, variant, config_path, started_ns, expected_identity):
+    """Measure fresh outputs of the successful canonical clean build; writes nothing."""
+    root = Path(root)
+    identity = build_identity(root, variant, config_path)
+    if identity != expected_identity:
+        raise ValueError("Build inputs changed during compilation")
+    outputs = artifact_paths(root, variant)
+    for path in outputs:
+        if not path.is_file() or path.stat().st_mtime_ns < started_ns:
+            raise ValueError(f"Missing or stale build output: {path.relative_to(root)}; use --clean")
+    return {"schema": 1, "identity": identity,
+            "artifacts": {path.relative_to(root).as_posix(): sha256(path) for path in outputs},
+            **measure_outputs(root, variant, outputs), "limitations": LIMITATION}
+
+
+def nonnegative(value):
+    return type(value) is int and value >= 0
+
+
+def validate_budgets(baseline):
+    """Validate every reviewed variant even when only structural checks are requested."""
+    variants = baseline.get("resources")
+    if not isinstance(variants, dict) or set(variants) != set(VARIANTS):
+        raise ValueError("Resource budgets must declare exactly all four variants")
+    for variant, budgets in variants.items():
+        if not isinstance(budgets, dict) or set(budgets) != {"ram_bytes", "flash_bytes", "stack_bytes"}:
+            raise ValueError(f"Incomplete resource budget: {variant}")
+        for field, capacity in (("ram_bytes", RAM_CAPACITY), ("flash_bytes", APP_PARTITION_CAPACITY)):
+            if not nonnegative(budgets[field]) or budgets[field] > capacity:
+                raise ValueError(f"Invalid absolute budget: {variant} {field}")
+        stacks = budgets["stack_bytes"]
+        if not isinstance(stacks, dict) or not stacks:
+            raise ValueError(f"Missing selected stack budgets: {variant}")
+        for key, ceiling in stacks.items():
+            if not isinstance(key, str) or "::" not in key:
+                raise ValueError("Invalid selected stack identifier")
+            source, signature = key.split("::", 1)
+            path = Path(source)
+            if (not path.parts or path.is_absolute() or path.parts[0] not in ("src", "firmware", "include") or ".." in path.parts
+                    or path.as_posix() != source
+                    or not signature or any(char in key for char in "\n\r\t") or not nonnegative(ceiling)):
+                raise ValueError(f"Invalid selected stack budget: {key}")
+
+
+def check_resources(root, baseline, variant):
+    """Read-only comparison. Invalid or missing evidence raises ValueError/OSError."""
+    root = Path(root)
+    validate_budgets(baseline)
+    report = json.loads((root / f"artifacts/code-health-{variant}.json").read_text())
+    expected_keys = {"schema", "identity", "artifacts", "ram_sections", "ram_bytes", "ram_capacity_bytes", "ram_alignment_bytes", "rtc_sections", "rtc_bytes",
+                     "flash_bytes", "flash_capacity_bytes", "stack_bytes", "limitations"}
+    if set(report) != expected_keys or report["schema"] != 1 or report["limitations"] != LIMITATION:
+        raise ValueError("Invalid resource report schema")
+    if report["identity"] != build_identity(root, variant):
+        raise ValueError("Stale or wrong-variant resource report; rebuild with --clean")
+    expected_paths = artifact_paths(root, variant)
+    if set(report["artifacts"]) != {path.relative_to(root).as_posix() for path in expected_paths}:
+        raise ValueError("Incomplete or wrong-variant artifact identity")
+    for name, digest in report["artifacts"].items():
+        if sha256(root / name) != digest:
+            raise ValueError(f"Changed build artifact: {name}")
+    for name in ("ram_bytes", "ram_capacity_bytes", "ram_alignment_bytes", "rtc_bytes", "flash_bytes", "flash_capacity_bytes"):
+        if not nonnegative(report[name]):
+            raise ValueError(f"Invalid resource measurement: {name}")
+    if (not report["ram_sections"] or not all(nonnegative(value) for value in report["ram_sections"].values())
+            or sum(report["ram_sections"].values()) + report["ram_alignment_bytes"] != report["ram_bytes"] or report["ram_capacity_bytes"] != RAM_CAPACITY):
+        raise ValueError("Invalid SRAM accounting")
+    # Re-measure from the hash-bound outputs instead of trusting editable JSON numbers.
+    measured = measure_outputs(root, variant, expected_paths)
+    if any(report[key] != value for key, value in measured.items()):
+        raise ValueError("Resource report differs from actual build outputs")
+    budgets = baseline["resources"][variant]
+    diagnostics = []
+    for name in ("ram_bytes", "flash_bytes"):
+        ceiling = budgets[name]
+        if ceiling > report[name.replace("_bytes", "_capacity_bytes")]:
+            raise ValueError(f"Invalid absolute budget: {name}")
+        if report[name] > ceiling:
+            diagnostics.append(f"{variant} {name}: {report[name]} exceeds reviewed ceiling {ceiling}")
+    for key, ceiling in budgets["stack_bytes"].items():
+        frame = measured["stack_bytes"].get(key)
+        if frame is None:
+            raise ValueError(f"Missing selected stack measurement: {key}")
+        if frame["kind"] == "dynamic":
+            diagnostics.append(f"{variant} unbounded compiler stack frame: {key}")
+        elif frame["bytes"] > ceiling:
+            diagnostics.append(f"{variant} static frame {key}: {frame['bytes']} exceeds reviewed ceiling {ceiling}")
+    return diagnostics

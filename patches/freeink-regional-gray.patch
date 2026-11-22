@@ -1,0 +1,1069 @@
+diff --git a/libs/display/FreeInkDisplay/include/FreeInkDisplay.h b/libs/display/FreeInkDisplay/include/FreeInkDisplay.h
+index 0acc38a..57a44e3 100644
+--- a/libs/display/FreeInkDisplay/include/FreeInkDisplay.h
++++ b/libs/display/FreeInkDisplay/include/FreeInkDisplay.h
+@@ -130,6 +130,37 @@ class FreeInkDisplay {
+   // (full buffers or consecutive strips per plane) before displayGrayBuffer().
+   // False means the requested mode is unavailable; no base was painted.
+   bool displayGrayscaleBase(GrayscaleMode mode, RefreshMode fallback = HALF_REFRESH, bool turnOffScreen = false);
++  // Experimental regional activation: X3 Direct only after completed Direct
++  // output. All changed pixels must be inside the native rectangle, aligned
++  // outward to eight pixels in X. Both COMPLETE selector planes must follow.
++  // False rejects without writes; use the existing full-frame overload.
++  bool supportsGrayscaleRegion(GrayscaleMode mode) const;
++  bool displayGrayscaleBase(GrayscaleMode mode, GrayscaleRegion region,
++                            RefreshMode fallback = HALF_REFRESH, bool turnOffScreen = false);
++  // False performs no SPI/reset/wait: unsupported, unsafe, or no proven gray
++  // baseline. The supplied complete native selector plane is read ONLY inside
++  // the typed island. No whole-panel B/W baseline is established.
++  bool displayBinaryGrayIsland(const uint8_t* plane, BinaryGrayIslandRegion region,
++                             bool turnOffScreen = true);
++  // Bind an immutable, static region array to a complete Direct or Overlay pass.
++  // Overlay requires empty masks here; a later binary update accepts only
++  // a subset of its exact, proven plan. Automatic, temporary, mutable and
++  // runtime-initialized geometry cannot instantiate this public API.
++  // NeutralGaps explicitly opts parallel vertical regions into one DU. The
++  // intervening controller selectors are white-to-white; whether this is
++  // physically quiet on a panel still requires hardware verification.
++  template<const BinaryGrayRegion* Regions, uint8_t Count, bool NeutralGaps = false>
++  bool displayGrayscaleBaseWithBinaryRegions(GrayscaleMode mode,
++      RefreshMode fallback = HALF_REFRESH, bool turnOffScreen = false) {
++    return displayGrayscaleBaseWithBinaryRegionsImpl(
++        mode, BinaryGrayPlanBinding<Regions, Count, NeutralGaps>::plan, fallback, turnOffScreen);
++  }
++  template<const BinaryGrayRegion* Regions, uint8_t Count, bool NeutralGaps = false>
++  bool displayBinaryGrayRegions(const uint8_t* plane, uint32_t regionMask,
++      bool turnOffScreen = true) {
++    return displayBinaryGrayRegionsImpl(
++        plane, BinaryGrayPlanBinding<Regions, Count, NeutralGaps>::plan, regionMask, turnOffScreen);
++  }
+   void copyGrayscaleBuffers(const uint8_t* lsbBuffer, const uint8_t* msbBuffer);
+   void copyGrayscaleLsbBuffers(const uint8_t* lsbBuffer);
+   void copyGrayscaleMsbBuffers(const uint8_t* msbBuffer);
+@@ -424,10 +455,14 @@ class FreeInkDisplay {
+   // baseline again).
+   // One pending flag for every deferred refresh (X4 async fire, X3 split);
+   // drained by syncPendingAsync() through the driver's displayFinish().
++  bool displayGrayscaleBaseWithBinaryRegionsImpl(GrayscaleMode mode,
++      const BinaryGrayRegionPlan& plan, RefreshMode fallback, bool turnOffScreen);
++  bool displayBinaryGrayRegionsImpl(const uint8_t* plane,
++      const BinaryGrayRegionPlan& plan, uint32_t regionMask, bool turnOffScreen);
+   GrayscaleMode _grayscaleMode = GrayscaleMode::Overlay;
+   uint16_t _grayRows[2] = {0, 0};
+   bool _grayPassFailed = false;
+-  void cancelGrayscalePass();
++  void cancelGrayscalePass(bool completedDirect = false);
+   bool acceptGrayscaleRows(unsigned plane, const uint8_t* data, uint16_t y, uint16_t rows);
+   bool _refreshPending = false;
+   uint8_t* _asyncShadow = nullptr;
+diff --git a/libs/display/FreeInkDisplay/include/GrayscaleCapabilities.h b/libs/display/FreeInkDisplay/include/GrayscaleCapabilities.h
+index ceef58d..9d196f7 100644
+--- a/libs/display/FreeInkDisplay/include/GrayscaleCapabilities.h
++++ b/libs/display/FreeInkDisplay/include/GrayscaleCapabilities.h
+@@ -12,6 +12,74 @@ enum class GrayscaleMode : uint8_t { Overlay, Absolute, Direct };
+ enum class GrayscaleEncoding : uint8_t { Unsupported, OverlayMasks, AbsolutePlanes };
+ enum class GrayscaleBase : uint8_t { Separate, Combined };
+ 
++// Native framebuffer coordinates, half-open. Activation aligns X outward to
++// eight pixels; complete absolute planes are still required. Experimental
++// regional activation does not promise a flash-free waveform or ink quality.
++struct GrayscaleRegion { uint16_t x, y, width, height; };
++// A B/W island within otherwise absolute gray RAM. Unlike GrayscaleRegion,
++// this path may write only the island and must prove its previous selectors
++// were binary. Experimental driver support is deliberately fixed and bounded.
++struct BinaryGrayIslandRegion { uint16_t x, y, width, height; };
++// Immutable, static-lifetime native rectangles whose packed byte total is at
++// most 480. X coordinates and widths are byte aligned and regions are disjoint.
++// A driver may retain this object's address until its binary proof is invalid.
++struct BinaryGrayRegion { uint16_t x, y, width, height; };
++struct BinaryGrayRegionPlan {
++  const BinaryGrayRegion* regions;
++  uint8_t count;
++  // Opt in to one vertical PTL spanning selected parallel regions. Rows outside
++  // the selected rectangles are staged as white-to-white controller selectors.
++  bool neutralGaps = false;
++};
++
++// Public callers bind the region array itself as a non-type template argument.
++// That gives both retained objects static lifetime: the array is named in the
++// program image and this descriptor is one inline constant per array/count.
++// Reading every rectangle in a constant expression also rejects mutable or
++// merely runtime-initialized arrays before the facade can retain their address.
++template<const BinaryGrayRegion* Regions, uint8_t Count, bool NeutralGaps = false>
++struct BinaryGrayPlanBinding {
++ private:
++  static constexpr bool validGeometry() {
++    if (Regions == nullptr || !Count || Count > 32) return false;
++    uint32_t bytes = 0;
++    for (uint8_t i = 0; i < Count; ++i) {
++      const auto& region = Regions[i];
++      if (!region.width || !region.height || (region.x & 7u) || (region.width & 7u) ||
++          region.x >= 792 || region.y >= 528 || region.width > 792 - region.x ||
++          region.height > 528 - region.y) return false;
++      bytes += static_cast<uint32_t>(region.width / 8) * region.height;
++      if (bytes > 480) return false;
++      for (uint8_t previous = 0; previous < i; ++previous) {
++        const auto& other = Regions[previous];
++        const bool disjoint = region.x + region.width <= other.x ||
++            other.x + other.width <= region.x || region.y + region.height <= other.y ||
++            other.y + other.height <= region.y;
++        if (!disjoint) return false;
++      }
++    }
++    if (NeutralGaps) {
++      const auto x = Regions[0].x;
++      const auto width = Regions[0].width;
++      uint16_t yStart = Regions[0].y;
++      uint16_t yEnd = static_cast<uint16_t>(Regions[0].y + Regions[0].height);
++      for (uint8_t i = 1; i < Count; ++i) {
++        if (Regions[i].x != x || Regions[i].width != width) return false;
++        if (Regions[i].y < yStart) yStart = Regions[i].y;
++        const uint16_t end = static_cast<uint16_t>(Regions[i].y + Regions[i].height);
++        if (end > yEnd) yEnd = end;
++      }
++      if (static_cast<uint32_t>(width / 8) * (yEnd - yStart) > 480) return false;
++    }
++    return true;
++  }
++
++ public:
++  static_assert(validGeometry(),
++                "binary gray regions must be immutable, disjoint, byte-aligned X3 rectangles totaling at most 480 bytes; neutral gaps additionally require one X/width and a 480-byte encompassing strip");
++  inline static constexpr BinaryGrayRegionPlan plan{Regions, Count, NeutralGaps};
++};
++
+ struct GrayscaleCapabilities {
+   // Overlay masks: black/white=00 (distinguished by the B/W base), dark=11,
+   // light=01, in (LSB, MSB) order. Absolute planes: black=00, dark=10,
+diff --git a/libs/display/FreeInkDisplay/src/FreeInkDisplay.cpp b/libs/display/FreeInkDisplay/src/FreeInkDisplay.cpp
+index 2f6fdf1..feda86d 100644
+--- a/libs/display/FreeInkDisplay/src/FreeInkDisplay.cpp
++++ b/libs/display/FreeInkDisplay/src/FreeInkDisplay.cpp
+@@ -328,6 +328,7 @@ void FreeInkDisplay::setInverted(const bool inverted) {
+   syncPendingAsync();
+   _inverted = inverted;
+   _inversionDirty = true;
++  if (_driver && _driver->supportsGrayscaleRegion(GrayscaleMode::Direct)) _driver->requestResync(1);
+   _shadowValid = false;
+   _redRamSynced = false;
+   if (_driver) _driver->setBackgroundHint(inverted);
+@@ -820,7 +821,10 @@ void FreeInkDisplay::displayGrayBuffer(bool turnOffScreen, const unsigned char*
+     }
+     _driver->displayGray(_bus, frameBuffer, turnOffScreen, nullptr, true);
+     _inversionDirty = false;
+-    cancelGrayscalePass();
++    // Completed Direct RAM describes the gray panel. Retain it for a possible
++    // regional pass; aborted/incomplete uploads still demand resynchronization.
++    cancelGrayscalePass(_grayscaleMode == GrayscaleMode::Direct &&
++                        _driver->supportsGrayscaleRegion(GrayscaleMode::Direct));
+     return;
+   }
+   _driver->displayGray(_bus, frameBuffer, turnOffScreen, lut, factoryMode);
+@@ -846,9 +850,9 @@ void FreeInkDisplay::copyGrayscaleBuffers(const uint8_t* lsbBuffer, const uint8_
+   _driver->copyGrayscaleMsb(_bus, msbBuffer);
+ }
+ 
+-void FreeInkDisplay::cancelGrayscalePass() {
++void FreeInkDisplay::cancelGrayscalePass(bool completedDirect) {
+   if (_grayscaleMode == GrayscaleMode::Overlay) return;
+-  if (_driver) _driver->requestResync(1);
++  if (_driver && !completedDirect) _driver->requestResync(1);
+   _grayscaleMode = GrayscaleMode::Overlay;
+   _grayRows[0] = _grayRows[1] = 0;
+   _grayPassFailed = true;
+@@ -881,6 +885,62 @@ bool FreeInkDisplay::displayGrayscaleBase(GrayscaleMode mode, RefreshMode fallba
+   return true;
+ }
+
++bool FreeInkDisplay::displayBinaryGrayIsland(const uint8_t* plane, BinaryGrayIslandRegion region,
++                                            bool turnOffScreen) {
++  // Do not finish a pending refresh or cancel an in-flight gray pass on reject.
++  if (!plane || _inverted || _inversionDirty || !_driver || _refreshPending ||
++      _grayscaleMode != GrayscaleMode::Overlay) return false;
++  if (!_driver->displayBinaryGrayIsland(_bus, plane, region, turnOffScreen)) return false;
++  _shadowValid = false;
++  _redRamSynced = false;
++  return true;
++}
++
++bool FreeInkDisplay::displayGrayscaleBaseWithBinaryRegionsImpl(GrayscaleMode mode,
++    const BinaryGrayRegionPlan& plan, RefreshMode fallback, bool turnOffScreen) {
++  // Validate/bind before cancelling any prior pass. UC8279 Direct starts with
++  // no bus writes; unsupported drivers reject without changing facade state.
++  if (_inverted || _inversionDirty || !_driver || _refreshPending ||
++      _grayscaleMode != GrayscaleMode::Overlay) return false;
++  if (!_driver->beginGrayscaleWithBinaryRegions(_bus, frameBuffer, mode, plan,
++                                                toInternal(fallback), turnOffScreen)) return false;
++  _shadowValid = false;
++  _grayPassFailed = false;
++  _grayscaleMode = mode;
++  _grayRows[0] = _grayRows[1] = 0;
++  return true;
++}
++
++bool FreeInkDisplay::displayBinaryGrayRegionsImpl(const uint8_t* plane,
++    const BinaryGrayRegionPlan& plan, uint32_t regionMask, bool turnOffScreen) {
++  if (!plane || _inverted || _inversionDirty || !_driver || _refreshPending ||
++      _grayscaleMode != GrayscaleMode::Overlay) return false;
++  if (!_driver->displayBinaryGrayRegions(_bus, plane, plan, regionMask,
++                                         turnOffScreen)) return false;
++  _shadowValid = false;
++  _redRamSynced = false;
++  return true;
++}
++
++bool FreeInkDisplay::supportsGrayscaleRegion(GrayscaleMode mode) const {
++  return !_inverted && !_inversionDirty && _driver && _driver->supportsGrayscaleRegion(mode);
++}
++
++bool FreeInkDisplay::displayGrayscaleBase(GrayscaleMode mode, GrayscaleRegion region,
++                                        RefreshMode fallback, bool turnOffScreen) {
++  // A rejection must not cancel an in-progress pass or issue a bus operation.
++  if (!supportsGrayscaleRegion(mode) || _refreshPending ||
++      _grayscaleMode != GrayscaleMode::Overlay ||
++      !_driver->canBeginGrayscaleRegion(mode, region)) return false;
++  if (!_driver->beginGrayscaleRegion(_bus, frameBuffer, mode, region,
++                                    toInternal(fallback), turnOffScreen)) return false;
++  _shadowValid = false;
++  _grayPassFailed = false;
++  _grayscaleMode = mode;
++  _grayRows[0] = _grayRows[1] = 0;
++  return true;
++}
++
+ void FreeInkDisplay::displayGrayscaleBase(RefreshMode fallback, bool turnOffScreen) {
+   cancelGrayscalePass();
+   _grayPassFailed = false;
+diff --git a/libs/display/FreeInkDisplay/src/driver/PanelDriver.h b/libs/display/FreeInkDisplay/src/driver/PanelDriver.h
+index ae67da5..dae3d47 100644
+--- a/libs/display/FreeInkDisplay/src/driver/PanelDriver.h
++++ b/libs/display/FreeInkDisplay/src/driver/PanelDriver.h
+@@ -138,6 +138,37 @@ class PanelDriver {
+     displayGrayscaleBase(bus, fb, fallback, turnOff);
+   }
+ 
++  virtual bool displayBinaryGrayIsland(EpdBus& bus, const uint8_t* plane,
++                                       BinaryGrayIslandRegion region, bool turnOff) {
++    (void)bus; (void)plane; (void)region; (void)turnOff; return false;
++  }
++  // Low-level dispatch only. The public facade supplies a static plan object
++  // backed by a static immutable region array; direct callers must preserve
++  // both objects for the entire retained proof lifetime.
++  virtual bool beginGrayscaleWithBinaryRegions(EpdBus& bus, const uint8_t* fb,
++      GrayscaleMode mode, const BinaryGrayRegionPlan& plan,
++      RefreshMode fallback, bool turnOff) {
++    (void)bus; (void)fb; (void)mode; (void)plan; (void)fallback; (void)turnOff;
++    return false;
++  }
++  virtual bool displayBinaryGrayRegions(EpdBus& bus, const uint8_t* plane,
++      const BinaryGrayRegionPlan& plan, uint32_t regionMask, bool turnOff) {
++    (void)bus; (void)plane; (void)plan; (void)regionMask; (void)turnOff;
++    return false;
++  }
++
++  // Optional typed regional Direct activation. Reject before bus writes if
++  // unsupported, invalid, or no completed Direct baseline exists. Callers
++  // promise every changed output pixel is inside the aligned rectangle.
++  virtual bool supportsGrayscaleRegion(GrayscaleMode mode) const { (void)mode; return false; }
++  virtual bool canBeginGrayscaleRegion(GrayscaleMode mode, GrayscaleRegion region) const {
++    (void)mode; (void)region; return false;
++  }
++  virtual bool beginGrayscaleRegion(EpdBus& bus, const uint8_t* fb, GrayscaleMode mode,
++                                    GrayscaleRegion region, RefreshMode fallback, bool turnOff) {
++    (void)bus; (void)fb; (void)mode; (void)region; (void)fallback; (void)turnOff; return false;
++  }
++
+   // Grayscale preconditioning settle pass (OEM X3 "AA-pre-BW(mid)"), windowed
+   // to the panel rect [x, x+w) x [y, y+h) like the OEM's PTL usage; fire after
+   // the BW base frame is displayed, before grayscale planes are written.
+diff --git a/libs/display/FreeInkDisplay/src/driver/Uc8253X3Driver.cpp b/libs/display/FreeInkDisplay/src/driver/Uc8253X3Driver.cpp
+index 0aca623..e49a0c4 100644
+--- a/libs/display/FreeInkDisplay/src/driver/Uc8253X3Driver.cpp
++++ b/libs/display/FreeInkDisplay/src/driver/Uc8253X3Driver.cpp
+@@ -102,12 +102,18 @@ void Uc8253X3Driver::triggerRefresh(EpdBus &bus, bool turnOff,
+ }
+ 
+ void Uc8253X3Driver::grayWindowIn(EpdBus &bus) {
+-  const uint16_t xEnd = _w - 1;
+-  const uint16_t yEnd = _h - 1;
++  grayWindowIn(bus, {0, 0, _w, _h});
++}
++
++void Uc8253X3Driver::grayWindowIn(EpdBus& bus, GrayscaleRegion region) {
++  const uint16_t xEnd = region.x + region.width - 1;
++  const uint16_t gateStart = _h - region.y - region.height;
++  const uint16_t gateEnd = _h - 1 - region.y;
+   const uint8_t window[9] = {
+-      0, 0, static_cast<uint8_t>(xEnd >> 8), static_cast<uint8_t>(xEnd),
+-      0, 0, static_cast<uint8_t>(yEnd >> 8), static_cast<uint8_t>(yEnd),
+-      1};
++      static_cast<uint8_t>(region.x >> 8), static_cast<uint8_t>(region.x),
++      static_cast<uint8_t>(xEnd >> 8), static_cast<uint8_t>(xEnd),
++      static_cast<uint8_t>(gateStart >> 8), static_cast<uint8_t>(gateStart),
++      static_cast<uint8_t>(gateEnd >> 8), static_cast<uint8_t>(gateEnd), 1};
+   bus.cmd(CMD_PARTIAL_IN);
+   bus.cmdData(CMD_PARTIAL_WINDOW, window, sizeof(window));
+ }
+@@ -175,6 +181,7 @@ void Uc8253X3Driver::begin(EpdBus& bus) {
+   _absoluteInput = false;
+   _directGrayPass = false;
+   _directGrayOnPanel = false;
++  _regionalGrayBaseline = false;
+   initController(bus);
+ }
+ 
+@@ -186,6 +193,7 @@ void Uc8253X3Driver::display(EpdBus& bus, const uint8_t* fb, const uint8_t* prev
+ bool Uc8253X3Driver::displayStart(EpdBus& bus, const uint8_t* fb, const uint8_t* prev, RefreshMode mode, bool turnOff) {
+   (void)prev;
+   const bool leavingDirectGray = _directGrayOnPanel;
++  _regionalGrayBaseline = false;
+   _absoluteInput = false;
+   _directGrayPass = false;
+   if (_directGrayOnPanel) {
+@@ -326,8 +334,37 @@ void Uc8253X3Driver::displayFinish(EpdBus& bus, const uint8_t* fb) {
+   _forcedConditionPassesNext = 0;
+ }
+ 
++bool Uc8253X3Driver::supportsGrayscaleRegion(GrayscaleMode mode) const {
++#if defined(FREEINK_EXPERIMENTAL_REGIONAL_GRAY) && FREEINK_EXPERIMENTAL_REGIONAL_GRAY
++  return mode == GrayscaleMode::Direct && _cfg.directGray;
++#else
++  (void)mode;
++  return false;
++#endif
++}
++
++bool Uc8253X3Driver::canBeginGrayscaleRegion(GrayscaleMode mode, GrayscaleRegion region) const {
++  return supportsGrayscaleRegion(mode) && _regionalGrayBaseline &&
++      _directGrayOnPanel && !_directGrayPass && !_inGrayscaleMode &&
++      region.width && region.height && region.x < _w && region.y < _h &&
++      region.width <= _w - region.x && region.height <= _h - region.y &&
++      ((static_cast<uint32_t>(region.x) + region.width - 1) | 7u) < _w;
++}
++
++bool Uc8253X3Driver::beginGrayscaleRegion(EpdBus& bus, const uint8_t* fb, GrayscaleMode mode,
++                                        GrayscaleRegion region, RefreshMode fallback, bool turnOff) {
++  if (!canBeginGrayscaleRegion(mode, region)) return false;
++  const uint16_t xEnd = static_cast<uint16_t>((region.x + region.width - 1) | 7u);
++  const uint16_t xStart = static_cast<uint16_t>(region.x & ~7u);
++  beginGrayscale(bus, fb, mode, fallback, turnOff);
++  _grayRegion = {xStart, region.y, static_cast<uint16_t>(xEnd - xStart + 1), region.height};
++  return true;
++}
++
+ void Uc8253X3Driver::beginGrayscale(EpdBus& bus, const uint8_t* fb, GrayscaleMode mode, RefreshMode fallback,
+                                    bool turnOff) {
++  _regionalGrayBaseline = false;
++  _grayRegion = {0, 0, _w, _h};
+   if (mode == GrayscaleMode::Direct && _cfg.directGray) {
+     // Stage complete planes before the only display activation. No B/W image is
+     // shown.
+@@ -344,6 +381,7 @@ void Uc8253X3Driver::beginGrayscale(EpdBus& bus, const uint8_t* fb, GrayscaleMod
+ }
+ 
+ void Uc8253X3Driver::displayGrayscaleBase(EpdBus& bus, const uint8_t* fb, RefreshMode fallback, bool turnOff) {
++  _regionalGrayBaseline = false;
+   _absoluteInput = false;
+   _directGrayPass = false;
+   // OEM V5.6.33 grayscale base update: write the new frame to DTM2 and fire
+@@ -425,6 +463,7 @@ void Uc8253X3Driver::preconditionGrayscale(EpdBus& bus, uint16_t x, uint16_t y,
+ }
+ 
+ void Uc8253X3Driver::copyGrayscaleLsb(EpdBus& bus, const uint8_t* lsb) {
++  if (!_directGrayPass) _regionalGrayBaseline = false;
+   if (_directGrayPass) {
+     writeGrayscalePlaneStrip(bus, GrayPlane::Lsb, lsb, 0, _h);
+     return;
+@@ -452,6 +491,7 @@ void Uc8253X3Driver::copyGrayscaleMsb(EpdBus &bus, const uint8_t *msb) {
+ void Uc8253X3Driver::writeGrayscalePlaneStrip(EpdBus& bus, GrayPlane plane, const uint8_t* rows, uint16_t yStart,
+                                               uint16_t numRows) {
+   if (!rows || numRows == 0) return;
++  if (!_directGrayPass) _regionalGrayBaseline = false;
+   // PTL partial-window in GATE space (logical row y lives at gate H-1-y), rows
+   // emitted bottom-first so they land at the same gates the full-frame write
+   // uses. Fixes the AA/image banding from windowing in logical space.
+@@ -491,12 +531,13 @@ void Uc8253X3Driver::displayGray(EpdBus& bus, const uint8_t* fb, bool turnOff, c
+     bus.cmdData2(CMD_VCOM_DATA_INTERVAL, 0xA9, 0x07);
+     const auto& bank = *_cfg.directGray;
+     loadBank(bus, bank);
+-    // Strip uploads leave the last band selected; refresh the entire visible
+-    // panel.
+-    grayWindowIn(bus);
++    // Strip uploads leave the last band selected; select the activation area
++    // independently. Full passes keep the existing full-panel rectangle.
++    grayWindowIn(bus, _grayRegion);
+     triggerRefresh(bus, turnOff, " X3_DIRECT_GRAY_DRF");
+     bus.cmd(CMD_PARTIAL_OUT);
+     _directGrayOnPanel = true;
++    _regionalGrayBaseline = true;
+     _absoluteInput = false;
+     _directGrayPass = false;
+     _grayState = {};
+@@ -534,6 +575,7 @@ void Uc8253X3Driver::displayGray(EpdBus& bus, const uint8_t* fb, bool turnOff, c
+ }
+ 
+ void Uc8253X3Driver::cleanupGrayscaleBuffers(EpdBus& bus, const uint8_t* bw) {
++  _regionalGrayBaseline = false;
+   if (_directGrayPass || _directGrayOnPanel) {
+     _absoluteInput = false;
+     _directGrayPass = false;
+@@ -584,6 +626,7 @@ void Uc8253X3Driver::grayscaleRevert(EpdBus& bus, const uint8_t* fb) {
+ }
+ 
+ void Uc8253X3Driver::requestResync(uint8_t settlePasses) {
++  _regionalGrayBaseline = false;
+   _grayState = {};
+   _absoluteInput = false;
+   _directGrayPass = false;
+@@ -597,6 +640,7 @@ void Uc8253X3Driver::skipInitialResync() {
+ }
+ 
+ void Uc8253X3Driver::deepSleep(EpdBus& bus) {
++  _regionalGrayBaseline = false;
+   _grayState = {};
+   _absoluteInput = false;
+   _directGrayPass = false;
+diff --git a/libs/display/FreeInkDisplay/src/driver/Uc8253X3Driver.h b/libs/display/FreeInkDisplay/src/driver/Uc8253X3Driver.h
+index 4d05a1e..10324b2 100644
+--- a/libs/display/FreeInkDisplay/src/driver/Uc8253X3Driver.h
++++ b/libs/display/FreeInkDisplay/src/driver/Uc8253X3Driver.h
+@@ -64,6 +64,10 @@ class Uc8253X3Driver : public PanelDriver {
+ 
+   void beginGrayscale(EpdBus &bus, const uint8_t *fb, GrayscaleMode mode,
+                             RefreshMode fallback, bool turnOff) override;
++  bool supportsGrayscaleRegion(GrayscaleMode mode) const override;
++  bool canBeginGrayscaleRegion(GrayscaleMode mode, GrayscaleRegion region) const override;
++  bool beginGrayscaleRegion(EpdBus& bus, const uint8_t* fb, GrayscaleMode mode,
++                            GrayscaleRegion region, RefreshMode fallback, bool turnOff) override;
+   void displayGrayscaleBase(EpdBus &bus, const uint8_t *fb,
+                                   RefreshMode fallback, bool turnOff) override;
+   void preconditionGrayscale(EpdBus &bus, uint16_t x, uint16_t y, uint16_t w,
+@@ -97,6 +101,7 @@ private:
+                    const Uc8253LutBank &bank);
+   void triggerRefresh(EpdBus &bus, bool turnOff, const char *label = " X3_DRF");
+   void grayWindowIn(EpdBus &bus);
++  void grayWindowIn(EpdBus &bus, GrayscaleRegion region);
+ 
+   const Uc8253X3Config& _cfg;
+ 
+@@ -111,6 +116,8 @@ private:
+   bool _absoluteInput = false;
+   bool _directGrayPass = false;
+   bool _directGrayOnPanel = false;
++  bool _regionalGrayBaseline = false;
++  GrayscaleRegion _grayRegion{};
+   uint8_t _initialFullSyncsRemaining = 0;
+   bool _forceFullSyncNext = false;
+   uint8_t _forcedConditionPassesNext = 0;
+diff --git a/libs/display/FreeInkDisplay/src/driver/Uc8279Driver.cpp b/libs/display/FreeInkDisplay/src/driver/Uc8279Driver.cpp
+index 6d52f95..e6d50e9 100644
+--- a/libs/display/FreeInkDisplay/src/driver/Uc8279Driver.cpp
++++ b/libs/display/FreeInkDisplay/src/driver/Uc8279Driver.cpp
+@@ -25,13 +25,30 @@ constexpr uint8_t CMD_PARTIAL_IN = 0x91;          // PTIN
+ constexpr uint8_t CMD_PARTIAL_OUT = 0x92;         // PTOUT
+ constexpr uint8_t CMD_CCSET = 0xE0;               // CCSET (AA pre-conditioning only)
+ constexpr uint8_t CMD_TSSET = 0xE5;               // TSSET (AA pre-conditioning only)
++#if defined(FREEINK_EXPERIMENTAL_REGIONAL_GRAY) && FREEINK_EXPERIMENTAL_REGIONAL_GRAY
++constexpr BinaryGrayRegion kLegacyIslandRegions[] = {{432, 464, 240, 16}};
++constexpr BinaryGrayRegionPlan kLegacyIslandPlan{kLegacyIslandRegions, 1};
++#endif
+ }  // namespace
+ 
+ Uc8279Driver::Uc8279Driver()
+     : _w(BoardConfig::ACTIVE.displayWidth),
+       _h(BoardConfig::ACTIVE.displayHeight),
+       _wb(BoardConfig::ACTIVE.displayWidth / 8),
+-      _bufferSize(static_cast<uint32_t>(BoardConfig::ACTIVE.displayWidth / 8) * BoardConfig::ACTIVE.displayHeight) {}
++      _bufferSize(static_cast<uint32_t>(BoardConfig::ACTIVE.displayWidth / 8) * BoardConfig::ACTIVE.displayHeight) {
++  _isScreenOn = _oldPlaneValid = _forceFullSyncNext = false;
++  _firstRefresh = true;
++  _displayStateReserved = 0;
++  _inGrayscaleMode = _lsbValid = _directGrayPass = _directGrayOnPanel = _regionalGrayBaseline = false;
++  _grayStateReserved = 0;
++  _pendingRefresh = _pendingTurnOff = _pendingUsedGc = false;
++  _pendingStateReserved = 0;
++#if defined(FREEINK_EXPERIMENTAL_REGIONAL_GRAY) && FREEINK_EXPERIMENTAL_REGIONAL_GRAY
++  _islandPlanesBinary = _binaryIslandBaseline = _preserveBinaryIsland = false;
++  _overlayIslandCaptured = _overlayIslandBaseline = false;
++  _binaryReserved = 0;
++#endif
++}
+ 
+ uint32_t Uc8279Driver::spiHz() const {
+   // UC8279 serial write timing is rated to 20 MHz, same as UC8253.
+@@ -74,9 +91,20 @@ void Uc8279Driver::grayWindowIn(EpdBus& bus) {
+   // PTIN + the full-panel PTL (same 792x528 window the init sets): X 0..791,
+   // Y 0..527 in gate space, PT_SCAN=1. Keeps plane writes/refresh at 99-byte
+   // rows so they align (normal mode would use the 800x600 frame).
+-  static const uint8_t kFullWindow[9] = {0x00, 0x00, 0x03, 0x17, 0x00, 0x00, 0x02, 0x0F, 0x01};
++  grayWindowIn(bus, {0, 0, _w, _h});
++}
++
++void Uc8279Driver::grayWindowIn(EpdBus& bus, GrayscaleRegion region) {
++  const uint16_t xEnd = region.x + region.width - 1;
++  const uint16_t gateStart = _h - region.y - region.height;
++  const uint16_t gateEnd = _h - 1 - region.y;
++  const uint8_t window[9] = {
++      static_cast<uint8_t>(region.x >> 8), static_cast<uint8_t>(region.x),
++      static_cast<uint8_t>(xEnd >> 8), static_cast<uint8_t>(xEnd),
++      static_cast<uint8_t>(gateStart >> 8), static_cast<uint8_t>(gateStart),
++      static_cast<uint8_t>(gateEnd >> 8), static_cast<uint8_t>(gateEnd), 1};
+   bus.cmd(CMD_PARTIAL_IN);
+-  bus.cmdData(CMD_PARTIAL_WINDOW, kFullWindow, 9);
++  bus.cmdData(CMD_PARTIAL_WINDOW, window, sizeof(window));
+ }
+ 
+ void Uc8279Driver::triggerGrayRefresh(EpdBus& bus, bool turnOff) {
+@@ -110,6 +138,8 @@ void Uc8279Driver::initController(EpdBus& bus) {
+ }
+ 
+ void Uc8279Driver::begin(EpdBus& bus) {
++  invalidateBinaryIsland();
++  _regionalGrayBaseline = false;
+   _directGrayOnPanel = false;
+   _directGrayPass = false;
+   bus.reset(50);
+@@ -126,6 +156,8 @@ bool Uc8279Driver::displayStart(EpdBus &bus, const uint8_t *fb,
+                                 const uint8_t *prev, RefreshMode mode,
+                                 bool turnOff) {
+   const bool paintDestination = _directGrayOnPanel;
++  invalidateBinaryIsland();
++  _regionalGrayBaseline = false;
+   _directGrayOnPanel = false;
+   _directGrayPass = false;
+   (void)prev; // single-buffer: DTM1 holds the previous frame from
+@@ -233,6 +265,8 @@ void Uc8279Driver::displayFinish(EpdBus& bus, const uint8_t* fb) {
+ }
+ 
+ void Uc8279Driver::requestResync(uint8_t settlePasses) {
++  invalidateBinaryIsland();
++  _regionalGrayBaseline = false;
+   _directGrayPass = false;
+   _lsbValid = false;
+   (void)settlePasses;
+@@ -245,6 +279,8 @@ void Uc8279Driver::skipInitialResync() {
+ }
+ 
+ void Uc8279Driver::deepSleep(EpdBus& bus) {
++  invalidateBinaryIsland();
++  _regionalGrayBaseline = false;
+   _directGrayOnPanel = false;
+   _directGrayPass = false;
+   _lsbValid = false;
+@@ -263,9 +299,93 @@ void Uc8279Driver::deepSleep(EpdBus& bus) {
+ // LUT resolves the 4 levels. The only UC8279 specifics are the LUT loading
+ // (raw 49-byte tables) and the single-byte CDI.
+ 
++#if defined(FREEINK_EXPERIMENTAL_REGIONAL_GRAY) && FREEINK_EXPERIMENTAL_REGIONAL_GRAY
++bool Uc8279Driver::validBinaryPlan(const BinaryGrayRegionPlan& plan) const {
++  if (_w != 792 || _h != 528 || !plan.regions || !plan.count || plan.count > 32) return false;
++  uint32_t bytes = 0;
++  uint16_t yStart = _h;
++  uint16_t yEnd = 0;
++  for (unsigned i = 0; i < plan.count; ++i) {
++    const auto& region = plan.regions[i];
++    if (!region.width || !region.height || (region.x & 7u) || (region.width & 7u) ||
++        region.x >= _w || region.y >= _h || region.width > _w - region.x ||
++        region.height > _h - region.y) return false;
++    bytes += static_cast<uint32_t>(region.width / 8) * region.height;
++    if (bytes > sizeof(_islandLsb)) return false;
++    if (plan.neutralGaps) {
++      if (region.x != plan.regions[0].x || region.width != plan.regions[0].width) return false;
++      if (region.y < yStart) yStart = region.y;
++      const uint16_t end = static_cast<uint16_t>(region.y + region.height);
++      if (end > yEnd) yEnd = end;
++    }
++    for (unsigned previous = 0; previous < i; ++previous) {
++      const auto& other = plan.regions[previous];
++      const bool disjoint = region.x + region.width <= other.x ||
++          other.x + other.width <= region.x || region.y + region.height <= other.y ||
++          other.y + other.height <= region.y;
++      if (!disjoint) return false;
++    }
++  }
++  if (plan.neutralGaps && static_cast<uint32_t>(plan.regions[0].width / 8) *
++          (yEnd - yStart) > sizeof(_islandLsb)) return false;
++  return true;
++}
++
++bool Uc8279Driver::binaryPlanDisjoint(GrayscaleRegion region) const {
++  if (!_binaryPlan || !validBinaryPlan(*_binaryPlan)) return false;
++  for (unsigned i = 0; i < _binaryPlan->count; ++i) {
++    const auto& proof = _binaryPlan->regions[i];
++    if (!(region.x + region.width <= proof.x || proof.x + proof.width <= region.x ||
++          region.y + region.height <= proof.y || proof.y + proof.height <= region.y)) return false;
++  }
++  return true;
++}
++
++bool Uc8279Driver::captureBinaryPlane(const uint8_t* plane, bool compare) {
++  if (!plane || !_binaryPlan || !validBinaryPlan(*_binaryPlan)) return false;
++  unsigned packed = 0;
++  for (unsigned i = 0; i < _binaryPlan->count; ++i) {
++    const auto& region = _binaryPlan->regions[i];
++    const unsigned rowBytes = region.width / 8;
++    for (unsigned y = 0; y < region.height; ++y) {
++      const auto* row = plane + static_cast<unsigned>(region.y + y) * _wb + region.x / 8;
++      if (compare) {
++        if (memcmp(_islandLsb + packed, row, rowBytes)) return false;
++      } else memcpy(_islandLsb + packed, row, rowBytes);
++      packed += rowBytes;
++    }
++  }
++  return true;
++}
++
++void Uc8279Driver::copyBinaryRegion(const uint8_t* plane, unsigned index) {
++  unsigned packed = 0;
++  for (unsigned i = 0; i < index; ++i)
++    packed += _binaryPlan->regions[i].width / 8 * _binaryPlan->regions[i].height;
++  const auto& region = _binaryPlan->regions[index];
++  const unsigned rowBytes = region.width / 8;
++  for (unsigned y = 0; y < region.height; ++y) {
++    const auto* row = plane + static_cast<unsigned>(region.y + y) * _wb + region.x / 8;
++    memcpy(_islandLsb + packed + y * rowBytes, row, rowBytes);
++  }
++}
++#endif
++
+ void Uc8279Driver::copyGrayscaleLsb(EpdBus& bus, const uint8_t* lsb) {
++#if defined(FREEINK_EXPERIMENTAL_REGIONAL_GRAY) && FREEINK_EXPERIMENTAL_REGIONAL_GRAY
++  if (!_directGrayPass) { invalidateDirectIsland(); _regionalGrayBaseline = false; }
++  _overlayIslandBaseline = false;
++  if (!_directGrayPass && lsb) _overlayIslandCaptured = _overlayIslandCaptured && overlayIslandClear(lsb);
++#else
++  if (!_directGrayPass) { invalidateBinaryIsland(); _regionalGrayBaseline = false; }
++#endif
+   _lsbValid = false;
+-  if (!lsb) return;
++  if (!lsb) { invalidateBinaryIsland(); return; }
++#if defined(FREEINK_EXPERIMENTAL_REGIONAL_GRAY) && FREEINK_EXPERIMENTAL_REGIONAL_GRAY
++  _binaryIslandBaseline = false;
++  _islandPlanesBinary = _directGrayPass && _binaryPlan && validBinaryPlan(*_binaryPlan) &&
++      captureBinaryPlane(lsb, _preserveBinaryIsland);
++#endif
+   grayWindowIn(bus);
+   bus.sendPlaneFlipped(CMD_DTM1, lsb, _h, _wb);
+   bus.cmd(CMD_DATA_STOP);
+@@ -274,7 +394,17 @@ void Uc8279Driver::copyGrayscaleLsb(EpdBus& bus, const uint8_t* lsb) {
+ }
+ 
+ void Uc8279Driver::copyGrayscaleMsb(EpdBus& bus, const uint8_t* msb) {
+-  if (!msb || !_lsbValid) return;
++#if defined(FREEINK_EXPERIMENTAL_REGIONAL_GRAY) && FREEINK_EXPERIMENTAL_REGIONAL_GRAY
++  if (!_directGrayPass) { invalidateDirectIsland(); _regionalGrayBaseline = false; }
++  if (!msb || !_lsbValid) { invalidateBinaryIsland(); return; }
++  if (!_directGrayPass) _overlayIslandCaptured = _overlayIslandCaptured && overlayIslandClear(msb);
++#else
++  if (!_directGrayPass) { invalidateBinaryIsland(); _regionalGrayBaseline = false; }
++  if (!msb || !_lsbValid) { invalidateBinaryIsland(); return; }
++#endif
++#if defined(FREEINK_EXPERIMENTAL_REGIONAL_GRAY) && FREEINK_EXPERIMENTAL_REGIONAL_GRAY
++  if (_islandPlanesBinary) _islandPlanesBinary = captureBinaryPlane(msb, true);
++#endif
+   grayWindowIn(bus);
+   bus.sendPlaneFlipped(CMD_DTM2, msb, _h, _wb);
+   bus.cmd(CMD_DATA_STOP);
+@@ -283,7 +413,9 @@ void Uc8279Driver::copyGrayscaleMsb(EpdBus& bus, const uint8_t* msb) {
+ 
+ void Uc8279Driver::writeGrayscalePlaneStrip(EpdBus& bus, GrayPlane plane, const uint8_t* rows, uint16_t yStart,
+                                             uint16_t numRows) {
++  invalidateBinaryIsland();  // strip passes do not capture the complete binary proof
+   if (!rows || numRows == 0 || yStart >= _h || numRows > _h - yStart) return;
++  if (!_directGrayPass) { invalidateBinaryIsland(); _regionalGrayBaseline = false; }
+   // PTL partial-window in GATE space (logical row y lives at gate H-1-y), rows
+   // emitted bottom-first so they land on the same gates the full-frame write
+   // uses — same idiom as the UC8253 sibling (fixes AA banding).
+@@ -330,7 +462,10 @@ void Uc8279Driver::displayGray(EpdBus& bus, const uint8_t* fb, bool turnOff, con
+   // resets PTL to full after any per-strip writeGrayscalePlaneStrip windows.
+   // Absolute passes consume complete host planes unchanged. Overlay passes
+   // keep the short XTF_AA nudge and its existing mask encoding.
+-  grayWindowIn(bus);
++  // Complete plane uploads used the full RAM window; activation may use a
++  // smaller native rectangle only during an explicitly bound Direct pass.
++  if (_directGrayPass) grayWindowIn(bus, _grayRegion);
++  else grayWindowIn(bus);
+   loadRawBank(bus, absolute ? kUc8279X3_Xth4 : kUc8279X3_XtfAa);
+   bus.cmd(CMD_VCOM_DATA_INTERVAL);
+   bus.data(_firstRefresh ? kUc8279X3_CdiFirst : kUc8279X3_CdiLater);
+@@ -340,6 +475,18 @@ void Uc8279Driver::displayGray(EpdBus& bus, const uint8_t* fb, bool turnOff, con
+   _firstRefresh = false;
+   _oldPlaneValid = false;  // gray planes overwrote DTM1/DTM2 — next B/W needs a rebase/clear
+   _directGrayOnPanel = _directGrayPass;
++  _regionalGrayBaseline = _directGrayPass;
++#if defined(FREEINK_EXPERIMENTAL_REGIONAL_GRAY) && FREEINK_EXPERIMENTAL_REGIONAL_GRAY
++  const bool full = _grayRegion.x == 0 && _grayRegion.y == 0 &&
++      _grayRegion.width == _w && _grayRegion.height == _h;
++  _binaryIslandBaseline = _directGrayPass && _islandPlanesBinary &&
++      (full || _preserveBinaryIsland);
++  _preserveBinaryIsland = false;
++  // An Overlay pass whose island masks were empty leaves the captured binary
++  // base on panel inside the island; any absolute pass ends that proof.
++  _overlayIslandBaseline = !absolute && _overlayIslandCaptured;
++  _overlayIslandCaptured = false;
++#endif
+   _forceFullSyncNext = absolute;
+   _lsbValid = false;
+   if (_directGrayPass)
+@@ -347,9 +494,191 @@ void Uc8279Driver::displayGray(EpdBus& bus, const uint8_t* fb, bool turnOff, con
+   _directGrayPass = false;
+ }
+ 
++bool Uc8279Driver::displayBinaryGrayIsland(EpdBus& bus, const uint8_t* plane,
++                                          BinaryGrayIslandRegion region, bool turnOff) {
++#if defined(FREEINK_EXPERIMENTAL_REGIONAL_GRAY) && FREEINK_EXPERIMENTAL_REGIONAL_GRAY
++  // Compatibility contract: the legacy Frosted cursor keeps its exact region.
++  if (region.x != 432 || region.y != 464 || region.width != 240 || region.height != 16)
++    return false;
++  return displayBinaryGrayRegions(bus, plane, kLegacyIslandPlan, 1u, turnOff);
++#else
++  (void)bus; (void)plane; (void)region; (void)turnOff; return false;
++#endif
++}
++
++bool Uc8279Driver::beginGrayscaleWithBinaryRegions(EpdBus& bus, const uint8_t* fb,
++    GrayscaleMode mode, const BinaryGrayRegionPlan& plan,
++    RefreshMode fallback, bool turnOff) {
++#if defined(FREEINK_EXPERIMENTAL_REGIONAL_GRAY) && FREEINK_EXPERIMENTAL_REGIONAL_GRAY
++  if ((mode != GrayscaleMode::Direct && mode != GrayscaleMode::Overlay) ||
++      !validBinaryPlan(plan) || _pendingRefresh || _lsbValid)
++    return false;
++  // Overlay captures its binary base synchronously inside this call. Supply
++  // the validated plan to the shared entry path so its identity is bound first.
++  beginGrayscaleBound(bus, fb, mode, fallback, turnOff, &plan);
++  return true;
++#else
++  (void)bus; (void)fb; (void)mode; (void)plan; (void)fallback; (void)turnOff;
++  return false;
++#endif
++}
++
++bool Uc8279Driver::displayBinaryGrayRegions(EpdBus& bus, const uint8_t* plane,
++    const BinaryGrayRegionPlan& plan, uint32_t regionMask, bool turnOff) {
++#if defined(FREEINK_EXPERIMENTAL_REGIONAL_GRAY) && FREEINK_EXPERIMENTAL_REGIONAL_GRAY
++  const bool direct = _binaryIslandBaseline && _directGrayOnPanel && !_inGrayscaleMode;
++  const bool overlay = _overlayIslandBaseline && _inGrayscaleMode;
++  // Validate the complete operation before its first RAM write/activation.
++  if (!plane || &plan != _binaryPlan || !validBinaryPlan(plan) || !regionMask ||
++      !(direct || overlay) || _directGrayPass || _pendingRefresh || _lsbValid) return false;
++  const uint32_t allowed = plan.count == 32 ? UINT32_MAX : ((uint32_t{1} << plan.count) - 1u);
++  if (regionMask & ~allowed) return false;
++
++  if (plan.neutralGaps) {
++    uint16_t yStart = _h;
++    uint16_t yEnd = 0;
++    for (unsigned index = 0; index < plan.count; ++index) {
++      if (!(regionMask & (uint32_t{1} << index))) continue;
++      const auto& region = plan.regions[index];
++      if (region.y < yStart) yStart = region.y;
++      const uint16_t end = static_cast<uint16_t>(region.y + region.height);
++      if (end > yEnd) yEnd = end;
++    }
++    const unsigned rowBytes = plan.regions[0].width / 8;
++    grayWindowIn(bus, {plan.regions[0].x, yStart, plan.regions[0].width,
++                       static_cast<uint16_t>(yEnd - yStart)});
++    const auto sendStrip = [&](uint8_t command, bool target) {
++      static constexpr uint8_t white = 0xff;
++      bus.cmd(command); bus.beginTxn();
++      for (int y = static_cast<int>(yEnd) - 1; y >= yStart; --y) {
++        const uint8_t* row = nullptr;
++        unsigned checkpoint = 0;
++        for (unsigned index = 0; index < plan.count; ++index) {
++          const auto& region = plan.regions[index];
++          if ((regionMask & (uint32_t{1} << index)) && y >= region.y &&
++              y < static_cast<int>(region.y + region.height)) {
++            row = target ? plane + static_cast<unsigned>(y) * _wb + region.x / 8 :
++                _islandLsb + checkpoint + static_cast<unsigned>(y - region.y) * rowBytes;
++            break;
++          }
++          checkpoint += region.width / 8 * region.height;
++        }
++        if (row) bus.rawWriteBytes(row, rowBytes);
++        else for (unsigned x = 0; x < rowBytes; ++x) bus.rawWriteBytes(&white, 1);
++      }
++      bus.endTxn(); bus.cmd(CMD_DATA_STOP);
++    };
++    // The UC8279 DU lookup defines OLD=NEW=1 as its WW/no-drive selector.
++    // This is controller-level reasoning only; physical quietness of the gap
++    // still requires a panel test. Stage both planes so Direct and Overlay use
++    // the same explicit transition basis throughout the encompassing PTL.
++    sendStrip(CMD_DTM1, false);
++    sendStrip(CMD_DTM2, true);
++    bus.cmd(CMD_VCOM_DATA_INTERVAL); bus.data(kUc8279X3_CdiLater);
++    loadBank(bus, kUc8279X3_BwDu);
++    triggerGrayRefresh(bus, false);
++    sendStrip(CMD_DTM1, true);
++    for (unsigned index = 0; index < plan.count; ++index)
++      if (regionMask & (uint32_t{1} << index)) copyBinaryRegion(plane, index);
++    bus.cmd(CMD_PARTIAL_OUT);
++    _regionalGrayBaseline = false;
++    if (turnOff) {
++      bus.cmd(CMD_POWER_OFF); bus.waitBusy(" 8279_ISLAND_POF"); _isScreenOn = false;
++    }
++    return true;
++  }
++
++  for (unsigned index = 0; index < plan.count; ++index) {
++    if (!(regionMask & (uint32_t{1} << index))) continue;
++    const auto& region = plan.regions[index];
++    const unsigned rowBytes = region.width / 8;
++    unsigned checkpoint = 0;
++    for (unsigned before = 0; before < index; ++before)
++      checkpoint += plan.regions[before].width / 8 * plan.regions[before].height;
++    grayWindowIn(bus, {region.x, region.y, region.width, region.height});
++    const auto sendPlaneRegion = [&](uint8_t command, const uint8_t* source, bool packed) {
++      bus.cmd(command); bus.beginTxn();
++      for (int y = static_cast<int>(region.height) - 1; y >= 0; --y) {
++        const auto offset = packed ? checkpoint + static_cast<unsigned>(y) * rowBytes :
++            static_cast<unsigned>(region.y + y) * _wb + region.x / 8;
++        bus.rawWriteBytes(source + offset, rowBytes);
++      }
++      bus.endTxn(); bus.cmd(CMD_DATA_STOP);
++    };
++    if (overlay) sendPlaneRegion(CMD_DTM1, _islandLsb, true);
++    sendPlaneRegion(CMD_DTM2, plane, false);
++    bus.cmd(CMD_VCOM_DATA_INTERVAL); bus.data(kUc8279X3_CdiLater);
++    loadBank(bus, kUc8279X3_BwDu);
++    triggerGrayRefresh(bus, false);
++    sendPlaneRegion(CMD_DTM1, plane, false);
++    copyBinaryRegion(plane, index);
++    bus.cmd(CMD_PARTIAL_OUT);
++  }
++  if (turnOff) {
++    bus.cmd(CMD_POWER_OFF); bus.waitBusy(" 8279_ISLAND_POF"); _isScreenOn = false;
++  }
++  // Gray RAM outside the selected regions remains authoritative. A whole B/W
++  // screen must still take the complete destination/rebase path.
++  return true;
++#else
++  (void)bus; (void)plane; (void)plan; (void)regionMask; (void)turnOff;
++  return false;
++#endif
++}
++
++bool Uc8279Driver::supportsGrayscaleRegion(GrayscaleMode mode) const {
++#if defined(FREEINK_EXPERIMENTAL_REGIONAL_GRAY) && FREEINK_EXPERIMENTAL_REGIONAL_GRAY
++  return mode == GrayscaleMode::Direct;
++#else
++  (void)mode;
++  return false;
++#endif
++}
++
++bool Uc8279Driver::canBeginGrayscaleRegion(GrayscaleMode mode, GrayscaleRegion region) const {
++  return supportsGrayscaleRegion(mode) && _regionalGrayBaseline &&
++      _directGrayOnPanel && !_directGrayPass && !_inGrayscaleMode &&
++      region.width && region.height && region.x < _w && region.y < _h &&
++      region.width <= _w - region.x && region.height <= _h - region.y &&
++      ((static_cast<uint32_t>(region.x) + region.width - 1) | 7u) < _w;
++}
++
++bool Uc8279Driver::beginGrayscaleRegion(EpdBus& bus, const uint8_t* fb, GrayscaleMode mode,
++                                      GrayscaleRegion region, RefreshMode fallback, bool turnOff) {
++  if (!canBeginGrayscaleRegion(mode, region)) return false;
++  const uint16_t xEnd = static_cast<uint16_t>((region.x + region.width - 1) | 7u);
++  const uint16_t xStart = static_cast<uint16_t>(region.x & ~7u);
++#if defined(FREEINK_EXPERIMENTAL_REGIONAL_GRAY) && FREEINK_EXPERIMENTAL_REGIONAL_GRAY
++  const bool preserve = _binaryIslandBaseline &&
++      binaryPlanDisjoint({xStart, region.y, static_cast<uint16_t>(xEnd - xStart + 1), region.height});
++  const auto* preservedPlan = _binaryPlan;
++#endif
++  beginGrayscale(bus, fb, mode, fallback, turnOff);
++  _grayRegion = {xStart, region.y, static_cast<uint16_t>(xEnd - xStart + 1), region.height};
++#if defined(FREEINK_EXPERIMENTAL_REGIONAL_GRAY) && FREEINK_EXPERIMENTAL_REGIONAL_GRAY
++  _preserveBinaryIsland = preserve;
++  if (preserve) _binaryPlan = preservedPlan;
++#endif
++  return true;
++}
++
+ void Uc8279Driver::beginGrayscale(EpdBus &bus, const uint8_t *fb,
+                                   GrayscaleMode mode, RefreshMode fallback,
+                                   bool turnOff) {
++  beginGrayscaleBound(bus, fb, mode, fallback, turnOff, nullptr);
++}
++
++void Uc8279Driver::beginGrayscaleBound(EpdBus& bus, const uint8_t* fb,
++    GrayscaleMode mode, RefreshMode fallback, bool turnOff,
++    const BinaryGrayRegionPlan* plan) {
++  invalidateBinaryIsland();
++#if defined(FREEINK_EXPERIMENTAL_REGIONAL_GRAY) && FREEINK_EXPERIMENTAL_REGIONAL_GRAY
++  _binaryPlan = plan ? plan : &kLegacyIslandPlan;
++#else
++  (void)plan;
++#endif
++  _regionalGrayBaseline = false;
++  _grayRegion = {0, 0, _w, _h};
+   _directGrayPass = mode == GrayscaleMode::Direct;
+   if (_directGrayPass) {
+     _lsbValid = false;
+@@ -362,6 +691,8 @@ void Uc8279Driver::beginGrayscale(EpdBus &bus, const uint8_t *fb,
+ }
+ 
+ void Uc8279Driver::displayGrayscaleBase(EpdBus& bus, const uint8_t* fb, RefreshMode fallback, bool turnOff) {
++  invalidateBinaryIsland();
++  _regionalGrayBaseline = false;
+   // OEM "AA-pre-BW(mid)" base: settle the frame with XTF_PRE_BW_MID before the
+   // gray planes so particles are receptive to the weak AA nudge. When the
+   // controller state can't support a clean differential (post-AA, boot fulls
+@@ -370,6 +701,9 @@ void Uc8279Driver::displayGrayscaleBase(EpdBus& bus, const uint8_t* fb, RefreshM
+   const bool cleanBaseNeeded = !_oldPlaneValid || _lsbValid || _forceFullSyncNext || _initialFullsRemaining > 0;
+   if (cleanBaseNeeded) {
+     display(bus, fb, nullptr, fallback, /*turnOff=*/false);
++#if defined(FREEINK_EXPERIMENTAL_REGIONAL_GRAY) && FREEINK_EXPERIMENTAL_REGIONAL_GRAY
++    captureOverlayIsland(fb);
++#endif
+     grayWindowIn(bus);
+     bus.cmd(CMD_VCOM_DATA_INTERVAL);
+     bus.data(kUc8279X3_CdiLater);
+@@ -399,7 +733,29 @@ void Uc8279Driver::displayGrayscaleBase(EpdBus& bus, const uint8_t* fb, RefreshM
+   bus.cmd(CMD_DATA_STOP);
+   bus.cmd(CMD_PARTIAL_OUT);
+   _oldPlaneValid = true;
++#if defined(FREEINK_EXPERIMENTAL_REGIONAL_GRAY) && FREEINK_EXPERIMENTAL_REGIONAL_GRAY
++  captureOverlayIsland(fb);
++#endif
++}
++
++#if defined(FREEINK_EXPERIMENTAL_REGIONAL_GRAY) && FREEINK_EXPERIMENTAL_REGIONAL_GRAY
++// The binary base just displayed is the on-panel content of the bound plan.
++void Uc8279Driver::captureOverlayIsland(const uint8_t* fb) {
++  _overlayIslandCaptured = fb && _binaryPlan && validBinaryPlan(*_binaryPlan) &&
++      captureBinaryPlane(fb, false);
++}
++// Overlay masks are 0 for black/white pixels: empty regions keep the base.
++bool Uc8279Driver::overlayIslandClear(const uint8_t* plane) const {
++  if (!plane || !_binaryPlan || !validBinaryPlan(*_binaryPlan)) return false;
++  for (unsigned i = 0; i < _binaryPlan->count; ++i) {
++    const auto& region = _binaryPlan->regions[i];
++    for (unsigned y = 0; y < region.height; ++y)
++      for (unsigned x = 0; x < region.width / 8; ++x)
++        if (plane[static_cast<unsigned>(region.y + y) * _wb + region.x / 8 + x]) return false;
++  }
++  return true;
+ }
++#endif
+ 
+ void Uc8279Driver::preconditionGrayscale(EpdBus& bus, uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+   if (w == 0 || h == 0 || x >= _w || y >= _h) return;
+@@ -434,6 +790,8 @@ void Uc8279Driver::preconditionGrayscale(EpdBus& bus, uint16_t x, uint16_t y, ui
+ }
+ 
+ void Uc8279Driver::cleanupGrayscaleBuffers(EpdBus &bus, const uint8_t *bw) {
++  invalidateBinaryIsland();
++  _regionalGrayBaseline = false;
+   _directGrayPass = false;
+   if (!bw) {
+     _lsbValid = false;
+@@ -455,6 +813,7 @@ void Uc8279Driver::cleanupGrayscaleBuffers(EpdBus &bus, const uint8_t *bw) {
+ }
+ 
+ void Uc8279Driver::grayscaleRevert(EpdBus& bus, const uint8_t* fb) {
++  invalidateBinaryIsland();
+   (void)fb;
+   if (!_inGrayscaleMode) return;
+   _inGrayscaleMode = false;
+diff --git a/libs/display/FreeInkDisplay/src/driver/Uc8279Driver.h b/libs/display/FreeInkDisplay/src/driver/Uc8279Driver.h
+index 11d4bec..ed7c0a3 100644
+--- a/libs/display/FreeInkDisplay/src/driver/Uc8279Driver.h
++++ b/libs/display/FreeInkDisplay/src/driver/Uc8279Driver.h
+@@ -56,6 +56,17 @@ class Uc8279Driver : public PanelDriver {
+                                   RefreshMode fallback, bool turnOff) override;
+   void beginGrayscale(EpdBus &bus, const uint8_t *fb, GrayscaleMode mode,
+                             RefreshMode fallback, bool turnOff) override;
++  bool supportsGrayscaleRegion(GrayscaleMode mode) const override;
++  bool canBeginGrayscaleRegion(GrayscaleMode mode, GrayscaleRegion region) const override;
++  bool beginGrayscaleRegion(EpdBus& bus, const uint8_t* fb, GrayscaleMode mode,
++                            GrayscaleRegion region, RefreshMode fallback, bool turnOff) override;
++  bool displayBinaryGrayIsland(EpdBus& bus, const uint8_t* plane,
++                              BinaryGrayIslandRegion region, bool turnOff) override;
++  bool beginGrayscaleWithBinaryRegions(EpdBus& bus, const uint8_t* fb,
++      GrayscaleMode mode, const BinaryGrayRegionPlan& plan,
++      RefreshMode fallback, bool turnOff) override;
++  bool displayBinaryGrayRegions(EpdBus& bus, const uint8_t* plane,
++      const BinaryGrayRegionPlan& plan, uint32_t regionMask, bool turnOff) override;
+   void preconditionGrayscale(EpdBus &bus, uint16_t x, uint16_t y, uint16_t w,
+                              uint16_t h) override;
+   GrayscaleCapabilities grayscaleCapabilities(
+@@ -95,16 +106,20 @@ class Uc8279Driver : public PanelDriver {
+   // path is implicitly windowed (init leaves this PTL set + displayStart's PTIN);
+   // the grayscale methods must re-assert it explicitly.
+   void grayWindowIn(EpdBus& bus);
++  void grayWindowIn(EpdBus& bus, GrayscaleRegion region);
++  void beginGrayscaleBound(EpdBus& bus, const uint8_t* fb, GrayscaleMode mode,
++      RefreshMode fallback, bool turnOff, const BinaryGrayRegionPlan* plan);
+ 
+   uint16_t _w;   // visible width  (792)
+   uint16_t _h;   // visible height (528)
+   uint16_t _wb;  // width in bytes (99)
+   uint32_t _bufferSize;
+ 
+-  bool _isScreenOn = false;
+-  bool _firstRefresh = true;    // CDI 0x97 on the first refresh after init, 0xD7 after
+-  bool _oldPlaneValid = false;  // DTM1 holds a real previous frame (differential baseline)
+-  bool _forceFullSyncNext = false;
++  uint8_t _isScreenOn : 1;
++  uint8_t _firstRefresh : 1;    // CDI 0x97 on the first refresh after init, 0xD7 after
++  uint8_t _oldPlaneValid : 1;   // DTM1 holds a real previous frame (differential baseline)
++  uint8_t _forceFullSyncNext : 1;
++  uint8_t _displayStateReserved : 4;
+   // Boot initial-full budget: force GC (strong clear) for this many content
+   // paints after begin(), so the first screen after the splash is a real clear
+   // even though CrossPoint requests it as FAST. Matches the UC8253 X3 sibling.
+@@ -113,15 +128,49 @@ class Uc8279Driver : public PanelDriver {
+   // Grayscale state (mirrors the UC8253 sibling): _inGrayscaleMode means the
+   // gray bank/planes are loaded so the next B/W turn must revert; _lsbValid
+   // means gray planes were written over DTM1/DTM2 (no valid B/W baseline).
+-  bool _inGrayscaleMode = false;
+-  bool _lsbValid = false;
+-  bool _directGrayPass = false;
+-  bool _directGrayOnPanel = false;
++  uint8_t _inGrayscaleMode : 1;
++  uint8_t _lsbValid : 1;
++  uint8_t _directGrayPass : 1;
++  uint8_t _directGrayOnPanel : 1;
++  uint8_t _regionalGrayBaseline : 1;
++  uint8_t _grayStateReserved : 3;
++#if defined(FREEINK_EXPERIMENTAL_REGIONAL_GRAY) && FREEINK_EXPERIMENTAL_REGIONAL_GRAY
++  // Packed bytes for one immutable plan, bounded by the existing 480-byte
++  // checkpoint. Capture LSB before the shared frame is reused for MSB, compare
++  // actual selectors, and keep the completed on-panel binary regions.
++  uint8_t _islandLsb[480]{};
++  const BinaryGrayRegionPlan* _binaryPlan = nullptr;
++  uint8_t _islandPlanesBinary : 1;
++  uint8_t _binaryIslandBaseline : 1;
++  uint8_t _preserveBinaryIsland : 1;
++  // Overlay gray: the island content captured from the binary base (kept in
++  // _islandLsb), then both overlay masks proven empty inside the island.
++  uint8_t _overlayIslandCaptured : 1;
++  uint8_t _overlayIslandBaseline : 1;
++  uint8_t _binaryReserved : 3;
++  void invalidateDirectIsland() {
++    _binaryIslandBaseline = _islandPlanesBinary = _preserveBinaryIsland = false;
++  }
++  void invalidateBinaryIsland() {
++    invalidateDirectIsland();
++    _overlayIslandCaptured = _overlayIslandBaseline = false;
++  }
++  void captureOverlayIsland(const uint8_t* fb);
++  bool overlayIslandClear(const uint8_t* plane) const;
++  bool validBinaryPlan(const BinaryGrayRegionPlan& plan) const;
++  bool binaryPlanDisjoint(GrayscaleRegion region) const;
++  bool captureBinaryPlane(const uint8_t* plane, bool compare);
++  void copyBinaryRegion(const uint8_t* plane, unsigned index);
++#else
++  void invalidateBinaryIsland() {}
++#endif
++  GrayscaleRegion _grayRegion{};
+ 
+   // Async split state (see Uc8253X3Driver for the contract).
+-  bool _pendingRefresh = false;
+-  bool _pendingTurnOff = false;
+-  bool _pendingUsedGc = false;  // this refresh ran the GC bank (spends the budget)
++  uint8_t _pendingRefresh : 1;
++  uint8_t _pendingTurnOff : 1;
++  uint8_t _pendingUsedGc : 1;  // this refresh ran the GC bank (spends the budget)
++  uint8_t _pendingStateReserved : 5;
+ };
+ 
+ PanelDriver& uc8279Driver();

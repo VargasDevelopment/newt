@@ -1,0 +1,24 @@
+{
+  "id": "pocket-pause",
+  "version": "0.2.0",
+  "title": "Pocket pause",
+  "subtitle": "Choose a small pause. Your book can wait.",
+  "note": "",
+  "cards": [
+    {
+      "title": "Take a breath",
+      "detail": "Soften your shoulders. Breathe in slowly, then let it out.",
+      "action": "show-note"
+    },
+    {
+      "title": "Stand up and move",
+      "detail": "Stand up if you can. Stretch gently, then take a few steps.",
+      "action": "show-note"
+    },
+    {
+      "title": "Drink some water",
+      "detail": "Take a few unhurried sips of water. Pause before your next page.",
+      "action": "show-note"
+    }
+  ]
+}

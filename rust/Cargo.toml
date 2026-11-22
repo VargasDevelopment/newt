@@ -1,0 +1,24 @@
+[workspace]
+members = ["reader-ui", "core", "host", "target-probe", "reader-atlas", "reader-navigation", "phased-reader", "phased-sink", "target-expat", "native-storage", "ui-canvas", "system-ui", "stage-home", "library-ui", "library-current", "library-current-ui", "device-ui", "wake-evidence", "tiny-app", "firmware", "salamander/board", "salamander/input", "salamander/input-owner", "salamander/native_io", "salamander/nvs_guard", "salamander/sdk-heap", "salamander/device"]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.93.1"
+license = "MIT"
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
+lto = true
+codegen-units = 1
+
+# Layout, inflate/XML and font loops need speed-oriented inlining on the device.
+[profile.release.package.newt-core]
+opt-level = 2
+
+[profile.release.package.newt-phased-reader]
+opt-level = 2
+
+[profile.release.package.newt-reader-atlas]
+opt-level = 2

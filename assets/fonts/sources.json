@@ -1,0 +1,238 @@
+{
+  "sources": [
+    {
+      "id": "crossink-lexend-regular",
+      "path": "crossink-lexend-regular/LexendDeca-Regular.ttf",
+      "url": "https://raw.githubusercontent.com/uxjulia/CrossInk/b25beb13761d5851f98e7eada09aa5e7d430df48/lib/EpdFont/builtinFonts/source/LexendDeca/LexendDeca-Regular.ttf",
+      "commit": "b25beb13761d5851f98e7eada09aa5e7d430df48",
+      "sha256": "434707ddcc72cb6f0949469f77c67b92bdaf86dc26ec9ab53e3f21fe8f7b0721"
+    },
+    {
+      "id": "crossink-lexend-bold",
+      "path": "crossink-lexend-bold/LexendDeca-Bold.ttf",
+      "url": "https://raw.githubusercontent.com/uxjulia/CrossInk/b25beb13761d5851f98e7eada09aa5e7d430df48/lib/EpdFont/builtinFonts/source/LexendDeca/LexendDeca-Bold.ttf",
+      "commit": "b25beb13761d5851f98e7eada09aa5e7d430df48",
+      "sha256": "b7fd349e9d1330d2e39fda62e3f2167335d89fbc6996c7812599bdaa0f12a642"
+    },
+    {
+      "id": "crossink-lexend-italic",
+      "path": "crossink-lexend-italic/LexendDeca-Italic.ttf",
+      "url": "https://raw.githubusercontent.com/uxjulia/CrossInk/b25beb13761d5851f98e7eada09aa5e7d430df48/lib/EpdFont/builtinFonts/source/LexendDeca/LexendDeca-Italic.ttf",
+      "commit": "b25beb13761d5851f98e7eada09aa5e7d430df48",
+      "sha256": "2b2d45a5925c66987283af3cbcd5598147aff1249ec32d83ccfdf2a1e8e9ecc1"
+    },
+    {
+      "id": "crossink-lexend-bolditalic",
+      "path": "crossink-lexend-bolditalic/LexendDeca-BoldItalic.ttf",
+      "url": "https://raw.githubusercontent.com/uxjulia/CrossInk/b25beb13761d5851f98e7eada09aa5e7d430df48/lib/EpdFont/builtinFonts/source/LexendDeca/LexendDeca-BoldItalic.ttf",
+      "commit": "b25beb13761d5851f98e7eada09aa5e7d430df48",
+      "sha256": "4c257cb370a592c56622aaed9c82183200806a1fd74bd05c9641563a33e1b6b4"
+    },
+    {
+      "id": "crossink-fontconvert",
+      "path": "crossink-fontconvert/fontconvert.py",
+      "url": "https://raw.githubusercontent.com/uxjulia/CrossInk/b25beb13761d5851f98e7eada09aa5e7d430df48/lib/EpdFont/scripts/fontconvert.py",
+      "commit": "b25beb13761d5851f98e7eada09aa5e7d430df48",
+      "sha256": "81c93f88ff03aea59a94ad8e3bf0c2ab2876763c82d363bc5838f99496eefe1d"
+    },
+    {
+      "id": "crossink-convert-builtin",
+      "path": "crossink-convert-builtin/convert-builtin-fonts.sh",
+      "url": "https://raw.githubusercontent.com/uxjulia/CrossInk/b25beb13761d5851f98e7eada09aa5e7d430df48/lib/EpdFont/scripts/convert-builtin-fonts.sh",
+      "commit": "b25beb13761d5851f98e7eada09aa5e7d430df48",
+      "sha256": "924166c7699032e6d3a2b6db71bfe1de3cc38bced509cc7126ac2c0b9fb058c9"
+    },
+    {
+      "id": "crossink-license",
+      "path": "crossink-license/LICENSE",
+      "url": "https://raw.githubusercontent.com/uxjulia/CrossInk/b25beb13761d5851f98e7eada09aa5e7d430df48/LICENSE",
+      "commit": "b25beb13761d5851f98e7eada09aa5e7d430df48",
+      "sha256": "7212963b5b1b5ee34ca158163356beb1e6945dd2cc5d320f1fe7573c424ea640"
+    },
+    {
+      "id": "noto-sans-regular",
+      "path": "noto-sans-regular/NotoSans-Regular.ttf",
+      "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/5c3913063bb189df4edc94b766584dfb4c04a187/fonts/NotoSans/hinted/ttf/NotoSans-Regular.ttf",
+      "commit": "5c3913063bb189df4edc94b766584dfb4c04a187",
+      "sha256": "478c558ea716033cd60c03438f628dfa75694dcf6b5f6d505a2f05fd2b4f3823"
+    },
+    {
+      "id": "noto-sans-bold",
+      "path": "noto-sans-bold/NotoSans-Bold.ttf",
+      "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/5c3913063bb189df4edc94b766584dfb4c04a187/fonts/NotoSans/hinted/ttf/NotoSans-Bold.ttf",
+      "commit": "5c3913063bb189df4edc94b766584dfb4c04a187",
+      "sha256": "1df075a380fc7cb898acf64c1f7b3b4dd780de3caa860178bf929de35817a913"
+    },
+    {
+      "id": "noto-sans-italic",
+      "path": "noto-sans-italic/NotoSans-Italic.ttf",
+      "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/5c3913063bb189df4edc94b766584dfb4c04a187/fonts/NotoSans/hinted/ttf/NotoSans-Italic.ttf",
+      "commit": "5c3913063bb189df4edc94b766584dfb4c04a187",
+      "sha256": "467e3f89eeca4108bb8710a2b9e0cf2281ac56d5b0609211a83776d0505eecb5"
+    },
+    {
+      "id": "noto-sans-bolditalic",
+      "path": "noto-sans-bolditalic/NotoSans-BoldItalic.ttf",
+      "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/5c3913063bb189df4edc94b766584dfb4c04a187/fonts/NotoSans/hinted/ttf/NotoSans-BoldItalic.ttf",
+      "commit": "5c3913063bb189df4edc94b766584dfb4c04a187",
+      "sha256": "1b602a9d6353be42c91df097a4857b69fa2696f26703d7a33b54a15d87c2622c"
+    },
+    {
+      "id": "noto-symbols2-regular",
+      "path": "noto-symbols2-regular/NotoSansSymbols2-Regular.ttf",
+      "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/5c3913063bb189df4edc94b766584dfb4c04a187/fonts/NotoSansSymbols2/hinted/ttf/NotoSansSymbols2-Regular.ttf",
+      "commit": "5c3913063bb189df4edc94b766584dfb4c04a187",
+      "sha256": "c4a0a80f0041ce4be81e2478faad22776d23edb98ae3f0d19bd37044820ecf9d"
+    },
+    {
+      "id": "noto-sans-ofl",
+      "path": "noto-sans-ofl/OFL.txt",
+      "url": "https://raw.githubusercontent.com/notofonts/latin-greek-cyrillic/71cf6f3ca9c185d809dd800ce9a9e58e1c16f1b1/OFL.txt",
+      "commit": "71cf6f3ca9c185d809dd800ce9a9e58e1c16f1b1",
+      "sha256": "cee9892f9f0cc8fe882c9e9537ee6a89621d86ee7ceaf70b02e2b2b1c25c061a"
+    },
+    {
+      "id": "noto-symbols-ofl",
+      "path": "noto-symbols-ofl/OFL.txt",
+      "url": "https://raw.githubusercontent.com/notofonts/symbols/91ef396f7d14a6373ea7e02a3d90f24f45a8f72f/OFL.txt",
+      "commit": "91ef396f7d14a6373ea7e02a3d90f24f45a8f72f",
+      "sha256": "b118dd41337806a5d4797052c77caf3bd096aed783e5eb21b4d11154351e1ac0"
+    },
+    {
+      "id": "noto-symbols-regular",
+      "path": "noto-symbols-regular/NotoSansSymbols-Regular.ttf",
+      "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/5c3913063bb189df4edc94b766584dfb4c04a187/fonts/NotoSansSymbols/hinted/ttf/NotoSansSymbols-Regular.ttf",
+      "commit": "5c3913063bb189df4edc94b766584dfb4c04a187",
+      "sha256": "d0e98e9a2c046594c5021437273943be7e79e0fd980fde125279e22302212595"
+    },
+    {
+      "id": "noto-math-regular",
+      "path": "noto-math-regular/NotoSansMath-Regular.ttf",
+      "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/5c3913063bb189df4edc94b766584dfb4c04a187/fonts/NotoSansMath/hinted/ttf/NotoSansMath-Regular.ttf",
+      "commit": "5c3913063bb189df4edc94b766584dfb4c04a187",
+      "sha256": "d51afd5739c7ba6c44fcab35a88160e25dfb69a2d4ad0bd99533f8d894af1f96"
+    },
+    {
+      "id": "noto-math-ofl",
+      "path": "noto-math-ofl/OFL.txt",
+      "url": "https://raw.githubusercontent.com/notofonts/math/6764bbdf67f2f94b26e2705c7c6e124efa2816f3/OFL.txt",
+      "commit": "6764bbdf67f2f94b26e2705c7c6e124efa2816f3",
+      "sha256": "403a95275b469061b7d4371c328e0ada3bc7d63328abe2e88aad5cd243b2fe21"
+    }
+  ],
+  "fallback_order": [
+    {
+      "family": "Lexend Deca",
+      "faces": {
+        "Regular": "crossink-lexend-regular",
+        "Bold": "crossink-lexend-bold",
+        "Italic": "crossink-lexend-italic",
+        "BoldItalic": "crossink-lexend-bolditalic"
+      },
+      "styling": "pinned face outlines"
+    },
+    {
+      "family": "Noto Sans",
+      "faces": {
+        "Regular": "noto-sans-regular",
+        "Bold": "noto-sans-bold",
+        "Italic": "noto-sans-italic",
+        "BoldItalic": "noto-sans-bolditalic"
+      },
+      "styling": "true styled faces"
+    },
+    {
+      "family": "Noto Sans Symbols 2",
+      "faces": {
+        "Regular": "noto-symbols2-regular",
+        "Bold": "noto-symbols2-regular",
+        "Italic": "noto-symbols2-regular",
+        "BoldItalic": "noto-symbols2-regular"
+      },
+      "styling": "upright regular symbols in every style"
+    },
+    {
+      "family": "Noto Sans Symbols",
+      "faces": {
+        "Regular": "noto-symbols-regular",
+        "Bold": "noto-symbols-regular",
+        "Italic": "noto-symbols-regular",
+        "BoldItalic": "noto-symbols-regular"
+      },
+      "styling": "upright regular symbols in every style"
+    },
+    {
+      "family": "Noto Sans Math",
+      "faces": {
+        "Regular": "noto-math-regular",
+        "Bold": "noto-math-regular",
+        "Italic": "noto-math-regular",
+        "BoldItalic": "noto-math-regular"
+      },
+      "styling": "upright regular symbols in every style"
+    }
+  ],
+  "rasterizer": {
+    "library": "FreeType",
+    "version": "2.14.2",
+    "unicode_version": "15.0.0",
+    "point_size": 14,
+    "dpi": 150,
+    "load_flags": 32780,
+    "force_autohint": false,
+    "proportional_figures": true,
+    "coverage_thresholds_8bit": [
+      48,
+      96,
+      160
+    ],
+    "ink_threshold_2bit": 2,
+    "sampling": "nearest-center",
+    "ascent": 30,
+    "line_height": 36,
+    "advance_rounding": "linear-16.16-to-sixteenths-half-up",
+    "kerning_rounding": "design-units-to-sixteenths-ties-even-clamp-int8"
+  },
+  "legacy_profile": {
+    "sha256": "f211011aeee147941af5f72ea97068b320edd48e33d48760b47282fa25fff217",
+    "glyphs_per_face": 341,
+    "authority": "unchanged checked-in four Lexend atlas JSON assets"
+  },
+  "block_fallback_order": {
+    "Arrows": [
+      "Lexend Deca",
+      "Noto Sans",
+      "Noto Sans Math",
+      "Noto Sans Symbols",
+      "Noto Sans Symbols 2"
+    ],
+    "Mathematical Operators": [
+      "Lexend Deca",
+      "Noto Sans",
+      "Noto Sans Math",
+      "Noto Sans Symbols",
+      "Noto Sans Symbols 2"
+    ],
+    "Letterlike Symbols": [
+      "Lexend Deca",
+      "Noto Sans",
+      "Noto Sans Math",
+      "Noto Sans Symbols",
+      "Noto Sans Symbols 2"
+    ],
+    "Geometric Shapes": [
+      "Lexend Deca",
+      "Noto Sans",
+      "Noto Sans Symbols 2",
+      "Noto Sans Symbols",
+      "Noto Sans Math"
+    ],
+    "Miscellaneous Symbols": [
+      "Lexend Deca",
+      "Noto Sans",
+      "Noto Sans Symbols",
+      "Noto Sans Symbols 2",
+      "Noto Sans Math"
+    ]
+  }
+}

@@ -1,0 +1,198 @@
+[
+  {
+    "name": "sharp-inclusive",
+    "needle": "                if c >= 120 {\n",
+    "replacement": "                if c > 120 {\n",
+    "witness": "sharp-threshold-exact",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "dither-solid",
+    "needle": "                if c >= 140 {\n",
+    "replacement": "                if c >= 120 {\n",
+    "witness": "dither-high-band",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "dither-floor",
+    "needle": "                } else if c >= 40\n",
+    "replacement": "                } else if c >= 80\n",
+    "witness": "dither-fringe",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "gray-darken",
+    "needle": "                    *p = (*p).min(255 - c);\n",
+    "replacement": "                    *p = 255 - c;\n",
+    "witness": "gray-keep-dark",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "rotation-cw",
+    "needle": "            FrameRotation::Portrait => (y, h - 1 - x),\n",
+    "replacement": "            FrameRotation::Portrait => (y, x),\n",
+    "witness": "rotation-1",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "style-tie-first",
+    "needle": "            if score > best_score {\n",
+    "replacement": "            if score >= best_score {\n",
+    "witness": "fallback-score",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "face-fallback",
+    "needle": "        if best.is_none() && self.count > 0 {\n",
+    "replacement": "        if false && best.is_none() && self.count > 0 {\n",
+    "witness": "missing-face-zero-fallback",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "kerning-font-identity",
+    "needle": "            (Some(a), Some(b)) if a.bank_index == b.bank_index => {\n                self.bank[a.bank_index].kerning(left, right, size, style)\n            }\n",
+    "replacement": "            (Some(a), Some(_b)) => self.bank[a.bank_index].kerning(left, right, size, style),\n",
+    "witness": "cross-font-kern",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "ligature-face-check",
+    "needle": "        if lig != 0 && self.font_for(lig, style).map(|s| s.bank_index) == Some(a.bank_index) {\n",
+    "replacement": "        if lig != 0 {\n",
+    "witness": "cross-font-ligature",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "bold-face-flags",
+    "needle": "                    && selected.map_or(0, |s| s.face_flags) & STYLE_BOLD == 0\n",
+    "replacement": "                    && selected.map_or(0, |s| s.face_flags) & STYLE_BOLD != 0\n",
+    "witness": "synthetic-bold",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "underline-size",
+    "needle": "            let thickness = if run.size_px >= 28 { 2 } else { 1 };\n",
+    "replacement": "            let thickness = if run.size_px >= 29 { 2 } else { 1 };\n",
+    "witness": "underline-large",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "missing-first",
+    "needle": "                if missing == 0 {\n",
+    "replacement": "                if missing == 1 {\n",
+    "witness": "missing",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "space-exemption",
+    "needle": "            if glyph.is_none() && cp != 32 && cp != 0xa0 {\n",
+    "replacement": "            if glyph.is_none() && cp != 32 && cp != 0xa1 {\n",
+    "witness": "whitespace",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "utf8-tolerant-leader",
+    "needle": "    let (mut cp, mut extra) = if b >= 0xf0 {\n",
+    "replacement": "    let (mut cp, mut extra) = if b >= 0xf8 {\n",
+    "witness": "utf8-four",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "utf8-partial",
+    "needle": "        cp = (cp << 6) | u32::from(text[*i] & 63);\n",
+    "replacement": "        cp = (cp << 5) | u32::from(text[*i] & 63);\n",
+    "witness": "utf8-truncated",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "image-gray-overwrites",
+    "needle": "                    self.target.framebuffer[offset] = gray[i];\n",
+    "replacement": "                    self.target.framebuffer[offset] = self.target.framebuffer[offset].min(gray[i]);\n",
+    "witness": "combined-text-before-image",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "image-signed-truncation",
+    "needle": "            self.err[i + 2] = (i32::from(self.err[i + 2]) + residual * 7 / 16) as i16;\n",
+    "replacement": "            self.err[i + 2] = (i32::from(self.err[i + 2]) + (residual * 7).div_euclid(16)) as i16;\n",
+    "witness": "image-truncation-negative",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "image-row-width",
+    "needle": "        let width = usize::from(width).min(self.width);\n",
+    "replacement": "        let width = usize::from(width).min(self.width.saturating_sub(1));\n",
+    "witness": "image-width-clamp",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "image-zero-each-attempt",
+    "needle": "        scratch.err[..n].fill(0);\n",
+    "replacement": "        scratch.err[..n].fill(1);\n",
+    "witness": "image-zero-exact",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "unsupported-status",
+    "needle": "        if status != BookStatus::Ok && status != BookStatus::Unsupported {\n",
+    "replacement": "        if status != BookStatus::Ok {\n",
+    "witness": "image-unsupported-ignored",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "image-oom-return",
+    "needle": "            scratch.arena.release(mark);\n            return Ok(BookStatus::OutOfMemory);\n",
+    "replacement": "            scratch.arena.release(mark);\n            return Ok(BookStatus::Ok);\n",
+    "witness": "image-oom-early",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "same-object-kern-selection-equality",
+    "needle": "(Some(a), Some(b)) if a.bank_index == b.bank_index => {",
+    "replacement": "(Some(a), Some(b)) if a == b => {",
+    "witness": "same-bank-style-identity",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "same-object-ligature-selection-equality",
+    "needle": "        if a.bank_index != b.bank_index {\n",
+    "replacement": "        if a != b {\n",
+    "witness": "same-bank-style-identity",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "same-object-ligature-result-selection",
+    "needle": "self.font_for(lig, style).map(|s| s.bank_index) == Some(a.bank_index)",
+    "replacement": "self.font_for(lig, style) == Some(a)",
+    "witness": "same-bank-style-identity",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "clipping-must-not-skip-diffusion",
+    "needle": "        for (i, &gray) in gray[..width].iter().enumerate() {\n",
+    "replacement": "        for (i, &gray) in gray[..width].iter().enumerate() {\n            if self.target.panel(i32::from(self.x) + i as i32, i32::from(self.y) + i32::from(y)).is_none() { continue; }\n",
+    "witness": "image-clipped",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "partial-row-full-transfer",
+    "needle": "        self.err[..self.width + 2].copy_from_slice(&self.next[..self.width + 2]);\n",
+    "replacement": "        self.err[..width + 1].copy_from_slice(&self.next[..width + 1]);\n",
+    "witness": "image-partial-row",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "measured-advance-authority",
+    "needle": "                .checked_add(i32::from(fonts.advance(cp, run.size_px, run.style_flags)))\n",
+    "replacement": "                .checked_add({ let _measured = fonts.advance(cp, run.size_px, run.style_flags); i32::from(7i16) })\n",
+    "witness": "measured-not-bitmap-advance",
+    "state": "unexecuted proposal"
+  },
+  {
+    "name": "bayer-logical-not-panel",
+    "needle": "u32::from(BAYER[(y & 3) as usize][(x & 3) as usize])",
+    "replacement": "u32::from({ let (px, py) = self.panel(x, y).unwrap_or((0, 0)); BAYER[py & 3][px & 3] })",
+    "witness": "matrix-0-1",
+    "state": "unexecuted proposal"
+  }
+]

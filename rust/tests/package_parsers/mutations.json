@@ -1,0 +1,58 @@
+[
+  {
+    "id": "container-media-inversion",
+    "old": "v != b\"application/oebps-package+xml\"",
+    "new": "v == b\"application/oebps-package+xml\"",
+    "witness": "container-first-local"
+  },
+  {
+    "id": "metadata-first-nonempty",
+    "old": "if bytes(self.arena, *slot).is_empty() {",
+    "new": "if !bytes(self.arena, *slot).is_empty() {",
+    "witness": "package-fields"
+  },
+  {
+    "id": "cover-promotion",
+    "old": "if filler.cover_hash != 0 {",
+    "new": "if filler.cover_hash == 0 {",
+    "witness": "package-fields"
+  },
+  {
+    "id": "nav-exact-namespace",
+    "old": "atts.exact(b\"epub:type\")",
+    "new": "atts.local(b\"type\")",
+    "witness": "nav-exact"
+  },
+  {
+    "id": "ncx-depth",
+    "old": "depth: self.point_depth - 1,",
+    "new": "depth: self.point_depth,",
+    "witness": "ncx-nested-label"
+  },
+  {
+    "id": "nav-depth",
+    "old": "depth: self.ol_depth.saturating_sub(1),",
+    "new": "depth: self.ol_depth,",
+    "witness": "nav-fragment"
+  },
+  {
+    "id": "toc-id-selection",
+    "old": "if result.ncx_index.is_none()\n            && (id_matches",
+    "new": "if result.ncx_index.is_none()\n            && (!id_matches",
+    "witness": "ncx-toc-id-fallback"
+  },
+  {
+    "id": "compact-string-offset",
+    "path": "core/src/zip_window/arena.rs",
+    "old": "self.0.get() - 1",
+    "new": "self.0.get()",
+    "witness": "container-first-local"
+  },
+  {
+    "id": "compact-string-terminator",
+    "path": "core/src/zip_window/arena.rs",
+    "old": "if self.view(range)?.last() != Some(&0)",
+    "new": "if self.view(range)?.last() == Some(&0)",
+    "witness": "container-first-local"
+  }
+]

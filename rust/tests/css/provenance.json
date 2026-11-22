@@ -1,0 +1,21 @@
+{
+  "commit": "cd6f5b831c8fad899723b6d406586f00c575f021",
+  "sha256": {
+    "LICENSE": "17dea5079d9905fbbc8323cde7bfffd0f24185949c43a5daad5177022b796588",
+    "NOTICE": "1a45b9f057b415f84085d808bd12ec5df1296808ad14bd9583f2a585c84290ff",
+    "libs/book/FreeInkBook/include/css/Css.h": "2f7f4fe24e92b1332b342cfac83653a24a99fd67d70b06e6e2c686b86cb7f396",
+    "libs/book/FreeInkBook/src/css/Css.cpp": "f9a9777232fab4cab071a79dfa9b27d9f4dbeff6730bb07cd456c0c273fea2ed",
+    "libs/book/FreeInkBook/src/BookCatalog.cpp": "f894230d600d38ac0d382383f220c554558aeb46d21d1a3ad4fd4234df7d48e4",
+    "libs/book/FreeInkBook/include/BookArena.h": "7fe4492f93d8c496b24b935504a1e6c5124062043413af2b8ea5f727ef112812",
+    "libs/book/FreeInkBook/include/BookStorage.h": "0885c8a100c62439a4fc0f701dfa83e561e95853ca5d29fe93d888793abb9bf0",
+    "libs/book/FreeInkBook/include/BookTypes.h": "38479bbdc7c57d7ff1fbaf2cb5516b90b9d55563fc9676caa8edd9a2e008206f",
+    "libs/book/FreeInkBook/include/epub/ZipCatalog.h": "44be3dce7253c36db12fa64b547b5a5862aaa8a1d832e6b7d45c47896ba03d82",
+    "libs/book/FreeInkBook/include/epub/MinizConfig.h": "760cad4d8a00dffc8f0e61f7c5df95bd479514095167059502d3c83da229d1d5",
+    "libs/book/FreeInkBook/src/epub/ZipCatalog.cpp": "27abccd275f811c18cb10515406e4e1c46afe4efe3759c49ad93c6542a317de0",
+    "libs/book/FreeInkBook/src/vendor/miniz_impl.c": "62d5a7524b9ff42b8f779191be05372e1a6a9a993ccda99fb454c7d50a83edd6",
+    "libs/book/FreeInkBook/third_party/miniz/miniz.h": "b53b62ed122e559b8f679e3cb787a0b0035fe87a58f909da0e44931678f4e85f",
+    "libs/book/FreeInkBook/third_party/miniz/miniz.c": "e2c1aeb66eef9191d8c3feb164db2def2335a61d039bf04ed849f6b042433b30",
+    "libs/book/FreeInkBook/third_party/miniz/LICENSE": "6f20fa7672b00e2e975c291df737cf227addf3ad32e36fef3fe0f416e4664d3d",
+    "libs/font/FreeInkFont/include/FontArena.h": "96e6f42834a9d961cf8f7af6f3530ec2a8f767cbdd1b67725282f99135e7d4b7"
+  }
+}

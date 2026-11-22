@@ -1,0 +1,8 @@
+NRUST-34 XML input foundation
+
+Derived from FreeInk SDK cd6f5b831c8fad899723b6d406586f00c575f021.
+Copyright (c) 2026 FreeInk. MIT; see rust/THIRD_PARTY.md.
+Translated portions: EntityFilter.cpp/h, XmlUtil.h and the resolveHref,
+dirName, kMaxPath and hexDigit helpers in PackageParsers.cpp.
+PROVENANCE.json retains capture-time file names, commits and hashes.
+Miniz's canonical terms: vendor/freeink-sdk/libs/book/FreeInkBook/third_party/miniz/LICENSE.

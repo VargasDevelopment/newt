@@ -1,0 +1,797 @@
+{
+  "external_packages": [],
+  "files": {
+    "rust/core/src/admission.rs": {},
+    "rust/core/src/app.rs": {},
+    "rust/core/src/book_days.rs": {
+      "expect": 1
+    },
+    "rust/core/src/book_days_store.rs": {},
+    "rust/core/src/book_semantic_index.rs": {},
+    "rust/core/src/cache_names/identity.rs": {},
+    "rust/core/src/cache_names/mod.rs": {},
+    "rust/core/src/cache_names/namespace.rs": {},
+    "rust/core/src/cache_names/segment.rs": {},
+    "rust/core/src/canonical.rs": {
+      "allow": 1
+    },
+    "rust/core/src/canonical_semantic.rs": {
+      "expect": 1
+    },
+    "rust/core/src/chapter_layout/arabic.rs": {},
+    "rust/core/src/chapter_layout/engine.rs": {
+      "lines": 1182
+    },
+    "rust/core/src/chapter_layout/images.rs": {},
+    "rust/core/src/chapter_layout/mod.rs": {},
+    "rust/core/src/chapter_layout/plain.rs": {},
+    "rust/core/src/chapter_layout/render_view.rs": {},
+    "rust/core/src/chapter_layout/session.rs": {},
+    "rust/core/src/chapter_layout/style.rs": {},
+    "rust/core/src/chapter_layout/text.rs": {},
+    "rust/core/src/chapter_layout/types.rs": {},
+    "rust/core/src/clock_format.rs": {
+      "expect": 1
+    },
+    "rust/core/src/crossink_stats.rs": {},
+    "rust/core/src/css.rs": {
+      "lines": 554
+    },
+    "rust/core/src/ds3231.rs": {},
+    "rust/core/src/durable.rs": {},
+    "rust/core/src/external_progress_store.rs": {
+      "expect": 6
+    },
+    "rust/core/src/font_layout.rs": {},
+    "rust/core/src/frame.rs": {},
+    "rust/core/src/ft_font.rs": {
+      "lines": 771
+    },
+    "rust/core/src/hyphenator.rs": {},
+    "rust/core/src/image_probe.rs": {},
+    "rust/core/src/image_renderer.rs": {},
+    "rust/core/src/inflate.rs": {
+      "lines": 772
+    },
+    "rust/core/src/jpeg/detection.rs": {},
+    "rust/core/src/jpeg/mod.rs": {
+      "unreachable": 1
+    },
+    "rust/core/src/jpeg/progressive.rs": {},
+    "rust/core/src/jpeg/renderer.rs": {},
+    "rust/core/src/jpeg/runtime_probe.rs": {},
+    "rust/core/src/jpeg/tables.rs": {},
+    "rust/core/src/lib.rs": {},
+    "rust/core/src/library_catalog.rs": {
+      "unwrap": 11
+    },
+    "rust/core/src/library_name.rs": {},
+    "rust/core/src/package_parsers.rs": {
+      "lines": 1158
+    },
+    "rust/core/src/page_cache.rs": {
+      "lines": 858
+    },
+    "rust/core/src/page_cache_access.rs": {},
+    "rust/core/src/page_envelope.rs": {
+      "expect": 2
+    },
+    "rust/core/src/page_renderer.rs": {
+      "lines": 632
+    },
+    "rust/core/src/pause.rs": {},
+    "rust/core/src/pause_store.rs": {},
+    "rust/core/src/phased_metadata.rs": {},
+    "rust/core/src/pngle.rs": {
+      "lines": 770
+    },
+    "rust/core/src/preferences.rs": {},
+    "rust/core/src/preferences_store.rs": {},
+    "rust/core/src/progress.rs": {},
+    "rust/core/src/progress_store.rs": {
+      "expect": 1
+    },
+    "rust/core/src/quick_start.rs": {
+      "expect": 1
+    },
+    "rust/core/src/reading_state_namespace.rs": {},
+    "rust/core/src/reading_stats.rs": {
+      "expect": 2,
+      "lines": 946
+    },
+    "rust/core/src/reading_stats_once.rs": {
+      "expect": 1
+    },
+    "rust/core/src/reading_stats_service.rs": {
+      "expect": 5,
+      "lines": 814
+    },
+    "rust/core/src/reading_stats_store.rs": {
+      "expect": 6
+    },
+    "rust/core/src/refresh.rs": {},
+    "rust/core/src/sd_record.rs": {},
+    "rust/core/src/sd_resume.rs": {
+      "expect": 1
+    },
+    "rust/core/src/selected_book.rs": {
+      "expect": 1
+    },
+    "rust/core/src/sleep_intent.rs": {},
+    "rust/core/src/sleep_stats.rs": {},
+    "rust/core/src/stats_clock.rs": {},
+    "rust/core/src/stats_graph_data.rs": {},
+    "rust/core/src/stats_service_backend.rs": {},
+    "rust/core/src/time_zone.rs": {},
+    "rust/core/src/tracker.rs": {},
+    "rust/core/src/utf8.rs": {},
+    "rust/core/src/wire.rs": {
+      "expect": 1
+    },
+    "rust/core/src/xml_input.rs": {},
+    "rust/core/src/xml_session.rs": {
+      "expect": 1
+    },
+    "rust/core/src/zip_container.rs": {
+      "expect": 2,
+      "lines": 517
+    },
+    "rust/core/src/zip_record_rules.rs": {},
+    "rust/core/src/zip_window/arena.rs": {},
+    "rust/core/src/zip_window/mod.rs": {},
+    "rust/core/src/zip_window/source.rs": {},
+    "rust/core/src/zip_window/window.rs": {
+      "expect": 2
+    },
+    "rust/device-ui/src/assets.rs": {},
+    "rust/device-ui/src/home_clock.rs": {
+      "lines": 509
+    },
+    "rust/device-ui/src/lib.rs": {
+      "allow": 1
+    },
+    "rust/device-ui/src/screens.rs": {
+      "expect": 1,
+      "lines": 532
+    },
+    "rust/device-ui/src/sleep.rs": {
+      "lines": 524,
+      "unwrap": 1
+    },
+    "rust/device-ui/src/stats.rs": {
+      "lines": 657
+    },
+    "rust/firmware/board_clock.rs": {},
+    "rust/firmware/fonts/native.rs": {
+      "lines": 514,
+      "unsafe_block": 30,
+      "unsafe_extern": 2,
+      "unsafe_fn": 8,
+      "unsafe_undocumented": 38
+    },
+    "rust/firmware/home_startup.rs": {},
+    "rust/firmware/no_card.rs": {},
+    "rust/firmware/nvs/nvs.rs": {
+      "unwrap": 2
+    },
+    "rust/firmware/nvs/sdk.rs": {
+      "unsafe_block": 7,
+      "unsafe_extern": 1,
+      "unsafe_fn": 1,
+      "unsafe_undocumented": 1
+    },
+    "rust/firmware/reader_book.rs": {
+      "allow": 4,
+      "expect": 1,
+      "lines": 1248
+    },
+    "rust/firmware/reader_checkpoint.rs": {
+      "expect": 3
+    },
+    "rust/firmware/reader_hash.rs": {
+      "unsafe_block": 6,
+      "unsafe_extern": 1,
+      "unsafe_fn": 1,
+      "unsafe_undocumented": 7
+    },
+    "rust/firmware/reader_linebreak.rs": {
+      "unsafe_block": 1,
+      "unsafe_extern": 1,
+      "unsafe_undocumented": 2
+    },
+    "rust/firmware/reader_pages.rs": {},
+    "rust/firmware/reader_preferences.rs": {},
+    "rust/firmware/reading_state_medium.rs": {},
+    "rust/firmware/reading_stats_runtime.rs": {
+      "allow": 4
+    },
+    "rust/firmware/sd_revision.rs": {},
+    "rust/firmware/serial_console.rs": {
+      "unsafe_block": 2,
+      "unsafe_extern": 1,
+      "unsafe_fn": 1,
+      "unsafe_undocumented": 1
+    },
+    "rust/firmware/stats_clock.rs": {},
+    "rust/host/src/admission_protocol.rs": {
+      "unwrap": 15
+    },
+    "rust/host/src/bin/app-host.rs": {},
+    "rust/host/src/bin/chapter-host.rs": {
+      "expect": 1,
+      "panic": 2,
+      "unwrap": 8
+    },
+    "rust/host/src/bin/chapter-xml-host.rs": {},
+    "rust/host/src/bin/css-host.rs": {},
+    "rust/host/src/bin/epub-admission-host.rs": {},
+    "rust/host/src/bin/font-layout-host.rs": {},
+    "rust/host/src/bin/ft-font-host.rs": {
+      "unreachable": 1,
+      "unsafe_block": 7,
+      "unsafe_extern": 1,
+      "unsafe_fn": 4,
+      "unsafe_undocumented": 12
+    },
+    "rust/host/src/bin/hyphenator.rs": {},
+    "rust/host/src/bin/image-probe.rs": {},
+    "rust/host/src/bin/inflate.rs": {
+      "expect": 2,
+      "panic": 1,
+      "unwrap": 7
+    },
+    "rust/host/src/bin/jpeg-host.rs": {
+      "unwrap": 2
+    },
+    "rust/host/src/bin/package-parsers-host.rs": {},
+    "rust/host/src/bin/page-renderer-host.rs": {},
+    "rust/host/src/bin/png-host.rs": {
+      "unwrap": 2
+    },
+    "rust/host/src/bin/xml-input.rs": {
+      "panic": 1,
+      "unwrap": 5
+    },
+    "rust/host/src/bin/xml-session-host.rs": {},
+    "rust/host/src/bin/zip-container.rs": {
+      "expect": 4,
+      "unwrap": 13
+    },
+    "rust/host/src/bin/zip-window.rs": {
+      "expect": 2,
+      "unwrap": 11
+    },
+    "rust/host/src/book_graph_protocol.rs": {},
+    "rust/host/src/chapter_layout/linebreak.rs": {
+      "unsafe_block": 1,
+      "unsafe_extern": 1,
+      "unsafe_undocumented": 2
+    },
+    "rust/host/src/clock_protocol.rs": {
+      "expect": 10
+    },
+    "rust/host/src/external_progress_protocol.rs": {},
+    "rust/host/src/host_catalog.rs": {
+      "panic": 1,
+      "unwrap": 1
+    },
+    "rust/host/src/host_frame.rs": {
+      "expect": 7,
+      "panic": 3
+    },
+    "rust/host/src/host_stats.rs": {
+      "expect": 4,
+      "panic": 4,
+      "unreachable": 1,
+      "unwrap": 2
+    },
+    "rust/host/src/host_tracker.rs": {
+      "expect": 2,
+      "panic": 2
+    },
+    "rust/host/src/identity_protocol.rs": {
+      "panic": 2,
+      "unwrap": 4
+    },
+    "rust/host/src/main.rs": {
+      "expect": 12,
+      "lines": 606,
+      "panic": 9,
+      "unwrap": 2
+    },
+    "rust/host/src/persistence_protocol.rs": {
+      "panic": 1,
+      "unwrap": 14
+    },
+    "rust/host/src/sleep_crossink_protocol.rs": {
+      "expect": 2,
+      "panic": 1,
+      "unwrap": 8
+    },
+    "rust/host/src/stats_service_protocol.rs": {
+      "expect": 2,
+      "panic": 3,
+      "unwrap": 4
+    },
+    "rust/host/src/stats_service_protocol/backend.rs": {
+      "unwrap": 1
+    },
+    "rust/host/src/xml_session/expat.rs": {
+      "expect": 1,
+      "unsafe_block": 13,
+      "unsafe_extern": 1,
+      "unsafe_fn": 6,
+      "unsafe_undocumented": 20
+    },
+    "rust/library-current-ui/src/borrowed.rs": {},
+    "rust/library-current-ui/src/lib.rs": {},
+    "rust/library-current/src/catalog.rs": {
+      "unwrap": 9
+    },
+    "rust/library-current/src/lib.rs": {},
+    "rust/library-current/src/list.rs": {
+      "unwrap": 1
+    },
+    "rust/library-current/src/scan.rs": {
+      "expect": 1,
+      "lines": 700,
+      "unwrap": 4
+    },
+    "rust/library-ui/src/lib.rs": {},
+    "rust/native-storage/src/chapter_cache.rs": {
+      "lines": 884
+    },
+    "rust/native-storage/src/lib.rs": {},
+    "rust/native-storage/src/port.rs": {
+      "expect": 3,
+      "lines": 981,
+      "unwrap": 6
+    },
+    "rust/native-storage/src/reading_state.rs": {
+      "lines": 1179
+    },
+    "rust/native-storage/src/route.rs": {},
+    "rust/native-storage/src/sd_source.rs": {},
+    "rust/native-storage/src/source_file.rs": {},
+    "rust/native-storage/src/source_hints.rs": {
+      "unwrap": 2
+    },
+    "rust/native-storage/src/text.rs": {
+      "expect": 1
+    },
+    "rust/phased-reader/host/entry.rs": {
+      "expect": 2,
+      "lines": 1028,
+      "panic": 2,
+      "unwrap": 15
+    },
+    "rust/phased-reader/host/main.rs": {
+      "expect": 2
+    },
+    "rust/phased-reader/src/borrowed.rs": {
+      "allow": 1
+    },
+    "rust/phased-reader/src/cache_build.rs": {
+      "allow": 5,
+      "expect": 1,
+      "lines": 609
+    },
+    "rust/phased-reader/src/cache_show.rs": {
+      "lines": 583,
+      "unwrap": 1
+    },
+    "rust/phased-reader/src/dynamic_cases.rs": {
+      "unwrap": 3
+    },
+    "rust/phased-reader/src/imported_revision.rs": {
+      "lines": 1074
+    },
+    "rust/phased-reader/src/lib.rs": {
+      "allow": 1
+    },
+    "rust/phased-reader/src/metadata_reader.rs": {},
+    "rust/phased-reader/src/phase_session.rs": {
+      "lines": 523,
+      "unwrap": 1
+    },
+    "rust/phased-reader/src/phase_storage.rs": {
+      "allow": 1,
+      "lines": 991,
+      "unsafe_block": 8,
+      "unsafe_undocumented": 1
+    },
+    "rust/phased-reader/src/reader.rs": {
+      "allow": 11,
+      "lines": 1617
+    },
+    "rust/phased-reader/src/reader_phased.rs": {
+      "lines": 694
+    },
+    "rust/phased-reader/src/reader_semantic.rs": {
+      "allow": 1
+    },
+    "rust/phased-reader/src/resources.rs": {},
+    "rust/phased-reader/src/scan.rs": {},
+    "rust/phased-reader/src/semantic_builder.rs": {
+      "allow": 1
+    },
+    "rust/phased-reader/src/semantic_metadata.rs": {},
+    "rust/phased-reader/src/session.rs": {},
+    "rust/phased-reader/src/session_adapter.rs": {
+      "allow": 1
+    },
+    "rust/phased-reader/src/session_probe.rs": {
+      "allow": 1
+    },
+    "rust/phased-reader/src/styles.rs": {
+      "lines": 1191
+    },
+    "rust/phased-reader/src/watch.rs": {},
+    "rust/phased-sink/src/lib.rs": {
+      "allow": 2,
+      "expect": 2,
+      "panic": 1
+    },
+    "rust/phased-sink/src/probe.rs": {
+      "allow": 1
+    },
+    "rust/reader-atlas/host/main.rs": {},
+    "rust/reader-atlas/src/data.rs": {},
+    "rust/reader-atlas/src/lib.rs": {
+      "allow": 1
+    },
+    "rust/reader-atlas/src/probe.rs": {},
+    "rust/reader-navigation/host/main.rs": {},
+    "rust/reader-navigation/src/lib.rs": {
+      "allow": 1,
+      "expect": 7,
+      "lines": 804
+    },
+    "rust/reader-navigation/src/menu.rs": {
+      "expect": 1
+    },
+    "rust/reader-navigation/src/metadata.rs": {},
+    "rust/reader-navigation/src/probe.rs": {},
+    "rust/reader-ui/host/verified.rs": {
+      "expect": 1,
+      "lines": 821,
+      "panic": 3,
+      "unwrap": 14
+    },
+    "rust/reader-ui/host/verified_main.rs": {
+      "allow": 1
+    },
+    "rust/reader-ui/src/chrome.rs": {},
+    "rust/reader-ui/src/compose.rs": {
+      "allow": 3
+    },
+    "rust/reader-ui/src/dispatch.rs": {},
+    "rust/reader-ui/src/external_owner.rs": {
+      "allow": 10,
+      "lines": 950,
+      "unreachable": 1
+    },
+    "rust/reader-ui/src/lib.rs": {},
+    "rust/reader-ui/src/lifecycle.rs": {
+      "allow": 1
+    },
+    "rust/reader-ui/src/overlay.rs": {
+      "allow": 1
+    },
+    "rust/reader-ui/src/owner.rs": {},
+    "rust/reader-ui/src/physical_owner.rs": {
+      "lines": 670,
+      "unreachable": 2
+    },
+    "rust/reader-ui/src/physical_source.rs": {},
+    "rust/reader-ui/src/statistics.rs": {
+      "allow": 1
+    },
+    "rust/reader-ui/src/working.rs": {},
+    "rust/salamander/board/lib.rs": {
+      "unsafe_block": 29,
+      "unsafe_extern": 1,
+      "unsafe_fn": 8,
+      "unsafe_undocumented": 4
+    },
+    "rust/salamander/input/counter.rs": {
+      "unsafe_block": 7,
+      "unsafe_extern": 1,
+      "unsafe_fn": 1,
+      "unsafe_undocumented": 8
+    },
+    "rust/salamander/input/lib.rs": {
+      "unsafe_block": 2,
+      "unsafe_fn": 2,
+      "unsafe_undocumented": 2
+    },
+    "rust/salamander/input/native.rs": {
+      "unsafe_block": 10,
+      "unsafe_extern": 1,
+      "unsafe_fn": 3,
+      "unsafe_impl": 1,
+      "unsafe_undocumented": 10
+    },
+    "rust/salamander/input/task_owner.rs": {
+      "unsafe_block": 12,
+      "unsafe_extern": 1,
+      "unsafe_fn": 3,
+      "unsafe_undocumented": 11
+    },
+    "rust/salamander/native_io/lib.rs": {
+      "unsafe_block": 16,
+      "unsafe_extern": 2,
+      "unsafe_fn": 1,
+      "unsafe_impl": 1,
+      "unsafe_undocumented": 15
+    },
+    "rust/salamander/nvs_guard/exports.rs": {
+      "unsafe_attr": 13,
+      "unsafe_block": 12,
+      "unsafe_fn": 12,
+      "unsafe_undocumented": 37
+    },
+    "rust/salamander/nvs_guard/guard.rs": {},
+    "rust/salamander/nvs_guard/save_notice.rs": {},
+    "rust/salamander/sdk-heap/host/host_test.rs": {
+      "unsafe_block": 2,
+      "unsafe_extern": 1,
+      "unsafe_undocumented": 3,
+      "unwrap": 4
+    },
+    "rust/salamander/sdk-heap/probe/lib.rs": {
+      "unsafe_attr": 1,
+      "unsafe_block": 2,
+      "unsafe_fn": 1,
+      "unsafe_undocumented": 2
+    },
+    "rust/salamander/sdk-heap/src/lib.rs": {
+      "unsafe_block": 4,
+      "unsafe_extern": 1,
+      "unsafe_fn": 4,
+      "unsafe_impl": 1,
+      "unsafe_undocumented": 9
+    },
+    "rust/stage-home/src/canvas.rs": {},
+    "rust/stage-home/src/host_probe.rs": {},
+    "rust/stage-home/src/lib.rs": {},
+    "rust/stage-home/src/span.rs": {},
+    "rust/stage-home/src/stage.rs": {},
+    "rust/stage-home/src/words.rs": {
+      "expect": 1
+    },
+    "rust/system-ui/src/data.rs": {},
+    "rust/system-ui/src/lib.rs": {},
+    "rust/system-ui/src/shell.rs": {},
+    "rust/target-expat/src/lib.rs": {
+      "expect": 1,
+      "unsafe_block": 13,
+      "unsafe_extern": 1,
+      "unsafe_fn": 6,
+      "unsafe_undocumented": 20
+    },
+    "rust/target-expat/src/probe.rs": {
+      "unsafe_attr": 3,
+      "unsafe_undocumented": 3
+    },
+    "rust/target-probe/src/admission_probe.rs": {
+      "unsafe_attr": 2,
+      "unsafe_undocumented": 2
+    },
+    "rust/target-probe/src/app_probe.rs": {
+      "unsafe_attr": 3,
+      "unsafe_undocumented": 3
+    },
+    "rust/target-probe/src/book_graph_probe.rs": {
+      "unsafe_attr": 7,
+      "unsafe_undocumented": 7
+    },
+    "rust/target-probe/src/catalog_probe.rs": {
+      "unsafe_attr": 1,
+      "unsafe_undocumented": 1
+    },
+    "rust/target-probe/src/chapter_probe.rs": {
+      "unsafe_attr": 5,
+      "unsafe_undocumented": 5
+    },
+    "rust/target-probe/src/clock_probe.rs": {
+      "unsafe_attr": 1,
+      "unsafe_undocumented": 1
+    },
+    "rust/target-probe/src/css_borrowed.rs": {},
+    "rust/target-probe/src/css_probe.rs": {
+      "unsafe_attr": 2,
+      "unsafe_undocumented": 2
+    },
+    "rust/target-probe/src/device_ui_borrowed.rs": {
+      "unsafe_attr": 3,
+      "unsafe_undocumented": 3
+    },
+    "rust/target-probe/src/epub_admission_borrowed.rs": {
+      "unsafe_attr": 2,
+      "unsafe_undocumented": 2
+    },
+    "rust/target-probe/src/external_progress_probe.rs": {},
+    "rust/target-probe/src/font_layout_probe.rs": {
+      "unsafe_attr": 2,
+      "unsafe_undocumented": 2
+    },
+    "rust/target-probe/src/ft_font_probe.rs": {
+      "unsafe_attr": 2,
+      "unsafe_undocumented": 2
+    },
+    "rust/target-probe/src/home_clock_borrowed.rs": {
+      "unsafe_attr": 6,
+      "unsafe_undocumented": 6
+    },
+    "rust/target-probe/src/hyphenator_probe.rs": {
+      "unsafe_attr": 1,
+      "unsafe_undocumented": 1
+    },
+    "rust/target-probe/src/identity_probe.rs": {},
+    "rust/target-probe/src/image_probe_borrowed.rs": {},
+    "rust/target-probe/src/image_probe_export.rs": {
+      "unsafe_attr": 1,
+      "unsafe_undocumented": 1
+    },
+    "rust/target-probe/src/inflate_probe.rs": {
+      "unsafe_attr": 1,
+      "unsafe_undocumented": 1
+    },
+    "rust/target-probe/src/jpeg_probe.rs": {
+      "unsafe_attr": 5,
+      "unsafe_block": 5,
+      "unsafe_fn": 3,
+      "unsafe_undocumented": 13
+    },
+    "rust/target-probe/src/lib.rs": {
+      "unsafe_attr": 7,
+      "unsafe_undocumented": 7
+    },
+    "rust/target-probe/src/library_ui_borrowed.rs": {
+      "unsafe_attr": 1,
+      "unsafe_undocumented": 1
+    },
+    "rust/target-probe/src/package_parsers_probe.rs": {
+      "unsafe_attr": 3,
+      "unsafe_undocumented": 3
+    },
+    "rust/target-probe/src/page_renderer_caller.rs": {},
+    "rust/target-probe/src/page_renderer_probe.rs": {
+      "unsafe_attr": 5,
+      "unsafe_undocumented": 5
+    },
+    "rust/target-probe/src/persistence_probe.rs": {
+      "unsafe_attr": 5,
+      "unsafe_undocumented": 5
+    },
+    "rust/target-probe/src/png_probe.rs": {
+      "unsafe_attr": 2,
+      "unsafe_undocumented": 2
+    },
+    "rust/target-probe/src/reader_atlas_borrowed.rs": {
+      "unsafe_attr": 1,
+      "unsafe_block": 3,
+      "unsafe_fn": 1,
+      "unsafe_undocumented": 3
+    },
+    "rust/target-probe/src/reader_navigation_borrowed.rs": {
+      "unsafe_attr": 4,
+      "unsafe_block": 10,
+      "unsafe_fn": 3,
+      "unsafe_undocumented": 11
+    },
+    "rust/target-probe/src/sleep_crossink_probe.rs": {
+      "unsafe_attr": 3,
+      "unsafe_undocumented": 3
+    },
+    "rust/target-probe/src/stage_home_borrowed.rs": {
+      "unsafe_attr": 1,
+      "unsafe_undocumented": 1
+    },
+    "rust/target-probe/src/stats_probe.rs": {
+      "unsafe_attr": 6,
+      "unsafe_undocumented": 6
+    },
+    "rust/target-probe/src/stats_service_probe.rs": {},
+    "rust/target-probe/src/system_ui_borrowed.rs": {
+      "unsafe_attr": 1,
+      "unsafe_block": 3,
+      "unsafe_fn": 1,
+      "unsafe_undocumented": 3,
+      "unwrap": 1
+    },
+    "rust/target-probe/src/tiny_app_borrowed.rs": {
+      "unsafe_attr": 3,
+      "unsafe_undocumented": 3
+    },
+    "rust/target-probe/src/tracker_probe.rs": {
+      "unsafe_attr": 1,
+      "unsafe_undocumented": 1
+    },
+    "rust/target-probe/src/ui_canvas_borrowed.rs": {
+      "unsafe_attr": 1,
+      "unsafe_block": 5,
+      "unsafe_fn": 1,
+      "unsafe_undocumented": 5
+    },
+    "rust/target-probe/src/wake_evidence_borrowed.rs": {
+      "unsafe_attr": 4,
+      "unsafe_undocumented": 4
+    },
+    "rust/target-probe/src/xml_input_probe.rs": {
+      "unsafe_attr": 4,
+      "unsafe_undocumented": 4
+    },
+    "rust/target-probe/src/xml_session_probe.rs": {
+      "unsafe_attr": 2,
+      "unsafe_undocumented": 2
+    },
+    "rust/target-probe/src/zip_container_borrowed.rs": {},
+    "rust/target-probe/src/zip_window_borrowed.rs": {},
+    "rust/target-probe/src/zip_window_probe.rs": {
+      "unsafe_attr": 2,
+      "unsafe_undocumented": 2
+    },
+    "rust/tiny-app/src/lib.rs": {},
+    "rust/tiny-app/src/pause.rs": {},
+    "rust/ui-canvas/src/atlas.rs": {},
+    "rust/ui-canvas/src/canvas.rs": {},
+    "rust/ui-canvas/src/data.rs": {},
+    "rust/ui-canvas/src/lib.rs": {},
+    "rust/ui-canvas/src/paint.rs": {},
+    "rust/ui-canvas/src/text.rs": {},
+    "rust/wake-evidence/src/lib.rs": {}
+  },
+  "generated": [
+    "rust/device-ui/src/assets.rs",
+    "rust/reader-atlas/src/data.rs",
+    "rust/system-ui/src/data.rs",
+    "rust/ui-canvas/src/data.rs"
+  ],
+  "line_limit": 500,
+  "native_exceptions": {
+    "rust/firmware/app_power.rs": 1,
+    "rust/firmware/app_startup.rs": 1,
+    "rust/firmware/cover_xml.rs": 15,
+    "rust/firmware/fonts/native.rs": 7,
+    "rust/firmware/lib.rs": 5,
+    "rust/firmware/nvs/sdk/leaf.rs": 3,
+    "rust/firmware/reader_hash.rs": 1,
+    "rust/firmware/reader_image.rs": 1,
+    "rust/firmware/reader_linebreak.rs": 1,
+    "rust/firmware/serial_console.rs": 1,
+    "rust/firmware/update_https.rs": 1,
+    "rust/firmware/update_https_headers.rs": 2,
+    "rust/firmware/update_https_native.rs": 4,
+    "rust/firmware/update_native.rs": 4,
+    "rust/firmware/update_tls_frame.rs": 2,
+    "rust/firmware/wifi_memory.rs": 6,
+    "rust/host/src/bin/ft-font-host.rs": 4,
+    "rust/host/src/chapter_layout/linebreak.rs": 1,
+    "rust/host/src/xml_session/expat.rs": 7,
+    "rust/target-expat/src/lib.rs": 7,
+    "rust/target-expat/src/probe.rs": 3
+  },
+  "native_owners": [
+    "salamander",
+    "target-probe"
+  ],
+  "platform_crates": [
+    "firmware",
+    "host",
+    "native-storage",
+    "salamander/board",
+    "salamander/input",
+    "salamander/input-owner",
+    "salamander/native_io",
+    "salamander/nvs_guard",
+    "salamander/sdk-heap",
+    "target-expat",
+    "target-probe"
+  ],
+  "platform_edge_exceptions": [
+    "phased-reader -> target-expat",
+    "reader-ui -> target-expat"
+  ]
+}

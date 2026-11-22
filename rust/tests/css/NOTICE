@@ -1,0 +1,9 @@
+NRUST-33 CSS translation
+
+Derived from FreeInk SDK cd6f5b831c8fad899723b6d406586f00c575f021.
+Copyright (c) 2026 FreeInk. MIT; see rust/THIRD_PARTY.md.
+provenance.json retains capture-time paths, commits and hashes.
+The removed host reference also used miniz, whose canonical terms remain at
+vendor/freeink-sdk/libs/book/FreeInkBook/third_party/miniz/LICENSE.
+The Rust runtime uses newt-core inflate/zip_container/zip_window;
+no C CSS or C inflater is linked into the Rust runtime.

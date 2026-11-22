@@ -1,0 +1,120 @@
+{
+  "design": "Approved Frosted Home B",
+  "status": "owner-selected-for-implementation",
+  "portrait_dimensions": [
+    528,
+    792
+  ],
+  "scalar_gray_levels": [
+    0,
+    85,
+    170,
+    255
+  ],
+  "firmware_owner_thread": "01a0f59a-44ac-70e8-a339-4a23da89e0e1",
+  "canonical_library_file_id": "libfile_0134c1de11948191ab5054fe0cb6169a",
+  "canonical_library_path": "/newt-frosted-cards-square.png",
+  "geometry_and_typography_source": "selected-scene.json",
+  "clock_status_progress_are_fixtures": true,
+  "drawing_operations_unchanged_from_round10_B": true,
+  "files": [
+    {
+      "path": "README.md",
+      "size_bytes": 8025,
+      "sha256": "923ffe877858a2df0944fac7b3321339809bbd617722abbced8de8f180880e01"
+    },
+    {
+      "path": "assets/Inter-Bold.ttf",
+      "size_bytes": 344152,
+      "sha256": "30a5c45ec23a594af2effe8d3b589ad22c2dede27441050a1604d00ff82fd0dc"
+    },
+    {
+      "path": "assets/Inter-OFL.txt",
+      "size_bytes": 4377,
+      "sha256": "5b9321a4298cfeb6b34354164a1c3afc3db114569984c502b9b35d988fd58c57"
+    },
+    {
+      "path": "assets/Inter.ttf",
+      "size_bytes": 342680,
+      "sha256": "3e5f90a0138b38de4cf4d779ad78391974ea1df776b9164842bdcbb60ce383c5"
+    },
+    {
+      "path": "assets/LexendDeca-OFL.txt",
+      "size_bytes": 4436,
+      "sha256": "5da8505887d0fa7fe963445fd58852707fda34adfeb65af25c99d152bab285bd"
+    },
+    {
+      "path": "assets/LexendDeca.ttf",
+      "size_bytes": 77904,
+      "sha256": "434707ddcc72cb6f0949469f77c67b92bdaf86dc26ec9ab53e3f21fe8f7b0721"
+    },
+    {
+      "path": "assets/haze-cover-gray.png",
+      "size_bytes": 38911,
+      "sha256": "4bbd4dbb8de6ef3efb86daa3f684524519c889065647e3dca8c621cf6c2e8f84"
+    },
+    {
+      "path": "assets/lexenddeca_14_regular.h",
+      "size_bytes": 155387,
+      "sha256": "c4f576ff651e1866974afae902edd6183be95225ca06054eadba8f5656c94770"
+    },
+    {
+      "path": "assets/newt-brand-reference.png",
+      "size_bytes": 1032811,
+      "sha256": "fa9d0ca025589a3325d569f43dfe2683a536453b9cb9736412020123d81d10c3"
+    },
+    {
+      "path": "assets/fixture-cover.png",
+      "size_bytes": 6936,
+      "sha256": "15742b99a20531a859d4d947eb23ed6a09749c5fc22b7bfec1109076f5f2649a"
+    },
+    {
+      "path": "assets/source-cover.png",
+      "size_bytes": 11931,
+      "sha256": "612cb96cde058c9e2de427a6aec3fe520a1f1dad4ccf1a29205a355d34fbcf12"
+    },
+    {
+      "path": "host-verification.json",
+      "size_bytes": 1987,
+      "sha256": "6bc6b9f412d8e80917bee3140bed0422f82c986a9ed96b61aee657917eae7711"
+    },
+    {
+      "path": "png_tools.py",
+      "size_bytes": 3399,
+      "sha256": "e758b652ac709e987b36c9333dcebe8e791e09658f80a087a489cddfa36b0477"
+    },
+    {
+      "path": "rebuild.py",
+      "size_bytes": 2055,
+      "sha256": "441ad545f1d306d08d7ce8275219a6f554dc854fa80f084f348a45651b0bf48a",
+      "upstream_size_bytes": 1948,
+      "upstream_sha256": "dfa09e9cde57d1bd0d2e5bb0cc7ef184fea139ac72a1c29e8e377f65d9af508d",
+      "adaptation": "Project-local per-run Swift/Clang caches with automatic cleanup; absolute existing system Swift path. Rendering and verification unchanged."
+    },
+    {
+      "path": "render.swift",
+      "size_bytes": 7319,
+      "sha256": "2715e573f7187be0c9b3ec2ccd7507e6b1e42853749a899f6496bf66a0569f49"
+    },
+    {
+      "path": "screens/newt-frosted-cards-square.png",
+      "size_bytes": 41539,
+      "sha256": "54e14ba8918c78fb679704289cf71fe776b211184db8e5191419070c71f4457c"
+    },
+    {
+      "path": "screens/newt-frosted-cards-square.svg",
+      "size_bytes": 4625,
+      "sha256": "175cb22e71ef5d042e519216b2fb76c95a4ed467f9eb3068b2f5a50816701146"
+    },
+    {
+      "path": "selected-scene.json",
+      "size_bytes": 9210,
+      "sha256": "1357f984778c061f2aa483e460141ac4d7b253e8529b3b9df90230f412d21b05"
+    },
+    {
+      "path": "tones.py",
+      "size_bytes": 2772,
+      "sha256": "54308618cf6d575f7a78c75728cdadc3c6293d7b58a9f0cac0c94aa2863884b8"
+    }
+  ]
+}

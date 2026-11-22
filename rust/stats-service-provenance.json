@@ -1,0 +1,17 @@
+{
+  "reference": "bc9ffda52b85f277e46c63718ac88d62fba5d368",
+  "core_packet_base": "a73c79e3",
+  "original_sha256": {
+    "firmware/reading_stats_service.h": "2e40b51140a26bd6f95b5d53fb4a49a9912ae41338fe54727ece590c09510809",
+    "firmware/reading_stats_once.h": "fbcf3955306e52c0b39f89d3fc4a9d7e51d2f054d8b866447c00b2596f552139"
+  },
+  "new_core_sha256": {
+    "reading_stats_service.rs": "53b3a08cff244653cbeaea6f87bc3ee21ff602486444d3a62bfadc71f619bb26",
+    "reading_stats_once.rs": "0ebfaa4773a0d778c91f066360bdc18ae727768c9f96f977079ab83ecbe9da4b",
+    "stats_service_backend.rs": "55e723d13d815594c4c52e7a574d204749ff449a54b71a96174ed223c3e840bb"
+  },
+  "native_sha256_boundary": "Same accepted original C++ provider rust/tests/persistence_sha256.cpp, existing host crypto. Rust table inputs independently validated against hashlib and native C++ SHA.",
+  "license": "MIT, original copyright retained; no third-party dependency acquisition",
+  "standalone_receipt": "artifacts/rust-stats-service-slice.json.gz",
+  "global_integration_state": "UNEXECUTED, no adoption claim"
+}

@@ -1,0 +1,46 @@
+{
+ "origin": "one-time unchanged frozen C++ execution",
+ "cases": 1,
+ "source_sha256": {
+  "rust/tests/nvs_backend/cases.tsv": "22aaf1bcac5eb15eda938c43a861ee249e870d3120813a5c202c4e5bd2bd281b",
+  "rust/tests/nvs_backend/oracle_probe.cpp": "5ce93803cb197114b50d485dfcb6ed926db786702ec61c1f8e91b05f7394563d",
+  "rust/tests/nvs_backend/oracle.cpp": "0c8d5ac3832cadf85b176abc7b809e50c4e76c4d6dc0e11ecdd0f029012fccc4",
+  "rust/tests/nvs_backend/oracle/nvs_blob_backend.h": "d61203884e431d75c07f622caa8b80094881d6484d2dc007f54ffbcf8267cccc",
+  "rust/tests/nvs_backend/oracle/durable_commit.h": "9788911919f56bc556d8cecc6d23710d7af82fc864585d697abc44cfb9e20992",
+  "rust/tests/nvs_backend/oracle/progress_store.h": "f6905a295a2c7cbfc13d2ce312a46106982d4db719d733cbcb57eccf7cd4457e",
+  "rust/tests/nvs_backend/oracle/nvs.h": "2f23f070a289f07b59b9d863f79a1ee5d0f1c3a0a1e8e1b01686893fea8c844b",
+  "rust/tests/nvs_backend/oracle/nvs_guard.h": "7ccf8eb840c2bd1d6b140d03f2dd09e11124d1665c4985b76d3708928d44b9dd"
+ },
+ "commands": [
+  {
+   "command": [
+    ".toolchain/llvm/bin/clang++",
+    "--no-default-config",
+    "-std=c++17",
+    "-O1",
+    "-g",
+    "-fsanitize=address,undefined",
+    "-fno-omit-frame-pointer",
+    "-I",
+    "rust/tests/nvs_backend/oracle",
+    "rust/tests/nvs_backend/oracle.cpp",
+    "-o",
+    ".build/rust/merge-prep/capture-storage/run/nvs_backend"
+   ],
+   "cwd": "rust/tests/nvs_backend",
+   "stdin_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "log": "000",
+   "returncode": 0
+  },
+  {
+   "command": [
+    ".build/rust/merge-prep/capture-storage/run/nvs_backend"
+   ],
+   "cwd": "rust/tests/nvs_backend",
+   "stdin_sha256": "22aaf1bcac5eb15eda938c43a861ee249e870d3120813a5c202c4e5bd2bd281b",
+   "log": "001",
+   "returncode": 0
+  }
+ ],
+ "fixture_sha256": "074203efb7e7eda2fb48a0f28e9a709406467ff79e836df4ea329320b8294b3a"
+}

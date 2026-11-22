@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "target": "linux-x86_64",
+  "python": "3.12.6",
+  "runner": [
+    "self-hosted",
+    "linux",
+    "x64",
+    "newt"
+  ],
+  "architecture": "x64",
+  "minimum_glibc": "2.35",
+  "host": "Ubuntu x86_64; dedicated repository account with infra-owned limits",
+  "source": "Official LLVM/OpenSSL GitHub asset metadata; archives not downloaded/executed during authoring",
+  "actions": {
+    "actions/checkout": "34e114876b0b11c390a56381ad16ebd13914f8d5",
+    "astral-sh/setup-uv": "c18668ad3cf93ea998bef934396af7bb5c839dc7",
+    "actions/cache/restore": "55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
+    "actions/cache/save": "55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
+    "actions/setup-node": "820762786026740c76f36085b0efc47a31fe5020"
+  },
+  "llvm": {
+    "filename": "LLVM-22.1.8-Linux-X64.tar.xz",
+    "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-Linux-X64.tar.xz",
+    "size": 1938859476,
+    "sha256": "df0e1ecf16caf3489a272a5eea4eec9b0d82878f6477fa309504f918a0006384"
+  },
+  "openssl": {
+    "version": "3.5.9",
+    "filename": "openssl-3.5.9.tar.gz",
+    "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz",
+    "size": 53279637,
+    "sha256": "603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a"
+  },
+  "python_bootstrap": {
+    "manager": "uv",
+    "version": "0.12.21",
+    "manager_sha256": "23f02075b652bb1df64178cfae41b5caf160822e720e2663568f3f5d63bc52c0",
+    "request": "cpython-3.12.6-linux-x86_64-gnu",
+    "mirror": "https://github.com/astral-sh/python-build-standalone/releases/download",
+    "archive_build": "20240909",
+    "archive_sha256": "b080463e4f0c452e592cdac1ca97936a6a19bb3d9a64da669a50ca843fce0108",
+    "archive_size": 21243376,
+    "hash_enforcement": "Pinned uv binary verifies its embedded exact CPython archive hash; no unmanaged/download fallback"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "commit": "cd6f5b831c8fad899723b6d406586f00c575f021",
+  "source": "vendor/freeink-sdk git objects; not live working tree",
+  "sha256": {
+    "LICENSE": "17dea5079d9905fbbc8323cde7bfffd0f24185949c43a5daad5177022b796588",
+    "NOTICE": "1a45b9f057b415f84085d808bd12ec5df1296808ad14bd9583f2a585c84290ff",
+    "libs/font/FreeInkFont/src/Gpos.cpp": "060d127d390f12c347dcdbe11416d29a011cd006766285afbcacd406584c9e62",
+    "libs/font/FreeInkFont/src/Gsub.cpp": "14320108bd378fefafc17f7a3585fbd4471bd812e0d0dc2cb8f91d7a81798ee5",
+    "libs/font/FreeInkFont/include/Gpos.h": "e36b1ae01e3716ad0d0d6b4d4fab12730a53d228e3704d6ae2387a1530fa6eb7",
+    "libs/font/FreeInkFont/include/Gsub.h": "59c8dcaca8b167cc15e44d08e9b80acf6022ce26340a57127633eb3058c2f6d2"
+  }
+}

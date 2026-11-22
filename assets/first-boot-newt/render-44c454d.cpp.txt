@@ -1,0 +1,276 @@
+#include "newt/app.h"
+#include "font.h"
+#include <cstdio>
+#include <cstring>
+
+namespace newt {
+namespace {
+constexpr int kMargin = 40;
+constexpr int kContentWidth = kWidth - 2 * kMargin;
+class Canvas {
+ public:
+  explicit Canvas(std::uint8_t* frame) : frame_(frame) {}
+  void pixel(int x, int y, bool black = true) {
+    if (x < 0 || y < 0 || x >= kWidth || y >= kHeight) return;
+    auto& byte = frame_[static_cast<std::size_t>(y * kWidth + x) / 8];
+    const auto mask = static_cast<std::uint8_t>(0x80u >> (x & 7));
+    if (black) byte |= mask;
+    else byte &= static_cast<std::uint8_t>(~mask);
+  }
+  void rect(int x, int y, int width, int height, bool black = true) {
+    for (int yy = y; yy < y + height; ++yy)
+      for (int xx = x; xx < x + width; ++xx) pixel(xx, yy, black);
+  }
+  void line(int x0, int y0, int x1, int y1, int weight = 2) {
+    const int dx = x1 > x0 ? x1 - x0 : x0 - x1;
+    const int dy = y1 > y0 ? y0 - y1 : y1 - y0;
+    const int sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+    int error = dx + dy;
+    for (;;) {
+      rect(x0, y0, weight, weight);
+      if (x0 == x1 && y0 == y1) break;
+      const int twice = 2 * error;
+      if (twice >= dy) { error += dy; x0 += sx; }
+      if (twice <= dx) { error += dx; y0 += sy; }
+    }
+  }
+  void outline(int x, int y, int width, int height, int weight = 2) {
+    rect(x, y, width, weight); rect(x, y + height - weight, width, weight);
+    rect(x, y, weight, height); rect(x + width - weight, y, weight, height);
+  }
+  void circle(int x, int y, int radius, bool filled = false) {
+    for (int yy = -radius; yy <= radius; ++yy) {
+      for (int xx = -radius; xx <= radius; ++xx) {
+        const int distance = xx * xx + yy * yy;
+        if (distance <= radius * radius &&
+            (filled || distance >= (radius - 2) * (radius - 2)))
+          pixel(x + xx, y + yy);
+      }
+    }
+  }
+  int textWidth(const char* text, int scale) const {
+    int width = 0;
+    for (unsigned i = 0; text && text[i] && i < 128; ++i)
+      width += advance(text[i]) * scale;
+    return width > 0 ? width - scale : 0;
+  }
+  void text(int x, int y, const char* text, int scale = 3, bool black = true) {
+    for (unsigned i = 0; text && text[i] && i < 128; ++i) {
+      const auto* glyph = find(text[i]);
+      if (glyph) {
+        const int left = leftEdge(*glyph);
+        for (int row = 0; row < 7; ++row)
+          for (int column = left; column < 5; ++column)
+            if (glyph->rows[row] & (16u >> column))
+              rect(x + (column - left) * scale, y + row * scale, scale, scale, black);
+      }
+      x += advance(text[i]) * scale;
+    }
+  }
+  void center(int y, const char* value, int scale = 3) {
+    text((kWidth - textWidth(value, scale)) / 2, y, value, scale);
+  }
+  // Fixed page content wraps at word boundaries; bounds contain malformed metadata too.
+  int paragraph(int x, int y, const char* value, int scale = 3,
+                int width = kContentWidth, int bottom = 690) {
+    char row[128] = {};
+    unsigned used = 0;
+    for (unsigned i = 0; value && value[i] && i < 2048;) {
+      if (value[i] == ' ') { ++i; continue; }
+      char word[64] = {};
+      unsigned length = 0;
+      while (value[i] && value[i] != ' ' && length < sizeof(word) - 1 && i < 2048)
+        word[length++] = value[i++];
+      char candidate[128] = {};
+      std::snprintf(candidate, sizeof(candidate), "%s%s%s", row, used ? " " : "", word);
+      if (used && (textWidth(candidate, scale) > width ||
+                   used + length + 1 >= sizeof(row))) {
+        if (y + 7 * scale > bottom) return y;
+        text(x, y, row, scale); y += scale * 10;
+        row[0] = '\0'; used = 0;
+      }
+      // A long device metadata token is truncated to fit the row.
+      while (length && textWidth(word, scale) > width) word[--length] = '\0';
+      if (used) row[used++] = ' ';
+      for (unsigned n = 0; n < length && used < sizeof(row) - 1; ++n)
+        row[used++] = word[n];
+      row[used] = '\0';
+    }
+    if (used && y + 7 * scale <= bottom) { text(x, y, row, scale); y += scale * 10; }
+    return y;
+  }
+ private:
+  static const detail::Glyph* find(char code) {
+    for (const auto& glyph : detail::kGlyphs) if (glyph.code == code) return &glyph;
+    if (code == ' ') return nullptr;
+    for (const auto& glyph : detail::kGlyphs) if (glyph.code == '?') return &glyph;
+    return nullptr;
+  }
+  static int leftEdge(const detail::Glyph& glyph) {
+    unsigned bits = 0;
+    for (auto row : glyph.rows) bits |= row;
+    for (int col = 0; col < 5; ++col) if (bits & (16u >> col)) return col;
+    return 0;
+  }
+  static int advance(char code) {
+    if (code == ' ') return 3;
+    const auto* glyph = find(code);
+    if (!glyph) return 6;
+    unsigned bits = 0;
+    for (auto row : glyph->rows) bits |= row;
+    int right = 4;
+    while (right > 0 && !(bits & (16u >> right))) --right;
+    return right - leftEdge(*glyph) + 2;
+  }
+  std::uint8_t* frame_;
+};
+
+void newtMascot(Canvas& c, int x, int y, int scale = 1, bool asleep = false) {
+  // A tiny pond companion: curved back, wide eyes, toes and a curling tail.
+  const auto line = [&](int ax, int ay, int bx, int by) {
+    c.line(x + ax * scale, y + ay * scale, x + bx * scale, y + by * scale, 2 * scale);
+  };
+  line(8, 34, 15, 23); line(15, 23, 32, 20); line(32, 20, 46, 26);
+  line(46, 26, 51, 36); line(51, 36, 62, 39); line(62, 39, 74, 30);
+  line(74, 30, 74, 20); line(74, 20, 67, 16);
+  line(8, 34, 10, 45); line(10, 45, 25, 49); line(25, 49, 46, 45);
+  line(46, 45, 62, 46); line(62, 46, 79, 35); line(79, 35, 82, 23);
+  line(82, 23, 76, 12); line(76, 12, 67, 10);
+  line(18, 48, 16, 57); line(16, 57, 9, 60); line(16, 57, 20, 61);
+  line(39, 48, 44, 57); line(44, 57, 38, 61); line(44, 57, 51, 60);
+  if (asleep) {
+    line(16, 31, 23, 34); line(23, 34, 29, 31);
+    line(32, 32, 38, 35); line(38, 35, 43, 32);
+  } else {
+    c.circle(x + 22 * scale, y + 30 * scale, 3 * scale, true);
+    c.circle(x + 38 * scale, y + 31 * scale, 3 * scale, true);
+  }
+  line(24, 41, 31, 43); line(31, 43, 36, 40);
+}
+
+void footer(Canvas& c, const char* left, const char* right) {
+  c.rect(kMargin, 719, kContentWidth, 2);
+  c.text(kMargin, 740, left, 2);
+  c.text(kWidth - kMargin - c.textWidth(right, 2), 740, right, 2);
+}
+
+void batteryLabel(char* value, std::size_t capacity, const DeviceInfo& info) {
+  if (info.batteryKnown)
+    std::snprintf(value, capacity, "Battery %u%%", info.batteryPercent > 100 ? 100 : info.batteryPercent);
+  else std::snprintf(value, capacity, "Battery --");
+}
+
+void home(Canvas& c, const AppState& state, const DeviceInfo& info) {
+  c.text(kMargin, 45, "newt", 8);
+  c.text(kMargin, 119, "A little room to read.", 3);
+  c.rect(kMargin, 164, kContentWidth, 2);
+  c.text(kMargin, 196, "YOUR READING NOOK", 2);
+  const bool readFocused = state.selected == 0;
+  if (readFocused) c.rect(kMargin, 237, kContentWidth, 156);
+  else c.outline(kMargin, 237, kContentWidth, 156);
+  c.text(62, 264, "Read a little", 4, !readFocused);
+  c.text(62, 313, "The lantern keeper", 3, !readFocused);
+  c.text(62, 354, "A tiny original story / 3 pages", 2, !readFocused);
+  const bool deviceFocused = state.selected != 0;
+  if (deviceFocused) c.rect(kMargin, 410, kContentWidth, 89);
+  else c.outline(kMargin, 410, kContentWidth, 89);
+  c.text(62, 436, "Your X3", 3, !deviceFocused);
+  c.text(62, 472, "Battery + device details", 2, !deviceFocused);
+  newtMascot(c, 328, 524, 1);
+  c.text(kMargin, 561, "Small screen.", 3);
+  c.text(kMargin, 600, "Quiet possibilities.", 3);
+  char battery[32]; batteryLabel(battery, sizeof(battery), info);
+  c.text(kMargin, 667, battery, 2);
+  c.text(347, 667, "OFFLINE", 2);
+  footer(c, "< > CHOOSE", "OK OPEN");
+}
+
+struct ReadingPage { const char* heading; const char* first; const char* second; };
+constexpr ReadingPage kPages[] = {
+ {"The lantern keeper",
+  "Every evening, Ada carried a lantern down to the pond. It was a small light, "
+  "but the path was a small path, and that was enough.",
+  "One night she found a newt waiting on the lowest stone. It looked at the "
+  "lantern, then at the water, as if it had a very important question."},
+ {"A light to borrow",
+  "Ada set the lantern beside the reeds. In its warm circle, the pond became "
+  "a whole little world: a leaf, a ripple, a silver thread of rain.",
+  "The newt climbed onto her boot. Together they watched the first star appear. "
+  "Neither of them had anywhere else to be."},
+ {"Enough for tonight",
+  "When Ada stood up, the newt slipped back into the pond. She left the "
+  "lantern on the stone for one more minute.",
+  "Then she took her small light home. The path was still a small path. "
+  "The world was still a very large world. And, for tonight, this was enough."},
+};
+static_assert(sizeof(kPages) / sizeof(kPages[0]) == kReadingPageCount,
+              "State bounds and authored pages must agree");
+void reading(Canvas& c, const AppState& state) {
+  const unsigned page = state.page < kReadingPageCount ? state.page : kReadingPageCount - 1;
+  c.text(kMargin, 45, "NEWT / A SHORT READ", 2);
+  c.text(kMargin, 98, kPages[page].heading, 3);
+  c.rect(kMargin, 144, kContentWidth, 2);
+  int y = c.paragraph(kMargin, 183, kPages[page].first);
+  c.paragraph(kMargin, y + 28, kPages[page].second);
+  if (page == 2) c.center(657, "The end.", 2);
+  char progress[24]; std::snprintf(progress, sizeof(progress), "%u / 3", page + 1);
+  c.center(691, progress, 2);
+  footer(c, "BACK HOME", "< > PAGE");
+}
+
+void deviceRow(Canvas& c, int y, const char* label, const char* value) {
+  c.text(kMargin, y, label, 2);
+  c.paragraph(kMargin, y + 26, value, 3, kContentWidth, y + 78);
+  c.rect(kMargin, y + 81, kContentWidth, 1);
+}
+void device(Canvas& c, const DeviceInfo& info) {
+  c.text(kMargin, 45, "Your X3", 5);
+  c.text(kMargin, 106, "Little device, useful details.", 2);
+  char value[64];
+  if (info.batteryKnown)
+    std::snprintf(value, sizeof(value), "%u%%", info.batteryPercent > 100 ? 100 : info.batteryPercent);
+  else std::snprintf(value, sizeof(value), "Not measured yet");
+  deviceRow(c, 164, "BATTERY", value);
+  if (info.millivoltsKnown) std::snprintf(value, sizeof(value), "%u mV", info.millivolts);
+  else std::snprintf(value, sizeof(value), "Not reported");
+  deviceRow(c, 262, "VOLTAGE", value);
+  deviceRow(c, 360, "CHARGING", !info.chargingKnown ? "Not reported" :
+            info.charging ? "Yes" : "No");
+  deviceRow(c, 458, "DISPLAY", info.panel ? info.panel : "Not reported");
+  if (info.freeHeap) std::snprintf(value, sizeof(value), "%lu bytes free", static_cast<unsigned long>(info.freeHeap));
+  else std::snprintf(value, sizeof(value), "Not reported");
+  c.text(kMargin, 557, "MEMORY", 2); c.text(kMargin, 583, value, 3);
+  c.text(kMargin, 630, "WAKE", 2);
+  c.paragraph(kMargin, 656, info.wake ? info.wake : "Not reported", 2, kContentWidth, 702);
+  footer(c, "BACK HOME", "NEWT SPIKE");
+}
+
+void sleeping(Canvas& c, const DeviceInfo& info) {
+  c.center(131, "Rest a little.", 4);
+  c.circle(411, 264, 28);
+  c.rect(421, 234, 27, 60, false);
+  c.circle(99, 283, 3, true); c.circle(146, 225, 2, true);
+  c.circle(368, 194, 2, true); c.circle(429, 346, 3, true);
+  newtMascot(c, 124, 310, 3, true);
+  c.line(85, 511, 433, 511, 2);
+  c.line(114, 521, 183, 521, 2); c.line(311, 521, 397, 521, 2);
+  c.center(565, "Your place is waiting.", 3);
+  c.center(613, "Power to wake", 2);
+  char battery[32]; batteryLabel(battery, sizeof(battery), info);
+  c.center(706, battery, 2);
+  c.center(745, "newt", 2);
+}
+}  // namespace
+
+void render(const AppState& state, const DeviceInfo& info, std::uint8_t* frame) {
+  if (!frame) return;
+  std::memset(frame, 0, kFrameBytes);
+  Canvas canvas(frame);
+  switch (state.screen) {
+    case Screen::Home: home(canvas, state, info); break;
+    case Screen::Reading: reading(canvas, state); break;
+    case Screen::Device: device(canvas, info); break;
+    case Screen::Sleeping: sleeping(canvas, info); break;
+  }
+}
+}  // namespace newt

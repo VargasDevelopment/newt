@@ -1,0 +1,11 @@
+{
+  "producer": "actual unchanged pinned C/C++",
+  "cases": 34,
+  "fixture_sha256": "2f961630f88237dfb05056660fe2ef23d68c2a545c4987d7587d85dbfe995e96",
+  "reference_revisions": {
+    "capture.original.commit": "cd6f5b831c8fad899723b6d406586f00c575f021",
+    "capture.original.reference": "bc9ffda52b85f277e46c63718ac88d62fba5d368",
+    "packet.sdk_commit": "cd6f5b831c8fad899723b6d406586f00c575f021",
+    "packet.newt_commit": "bc9ffda52b85f277e46c63718ac88d62fba5d368"
+  }
+}
