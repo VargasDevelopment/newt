@@ -8,14 +8,23 @@
 mod package;
 
 /// Stands in for the X3's mbedTLS provider: real SHA-256, or a provider
-/// failure for inputs of one length (659 is the record, 615 the package).
+/// failure for every input or for one exact input.
 mod reader_hash {
-    use std::cell::Cell;
+    use std::cell::RefCell;
+    pub enum Fail {
+        Every,
+        Input(Vec<u8>),
+    }
     thread_local! {
-        pub static FAIL_LENGTH: Cell<Option<usize>> = const { Cell::new(None) };
+        pub static FAIL: RefCell<Option<Fail>> = const { RefCell::new(None) };
     }
     pub(crate) fn package_hash(input: &[u8], output: &mut [u8; 32]) -> bool {
-        if FAIL_LENGTH.get() == Some(input.len()) { return false; }
+        let fails = FAIL.with_borrow(|fail| match fail {
+            Some(Fail::Every) => true,
+            Some(Fail::Input(bytes)) => bytes == input,
+            None => false,
+        });
+        if fails { return false; }
         *output = crate::sha256(input);
         true
     }
@@ -94,10 +103,10 @@ fn boot_slots(first: Blob, second: Blob) -> Result<Definition, &'static str> {
     boot(&mut Nvs::with(first, second))
 }
 
-fn with_failing_hash<T>(length: usize, work: impl FnOnce() -> T) -> T {
-    reader_hash::FAIL_LENGTH.set(Some(length));
+fn with_failing_hash<T>(fail: reader_hash::Fail, work: impl FnOnce() -> T) -> T {
+    reader_hash::FAIL.set(Some(fail));
     let result = work();
-    reader_hash::FAIL_LENGTH.set(None);
+    reader_hash::FAIL.set(None);
     result
 }
 
@@ -173,7 +182,8 @@ fn storage_that_cannot_open_is_failed() {
 
 #[test]
 fn the_bundled_app_must_pass_its_hash() {
-    let result = with_failing_hash(WIRE_BYTES, || boot_slots(Blob::Missing, Blob::Missing));
+    let fail = reader_hash::Fail::Input(BUILTIN_BYTES.to_vec());
+    let result = with_failing_hash(fail, || boot_slots(Blob::Missing, Blob::Missing));
     assert_eq!(result, Err(BUNDLED_BROKEN));
 }
 
@@ -208,10 +218,39 @@ fn a_malformed_package_loses_to_its_older_valid_peer() {
 
 #[test]
 fn a_hash_provider_failure_is_failed_even_beside_a_valid_slot() {
-    for length in [659, WIRE_BYTES] {
-        let result = with_failing_hash(length, || boot_slots(valid(1, b"First"), valid(2, b"Second")));
-        assert_eq!(result, Err(FAILED), "hash of {length} bytes");
+    // Only one slot's record or package hash fails; the other slot validates.
+    let records = [record(1, &package(b"First")), record(2, &package(b"Second"))];
+    for failing in 0..2 {
+        let inputs = [records[failing][..659].to_vec(), records[failing][44..659].to_vec()];
+        for (input, part) in inputs.into_iter().zip(["record", "package"]) {
+            let result = with_failing_hash(reader_hash::Fail::Input(input), || {
+                boot_slots(Blob::Bytes(records[0].clone()), Blob::Bytes(records[1].clone()))
+            });
+            assert_eq!(result, Err(FAILED), "slot {failing} {part} hash");
+        }
     }
+}
+
+#[test]
+fn versions_are_read_in_order_around_the_hashes() {
+    let mut newer_app = package(b"Newer");
+    newer_app[7] = b'2';
+    // A newer package inside a record whose own hash is wrong is damage, so a
+    // valid peer still wins: the package version is read only after the record hash.
+    let mut damaged = record(9, &newer_app);
+    damaged[690] ^= 1;
+    assert_eq!(boot_slots(Blob::Bytes(damaged.clone()), valid(1, b"Older")), Ok(app(b"Older")));
+    assert_eq!(boot_slots(Blob::Bytes(damaged), Blob::Missing), Err(CORRUPT));
+    // A newer record version is read before any hash runs.
+    let every = || reader_hash::Fail::Every;
+    let newer_record = || flipped(1, b"Newer", 7, 3);
+    assert_eq!(with_failing_hash(every(), || boot_slots(newer_record(), Blob::Missing)), Err(UNSUPPORTED));
+    // A newer package version is read before the package hash, after the record hash.
+    let sealed = record(9, &newer_app);
+    let package_only = reader_hash::Fail::Input(sealed[44..659].to_vec());
+    assert_eq!(with_failing_hash(package_only, || boot_slots(Blob::Bytes(sealed.clone()), Blob::Missing)),
+               Err(UNSUPPORTED));
+    assert_eq!(with_failing_hash(every(), || boot_slots(Blob::Bytes(sealed), Blob::Missing)), Err(FAILED));
 }
 
 #[test]

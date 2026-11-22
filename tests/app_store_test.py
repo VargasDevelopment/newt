@@ -25,7 +25,7 @@ from gate_tier import negative_controls
 STORE = 'core/src/app_store.rs'
 LOADER = 'firmware/app_runtime/package.rs'
 TINY = 'tiny-app/src/lib.rs'
-TESTS = 12
+TESTS = 13
 MALFORMED = 'a_malformed_package_loses_to_its_older_valid_peer'
 DAMAGE = 'damage_without_a_valid_slot_is_unavailable'
 FAILED = "    if first == Slot::Failed || second == Slot::Failed {\n        return Load::Failed;\n    }\n"
@@ -43,6 +43,11 @@ CONTROLS = (
      "if !payload.hash(&bytes[..HASH_AT], &mut digest) {\n        return Slot::Failed;",
      "if !payload.hash(&bytes[..HASH_AT], &mut digest) {\n        return Slot::Corrupt;",
      'a_hash_provider_failure_is_failed_even_beside_a_valid_slot'),
+    ('the package version is read before the record hash', STORE,
+     "    if !payload.hash(&bytes[..HASH_AT], &mut digest) {\n        return Slot::Failed;",
+     "    if &bytes[44..51] == b\"NEWTAPP\" && bytes[51] != b'1' {\n        return Slot::Unsupported;\n    }\n"
+     "    if !payload.hash(&bytes[..HASH_AT], &mut digest) {\n        return Slot::Failed;",
+     'versions_are_read_in_order_around_the_hashes'),
     ('Unsupported outranks Failed', STORE, FAILED_FIRST, UNSUPPORTED_FIRST,
      'failed_outranks_unsupported_which_outranks_selection'),
     ('equal generations with different bytes are not a conflict', STORE,
