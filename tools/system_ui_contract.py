@@ -29,6 +29,11 @@ CASES.update({'reader': ['--screen', 'epub'],
               'reader-menu': ['--screen', 'epub', '--actions', 'activate'],
               'reader-settings': ['--screen', 'epub', '--actions', 'activate,next,next,activate'],
               'device': ['--screen', 'device'], 'prepared-focus': None, 'open-error': None})
+# Five Selects on About's Version open the first newt; Previous, Next,
+# Previous, Next there open the hidden Developer page.
+FIRST_NEWT = 'next,next,next,activate,activate' + ',activate' * 5
+CASES.update({'first-newt': ['--screen', 'device', '--actions', FIRST_NEWT],
+              'developer': ['--screen', 'device', '--actions', FIRST_NEWT + ',previous,next,previous,next']})
 LIBRARY_CASES.update(('prepared-focus', 'open-error'))
 # Authored fixture actions, in physical Previous/Next order. This pins the
 # navigation contract as well as the canonical appearance of active cells.

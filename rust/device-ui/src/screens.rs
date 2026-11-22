@@ -2,6 +2,7 @@ use crate::*;
 use crate::{Buffer, cstr, para, text, width};
 use core::fmt::Write;
 use newt_core::time_zone::{TIME_ZONE_LABELS, TimeZone};
+use newt_core::update_online::TestBuilds;
 use newt_system_ui::*;
 #[derive(Default, Clone, Copy)]
 pub struct BuildIdentity<'a> {
@@ -442,6 +443,7 @@ pub fn render_device_ui(
     mut stats: Option<&mut dyn FnMut(StatsGraphPosition, u32) -> stats::StatsScreenView>,
     build: BuildIdentity<'_>,
     sleep: SleepScreenChoices,
+    test_builds: TestBuilds,
 ) {
     match device_page(state) {
         DevicePage::Settings => {
@@ -507,6 +509,8 @@ pub fn render_device_ui(
                 .unwrap_or_default();
             stats::render_stats_graph_view(page.canvas(), view, &data);
         }
-        DevicePage::Diagnostics | DevicePage::FirstNewt => diagnostics(frame, bar, info),
+        DevicePage::FirstNewt => crate::first_newt::first_newt(frame, bar),
+        DevicePage::Developer => crate::developer::developer(frame, bar, test_builds, state.settings_notice),
+        DevicePage::Diagnostics => diagnostics(frame, bar, info),
     }
 }

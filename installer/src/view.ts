@@ -69,7 +69,7 @@ function cardPath(open: boolean): HTMLElement {
       h('li', {}, "Copy it to your X3's card."),
       h('li', {}, 'On the X3, open Settings, then System, then SD Card Firmware Update, and pick newt.bin.'),
     ),
-    h('p', { class: 'quiet' }, 'Your current firmware stays as the spare. On stock Xteink firmware, install CrossPoint first.'),
+    h('p', { class: 'quiet' }, 'Your current firmware stays as the spare. On stock Xteink firmware, use this page in Chrome or Edge instead.'),
   );
   details.open = open;
   return details;

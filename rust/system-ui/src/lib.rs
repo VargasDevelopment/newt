@@ -70,23 +70,6 @@ pub fn clamped_list_buttons<'a>(
         next: (position.wrapping_add(1) < count).then_some(b"Down"),
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SystemPageException {
-    None,
-    Home,
-    Reader,
-    Sleep,
-    FirstNewt,
-}
-pub fn system_page_exception(state: &AppState) -> SystemPageException {
-    match state.screen {
-        Screen::Home => SystemPageException::Home,
-        Screen::Reading | Screen::EpubReading => SystemPageException::Reader,
-        Screen::Sleeping => SystemPageException::Sleep,
-        Screen::Device if state.first_newt => SystemPageException::FirstNewt,
-        Screen::Device | Screen::TinyApp | Screen::Library | Screen::QuickStart => SystemPageException::None,
-    }
-}
 pub const SYSTEM_ROW_PITCH: i32 = 43;
 pub const SYSTEM_CARD: Card = Card {
     x: 28,

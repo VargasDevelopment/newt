@@ -4,10 +4,10 @@
 //! Pure functions: no storage, allocation or I/O.
 use crate::reading_stats_store::{CROSS_INK_NAMESPACE, LEDGER_NAMESPACE, STREAK_NAMESPACE};
 
-/// Durable reading, clock, Sleep screen, last-seen build and saved Wi-Fi
-/// network names that route to SD. The retired Home name stays recognized
+/// Durable reading, clock, Sleep screen, last-seen build, saved Wi-Fi network
+/// and Test builds names that route to SD. The retired Home name stays recognized
 /// for compatibility; startup never opens or changes it.
-const READING_STATE_NAMESPACES: [&str; 8] = [
+const READING_STATE_NAMESPACES: [&str; 9] = [
     "newt_selected",
     "newt_resume",
     "newt_zone",
@@ -16,6 +16,7 @@ const READING_STATE_NAMESPACES: [&str; 8] = [
     "newt_seen",
     "newt_net",
     "newt_sleep",
+    "newt_builds",
 ];
 /// CrossInk import's completion record; its global copy is CROSS_INK_NAMESPACE.
 const IMPORT_NAMESPACE: &str = "newt_import";

@@ -3,6 +3,8 @@
 #![forbid(unsafe_code)]
 #![allow(non_upper_case_globals)]
 mod assets;
+mod developer;
+mod first_newt;
 pub mod home_clock;
 mod screens;
 mod sleep;

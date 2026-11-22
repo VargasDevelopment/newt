@@ -37,13 +37,13 @@ def run_gate(root, expected):
     command = [sys.executable, '-B', str(root / 'tests/library_cover_prepare_test.py')]
     print('START required Mac ImageIO cover tests', flush=True)
     subprocess.run(command, cwd=root, env=environment, check=True)
-    print('START all 20 reviewed Mac UI frames with prepared ImageIO covers', flush=True)
+    print('START all 22 reviewed Mac UI frames with prepared ImageIO covers', flush=True)
     reviewed_frames(root)
     after = committed_source(root, expected)
     if before != after:
         raise RuntimeError('Committed source changed during required Mac cover gate')
     write_text(root, report, json.dumps({
-        'purpose': 'Mac ImageIO cover software checks and all 20 frames against committed reviewed UI authority',
+        'purpose': 'Mac ImageIO cover software checks and all 22 frames against committed reviewed UI authority',
         'source': after, 'phases': ['mac-imageio-cover-tests', 'reviewed-ui-20-frames'], 'platform': platform.platform(),
         'reusable_proof': False, 'hardware': 'not-tested', 'owner': 'pending',
     }, indent=2) + '\n')

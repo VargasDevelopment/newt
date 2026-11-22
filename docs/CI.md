@@ -243,7 +243,7 @@ Production cover extraction still uses macOS ImageIO. Linux is not claimed to
 support arbitrary PNG/JPEG, EXIF orientation, resizing or general decoder parity.
 Its test-only decoder accepts only four committed, SHA-locked authored grayscale
 PNGs. Each corresponding packed cover was compared against the production Mac
-Swift helper with zero differing bytes. All 20 reviewed UI frames remain
+Swift helper with zero differing bytes. All 22 reviewed UI frames remain
 mandatory and unchanged; unknown fixture bytes fail closed.
 
 Linux reports `complete_software_coverage: false` and requires a separate fresh
@@ -253,7 +253,7 @@ Mac gate for the exact candidate:
 python3 -B tools/check-mac-covers.py --expected-commit FULL_SHA
 ```
 
-That gate runs the complete ImageIO suite and directly verifies all 20 actual
+That gate runs the complete ImageIO suite and directly verifies all 22 actual
 renderer frames, with committed source and golden authority checked before and
 after. Its report is `.build/mac-covers/report.json`. A Linux PASS alone cannot
 satisfy complete software acceptance. The Mac report is reviewed separately;

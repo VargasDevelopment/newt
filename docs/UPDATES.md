@@ -299,13 +299,20 @@ Check joins once (`rust/firmware/update_online_runtime.rs`) and reads
 `LATEST_RELEASE_URL` in `rust/core/src/update_online.rs`: GitHub's
 `/releases/latest`, no token, which skips drafts and pre-releases.
 
-**Test builds.** With the hidden Test builds setting on, the check reads
-`/releases?per_page=1` instead: the newest release, pre-releases included.
-CI publishes a nightly test build of `main` there as a pre-release,
-`<next>-dev.YYYYMMDD.N` ([RELEASING](RELEASING.md#nightly-test-builds)),
-with the same assets and checks as a release. SemVer orders it after the
-version it builds on, so a later nightly, or a release above it, replaces it.
-Turning the setting off keeps the nightly until a newer release comes.
+**Test builds.** Test builds are GitHub pre-releases: CI publishes a
+nightly build of `main`, versioned `<next>-dev.YYYYMMDD.N` like
+`0.2.2-dev.20261123.1` ([RELEASING](RELEASING.md#nightly-test-builds)), with
+the same assets and checks as a release. A test build ranks above `0.2.1`
+and below `0.2.2`, so a later nightly, or a release above it, replaces it.
+Devices ignore them unless Test builds is On. That switch is on a hidden
+Developer page: open About's first newt, then press Previous, Next,
+Previous, Next. With it On, Check reads `NEWEST_RELEASE_URL` instead:
+`/releases?per_page=1`, the newest release of either kind, as a list of one.
+Turning it Off keeps an installed nightly until a newer release comes.
+The choice is the card record `newt_builds` (`TestBuildsCodec` in
+`rust/core/src/durable.rs`), Off when missing or corrupt. Update mode
+restores it with the clock choices at its own boot. Versions, like
+every manifest version, are at most 23 characters.
 
 **Assets.** A release has three: `newt.bin`, `newt.manifest` and
 `NOTICES.txt` (`tools/release_publish.py`;

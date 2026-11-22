@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
-//! Home's clock source and its three durable preferences (time zone,
-//! clock format and Sleep screen).
+//! Home's clock source and its four durable preferences (time zone, clock
+//! format, Sleep screen and the Developer page's Test builds).
 //!
 //! Firmware Home borrows one six-byte HH:MM snapshot. A full Home composition
 //! refreshes it once; focus and status passes keep the time already shown. The
-//! published zone, format and Sleep screen choices change only through the
+//! published choices change only through the
 //! startup restore or a verified commit. The SD records are the only authority
 //! for every reset class; there is no RTC copy, so a boot without the card
 //! shows the product defaults, as a cold boot does.
@@ -55,10 +55,11 @@ const TWELVE_HOUR: u8 = 2;
 // The Sleep screen record's bits (progress 1, week 2, habit 4), shifted.
 const SLEEP_SHIFT: u32 = 2;
 const SLEEP_BITS: u8 = 7 << SLEEP_SHIFT;
+mod test_builds;
 
-/// The published Home clock. The latch, format and Sleep screen choices share
-/// one byte and the zone another, so the reader and snapshot are the only
-/// other state: 12 bytes on RV32, as the original.
+/// The published Home clock. The latch, format, Sleep screen and Test builds
+/// choices share one byte and the zone another, so the reader and snapshot
+/// are the only other state: 12 bytes on RV32, as the original.
 pub struct HomeClockSource<C> {
     reader: Option<ClockReader<C>>,
     text: [u8; 6],
@@ -68,7 +69,7 @@ pub struct HomeClockSource<C> {
 
 const _: () = assert!(
     size_of::<HomeClockSource<()>>() == if size_of::<usize>() == 4 { 12 } else { 16 },
-    "the zone, format and Sleep screen use padding, not RAM"
+    "the published choices use padding, not RAM"
 );
 
 impl<C> HomeClockSource<C> {
@@ -108,7 +109,7 @@ impl<C> HomeClockSource<C> {
         CStr::from_bytes_until_nul(&self.text).unwrap_or(c"--:--")
     }
 
-    /// Startup with separate store/context borrows: publish the durable zone, format and Sleep screen
+    /// Startup with separate store/context borrows: publish the durable
     /// choices, then read once for boot, so the boot time and every later Home
     /// paint are local and in the chosen format. None disables every read.
     /// `store` and `ctx` are separate borrows for this call only.
@@ -122,12 +123,13 @@ impl<C> HomeClockSource<C> {
         self.begin_reader(ctx, reader);
     }
 
-    /// Restore the three durable choices in the pinned order. The firmware
+    /// Restore the four durable choices in the pinned order. The firmware
     /// can end every store loan before borrowing the Board for its Boot read.
     pub fn restore_preferences<B: Backend>(&mut self, store: &mut B) {
         self.restore_time_zone(store);
         self.restore_clock_format(store);
         self.restore_sleep_screen(store);
+        self.restore_test_builds(store);
     }
 
     /// Finish startup after restore_preferences; performs exactly one Boot read.

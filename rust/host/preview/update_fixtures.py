@@ -22,6 +22,8 @@ ROOT = Path(__file__).resolve().parents[3]
 RUNNING = re.search(r'#define NEWT_FIRMWARE_VERSION "([^"]+)"',
                     (ROOT / 'rust/firmware/native/firmware_version.h').read_text())[1]
 NEWER, OLDER = '9.0.0', '0.0.9'
+# A test build: a GitHub pre-release, offered only with Test builds On.
+TEST_BUILD = f'{NEWER}-dev.20261123.1'
 BUILD = '0123456789ab'
 SLOT_BYTES, SECTOR = 0x770000, 4096
 STATE_VALID, STATE_ABORTED = 2, 4
@@ -93,16 +95,18 @@ CARD_FILES = {'crosspoint-2.0.0-x3.bin': image('crosspoint-reader', '2.0.0'),
 MORE_FILES = {'crosspoint-2.0.0-x3.bin': CARD_FILES['crosspoint-2.0.0-x3.bin'], 'newt-old.bin': newt_image(OLDER),
               'reader-6.5.bin': CARD_FILES['reader-6.5.bin'], 'zz-extra.bin': image('x3-reader', 'V7.0.0')}
 LATEST = 'https://api.github.com/repos/VargasDevelopment/newt/releases/latest'
+NEWEST = 'https://api.github.com/repos/VargasDevelopment/newt/releases?per_page=1'
 
 
-def release(version):
-    """GitHub's latest-release JSON and its two assets."""
+def release(version, url=LATEST, host='https://example.invalid'):
+    """GitHub's release JSON at `url` and its two assets under `host`. NEWEST
+    answers with a list of one release, as GitHub's release list does."""
     payload = newt_image(version)
-    assets = {'https://example.invalid/newt.manifest': manifest(version, payload),
-              'https://example.invalid/newt.bin': payload}
-    listing = ','.join(f'{{"name":"{url.rsplit("/", 1)[1]}","browser_download_url":"{url}","size":{len(body)}}}'
-                       for url, body in assets.items())
-    return {LATEST: f'{{"tag_name":"v{version}","assets":[{listing}]}}'.encode(), **assets}
+    assets = {f'{host}/newt.manifest': manifest(version, payload), f'{host}/newt.bin': payload}
+    listing = ','.join(f'{{"name":"{asset.rsplit("/", 1)[1]}","browser_download_url":"{asset}","size":{len(body)}}}'
+                       for asset, body in assets.items())
+    body = f'{{"tag_name":"v{version}","assets":[{listing}]}}'
+    return {url: (f'[{body}]' if url == NEWEST else body).encode(), **assets}
 
 
 def update_world(name):
@@ -166,6 +170,12 @@ def update_world(name):
             world.update(http={}, status={LATEST: 404})
         if name == 'check-downloading':
             world['conf'] = {'freeze': 'http.read', 'http.freeze_bytes': '256'}
+    elif name in ('test-builds', 'test-builds-unconfirmed'):
+        # The latest stable release is the running one; the newest is a test build.
+        world.update(offer=None, saved=True,
+                     http={**release(RUNNING), **release(TEST_BUILD, NEWEST, 'https://example.invalid/test')})
+        if name == 'test-builds-unconfirmed':
+            world['conf'] = {'store.drop': 'card-sync:/newt-sd/Newt/State/newt-builds.nrs'}
     else:
         raise ValueError(f'unknown update fixture: {name}')
     return world

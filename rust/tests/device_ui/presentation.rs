@@ -151,6 +151,7 @@ fn statistics_source_runs_once_only_when_its_page_is_selected_even_without_frame
         Some(&mut source),
         FIRMWARE_BUILD,
         SleepScreenChoices::default(),
+        Default::default(),
     );
     state.row_open = false;
     render_device_ui(
@@ -163,6 +164,7 @@ fn statistics_source_runs_once_only_when_its_page_is_selected_even_without_frame
         Some(&mut source),
         FIRMWARE_BUILD,
         SleepScreenChoices::default(),
+        Default::default(),
     );
     assert_eq!(calls, 1);
 }

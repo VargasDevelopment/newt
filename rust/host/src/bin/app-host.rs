@@ -21,7 +21,7 @@ fn state(a: &[u32]) -> Option<AppState> {
         about_presses: a[4].try_into().ok()?,
         about: [AboutView::Closed, AboutView::Version, AboutView::WhatsNewRow,
             AboutView::WhatsNew, AboutView::Updated].get(a[5] as usize).copied()?,
-        first_newt: boolean(a[6])?, row_open: boolean(a[7])?,
+        first_newt: boolean(a[6])?, unlock_presses: 0, developer: false, row_open: boolean(a[7])?,
         settings_row: [SettingsRow::TimeZone, SettingsRow::TimeFormat, SettingsRow::SleepScreen,
             SettingsRow::Diagnostics, SettingsRow::ReadingStats, SettingsRow::FirmwareSwitch,
             SettingsRow::Update, SettingsRow::Wifi, SettingsRow::About, SettingsRow::QuickStart].get(a[8] as usize).copied()?,

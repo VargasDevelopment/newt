@@ -5,7 +5,7 @@ use super::AppRuntime;
 use crate::{home_startup::{CardPort, HomeRuntime}, nvs};
 use core::fmt::Write;
 use newt_core::{app::{self, DevicePage, Screen, StatsGraphPosition},
-    preferences::Orientation, quick_start::Facts, time_zone::TimeZone};
+    preferences::Orientation, quick_start::Facts, time_zone::TimeZone, update_online::TestBuilds};
 use newt_device_ui::{BuildIdentity, DeviceInfo, SleepScreenChoices, stats::StatsScreenView};
 use newt_library_current_ui::{self as library, Catalog, LibraryCoverSource};
 use newt_stage_home::{HeaderInfo, HomeData, HomePlane, HomeStyle, PreparedHomeCover};
@@ -19,6 +19,7 @@ pub struct PreparedSystemPaint {
     bar: SystemBar,
     zone: TimeZone,
     sleep: SleepScreenChoices,
+    test_builds: TestBuilds,
     orientation: Orientation,
     wifi_saved: bool,
 }
@@ -71,6 +72,7 @@ impl AppRuntime<'_, '_> {
             bar,
             zone: home.clock.zone(),
             sleep: home.clock.sleep_screen(),
+            test_builds: home.clock.test_builds(),
             orientation: home.preferences.settings().orientation,
             wifi_saved,
         })
@@ -132,12 +134,12 @@ impl AppRuntime<'_, '_> {
             && stats.is_none() {
             return false;
         }
-        let PreparedSystemPaint { bar, zone, sleep, orientation, wifi_saved } = prepared;
+        let PreparedSystemPaint { bar, zone, sleep, test_builds, orientation, wifi_saved } = prepared;
         match screen {
             Screen::Device => {
                 newt_device_ui::render_device_ui(
                     self.rest.app, info, &bar, frame, zone, scratch,
-                    stats, build, sleep,
+                    stats, build, sleep, test_builds,
                 );
             }
             Screen::TinyApp => match self.rest.definition {
