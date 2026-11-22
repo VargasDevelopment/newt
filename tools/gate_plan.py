@@ -27,11 +27,11 @@ UNIT_TESTS = (("sd_shared_bus_test.cpp", "sd-shared-bus-tests"),)
 # policy tests, build boundaries, generator checks, the native unit binary and
 # the preview contracts, with their prerequisites, in the complete gate's order.
 # The Rust families run only in the complete gate.
-QUICK = ("bench_flash_test.py --negative-controls", "bench_flash_layouts_test.py --negative-controls", "bench_handshake_test.py", "x3_slots_test.py", "installer_test.py --negative-controls", "clean_export_test.py", "history_fixtures_test.py", "crt_bundle_test.py", "update_publish_test.py", "release_publish_test.py --negative-controls", "nvs_namespaces_test.py", "legacy_nvs_test.py", "gate_scratch_test.py", "native_fixture_roots_test.py", "host_scratch_inputs_test.py", "trusted_host_test.py", "source_fixture_test.py", "code_health_test.py",
+QUICK = ("bench_flash_test.py --negative-controls", "bench_flash_layouts_test.py --negative-controls", "bench_handshake_test.py", "x3_slots_test.py", "installer_test.py --negative-controls", "clean_export_test.py", "history_fixtures_test.py", "repo_docs_allowlist_test.py", "crt_bundle_test.py", "update_publish_test.py", "release_publish_test.py --negative-controls", "nvs_namespaces_test.py", "legacy_nvs_test.py", "gate_scratch_test.py", "native_fixture_roots_test.py", "host_scratch_inputs_test.py", "trusted_host_test.py", "source_fixture_test.py", "code_health_test.py",
          "code_health_resources_test.py", "code_health_capacity_test.py", "code_health_lent_test.py", "code_health_procedure_cache_test.py",
          "python_runtime_test.py", "reading_acceptance_test.py", "reading_latency_test.py",
          "reading_latency_ready_test.py", "host_objects_test.py", "host_object_reuse_test.py",
-         "page_entry_fatfs_test.py", "newt33_lead_device_script_test.py", "software_gate_shadow_test.py", "ci_toolchain_test.py",
+         "page_entry_fatfs_test.py", "software_gate_shadow_test.py", "ci_toolchain_test.py",
          "ci_workflow_test.py", "public_ci_test.py", "ci_persist_test.py", "gate_runner_test.py", "gate_tier_test.py", "gate_performance_test.py", "host_wide_jobs_test.py", "gate_stop_test.py", "procedure_closure_test.py",
          "code_health.py", "native_sleep_guard_test.py",
          "native_reader_stack_test.py", "native_rollback_hook_test.py", "native_timer_task_test.py", "native_flash_writers_test.py", "native_crash_output_test.py", "wifi_link_test.py", "next_boot_test.py", "heap_clear_test.py", "build_scope_test.py", "rust_app_build_test.py",
@@ -86,6 +86,7 @@ def plan(profile: str, fresh_objects: bool, controls=None) -> list[Phase]:
     test("release_publish_test.py", "--negative-controls")
     test("clean_export_test.py")
     test("history_fixtures_test.py")
+    test("repo_docs_allowlist_test.py")
     test("crt_bundle_test.py")
     test("nvs_namespaces_test.py")
     test("gate_scratch_test.py")
@@ -138,7 +139,6 @@ def plan(profile: str, fresh_objects: bool, controls=None) -> list[Phase]:
     test("native_output_test.py")
     for tool in ("make-reader-fixture.py", "make-builtin-app.py"):
         run(ROOT / "tools" / tool, "--check", bytecode=True)
-    test("newt33_lead_device_script_test.py")
     for script in ("newt_package_test.py", "newt_delivery_test.py", "home_refresh_regional_test.py"):
         test(script, bytecode=True)
     # The real firmware built for the host over C fakes (tools/rust_preview.py).

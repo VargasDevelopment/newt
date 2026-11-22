@@ -1,4 +1,4 @@
-"""Fault controls for tools/verify-next-boot.py (docs/085-wifi-setup.md): inputs
+"""Fault controls for tools/verify-next-boot.py (docs/UPDATES.md, "Secrets in RAM"): inputs
 in the linked image's shape pass, and each broken fact fails."""
 import importlib.util
 from pathlib import Path

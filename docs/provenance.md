@@ -135,8 +135,7 @@ glyphs, advances and 899 pairs remain unchanged.
 [Asset provenance and source pins](../assets/fonts/README.md) records the
 exact ranges, hashes and reproduction commands. Independent host proofs
 compare every added raster, all 341 advances and 116,281 pairs with that
-source. [Decision 006](006-reader-typography.md) explains why static data
-avoids a runtime rasterizer.
+source. Static data avoids a runtime rasterizer.
 
 **Closed check: CrossInk's generated typography.** The repository now holds
 only a Lexend Deca copy of CrossInk's generated header, as the owner chose.
@@ -230,7 +229,7 @@ The same pin supplies
 [FreeInkUI](https://github.com/Free-Ink/freeink-sdk/tree/cd6f5b831c8fad899723b6d406586f00c575f021/libs/ui/FreeInkUI)
 (MIT): Newt uses a Rust translation of its keyboard layout and navigator
 (`rust/device-ui/src/update/keyboard.rs`) for update mode's Wi-Fi password
-page ([085](085-wifi-setup.md)) and draws the keys itself.
+page ([UPDATES.md](UPDATES.md#wi-fi-setup)) and draws the keys itself.
 
 `tests/fixtures/the-small-lantern.epub` and the identical embedded built-in
 sample `rust/firmware/sample.epub` (embedded by `rust/firmware/sample_epub.rs`)
@@ -261,8 +260,7 @@ checks are not a signing or authentication claim.
 ## Frosted reader reference
 
 The first reader geometry slice followed an earlier, unpublished design
-reference. Its files are hashed in
-[the receipt](../artifacts/frosted-reader-verification.json). No reference
+reference. No reference
 code, text, images, TTFs or generated font headers were imported. The owner
 later chose its slim progress bar and the reading menu.
 
@@ -273,6 +271,6 @@ from the pinned ESP-IDF 5.5.2 `esp32c3/ld/sections.ld` in
 framework-arduinoespressif32-libs 5.5.0+sha.87912cd291 (Espressif,
 Apache-2.0). It refuses any other script or package by SHA-256 and makes three
 changes: a Wi-Fi data range, libphy/libesp_ringbuf and selected IRAM functions
-in flash, and deferred Wi-Fi constructors ([084](084-wifi-memory.md)). The
+in flash, and deferred Wi-Fi constructors ([UPDATES.md](UPDATES.md#wi-fi-memory)). The
 derived file is generated, never checked in; it keeps Espressif's SPDX notice
 and a header naming Newt's change.

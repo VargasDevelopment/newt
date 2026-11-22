@@ -9,7 +9,7 @@ namespace newt::firmware {
 inline constexpr char kSdMountPoint[]="/newt-sd";
 inline constexpr char kSdBooksDirectory[]="/newt-sd/Newt/Books";
 inline constexpr char kSdCoversDirectory[]="/newt-sd/Newt/Covers";
-// Update files (docs/083-ota-sd-install.md): <kind>.bin beside <kind>.manifest
+// Update files (docs/UPDATES.md, "Card install"): <kind>.bin beside <kind>.manifest
 // (firmware/update_card.h).
 inline constexpr char kSdUpdateDirectory[]=NEWT_SD_UPDATE_DIRECTORY;
 }  // namespace newt::firmware

@@ -14,8 +14,7 @@ root's execution can establish that each compiles and is killed by its witness.
 
 The overlay under `rust/` is intended for root adoption into the actual workspace.
 It has no standalone Cargo workspace and adds no Cargo dependencies. See
-[INTEGRATION.md](INTEGRATION.md) for the exact required wiring and root checks,
-and [CONTRACT.md](CONTRACT.md) for parity and resource boundaries.
+[CONTRACT.md](CONTRACT.md) for parity and resource boundaries.
 
 Full decoder, full-picture loading, page layout, firmware, physical hardware,
 and performance acceptance remain pending and outside this packet. The borrowed

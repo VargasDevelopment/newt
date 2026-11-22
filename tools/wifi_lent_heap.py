@@ -1,4 +1,4 @@
-"""Property 4 of tools/verify-wifi-link.py (docs/084-wifi-memory.md): the lent
+"""Property 4 of tools/verify-wifi-link.py (docs/UPDATES.md, "Wi-Fi memory"): the lent
 range holds the SD card's FATFS context.
 
 The first SD mount allocates the context after the lend and keeps it for the

@@ -14,7 +14,7 @@ expect vitest to fail.
   installer_test.py --write   regenerate the vectors after a reviewed rule change
 
 Public CI installs the Node packages first. The self-hosted CI runner has
-none (docs/092-install-page.md), so there, and only there, the vector and
+none (installer/README.md, "CI"), so there, and only there, the vector and
 wordmark checks run alone and the rest is skipped loudly.
 """
 import argparse
@@ -146,7 +146,7 @@ def main():
     if not BIN.is_dir():
         if os.environ.get('GITHUB_ACTIONS') == 'true':
             print('SKIP installer type check, vitest and controls: this CI runner has no installer/node_modules '
-                  '(docs/092-install-page.md, "CI")', flush=True)
+                  '(installer/README.md, "CI")', flush=True)
             return
         sys.exit('FAIL installer/node_modules is missing: run pnpm install --frozen-lockfile in installer/')
     if node('tsc', '--noEmit') != 0:

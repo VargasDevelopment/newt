@@ -9,7 +9,7 @@ from bench_lease import usb_identity
 from x3_slots import OTADATA, SLOTS
 
 # Reset to an answered HELLO measured 6.5 s on the bench X3 (2026-10-25 install).
-# Newt now confirms its image only at its first finished screen (docs/083), and
+# Newt now confirms its image only at its first finished screen (docs/UPDATES.md), and
 # its DEV bridge reads but never answers HELLO before that. Both windows still
 # cover that measurement, which included the first paint; the time to the
 # confirmation itself is not yet measured on a device.
@@ -140,7 +140,7 @@ class Device:
 
         Opening another port resets the X3; between a new selection's first
         boot and the app's confirmation, that second reset makes the rollback
-        bootloader abort the selection (docs/077).
+        bootloader abort the selection (docs/UPDATES.md, "Slots").
         """
         # bench_flash holds the shared unit lease through this client and closure.
         bridge = load_bridge()

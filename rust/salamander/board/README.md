@@ -9,6 +9,15 @@ the shared SPI/card rail, initialized `Wire`, and the driver resources listed
 in `native/board.h`. It runs fixed display/input startup and the SD mount
 sequence; teardown after a partial acquisition remains the caller's obligation.
 
+**Display startup order**, on cold boot and deep-sleep reset alike: select X3
+geometry (`nb_select_x3`), release the shared SD rail, probe the panel, then
+begin. Selecting X3 must come before the probe: the pinned SDK's probe
+promotes only the display controller, while `setDisplayX3` resets the base
+profile unless the board was set to the UC8279 sibling. The board is X3-only
+on purpose: no I2C fingerprint (clock, battery) may pick another geometry, and
+the panel's VER probe alone picks the controller. Keep that when adding a
+boot-time sensor.
+
 `acquire_x3_optional_sd` keeps Home and input usable when the SD mount returns
 `Io`; other acquisition errors remain fatal. It exposes no filesystem view
 until `ensure_sd_mounted` succeeds. Failed mounts can retry; a successful mount

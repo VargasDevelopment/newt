@@ -10,12 +10,12 @@
 // Arduino confirms a pending image before setup() unless this returns true
 // (esp32-hal-misc.c). Newt confirms after its first finished screen
 // instead, so a build that cannot show one returns to the previous one on the
-// next boot (docs/083-ota-sd-install.md). The Rust image supplies
+// next boot (docs/UPDATES.md, "Card install"). The Rust image supplies
 // verifyRollbackLater and confirms its first finished paint.
 
 namespace newt {
 // The X3 app-slot identity block, the same rule as tools/x3_slots.py
-// (docs/077-return-to-crossink.md). A slot's first kSlotHeadBytes hold the ESP
+// (docs/UPDATES.md, "Slots"). A slot's first kSlotHeadBytes hold the ESP
 // image header, the first segment header, the ESP-IDF app descriptor and, for
 // Newt, its fixed mark.
 inline constexpr std::size_t kSlotHeadBytes = 0x200;
@@ -35,7 +35,7 @@ static_assert(sizeof(NewtAppMark) == 16);
 inline constexpr NewtAppMark kNewtAppMark{"NEWT-X3-APP", 1};
 
 // Newt's identity block follows the mark in the same section, so the mark
-// and every tool that reads it stay unchanged (docs/083-ota-sd-install.md):
+// and every tool that reads it stay unchanged (docs/UPDATES.md, "Slots"):
 // the firmware version and the exact 12-hex build ID, each NUL-padded. A
 // dirty or unidentified build carries an empty build. Images older than the
 // block carry other bytes here; nothing trusts them without a manifest.
@@ -80,8 +80,8 @@ inline constexpr char kNewtImageBuild[]="";
 #endif
 static_assert(identityTextLength(NEWT_FIRMWARE_VERSION)<sizeof(NewtAppIdentity::version));
 // Every Newt image carries this mark right after its app descriptor, where
-// classifySlot and tools/x3_slots.py look for it (docs/077), then its
-// version and exact build (docs/083-ota-sd-install.md).
+// classifySlot and tools/x3_slots.py look for it, then its
+// version and exact build (docs/UPDATES.md, "Slots").
 [[gnu::used, gnu::retain, gnu::section(".rodata_custom_desc")]] const NewtImageDescriptor kNewtImageDescriptor{kNewtAppMark,newtAppIdentity(NEWT_FIRMWARE_VERSION,kNewtImageBuild)};
 }  // namespace newt::firmware
 

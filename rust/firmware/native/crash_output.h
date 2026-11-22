@@ -1,6 +1,6 @@
 #pragma once
-// Console output while secrets may be in RAM (docs/082-ota-updates.md, "Crash
-// dumps and panic output"). One fail-closed word decides, and the gates sit
+// Console output while secrets may be in RAM (docs/UPDATES.md, "Secrets
+// in RAM"). One fail-closed word decides, and the gates sit
 // on the console's channels rather than on each printer:
 // - Panics and aborts: every one enters IDF's panic handler through
 //   esp_panic_handler, which prints the reason or abort message, the fault's

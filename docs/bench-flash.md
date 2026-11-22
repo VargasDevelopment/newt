@@ -3,14 +3,13 @@
 `tools/bench_flash.py` installs or restores a reviewed candidate into the one
 app slot a tool may write. `tools/x3_slots.py` decides which slot that is from
 the device on each run (each slot's app descriptor and Newt's mark, plus the
-OTA selection records; docs/077-return-to-crossink.md,
-docs/082-ota-updates.md section 1):
+OTA selection records; [UPDATES.md](UPDATES.md#slots)):
 
 - **One slot holds another firmware** (any valid app without Newt's mark:
   stock, CrossPoint, CrossInk or another): Newt's slot is the other one. On
   the bench X3 that is app1 (`0x780000`); on the main X3 app0 (`0x10000`).
   When that Newt is the one running, the install rewrites it in place (below).
-- **No slot holds another firmware** (after SD installs, docs/083): the slot that boots must hold
+- **No slot holds another firmware** (after SD installs, [UPDATES.md](UPDATES.md#card-install)): the slot that boots must hold
   Newt, be what the highest selection record selects, and be confirmed (state
   valid, or undefined). The tool writes only the other slot, so the running
   Newt stays the fallback.
@@ -23,7 +22,7 @@ docs/082-ota-updates.md section 1):
 | Newt + Invalid | the invalid one | `--repair-invalid` (below) |
 
 The tools never replace another firmware: put one in the other slot, or
-replace it, with Newt's card install (docs/083), or on the bench with
+replace it, with Newt's card install ([UPDATES.md](UPDATES.md#card-install)), or on the bench with
 `install-other` ([below](#another-firmware-into-the-spare-slot)). The tool refuses when both
 slots hold another firmware; when no slot holds another firmware and
 the slot that boots does not hold Newt; when a newer selection is still pending
@@ -96,7 +95,7 @@ power once: USB returns while stock runs. Then `boot-newt` selects Newt again.
 `install` and `restore` always select the written slot with a fresh *new*
 record (`x3_slots.install_selection`), even when that slot already boots. Its
 first boot is then pending until the image confirms itself at its first
-finished screen, whichever it is (docs/083); a reset or power loss before that
+finished screen, whichever it is ([UPDATES.md](UPDATES.md#card-install)); a reset or power loss before that
 makes the bootloader abort the record and boot the fallback:
 
 | Layout | Slot written | A failed first boot returns to |
@@ -141,13 +140,33 @@ the repaired slot only after `written-range-md5` proves the candidate; then one
 reset and HELLO, as for any install. The recovery authority below still
 applies.
 
+## Before the first write to a new unit
+
+Each session takes its own full backup (below), but a unit new to Newt needs
+more first:
+
+- Some Xteink units are USB-locked, and custom firmware can re-lock USB and
+  leave a unit without OTA ([CrossPoint's
+  warning](https://github.com/crosspoint-reader/crosspoint-reader#usb-locked-devices-xteink-unlocker)).
+  If a unit is locked, needs an unlocker, or its recovery path is unclear,
+  do not install a development build on it.
+- Read the whole 16 MiB flash twice with the pinned esptool, require the same
+  SHA-256, and keep a copy outside the checkout. A dump holds NVS,
+  calibration and possibly Wi-Fi credentials: keep it private and never
+  commit it. A flash backup does not restore ROM or eFuse state. Never use
+  `--force` or security and eFuse commands.
+- Copy the whole SD card after a clean shutdown, including the hidden
+  `/.crosspoint` folder (another firmware's progress, settings and
+  statistics). Never erase it.
+- Keep a recovery image of the firmware the unit runs now, and confirm the ROM
+  serial connection works after a normal power cycle.
+
 ## Owner-controlled unit identity
 
 By default identity is the owner's root-owned
 `/etc/udev/rules.d/99-newt-x3.rules` (the bench). For a separately approved
 main-unit session, pass `--identity-rule /etc/udev/rules.d/99-newt-x3-main.rules`
-on **every** command; [080](080-main-device-switch.md) gives the owner-only
-rule setup. Selection never edits the bench rule or discovers another unit. The tool requires a regular,
+on **every** command. Selection never edits the bench rule or discovers another unit. The tool requires a regular,
 root-owned rule file without group or other write permission, containing exactly
 one active rule line with one Espressif vendor (`303a`) and one MAC-shaped USB
 serial. Missing, writable, malformed or ambiguous rules fail before any device
@@ -156,6 +175,25 @@ identity override or serial-device enumeration. An explicitly selected rule has
 the same ownership, permissions and content checks; failure never falls back
 to the bench. The receipt records the rule path, MAC and derived port. Old `.build/bench/config.json`
 files are ignored and should be removed from each old worktree.
+
+To set up a unit, its owner writes one rule once, on the Linux host. Use the
+unit's USB serial (its MAC) and your account; stop if the file exists rather
+than overwrite it:
+
+```sh
+set -eu
+rule=/etc/udev/rules.d/99-newt-x3.rules
+test ! -e "$rule"
+sudo sh -eu -c "set -C; umask 022; cat > $rule" <<'RULE'
+SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="1001", ATTRS{serial}=="UNIT_MAC", OWNER="YOUR_USER", MODE="0600"
+RULE
+sudo chown root:root "$rule"
+sudo chmod 0644 "$rule"
+sudo udevadm control --reload-rules
+```
+
+Reconnect the unit once to apply it. A second unit gets its own rule file,
+passed with `--identity-rule`. Never add a broad permission workaround.
 
 Before opening the selected port, the tool checks its actual USB descriptor
 (serial, vendor and USB-Serial/JTAG product). It then checks the decoded esptool
@@ -182,7 +220,7 @@ build from its identity block, when present; reported only, never trusted for
 a decision), the selection records and the decision or refusal, then resets the
 unit. `boot-newt` writes only the selection sector, after an on-chip MD5 proves
 Newt's slot already holds exactly this candidate; it writes nothing when Newt is
-already selected. It is the USB way back from another firmware (docs/077).
+already selected. It is the USB way back from another firmware ([UPDATES.md](UPDATES.md#slots)).
 Without another firmware both slots may hold Newt: `boot-newt` selects the
 slot whose on-chip MD5 matches the candidate, checking the slot that boots
 first (then nothing is written), and never selects before that MD5.
@@ -342,7 +380,7 @@ backup remains the recovery image for the session.
 After verified writing, the tool resets the unit and checks the exact DEV build
 via two USB HELLO responses and a fresh STATUS challenge, recording DIAG when
 available. Newt confirms a new selection only at its first finished screen
-(docs/083), and HELLO answers only after that: an answered HELLO
+([UPDATES.md](UPDATES.md#card-install)), and HELLO answers only after that: an answered HELLO
 means the new build painted and confirmed itself. After an install, `slots`
 should show the new record `valid`, the device's own evidence of that
 confirmation. The handshake runs on esptool's port, still open from the reset:
@@ -363,8 +401,8 @@ unconfirmed and follows STOP recovery if a write started, rather than reporting
 PASS; read-only cancellations create no write STOP. SIGKILL and
 unplug cannot be deferred; never use them during the window. A `boot-other`
 receipt explicitly leaves running identity unconfirmed: wait for the command to return, then use `slots`
-to require a VALID selection of the other firmware. The hardware close behavior remains pending
-the [080 rehearsal](080-main-device-switch.md#bench-rehearsal-for-the-lead).
+to require a VALID selection of the other firmware. Whether closing the port resets the X3 is
+not measured on hardware.
 Terminal output gives timed PASS/FAIL steps; private per-run logs and receipts
 remain in the session. This is a USB-powered reset/install check, not a battery
 sleep/wake or cold-power check.

@@ -130,7 +130,7 @@ function problemPage(problem: Problem, actions: Actions): HTMLElement {
           h('p', {}, "Its storage layout isn't one this page knows, so it won't write anything."),
           h('p', {}, UNCHANGED),
           again,
-          // Newt's Update and Restart into are unproven on this layout (docs/092-install-page.md).
+          // Newt's Update and Restart into are unproven on this layout (installer/README.md, "Known tables").
           h('p', { class: 'quiet' }, 'Installing from the card is untested on this layout: nobody has tried it yet.'),
           cardPath(true),
         );

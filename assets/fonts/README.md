@@ -67,8 +67,8 @@ python -B tools/make-reader-font.py --check
 
 Normal builds and checks use only stdlib and checked-in data; no FreeType,
 source TTF, network or Python font package is needed. Source import also
-regenerated the hash-bound [source-comparison PNG](../../artifacts/reader-symbol-source-proof.png)
-and PBM. All source rasters were held in bounded host inputs (largest full face
+regenerated a hash-bound source-comparison PNG
+and PBM (not kept in the repo). All source rasters were held in bounded host inputs (largest full face
 bitmap 195,259 bytes; 200,000-byte host import bound). That bound is separate
 from firmware resource ceilings.
 
@@ -92,7 +92,7 @@ cross-source kerning is zero. Noncontextual GPOS PairPos (including extensions)
 is supported during import; contextual positioning requires shaping and is
 outside scope. Runtime uses immutable sparse classes, without font state or heap.
 
-The [pixel comparison](../../artifacts/reader-symbol-source-proof.png) renders
+The pixel comparison renders
 representative arrows, operators, shapes and music directly from all three
 symbol fonts at the same size/baseline/threshold. Math covers 112/112 arrows
 and 256/256 operators; Symbols covers 10/112 and 0/256, Symbols 2 covers 13/112

@@ -1,5 +1,5 @@
 """tools/crt_bundle.py: the bundle update mode's HTTPS checks servers against
-(docs/088-ota-wifi-install.md). The pinned CA list becomes ESP-IDF 5.5's
+(docs/UPDATES.md, "Updates over Wi-Fi"). The pinned CA list becomes ESP-IDF 5.5's
 bundle layout, every root's subject and key whole and sorted by subject, and
 any other list or a damaged certificate is refused."""
 import importlib.util

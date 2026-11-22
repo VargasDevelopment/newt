@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""bench_flash on every layout an SD install can leave (docs/082 section 8,
-"Recovery"): Newt+Newt, Newt+Empty and Newt+Invalid with Newt running from
+"""bench_flash on every layout an SD install can leave (docs/bench-flash.md,
+"Damaged slots and the repair"): Newt+Newt, Newt+Empty and Newt+Invalid with Newt running from
 app0 and from app1, the repair and each of its refusals, and another firmware
 (CrossInk, or any app without Newt's mark) installed from the card into
 Newt's old slot. On each, what a failed first boot

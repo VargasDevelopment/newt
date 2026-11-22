@@ -1,5 +1,5 @@
 """Fault controls for the linked image keeping every flash write and NVS open
-behind the Wi-Fi fence (docs/084-wifi-memory.md, "Wi-Fi never writes flash")."""
+behind the Wi-Fi fence (docs/UPDATES.md, "Wi-Fi never writes flash")."""
 import importlib.util
 from pathlib import Path
 import sys

@@ -1,5 +1,6 @@
 """Fault controls for the linked image keeping FreeRTOS's timer task and
-Arduino's RGB LED path out (docs/CODE_HEALTH.md, record 72)."""
+Arduino's RGB LED path out: the X3 has no RGB LED, and the timer task that
+path pulled in took its stack and TCB from the heap."""
 import importlib.util
 from pathlib import Path
 import sys

@@ -1,6 +1,6 @@
 name: Install page
 
-# The install page (installer/, docs/092-install-page.md) on the public
+# The install page (installer/, installer/README.md) on the public
 # repository's GitHub Pages. A browser cannot download a release asset (GitHub
 # sends no CORS header), so the page carries its own copy of the latest
 # release's newt.bin, newt.manifest and NOTICES.txt, and its build refuses a

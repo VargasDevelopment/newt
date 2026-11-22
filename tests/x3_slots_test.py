@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The X3 app-slot identity rule (docs/077, docs/082 section 1): tools/x3_slots.py
+"""The X3 app-slot identity rule (docs/UPDATES.md, "Slots"): tools/x3_slots.py
 on the bench and main layouts, the layouts without another firmware, the
 repair and every refusal."""
 from pathlib import Path

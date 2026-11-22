@@ -23,5 +23,5 @@ Preservation does not introduce a separate license grant. The `.txt` source
 archives are outside the firmware and host build inputs; they do not change
 the deployed baseline or the current application.
 
-The activation/exit requirement and proposed placement are recorded in
-[design requirements](../../docs/design-requirements.md#first-boot-character-easter-egg).
+In the firmware, five Select presses on About's Version row open it, and
+Back returns to About (`rust/core/src/app.rs`).

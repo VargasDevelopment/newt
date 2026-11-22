@@ -24,10 +24,10 @@ const OTA_0 = 0x10;
 const OTA_1 = 0x11;
 const OTA_DATA = 0;
 
-// The X3 factory table (firmware/x3_existing_partitions.csv). Newt builds
+// The X3 factory table (rust/firmware/x3_existing_partitions.csv). Newt builds
 // against it and bench_flash.py checks the bench unit holds exactly it.
 // The X4-shaped table some X3s may carry (app1 at 0x650000) is not here:
-// nobody has installed Newt on one yet (docs/092-install-page.md).
+// nobody has installed Newt on one yet (installer/README.md, "Known tables").
 export const X3_TABLE: readonly Partition[] = [
   { type: DATA, subtype: 0x02, offset: 0x9000, size: 0x5000, label: 'nvs', flags: 0 },
   { type: DATA, subtype: OTA_DATA, offset: 0xe000, size: 0x2000, label: 'otadata', flags: 0 },

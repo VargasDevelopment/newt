@@ -208,7 +208,7 @@ def install(device, session, identity, candidate, step, unit, action='install', 
     step('selection-md5', lambda: verify_md5(device, OTADATA, expected))
     # The port stays open through the reset and the handshake: reopening it
     # resets the X3 again, and a second boot before Newt confirms the new
-    # selection makes the rollback bootloader abort it (docs/077).
+    # selection makes the rollback bootloader abort it (docs/UPDATES.md, "Slots").
     step('reset', device.reset)
     written = ([fallback[0]] if fallback else []) + ([] if boot_only else [start]) + \
         ([selection[0]] if selection else [])

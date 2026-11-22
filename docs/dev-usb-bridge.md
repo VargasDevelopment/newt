@@ -1,6 +1,6 @@
 # Development USB test bridge
 
-The isolated USB component was based on `808e908`; its Frosted bring-up is historical. Stage is now the only Home. `NEWT_DEV_USB` defaults to zero in source, excluding the protocol and its storage; the one firmware build (regional DEV, owner decision 2026-10-26) sets it, so every current Newt image carries the bridge. It is not an installed capability or permission to connect/flash hardware.
+`NEWT_DEV_USB` defaults to zero in source, excluding the protocol and its storage; the one firmware build (regional DEV) sets it, so every current Newt image carries the bridge. It is not an installed capability or permission to connect/flash hardware.
 
 The bridge accepts only a handshake, semantic button events, read-only status/boot diagnostics, and bounded capture of the existing logical framebuffer. Main remains the sole app/display owner; the physical polling task retains InputManager ownership. Synthetic and physical events share the queue. Responses distinguish accepted, consumed, and render-return completion. Render-return does not prove physical panel appearance or waveform quality.
 
@@ -12,7 +12,7 @@ A capture lease uses the existing frame, expires after 1.5 seconds without a val
 
 An active lease's original deadline cannot renew through FRAME. Expiry blocks reacquisition until main has given its normal periodic work an opportunity, closing capture-driven housekeeping starvation.
 
-Before any separately approved deployment, disclose the development flag, exact image/source, these capabilities and session lifetime. The installed M1 image is `f6c6792bf8e4-regional-experiment`, with DIAG enabled. Earlier owner-controlled reading sleep/wake passed with USB connected; a later battery-only cycle returned Home. Resume reliability remains open; additional device access remains on hold.
+Before any separately approved deployment, disclose the development flag, exact image/source, these capabilities and session lifetime.
 
 ## Build
 
@@ -21,7 +21,7 @@ python3 tools/check.py
 python3 tools/firmware-build.py --clean
 ```
 
-The one firmware build includes the bridge and writes `.pio/regional-dev-usb/` output with the approved toolchain, SDK and preservation guard. `--dev-usb` is retired. Neither command uploads. The C++ host simulation (`simulate`) was deleted with the C++ Newt in NEWT-90; a Rust host fixture is a follow-up.
+The one firmware build includes the bridge and writes `.pio/regional-dev-usb/` output with the approved toolchain, SDK and preservation guard. `--dev-usb` is retired. Neither command uploads. There is no host simulation mode.
 
 After a separately approved installation and explicit authorization to access the selected device, the live runner can use the already approved project-local pyserial 3.5:
 
@@ -33,7 +33,7 @@ After a separately approved installation and explicit authorization to access th
 
 The expected build must match the actual approved image; a future combined image has its own identity. Live mode never discovers or guesses a port, uses URL/network transports, flashes/resets firmware, or retries a press with unknown completion. It constructs an unopened Serial instance and sets DTR/RTS false BEFORE opening. OS/adapter behavior can still transiently affect control lines; physical verification remains necessary. It clears only the host receive buffer, validates the exact build/capabilities, and uses the same bounded codec as simulation. Deadlines cover write and receive together; capture has a 14-second host total limit under the device's 15-second lease. At most 32 presses are accepted per invocation. Live sleep must be the last command and cannot be followed by capture; it reports requested entry, then closes, with physical wake required.
 
-Fake-driver tests exercise the live transport against a protocol fixture, including fragmented reads, line states before open, wrong-build refusal, short writes, deadlines and no retries. These tests do not establish actual USB control-line transitions. A previous authorized diagnostic attachment coincided with a visible return to Home; its exact cause remains unproven. No device was accessed while implementing the host freshness correction.
+Fake-driver tests exercise the live transport against a protocol fixture, including fragmented reads, line states before open, wrong-build refusal, short writes, deadlines and no retries. These tests do not establish actual USB control-line transitions.
 
 The client verifies two HELLO replies with the same boot/build/capabilities and
 exactly advancing sessions, then proves a current response using read-only STATUS
@@ -61,20 +61,6 @@ Replies begin `!N1 BOOT SESSION REQUEST`, end with ` *CRC32` and LF, and fit the
 FRAME identifies logical PBM1 dimensions, orientation, one-black polarity, generation, whole-frame CRC32, 160-byte chunk limit and last blocking display-call duration. CHUNK replies carry the same generation/offset and hex data, protected by record CRC. The host must validate every record, every offset/generation, the full byte count and whole-frame checksum. There is no framebuffer copy and no async-refresh path in this firmware. RENDER_RETURN measures the SDK call returning; BUSY wiring/controller behavior and physical appearance still require hardware validation.
 
 The device adapter explicitly declares whether its retained frame is a complete monochrome image; unsupported formats fail FRAME. The combined firmware sets that capability false after an actual gray Home paint. FRAME fails with unsupported-format there; other complete monochrome screens remain capturable. A truthful multi-plane Home capture is future work. A last gray-selector plane must never be advertised as the complete image.
-
-## Standalone USB component evidence
-
-These measurements are historical for the isolated USB component. The combined Home candidate has its own `artifacts/frosted-usb-verification.json` receipt and larger image.
-
-Compiled source checkpoint: `78c5b1fe6f371e63b2653bed2ba0c81667095014`. Both ordinary and explicitly enabled development images compile with the pinned approved C3 tools and pass the actual linked NVS preservation guard. Development HELLO carries the clean source identity `78c5b1fe6f37`. [Verification receipt](../artifacts/dev-usb-verification.json) records exact binary/ELF/map hashes and private local archive paths.
-
-Ordinary image: **658,864 bytes**; development image: **664,048 bytes**. Linked data RAM increases **624 bytes** and the existing queue's payload storage increases **224 bytes**, for **848 bytes** of persistent state/storage. Linked IRAM text increases **48 bytes**. There is no additional task, framebuffer or authored protocol heap-allocation call. Existing CDC queues, SDK allocations and existing-task stack are separate. Compiler stack estimates include **592 bytes** for command processing and **48 bytes** for polling; they are not physical stack-high-water measurements.
-
-Three fresh bounded correctness review rounds and a separate strict maintainability review finished clean. Earlier concrete findings were closed by timing-faithful transfer tests, live connection/expiry consumption gating, the canonical manual-takeover boundary and nonrenewing capture/housekeeping gating. The complete host ASan/UBSan gate, exact chunk reconstruction, damaged-record framing, queue/full/session/manual-takeover tests and default-symbol exclusion pass. [Host capture](../artifacts/dev-usb-host-capture.png) is the shared UI rendered through the real protocol fixture, with zero physical refresh timing. No USB device, firmware flash, SD, credentials, network deployment or publication was accessed.
-
-The source checkpoint is ready for a separate deployment review. The live host transport is implemented and fake-driver tested; actual host USB behavior, throughput/backpressure, button debounce, controller BUSY behavior, panel appearance, held-power handling, sleep/wake and actual heap/stack/power measurements remain hardware work. Live commands require explicit port/build selection and were never executed against hardware. The development binary's unauthenticated local USB capabilities and persistence described above must be disclosed before choosing to install it.
-
-Live client source checkpoint: `7b357cf2d228b5eb20b9c014e9b87746930e4b92`; firmware is unchanged from the compiled checkpoint above. Two focused transport review rounds finished clean after fixing pyserial's size-fill timeout behavior and strengthening the fake driver to reproduce it. The client now waits for one byte and drains only bytes already available, avoiding a fill timeout for every short frame reply. The complete host gate, including the fake live driver, passed at this source checkpoint. No actual serial port was opened.
 
 ## Firmware rows and listening
 
@@ -138,20 +124,11 @@ grows from 380 to 464 bytes. No additional command or multipart diagnostic is us
 The firmware's separate aggregate RAM assertion also counts the eight-byte device
 fingerprint and keeps its existing 1 KiB bound; the core bridge/queue subtotal is
 not a complete firmware RAM measurement.
-On the combined reader/Library C3 checkpoint the named firmware aggregate is
-1,016 bytes. Its scope excludes the SDK's additional 28-byte `ESP_EFUSE_MAC`
-descriptor. Complete linked DEV-minus-normal SRAM is 816 bytes; with the
-separately modeled 224-byte runtime queue increase that is 1,040 bytes before
-allocator/queue metadata and task peaks. The existing named 1 KiB assertion
-remains unchanged; it does not promise complete runtime DEV cost below 1 KiB.
-Record status codes followed `SleepRecordStatus` in the C++ `firmware/retained_state.h` (deleted in NEWT-90; see git history).
 
 DIAG calls only the diagnostics adapter. It does not request a framebuffer, enqueue
 an event, save progress or renew the capture deadline. The dev-only snapshot has no
-normal-firmware storage/symbols. It is evidence for the next owner-controlled physical
-sleep/wake. Immutable boot facts and live reader fields must be interpreted
-separately; current host receipts identify the observation session. The owner's
-independent visible sleep/wake acceptance does not supply an instrumented anchor.
+normal-firmware storage/symbols. Immutable boot facts and live reader fields must
+be interpreted separately; host receipts identify the observation session.
 
 ## One Home build
 
@@ -166,6 +143,4 @@ sample progress). Selected SD books, per-book progress/statistics, resume intent
 Home clock zone and format use SD records. The retired `newt_home` namespace
 and `/Newt/State/newt-home.nrs`, if present, are ignored and left intact. They
 are Newt historical data, never a foreign-storage error or an erase target.
-There is no new Home write at startup. Removing its RTC mirror reduces the
-expected aggregate RTC allocation from 304 to 300 B; native measurement and
-separate physical power checks remain required.
+There is no Home write at startup.
