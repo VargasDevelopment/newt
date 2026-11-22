@@ -99,13 +99,12 @@ fn version(value: &[u8]) -> bool {
     }
     parts.next().is_none()
 }
-/// Validate the complete wire before touching the caller's prior definition.
-/// This avoids materializing a second whole definition on the reader stack.
-pub fn decode(bytes: Option<&[u8]>, out: &mut Definition) -> bool {
-    let Some(b) = bytes else {
-        return false;
-    };
-    if b.len() != WIRE_BYTES || &b[..8] != b"NEWTAPP1" {
+// The installed-app record carries exactly one wire.
+const _: () = assert!(WIRE_BYTES == newt_core::app_store::PACKAGE_BYTES);
+/// Whether `b` is a complete, canonical NEWTAPP1 wire. It reads only the
+/// wire, so a caller can validate without a whole definition on its stack.
+pub fn check(b: &[u8; WIRE_BYTES]) -> bool {
+    if &b[..8] != b"NEWTAPP1" {
         return false;
     }
     if !field(&b[8..41], true)
@@ -135,6 +134,18 @@ pub fn decode(bytes: Option<&[u8]>, out: &mut Definition) -> bool {
             return false;
         }
     }
+    true
+}
+/// Validate the complete wire before touching the caller's prior definition.
+/// This avoids materializing a second whole definition on the reader stack.
+pub fn decode(bytes: Option<&[u8]>, out: &mut Definition) -> bool {
+    let Some(b) = bytes.and_then(|b| <&[u8; WIRE_BYTES]>::try_from(b).ok()) else {
+        return false;
+    };
+    if !check(b) {
+        return false;
+    }
+    let count = usize::from(b[317]);
     out.id.copy_from_slice(&b[8..41]);
     out.version.copy_from_slice(&b[41..58]);
     out.title.copy_from_slice(&b[58..91]);

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """The installed-app record loader, characterized (NEWT-102).
 
-rust/tests/app_store/record.rs drives the firmware's own load_boot over a
-backend that answers like NvsBlobBackend and a host SHA-256 that can fail. It
-pins today's validation order and the Failed, then Unsupported, then
-selection precedence. This runs it in a scratch copy of rust/. Each negative
+rust/tests/app_store/record.rs drives the firmware's own load_boot (over
+newt_core::app_store) with a backend that answers like NvsBlobBackend and a
+host SHA-256 that can fail. It pins the validation order and the Failed, then
+Unsupported, then selection precedence, and holds Tiny's check to decode.
+This runs it in a scratch copy of rust/. Each negative
 control then breaks one rule there and expects the named test to fail, never
 to fail to compile.
 """
@@ -21,32 +22,37 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 from gate_tier import negative_controls
 
+STORE = 'core/src/app_store.rs'
 LOADER = 'firmware/app_runtime/package.rs'
-TESTS = 11
+TINY = 'tiny-app/src/lib.rs'
+TESTS = 12
+MALFORMED = 'a_malformed_package_loses_to_its_older_valid_peer'
+DAMAGE = 'damage_without_a_valid_slot_is_unavailable'
+FAILED = "    if first == Slot::Failed || second == Slot::Failed {\n        return Load::Failed;\n    }\n"
+UNSUPPORTED = "    if first == Slot::Unsupported || second == Slot::Unsupported {\n        return Load::Unsupported;\n    }\n"
+FAILED_FIRST, UNSUPPORTED_FIRST = FAILED + UNSUPPORTED, UNSUPPORTED + FAILED
 # (what breaks, file under rust/, its text, the broken text, the test that must fail)
 CONTROLS = (
-    ("Tiny's decoder is not consulted", LOADER, "digest != expected || !decode(Some(bytes), out)",
-     "digest != expected", 'a_malformed_package_loses_to_its_older_valid_peer'),
-    ('the record hash is not compared', LOADER, "if digest != bytes[HASH_OFFSET..] { return Slot::Corrupt; }", "",
-     'damage_without_a_valid_slot_is_unavailable'),
-    ('a hash provider failure reads as damage', LOADER,
-     "if !crate::reader_hash::package_hash(&bytes[..HASH_OFFSET], &mut digest) { return Slot::Failed; }",
-     "if !crate::reader_hash::package_hash(&bytes[..HASH_OFFSET], &mut digest) { return Slot::Corrupt; }",
+    ("core ignores the decoder's verdict", STORE, "digest != expected || !payload.accepts(wire)",
+     "digest != expected", MALFORMED),
+    ("the firmware port accepts every wire", LOADER, "-> bool { check(wire) }", "-> bool { let _ = wire; true }",
+     MALFORMED),
+    ('the record hash is not compared', STORE,
+     "    if digest != bytes[HASH_AT..] {\n        return Slot::Corrupt;\n    }\n", "", DAMAGE),
+    ('a hash provider failure reads as damage', STORE,
+     "if !payload.hash(&bytes[..HASH_AT], &mut digest) {\n        return Slot::Failed;",
+     "if !payload.hash(&bytes[..HASH_AT], &mut digest) {\n        return Slot::Corrupt;",
      'a_hash_provider_failure_is_failed_even_beside_a_valid_slot'),
-    ('Unsupported outranks Failed', LOADER,
-     "    if first == Slot::Failed || second == Slot::Failed { return Status::Failed; }\n"
-     "    if first == Slot::Unsupported || second == Slot::Unsupported { return Status::Unsupported; }",
-     "    if first == Slot::Unsupported || second == Slot::Unsupported { return Status::Unsupported; }\n"
-     "    if first == Slot::Failed || second == Slot::Failed { return Status::Failed; }",
+    ('Unsupported outranks Failed', STORE, FAILED_FIRST, UNSUPPORTED_FIRST,
      'failed_outranks_unsupported_which_outranks_selection'),
-    ('equal generations with different bytes are not a conflict', LOADER,
-     "0 if self.bytes[0] != self.bytes[1] => return Status::Ambiguous,", "",
-     'conflicting_generations_are_ambiguous'),
-    ('generations compare as plain numbers', LOADER, "delta => u32::from(delta >= 0x8000_0000),",
-     "_ => u32::from(self.generations[1] > self.generations[0]),", 'generations_use_serial_order'),
-    ('damage beside absence loads the bundled app', LOADER, "(Slot::Missing, Slot::Missing) => return Status::Empty,",
-     "(Slot::Missing | Slot::Corrupt, Slot::Missing | Slot::Corrupt) => return Status::Empty,",
-     'damage_without_a_valid_slot_is_unavailable'),
+    ('equal generations with different bytes are not a conflict', STORE,
+     "0 if slots[0] != slots[1] => Load::Ambiguous,", "", 'conflicting_generations_are_ambiguous'),
+    ('generations compare as plain numbers', STORE, "delta => Load::Selected(usize::from(delta >= 0x8000_0000)),",
+     "_ => Load::Selected(usize::from(b > a)),", 'generations_use_serial_order'),
+    ('damage beside absence loads the bundled app', STORE, "(Slot::Missing, Slot::Missing) => Load::Empty,",
+     "(Slot::Missing | Slot::Corrupt, Slot::Missing | Slot::Corrupt) => Load::Empty,", DAMAGE),
+    ("Tiny's check skips a card beyond the count", TINY, "if b[at..at + 99].iter().any(|&v| v != 0) {",
+     "if false {", 'check_agrees_with_decode_over_a_wire_corpus'),
 )
 
 

@@ -2,6 +2,7 @@
 //! Characterizes the installed-app record loader (NVS `newt_apps`, slot0 and
 //! slot1) through the firmware's own `load_boot`, over a backend that answers
 //! like `NvsBlobBackend` and a host SHA-256 that can be made to fail.
+//! It also holds Tiny's `check` to `decode`, whose verdict the port reports.
 //! tests/app_store_test.py runs it with its negative controls.
 #[path = "../../firmware/app_runtime/package.rs"]
 mod package;
@@ -21,7 +22,7 @@ mod reader_hash {
 }
 
 use newt_core::durable::{Backend, BlobRead, DurableWrite, SLOT_KEYS, StorageOpen};
-use newt_tiny_app::{Definition, WIRE_BYTES, decode, pause::BUILTIN_BYTES};
+use newt_tiny_app::{Definition, WIRE_BYTES, check, decode, pause::BUILTIN_BYTES};
 
 const CORRUPT: &str = "The saved app did not pass its integrity check.";
 const UNSUPPORTED: &str = "The saved app needs a different Newt package version.";
@@ -256,6 +257,36 @@ fn blob_sizes_and_reads() {
     assert_eq!(boot_slots(Blob::RereadFails(short), Blob::Missing), Err(FAILED));
     // The record version is read even from a short blob.
     assert_eq!(boot_slots(Blob::Bytes(b"NEWTGEN2".to_vec()), Blob::Missing), Err(UNSUPPORTED));
+}
+
+#[test]
+fn check_agrees_with_decode_over_a_wire_corpus() {
+    // (what changes, the byte, its new value, whether the wire stays valid)
+    let corpus: [(&str, usize, u8, bool); 12] = [
+        ("nothing", 58, b'P', true),
+        ("another title", 58, b'Q', true),
+        ("a newer package version", 7, b'2', false),
+        ("an id that starts upper case", 8, b'P', false),
+        ("a version that is not x.y.z", 42, b'x', false),
+        ("a title that ends before it starts", 58, 0, false),
+        ("a control byte in the subtitle", 91, 7, false),
+        ("no cards", 317, 0, false),
+        ("four cards", 317, 4, false),
+        ("a third card beyond the count", 317, 2, false),
+        ("an unknown card action", 318 + 98, 4, false),
+        ("no card action", 318 + 98, 0, false),
+    ];
+    for (change, at, value, valid) in corpus {
+        let mut wire = *BUILTIN_BYTES;
+        wire[at] = value;
+        let mut definition = Definition::default();
+        assert_eq!(check(&wire), valid, "check: {change}");
+        assert_eq!(decode(Some(&wire), &mut definition), valid, "decode: {change}");
+    }
+    let mut unterminated = *BUILTIN_BYTES;
+    unterminated[8..41].fill(b'a');
+    assert!(!check(&unterminated) && !decode(Some(&unterminated), &mut Definition::default()));
+    assert!(!decode(Some(&BUILTIN_BYTES[1..]), &mut Definition::default()));
 }
 
 /// FIPS 180-4 SHA-256, as in slot_vectors: each packet keeps its own inputs,
