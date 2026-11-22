@@ -15,6 +15,8 @@ on:
   # The nightly full tier (docs/CI.md, "Tiers").
   schedule:
     - cron: '47 9 * * *'
+  # A manual run on main gates main's tip, then publishes a nightly test build.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -284,3 +286,161 @@ jobs:
           export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= \
             GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1='!gh auth git-credential'
           python3 -B tools/release_tag.py --ci-run "$GITHUB_RUN_ID" "$EXPECTED_COMMIT"
+
+  # A nightly test build (docs/RELEASING.md, "Nightly test builds"), once this
+  # run's gate passed on main: stamp main's tip with the nightly version, build
+  # it as a release is built and publish it as a GitHub pre-release, which only
+  # devices with Test builds on read. A push that changes nothing the image is
+  # built from since the last published nightly publishes none; a manual run
+  # always does. A run whose commit is no longer main's tip publishes nothing.
+  nightly:
+    needs: gate
+    if: >-
+      success() && toJSON(github.event.repository.private) == 'false' &&
+      github.repository == 'VargasDevelopment/newt' &&
+      github.ref == 'refs/heads/main' && github.actor == 'VargasDevelopment' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    # One at a time, so two nightlies never take the same number. Every queued
+    # run waits its turn (queue: max) instead of a later-queued, possibly stale
+    # run replacing the pending one; each stale run then skips at its tip check.
+    concurrency:
+      group: nightly
+      cancel-in-progress: false
+      queue: max
+    permissions:
+      contents: write # It pushes exactly one nightly tag and publishes its pre-release.
+    # Only the stamp step (release reads) and the publish step get the token; the build never does.
+    env:
+      EXPECTED_COMMIT: ${{ github.sha }}
+      NEWT_RUST_ACQUISITION_APPROVED: ${{ vars.NEWT_RUST_ACQUISITION_APPROVED }}
+      PYTHONDONTWRITEBYTECODE: '1'
+      OPENSSL_CONF: /dev/null
+      UV_CACHE_DIR: ${{ github.workspace }}/.build/python-bootstrap/cache
+      UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.build/python-bootstrap/python
+      UV_PYTHON_BIN_DIR: ${{ github.workspace }}/.build/python-bootstrap/bin
+      UV_TOOL_DIR: ${{ github.workspace }}/.build/python-bootstrap/tools
+      UV_TOOL_BIN_DIR: ${{ github.workspace }}/.build/python-bootstrap/tool-bin
+    # The setup steps are the check job's own (tests/public_ci_test.py); this job saves no cache.
+    steps:
+      - name: Check out the exact commit, complete release history and release tags
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ env.EXPECTED_COMMIT }}
+          fetch-depth: 0
+          # The release gate refuses work built on an untagged release, so it reads tags.
+          fetch-tags: true
+          persist-credentials: false
+          set-safe-directory: false
+      - name: Check out official pinned FreeInk without recursive asset submodules
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          repository: Free-Ink/freeink-sdk
+          ref: cd6f5b831c8fad899723b6d406586f00c575f021
+          path: vendor/freeink-sdk
+          persist-credentials: false
+          set-safe-directory: false
+      - name: Preserve canonical official SDK origin spelling
+        run: git -C vendor/freeink-sdk remote set-url origin https://github.com/Free-Ink/freeink-sdk.git
+      - name: Locked uv for workspace-local Python
+        shell: bash
+        run: |
+          set -euo pipefail
+          wheel="$RUNNER_TEMP/uv.whl"
+          curl --fail --silent --show-error --location --proto '=https' --output "$wheel" \
+            https://files.pythonhosted.org/packages/c6/2b/8700206efe193fc279fe32c11ab9a502c8364e7882e3f6f36a00a6cc8af7/uv-0.12.21-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+          echo "0083454d25479f1cd03547c8c98c235b4af92bd07f0e61c3eae5d1cbb0c1834c  $wheel" | sha256sum --check --strict
+          mkdir -p "$UV_TOOL_BIN_DIR"
+          unzip -p "$wheel" uv-0.12.21.data/scripts/uv > "$UV_TOOL_BIN_DIR/uv"
+          chmod 755 "$UV_TOOL_BIN_DIR/uv"
+          test "$("$UV_TOOL_BIN_DIR/uv" --no-config --version)" = 'uv 0.12.21 (x86_64-unknown-linux-gnu)'
+          echo "$UV_TOOL_BIN_DIR" >> "$GITHUB_PATH"
+      - name: Exact managed Python and real runtime checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e "$UV_PYTHON_INSTALL_DIR"
+          # uv 0.12.21 pins the baseline 20240909 CPython 3.12.6 archive SHA256:
+          # b080463e4f0c452e592cdac1ca97936a6a19bb3d9a64da669a50ca843fce0108
+          request=cpython-3.12.6-linux-x86_64-gnu
+          uv --no-config python install --no-bin "$request" \
+            --mirror https://github.com/astral-sh/python-build-standalone/releases/download
+          python_path="$(uv --no-config python find --managed-python --no-python-downloads "$request")"
+          "$python_path" -I -B - <<'PYTHON'
+          import bz2, ctypes, lzma, os, pathlib, sqlite3, ssl, subprocess, sys, venv, zlib
+          assert sys.version_info[:3] == (3, 12, 6)
+          root = pathlib.Path(os.environ['UV_PYTHON_INSTALL_DIR']).resolve()
+          assert pathlib.Path(sys.executable).resolve().is_relative_to(root)
+          probe = pathlib.Path(os.environ['GITHUB_WORKSPACE']) / '.build/python-bootstrap/probe-venv'
+          venv.EnvBuilder(with_pip=True, symlinks=True).create(probe)
+          subprocess.run([str(probe / 'bin/python'), '-I', '-B', '-c',
+                          'import ssl, sys, venv; assert sys.version_info[:3] == (3, 12, 6)'], check=True)
+          print('PASS exact workspace-local Python 3.12.6, stdlib and venv:', sys.executable)
+          PYTHON
+          test -x "$(dirname "$python_path")/python3"
+          echo "$(dirname "$python_path")" >> "$GITHUB_PATH"
+      - name: Reject unavailable runtime or changed source before acquisition
+        run: python3 -B tools/ci_environment.py --check-host
+      - name: Which tier this run takes (tools/gate_tier.py)
+        id: tier
+        shell: bash
+        run: |
+          set -euo pipefail
+          tier="$(python3 -B tools/gate_tier.py --ci-tier "$EXPECTED_COMMIT")"
+          echo "tier=$tier" >> "$GITHUB_OUTPUT"
+      - name: Restore the toolchains a fresh run made from these locks
+        id: trees
+        if: steps.tier.outputs.tier != 'full'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .toolchain
+            !.toolchain/downloads
+            .release-venv
+            .build/ci-toolchain.json
+          key: toolchains-${{ hashFiles('docs/toolchain-linux-lock.json', '.github/ci-release-linux-lock.json', '.github/ci-tool-linux-lock.json', 'rust/toolchain.json', 'tools/rust-toolchain.py', 'tools/ci_toolchain.py', 'tools/ci_environment.py', 'tools/ci_persist.py', 'tools/ci_hosted.py') }}
+      - name: Restore the raw locked archives
+        id: raw
+        if: steps.trees.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .toolchain/downloads
+            .build/ci-downloads
+            .build/ci-rust-downloads
+          key: raw-${{ hashFiles('docs/toolchain-linux-lock.json', '.github/ci-release-linux-lock.json', '.github/ci-tool-linux-lock.json', 'rust/toolchain.json', 'tools/rust-toolchain.py') }}
+      - name: Locked native, release, LLVM and static OpenSSL toolchains
+        run: python3 -B tools/ci_hosted.py --expected-commit "$EXPECTED_COMMIT"
+      - name: Stamp main's tip with the nightly version
+        id: stamp
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: |
+          set -euo pipefail
+          force=()
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then force=(--force); fi
+          python3 -B tools/nightly.py stamp --repository "$GITHUB_REPOSITORY" "${force[@]}" >> "$GITHUB_OUTPUT"
+      - name: Build the stamped commit as a release is built
+        if: steps.stamp.outputs.version != ''
+        run: |
+          python3 -B tools/firmware-build.py --clean
+          python3 -B tools/firmware-build.py --clean --health-report
+      # release_publish.py makes every check, rechecks main's tip, then pushes the
+      # one tag and publishes; it publishes nothing if main has moved on.
+      - name: Push the nightly tag and publish its pre-release
+        if: steps.stamp.outputs.version != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # As in the release-tag job, Git gets the token from gh in this step only.
+        run: |
+          set -euo pipefail
+          export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= \
+            GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1='!gh auth git-credential'
+          python3 -B tools/release_publish.py --prerelease --publish

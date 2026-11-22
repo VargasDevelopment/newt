@@ -111,8 +111,9 @@ or CI duration.
 same gate on GitHub-hosted runners (4 vCPU, 16 GB RAM, about 14 GB free disk),
 split into parallel jobs, so a pull request's checks finish in about 10
 minutes. It runs on every pull request into `main` (forks included; the gate
-compares a candidate with `origin/main`), every push to `main` and nightly;
-there is no `pull_request_target` and no manual trigger.
+compares a candidate with `origin/main`), every push to `main` and nightly,
+and by hand (`workflow_dispatch`, the full tier); there is no
+`pull_request_target`.
 
 **Which repository runs what.** Both repositories are named
 `VargasDevelopment/newt`, so the guard is visibility, never the name. Each
@@ -129,9 +130,12 @@ job requires the name `VargasDevelopment/newt`); that is intended, because it
 becomes read-only history.
 
 **Permissions.** The token is read-only (`contents: read`) for every job but
-`release-tag`, which runs only on an owner push to `main` after the `gate` job
-passed and gets `contents: write` to push one release tag
-(`tools/release_tag.py`, which accepts either workflow's gate). Actions are
+two, which run only on `main` for the owner after the `gate` job passed. On a
+push, `release-tag` gets `contents: write` to push one release tag
+(`tools/release_tag.py`, which accepts either workflow's gate). On a push or a
+manual run, `nightly` gets `contents: write` to push one nightly tag and
+publish its pre-release
+([RELEASING.md](RELEASING.md#nightly-test-builds)). Actions are
 first-party `actions/*` only, pinned to full SHAs in
 `.github/ci-tool-linux-lock.json`. uv comes from the wheel
 `docs/toolchain-linux-lock.json` pins (checked against its SHA-256), not from
@@ -327,11 +331,16 @@ prevent exact software-proof reuse; this is not a hermetic attestation system.
 
 ## Rollout and acceptance
 
-The workflow default and the gate job have `contents: read`. The one write
-permission is the small `release-tag` job's `contents: write` (with
-`actions: read`), so CI tags each release itself and nobody has to remember
-([RELEASING.md](RELEASING.md#tag-the-release)). That job runs only in a push
-run, after its gate job passed, on the same runner with the same guards. It
+The workflow default and the gate job have `contents: read`. Public CI has two
+write permissions, each a job's own `contents: write`. The small `release-tag`
+job (with `actions: read`) tags each release, so nobody has to remember
+([RELEASING.md](RELEASING.md#tag-the-release)). The `nightly` job pushes one
+nightly tag and publishes its pre-release; its token reaches only the step
+that stamps (to read releases) and, after the build, the step that publishes,
+which gets it the same way as below
+([RELEASING.md](RELEASING.md#nightly-test-builds)). The `release-tag` job runs
+only in a push run, after its gate job passed, on the same runner with the
+same guards. It
 runs no gate or build: only the standard-library `tools/release_tag.py`, with
 the runner's `python3`, `git` and `gh`. Its token lasts only while the job
 runs. Apart from the pinned checkout action's fetch, only the tag step gets it,
@@ -340,7 +349,8 @@ helper the runner's own config may hold, then gets the token from
 `gh auth git-credential`, so no stored helper can save it or answer instead. With that token, code in the step could push any
 branch or tag here; the tool pushes exactly one new tag and never moves, forces
 or deletes one. There is no other new secret, artifact
-upload, release, deployment or setting change. The public pinned SDK requires
+upload, release, deployment or setting change; the nightly pre-release is the
+one release CI publishes. The public pinned SDK requires
 no extra token. A newer push or nightly run cancels an older push or nightly
 run's gate job. It never cancels a release merge's push run: a first small job
 (`tools/gate_tier.py --release-push`) puts that run's gate job in a group of its

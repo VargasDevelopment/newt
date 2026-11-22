@@ -299,6 +299,14 @@ Check joins once (`rust/firmware/update_online_runtime.rs`) and reads
 `LATEST_RELEASE_URL` in `rust/core/src/update_online.rs`: GitHub's
 `/releases/latest`, no token, which skips drafts and pre-releases.
 
+**Test builds.** With the hidden Test builds setting on, the check reads
+`/releases?per_page=1` instead: the newest release, pre-releases included.
+CI publishes a nightly test build of `main` there as a pre-release,
+`<next>-dev.YYYYMMDD.N` ([RELEASING](RELEASING.md#nightly-test-builds)),
+with the same assets and checks as a release. SemVer orders it after the
+version it builds on, so a later nightly, or a release above it, replaces it.
+Turning the setting off keeps the nightly until a newer release comes.
+
 **Assets.** A release has three: `newt.bin`, `newt.manifest` and
 `NOTICES.txt` (`tools/release_publish.py`;
 [RELEASING](RELEASING.md#publish-a-github-release)). The device reads only

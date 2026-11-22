@@ -20,7 +20,11 @@ SNAPSHOT_TRAILER = "Newt-Snapshot"
 SNAPSHOT_VALUE = re.compile(r"([0-9a-f]{40}) sha256:([0-9a-f]{64})")
 FILE_MODES = ("100644", "100755")
 # The supported firmware release vocabulary; SemVer build metadata stays in receipts.
-SEMVER = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:alpha|beta|rc)\.(?:0|[1-9][0-9]*))?"
+CORE = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+SEMVER = CORE + r"(?:-(?:alpha|beta|rc)\.(?:0|[1-9][0-9]*))?"
+# A nightly test build (tools/nightly.py): <next>-dev.YYYYMMDD.N. CI stamps it on
+# its own commit off main, so no branch ever carries it.
+NIGHTLY = CORE + r"-dev\.[0-9]{8}\.[1-9][0-9]*"
 VERSION_HEADER = "rust/firmware/native/firmware_version.h"
 # Its earlier home: commits before the C++ removal (NEWT-90) bind this path.
 HISTORICAL_VERSION_HEADER = "include/newt/firmware_version.h"
@@ -31,7 +35,7 @@ TAG_COMMAND = "python3 -B tools/release_tag.py"
 
 def header_version(text):
     versions = re.findall(r'^#define NEWT_FIRMWARE_VERSION "([^"]+)"$', text, re.MULTILINE)
-    if len(versions) != 1 or not re.fullmatch(SEMVER, versions[0]):
+    if len(versions) != 1 or not (re.fullmatch(SEMVER, versions[0]) or re.fullmatch(NIGHTLY, versions[0])):
         raise ValueError("Invalid or ambiguous firmware SemVer")
     return versions[0]
 
@@ -255,7 +259,8 @@ def check_commits(root=ROOT, rev_range=None):
 def gate(root=ROOT, rev_range=None):
     """The release gate. A review range's end is the work it guards; if that end
     is a merge, it is a planned merge onto origin/main."""
-    check_version(root)
+    if re.fullmatch(NIGHTLY, check_version(root)):
+        raise ValueError("A nightly version is CI's stamp on its own commit; never commit it to a branch")
     tag = check_release_tagged(root, (rev_range or "").rpartition("..")[2] or "HEAD", rev_range is not None)
     release_python(root)
     check_commits(root, rev_range)

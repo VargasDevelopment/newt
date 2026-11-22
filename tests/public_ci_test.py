@@ -1,7 +1,8 @@
 """The public workflow (.github/workflows/public-ci.yml): GitHub-hosted runners
 only, jobs only in a public repository, first-party actions pinned to commits,
-read-only but for one tag job; its host shards, which together run exactly the
-tier's plan; and the hosted toolchain cache, never trusted over its check."""
+read-only but for the tag job and the nightly job; its host shards, which
+together run exactly the tier's plan; and the hosted toolchain cache, never
+trusted over its check."""
 import json
 import os
 from pathlib import Path
@@ -54,24 +55,28 @@ class PublicWorkflow(unittest.TestCase):
         return next(step for step in self.check['steps'] if step.get('name') == name)
 
     def test_triggers_permissions_and_github_hosted_runners_only(self):
-        self.assertEqual(set(self.workflow['on']), {'pull_request', 'push', 'schedule'})
+        self.assertEqual(set(self.workflow['on']), {'pull_request', 'push', 'schedule', 'workflow_dispatch'})
+        self.assertEqual(self.workflow['on']['workflow_dispatch'], '')  # no inputs
         self.assertEqual(self.workflow['on']['push'], {'branches': ['main']})
         # The gate compares a candidate with origin/main, so only pull requests into main.
         self.assertEqual(self.workflow['on']['pull_request'], {'branches': ['main']})
         self.assertEqual(len(self.workflow['on']['schedule']), 1)  # The nightly full tier.
         self.assertNotIn('pull_request_target', self.text)
         self.assertEqual(self.workflow['permissions'], {'contents': 'read'})
-        self.assertEqual(list(self.workflow['jobs']), ['check', 'gate', 'release-tag'])
+        self.assertEqual(list(self.workflow['jobs']), ['check', 'gate', 'release-tag', 'nightly'])
+        tokens = ('Tag the release if this run checked it', "Stamp main's tip with the nightly version",
+                  'Push the nightly tag and publish its pre-release')
         for name, job in self.workflow['jobs'].items():
             self.assertEqual(job['runs-on'], 'ubuntu-24.04', name)
-            self.assertEqual('permissions' in job, name == 'release-tag', name)
+            self.assertEqual('permissions' in job, name in ('release-tag', 'nightly'), name)
             self.assertNotIn('continue-on-error', job, name)  # A job that may fail would pass the gate.
             for step in job['steps']:
                 self.assertNotIn('continue-on-error', step)
                 text = json.dumps(step)
-                self.assertEqual('github.token' in text or 'secrets.' in text,
-                                 step.get('name') == 'Tag the release if this run checked it', step.get('name'))
+                self.assertEqual('github.token' in text or 'secrets.' in text, step.get('name') in tokens,
+                                 step.get('name'))
         self.assertEqual(self.workflow['jobs']['release-tag']['permissions'], {'actions': 'read', 'contents': 'write'})
+        self.assertEqual(self.workflow['jobs']['nightly']['permissions'], {'contents': 'write'})
 
     def test_every_action_is_first_party_and_pinned_to_its_locked_commit(self):
         tools, _ = setup.settings(ROOT, 'linux-x86_64')
@@ -89,13 +94,19 @@ class PublicWorkflow(unittest.TestCase):
         for name, job in self.workflow['jobs'].items():
             allowed = trust_expression(job['if'])
             with self.subTest(job=name):
-                for event_name in ('push', 'pull_request', 'schedule'):
+                for event_name in ('push', 'pull_request', 'schedule', 'workflow_dispatch'):
                     self.assertFalse(allowed(where({**base, **PRIVATE}, event_name)), event_name)
                 # A missing visibility never passes, on any event.
                 self.assertFalse(allowed({**base, **PUBLIC, 'event_name': 'push', 'event.repository.private': None}))
                 self.assertTrue(allowed(where({**base, **PUBLIC}, 'push')))
+                writes = name in ('release-tag', 'nightly')
                 for event_name in ('pull_request', 'schedule'):
-                    self.assertEqual(allowed(where({**base, **PUBLIC}, event_name)), name != 'release-tag', event_name)
+                    self.assertEqual(allowed(where({**base, **PUBLIC}, event_name)), not writes, event_name)
+                # A manual run gates main and publishes a nightly, but never tags.
+                self.assertEqual(allowed(where({**base, **PUBLIC}, 'workflow_dispatch')), name != 'release-tag')
+                if writes:  # only the owner's runs on main, in this repository
+                    for other in ({'ref': 'refs/heads/feature'}, {'actor': 'someone'}, {'repository': 'someone/newt'}):
+                        self.assertFalse(allowed(where({**base, **PUBLIC, **other}, 'push')), other)
         # Why the guards compare JSON text: GitHub's == coerces null to false.
         self.assertTrue(trust_expression('github.event.repository.private == false')(where(PRIVATE, 'schedule')))
         # fresh-gates.yml is the mirror image; tests/ci_workflow_test.py checks its jobs in full.
@@ -239,6 +250,48 @@ class PublicWorkflow(unittest.TestCase):
         # A gate with nothing to judge does not pass either.
         self.assertNotEqual(subprocess.run(['bash', '-c', step['run']], env={**os.environ, 'NEEDS': '{}'},
                                            capture_output=True).returncode, 0)
+
+    def test_the_nightly_job_builds_and_publishes_after_the_gate_as_releases_are_built(self):
+        jobs = self.workflow['jobs']
+        job = jobs['nightly']
+        self.assertEqual(job['needs'], 'gate')
+        # Every queued run waits its turn: a later-queued stale run never replaces the current one.
+        self.assertEqual(job['concurrency'], {'group': 'nightly', 'cancel-in-progress': 'false', 'queue': 'max'})
+        base = {'repository': 'VargasDevelopment/newt', 'ref': 'refs/heads/main', 'actor': 'VargasDevelopment',
+                'cancelled': False, **where(PUBLIC, 'push')}
+        self.assertFalse(trust_expression(job['if'])({**base, 'success': False}))  # never without a passed gate
+        # Its setup is the check job's own, step for step, and it saves no cache.
+        steps = {step['name']: step for step in job['steps']}
+        names = [step['name'] for step in job['steps']]
+        stamp = names.index("Stamp main's tip with the nightly version")
+        for name in names[:stamp]:
+            self.assertEqual(steps[name], self.step(name), name)
+        shared = set(self.check['env']) - {'EXPECTED_COMMIT', 'PART'}
+        self.assertEqual(set(job['env']), shared | {'EXPECTED_COMMIT'})
+        self.assertEqual({key: job['env'][key] for key in shared}, {key: self.check['env'][key] for key in shared})
+        self.assertEqual(job['env']['EXPECTED_COMMIT'], '${{ github.sha }}')
+        self.assertFalse(any(step.get('uses', '').startswith('actions/cache/save@') for step in job['steps']))
+        self.assertEqual(names[stamp:], ["Stamp main's tip with the nightly version",
+                                         'Build the stamped commit as a release is built',
+                                         'Push the nightly tag and publish its pre-release'])
+        # Only a manual run forces a nightly with no image change.
+        run = steps["Stamp main's tip with the nightly version"]['run']
+        self.assertIn('if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then force=(--force); fi', run)
+        self.assertIn('python3 -B tools/nightly.py stamp --repository "$GITHUB_REPOSITORY" "${force[@]}" >> '
+                      '"$GITHUB_OUTPUT"', run)
+        # The one firmware build exactly as the gate's native part makes it, then the checked publish.
+        build = steps['Build the stamped commit as a release is built']['run'].splitlines()
+        python = Path(sys.executable)
+        self.assertEqual([command for _, command in ci_gate.commands(ROOT, python, 'push', 'native')],
+                         [[str(python), flag, str(ROOT / script), *rest] for _, flag, script, *rest in map(str.split, build)])
+        # The stamp reads releases; the publish pushes the tag itself, after every check.
+        self.assertEqual(steps["Stamp main's tip with the nightly version"]['env']['GH_TOKEN'], '${{ github.token }}')
+        publish = steps['Push the nightly tag and publish its pre-release']
+        self.assertEqual(publish['env'], {'GH_TOKEN': '${{ github.token }}'})
+        self.assertEqual(publish['run'].splitlines()[-1], 'python3 -B tools/release_publish.py --prerelease --publish')
+        self.assertNotIn('git push', publish['run'])
+        for name in names[stamp + 1:]:
+            self.assertEqual(steps[name]['if'], "steps.stamp.outputs.version != ''", name)
 
     def test_the_release_tag_job_tags_like_fresh_gates(self):
         jobs, private = self.workflow['jobs'], self.private['jobs']

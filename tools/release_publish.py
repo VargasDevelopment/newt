@@ -19,9 +19,15 @@ repository find it there and from then on read the new one. CI tags each
 release in SOURCE_REPOSITORY, so there the tag must exist and name the build
 commit; anywhere else an existing tag is refused.
 
+A nightly (tools/nightly.py) is the one pre-release: --prerelease publishes it,
+never as Latest, with no bench check and no What's new. Every check runs before
+its tag push (nightly.push_tag), and only the release created is then verified,
+by its id; nothing reads list positions or /releases/latest for it.
+
   release_publish.py --bench-receipt JSON                 (dry run)
   release_publish.py --bench-receipt JSON --publish       (the Lead only)
   release_publish.py --bench-receipt JSON --hop --publish (the Lead, once, at launch)
+  release_publish.py --prerelease --publish               (CI's nightly job)
 """
 from __future__ import annotations
 import argparse
@@ -38,7 +44,8 @@ import sys
 
 from bench_candidate import VARIANT, json_bytes, require, sha
 from daily_firmware import BUILD_DIRECTORY, IDENTITY_RECEIPT
-from release_tools import DESTINATION, committed_release, git_output, resolve_commit
+from release_tools import DESTINATION, NIGHTLY, committed_release, git_output, resolve_commit
+import nightly
 import update_publish
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -75,6 +82,15 @@ class Git:
     def version(self, commit):
         return committed_release(self.root, commit)[0]
 
+    def stamp_source(self, commit):
+        return nightly.stamp_source(self.root, commit)
+
+    def subject(self, commit):
+        return git_output(self.root, 'log', '-1', '--format=%s', commit)
+
+    def push_nightly(self, tag, source):
+        return nightly.push_tag(self.root, tag, source)
+
     def show(self, commit, path):
         """A file's text at a commit, or None where it does not exist."""
         shown = subprocess.run(['git', 'show', f'{commit}:{path}'], cwd=self.root, capture_output=True, text=True)
@@ -90,10 +106,11 @@ def update_repository(source):
     return found[1]
 
 
-def publish_command(repository, release_id):
-    """Publishes a verified draft and marks it Latest; the only change ever made to an existing release."""
+def publish_command(repository, release_id, latest=True):
+    """Publishes a verified draft, marked Latest unless it is a nightly; the only change ever made to an
+    existing release."""
     return ['gh', 'api', '-X', 'PATCH', f'repos/{repository}/releases/{release_id}',
-            '-F', 'draft=false', '-f', 'make_latest=true']
+            '-F', 'draft=false', '-f', f'make_latest={str(latest).lower()}']
 
 
 class GitHub:
@@ -136,16 +153,16 @@ class GitHub:
     def create_draft(self, command):
         self.run(command)
 
-    def publish(self, release_id):
-        self.run(publish_command(self.repository, release_id))
+    def publish(self, release_id, latest=True):
+        self.run(publish_command(self.repository, release_id, latest))
 
     def latest(self):
         return self.api(f'repos/{self.repository}/releases/latest')
 
     def all_releases(self):
-        """Every release here, drafts included, as {tag_name, draft, body}."""
+        """Every release here, drafts included, as {tag_name, draft, prerelease, body}."""
         rows = self.run(['gh', 'api', '--paginate', f'repos/{self.repository}/releases?per_page=100',
-                         '--jq', '.[] | {tag_name, draft, body} | tojson'])
+                         '--jq', '.[] | {tag_name, draft, prerelease, body} | tojson'])
         return [json.loads(row) for row in rows.splitlines()]
 
 
@@ -162,6 +179,9 @@ class Plan:
     refusals: list[str] = field(default_factory=list)
     # The matching draft a rerun resumes instead of creating one.
     draft: dict | None = None
+    prerelease: bool = False
+    # The main commit a nightly stamps.
+    source: str | None = None
 
     @property
     def tag(self):
@@ -172,9 +192,10 @@ class Plan:
         return f'Newt {self.version}'
 
     def command(self, out):
-        """The draft, never public, that publish_command later publishes; never --prerelease."""
+        """The draft, never public, that publish_command later publishes; --prerelease only for a nightly."""
         return ['gh', 'release', 'create', self.tag, '--repo', self.repository, '--title', self.title,
-                '--notes-file', str(out / 'notes.md'), '--draft', *(str(out / name) for name in ASSETS)]
+                '--notes-file', str(out / 'notes.md'), *(['--prerelease'] if self.prerelease else []),
+                '--draft', *(str(out / name) for name in ASSETS)]
 
     def assets(self):
         """Each asset's expected (size, SHA-256)."""
@@ -194,8 +215,10 @@ def whats_new(header):
 
 
 def announced(releases, tag):
-    """Every What's new line that the published notes here, other than `tag`'s, already showed readers."""
+    """Every What's new line that the published notes here, other than `tag`'s and nightlies', already
+    showed readers."""
     return {line for release in releases if not release['draft'] and release['tag_name'] != tag
+            and not release.get('prerelease')
             for section in re.findall(r"^## What's new\n(.*?)(?=^## |\Z)",
                                       (release['body'] or '').replace('\r\n', '\n'), re.MULTILINE | re.DOTALL)
             for line in re.findall(r'^- (.+)$', section, re.MULTILINE)}
@@ -272,7 +295,8 @@ def draft_mismatch(github, draft, release):
     found = [message for same, message in (
         (draft.get('name') == release.title, f'its title is not {release.title!r}'),
         (body == release.notes.strip(), 'its notes are not the notes this run renders'),
-        (draft.get('prerelease') is False, 'it is flagged pre-release')) if not same]
+        (draft.get('prerelease') is release.prerelease,
+         f'it is {"not " if release.prerelease else ""}flagged pre-release')) if not same]
     return found + asset_refusals(github, draft, release.assets())
 
 
@@ -291,6 +315,8 @@ def plan(image, receipt, bench_receipt=None, prerelease=False, git=None, github=
     git = git or Git(root)
     manifest = update_publish.newt_manifest(image, receipt)
     version, commit, build = receipt['firmware_version'], receipt['git_revision'], receipt['build_id']
+    night = re.fullmatch(NIGHTLY, version) is not None
+    main = git.stamp_source(commit) if night else None  # the main commit a nightly stamps
     refusals = []
     source = update_repository(git.show(commit, UPDATE_SOURCE) or '')
     repository = HOP_REPOSITORY if hop else source
@@ -303,16 +329,17 @@ def plan(image, receipt, bench_receipt=None, prerelease=False, git=None, github=
     if tagged != commit:
         refusals.append(f'Tag {tag} here names {tagged}, not the build commit {commit}: '
                         'publish only the release merge CI tagged (git fetch origin)')
-    elif git.origin_tag_commit(tag) != commit:
-        refusals.append(f"Origin's tag {tag} does not name {commit}")
-    elif not git.on_mainline(commit):
-        refusals.append(f"{commit} is not on origin/main's first-parent history")
+    elif (origin := git.origin_tag_commit(tag)) != (None if night else commit):
+        refusals.append(f"Origin's tag {tag} names {origin}, not " +
+                        ('nothing: a nightly\'s tag is pushed only after every check' if night else commit))
+    elif not (main if night else git.on_mainline(commit)):
+        refusals.append(f"{commit} is not " + ('a nightly stamp of a commit on' if night else 'on') +
+                        " origin/main's first-parent history")
     elif git.version(commit) != version:
         refusals.append(f"{commit}'s own version is not {version}")
-    if prerelease:
-        refusals.append("GitHub's pre-release flag hides a release from /releases/latest, which devices read; "
-                        'the SemVer tag states the maturity. It stays off until a reviewed device change adds '
-                        'channels')
+    if prerelease != night or (hop and night):
+        refusals.append("A nightly, and only a nightly, is a pre-release, published here: /releases/latest, which "
+                        'devices read, skips pre-releases; Test builds read the newest release')
     notices = git.show(commit, NOTICES)
     if notices is None:
         refusals.append(f'{commit} has no {NOTICES}')
@@ -323,21 +350,26 @@ def plan(image, receipt, bench_receipt=None, prerelease=False, git=None, github=
         # The written source offer must stay answerable: exactly this repository's issues, never a private one.
         refusals.append(f"{NOTICES}'s written offer does not take requests at https://github.com/{source}/issues, "
                         "where this firmware's releases are")
-    refusals += bench_refusals(bench_receipt, version, build, image, manifest)
+    if not night:  # CI publishes nightlies unchecked; only devices with Test builds on see them.
+        refusals += bench_refusals(bench_receipt, version, build, image, manifest)
     header = git.show(commit, WHATS_NEW)
     require(header is not None, f'{commit} has no {WHATS_NEW}')
     # News is what this repository's published notes have not yet shown. Git tags are no guide: the public
     # export put every older tag on one commit, and a first release here (or the hop) has other readers.
-    shown = announced(github.all_releases(), tag)
-    news = list(dict.fromkeys(line for _, lines in whats_new(header) for line in lines if line not in shown))
+    shown = set() if night else announced(github.all_releases(), tag)
+    news = [] if night else list(dict.fromkeys(line for _, lines in whats_new(header) for line in lines
+                                               if line not in shown))
     notes = render_notes(version, commit, build, image, news)
+    if main:
+        notes = nightly.notes(source, main, git.subject(main), git.version(main)) + '\n' + notes
     # Until its firmware reads it, the source repository is private and its links 404.
     if source != SOURCE_REPOSITORY and re.search(r'VargasDevelopment/newt(?!-releases)', notes):
         refusals.append('The notes link into the private source repository')
     patterns = host_patterns(root)
     allowed = set(EMAIL.findall((notices or '').encode()))
     refusals += leaks('newt.bin', image, patterns, allowed) + leaks('The notes', notes.encode(), patterns, allowed)
-    release = Plan(repository, version, commit, build, image, manifest, notes, notices, refusals)
+    release = Plan(repository, version, commit, build, image, manifest, notes, notices, refusals, prerelease=night,
+                   source=main)
     if hop and source == SOURCE_REPOSITORY:
         public = public or GitHub(SOURCE_REPOSITORY)
         shown = public.release_for(tag)
@@ -347,9 +379,9 @@ def plan(image, receipt, bench_receipt=None, prerelease=False, git=None, github=
             refusals += [f"{SOURCE_REPOSITORY}'s {tag}: {difference}"
                          for difference in asset_refusals(public, shown, release.assets())]
     there = github.tag_commit(tag)
-    if repository == SOURCE_REPOSITORY and there != commit:
+    if repository == SOURCE_REPOSITORY and not night and there != commit:
         refusals.append(f"{repository}'s tag {tag} names {there}, not the build commit {commit}")
-    elif repository != SOURCE_REPOSITORY and there is not None:
+    elif (night or repository != SOURCE_REPOSITORY) and there is not None:
         refusals.append(f'{repository} already has tag {tag}; a published version is never replaced')
     elif (existing := github.release_for(tag)) is not None:
         if not existing.get('draft'):
@@ -362,7 +394,8 @@ def plan(image, receipt, bench_receipt=None, prerelease=False, git=None, github=
 
 
 def describe(release, out):
-    print(f'Release {release.tag} to {release.repository}, marked Latest, no pre-release flag')
+    print(f'Release {release.tag} to {release.repository}, ' +
+          ('a pre-release, never Latest' if release.prerelease else 'marked Latest, no pre-release flag'))
     print(f'Title: Newt {release.version}')
     print(f'Source commit: {release.commit} (build {release.build}, {VARIANT})')
     for name, data in zip(ASSETS, (release.image, release.manifest, release.notices)):
@@ -372,16 +405,17 @@ def describe(release, out):
         print('Draft: ' + shlex.join(release.command(out)))
     else:
         print(f"Draft: resume {release.repository} draft {release.draft['id']}, whose assets match")
-    print('Publish: ' + shlex.join(publish_command(release.repository,
-                                                   release.draft['id'] if release.draft else '<draft id>')))
+    print('Publish: ' + shlex.join(publish_command(release.repository, release.draft['id'] if release.draft
+                                                   else '<draft id>', not release.prerelease)))
     print('--- Notes ---')
     print(release.notes, end='')
     print('--- End of notes ---')
 
 
-def publish(release, out, github):
+def publish(release, out, github, git=None):
     """Creates (or resumes) the draft, verifies its assets, publishes it with one PATCH, then reads it
-    back by id and as devices will. Never deletes: a draft that stays a draft is reported."""
+    back by id (and a stable release as devices will). Never deletes. A nightly pushes its tag only after
+    its draft verifies, so a failed check or a newer main (returns False) leaves at most a private draft."""
     draft = release.draft
     if draft is None:
         digests = dict(update_publish.publish(out, 'newt', release.image, release.manifest))
@@ -390,14 +424,18 @@ def publish(release, out, github):
         for name, text in (('NOTICES.txt', release.notices), ('notes.md', release.notes)):
             with (out / name).open('x', encoding='utf-8') as file:
                 file.write(text)
+    if draft is None:
         github.create_draft(release.command(out))
         draft = github.release_for(release.tag)
         require(draft is not None and draft.get('draft') is True,
                 f'{release.repository} shows no draft for {release.tag} after creating it')
         mismatch = draft_mismatch(github, draft, release)
         require(not mismatch, draft_refusals(release, mismatch)[0])
+    # The one irreversible step for a nightly: GitHub publishes the draft at this pushed tag.
+    if release.prerelease and not (git or Git()).push_nightly(release.tag, release.source):
+        return False
     try:
-        github.publish(draft['id'])
+        github.publish(draft['id'], not release.prerelease)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         # GitHub may have published it and only the answer was lost; the read-back decides.
         print(f'The publish request failed ({error}); reading draft {draft["id"]} back', file=sys.stderr)
@@ -405,11 +443,20 @@ def publish(release, out, github):
     require(shown.get('draft') is False,
             f'{release.tag} is still a draft ({release.repository} release {draft["id"]}), so not public; '
             'rerun --publish to resume it')
-    latest = github.latest()
-    require(latest.get('id') == draft['id'] and latest.get('tag_name') == release.tag and
-            latest.get('prerelease') is False and not asset_refusals(github, latest, release.assets()),
-            f'{release.repository} published {release.tag}, but /releases/latest does not show it with exactly '
-            f'{", ".join(ASSETS)}; never delete it (docs/RELEASING.md)')
+    # By id: this release's tag, flag and assets. GitHub never makes a pre-release Latest.
+    require(shown.get('tag_name') == release.tag and shown.get('prerelease') is release.prerelease and
+            not asset_refusals(github, shown, release.assets()),
+            f'{release.repository} published {release.tag}, but release {draft["id"]} does not show it '
+            f'{"flagged" if release.prerelease else "unflagged"} with exactly {", ".join(ASSETS)}; never delete it '
+            '(docs/RELEASING.md)')
+    # Devices read /releases/latest, so a stable release must be it, with its assets; a nightly never is.
+    if not release.prerelease:
+        latest = github.latest()
+        require(latest.get('id') == draft['id'] and latest.get('tag_name') == release.tag and
+                latest.get('prerelease') is False and not asset_refusals(github, latest, release.assets()),
+                f'{release.repository} published {release.tag}, but /releases/latest does not show it with exactly '
+                f'{", ".join(ASSETS)}; never delete it (docs/RELEASING.md)')
+    return True
 
 
 def main(argv=None, git=None, github=None, public=None):
@@ -418,11 +465,12 @@ def main(argv=None, git=None, github=None, public=None):
     parser.add_argument('--receipt', type=Path, default=ROOT / IDENTITY_RECEIPT)
     parser.add_argument('--bench-receipt', type=Path, help="the bench install check's receipt (docs/RELEASING.md)")
     parser.add_argument('--out', type=Path, help='a new folder for the published files (default .build/release/TAG)')
-    parser.add_argument('--prerelease', action='store_true', help='refused: devices never see pre-releases')
+    parser.add_argument('--prerelease', action='store_true', help="a nightly, CI's test build; refused for others")
     parser.add_argument('--publish', action='store_true', help='create the release (the Lead only)')
     parser.add_argument('--hop', action='store_true',
                         help=f'publish to {HOP_REPOSITORY} instead: once, at launch (docs/RELEASING.md)')
     args = parser.parse_args(argv)
+    git = git or Git()
     try:
         release = plan(args.image.read_bytes(), json_bytes(args.receipt.read_bytes()), args.bench_receipt,
                        args.prerelease, git, github, hop=args.hop, public=public)
@@ -436,11 +484,14 @@ def main(argv=None, git=None, github=None, public=None):
         if not args.publish:
             print('DRY RUN: nothing written or published')
             return 0
-        publish(release, out, github)
+        if not publish(release, out, github, git):
+            print(f'Not published: origin\'s main has moved on from {release.source}; its own run publishes')
+            return 0
     except (OSError, KeyError, TypeError, ValueError, subprocess.CalledProcessError) as error:
         print(f'Release publish stopped: {error}', file=sys.stderr)
         return 1
-    print(f'Published {release.tag} to {release.repository}; /releases/latest shows it with {", ".join(ASSETS)}')
+    shows = ' as a pre-release, never Latest,' if release.prerelease else '; /releases/latest shows it'
+    print(f'Published {release.tag} to {release.repository}{shows} with {", ".join(ASSETS)}')
     return 0
 
 
