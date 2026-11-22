@@ -16,6 +16,7 @@ DOCS = frozenset((
     "UPDATES.md", "bench-flash.md", "dev-usb-bridge.md", "provenance.md", "reading-acceptance.md",
     "software-proof-shadow.md", "toolchain-proposal.md",
     "newt-wordmark-dark.png", "newt-wordmark-light.png",
+    "screen-books.png", "screen-home.png", "screen-reader.png", "screen-settings.png", "screen-sleep.png",
     "reading-latency-contract.json", "reading-latency-policy.json",
     "toolchain-linux-lock.json", "toolchain-lock.json", "toolchain-python-linux.lock", "toolchain-python.lock",
 ))
