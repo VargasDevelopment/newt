@@ -455,8 +455,9 @@ in this order:
 
 1. **Export.** From the private `main`, once its latest release is tagged:
    `python3 -B tools/clean_export.py --rev origin/main --out DIR --terms TERMS
-   --commit 'VargasDevelopment <6808194+VargasDevelopment@users.noreply.github.com>'`.
-   After a clean scan it prints the root commit. `LICENSE` names the
+   --commit "$(git config user.name) <6808194+VargasDevelopment@users.noreply.github.com>"`,
+   run in the owner's checkout: the root commit carries the owner's name with
+   the GitHub no-reply e-mail. After a clean scan it prints the root commit. `LICENSE` names the
    copyright holder, so a TERMS file that lists the owner's name also needs
    one `allow<TAB>LICENSE<TAB>TERM` line for each such term, or the scan
    fails on `LICENSE`.

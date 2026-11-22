@@ -835,7 +835,7 @@ your changed core. You may change newt.bin for your own use and reverse
 engineer it to debug such changes.
 
 To ask, open an issue at
-https://github.com/VargasDevelopment/newt-releases/issues, naming the release
+https://github.com/VargasDevelopment/newt/issues, naming the release
 version and build ID.
 
 ==============================================================================

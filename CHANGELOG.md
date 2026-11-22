@@ -15,6 +15,29 @@ Source-import closure for PR #16: immutable checkpoint
 authorship and subjects through an explicit bounded frozen-source import exception. New integration commits remain strictly conventional;
 no firmware version, tag or installed image is changed by that closure.
 
+## v0.2.0
+
+### Feat
+- **update**: read updates from the public source repository
+### Fix
+- **installer**: read in 256-byte packets and really reset the X3, so macOS Chrome can check it (NEWT-77, #4)
+- **installer**: read in 256-byte packets and really reset the X3, so macOS Chrome can check it
+- **ci**: gate a pull request's own head, not GitHub's merge commit (NEWT-77, #3)
+- **ci**: gate a pull request's own head, not GitHub's merge commit (NEWT-77)
+- **copy**: send newcomers to the install page and say what is untested (NEWT-69, #396)
+- **ui**: newcomer copy and Update's Wi-Fi setup for the first public release (NEWT-69)
+- **update**: drop "slot" from the install confirm page (NEWT-69)
+- **installer**: link the install guide and repository, and call one card route untested (NEWT-69)
+- **update**: set up Wi-Fi from Update when no network is saved (NEWT-69)
+- **ui**: plainer newcomer copy on Settings, Switch firmware, Update and Home (NEWT-69)
+- **ui**: write What's new for a newcomer on the first public release (NEWT-69)
+- **gate**: run the gate from a stock Linux shell (NEWT-69, #394)
+- **gate**: hand off to pinned Python and reset child stop signals (NEWT-69)
+- **gate**: hand off to the pinned Python before the gate's imports (NEWT-69, #279)
+- **tests**: compare external interpreter path with home_relative under TMPDIR (NEWT-69)
+- **gate**: reset inherited ignored stop signals for gate children (NEWT-69)
+- **gate**: hand off check.py to the pinned toolchain Python (NEWT-69)
+
 ## v0.1.0-alpha.22
 
 ### Fix

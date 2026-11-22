@@ -12,7 +12,7 @@ mod loan_tests;
 
 pub const URL_BYTES: usize = 2048;
 pub const READ_BYTES: usize = 2048;
-pub const LATEST_RELEASE_URL: &CStr = c"https://api.github.com/repos/VargasDevelopment/newt-releases/releases/latest";
+pub const LATEST_RELEASE_URL: &CStr = c"https://api.github.com/repos/VargasDevelopment/newt/releases/latest";
 pub const USABLE_SLOT_BYTES: u32 = 7016448;
 pub const SLOT_HEAD_BYTES: u32 = 512;
 
