@@ -91,8 +91,8 @@ class PublicWorkflow(unittest.TestCase):
             self.assertRegex(revision, '^[0-9a-f]{40}$')
 
     def test_jobs_run_only_in_a_public_repository(self):
-        base = {'success': True, 'cancelled': False, 'repository': 'VargasDevelopment/newt',
-                'ref': 'refs/heads/main', 'actor': 'VargasDevelopment'}
+        base = {'success': True, 'cancelled': False, 'needs.gate.result': 'success',
+                'repository': 'VargasDevelopment/newt', 'ref': 'refs/heads/main', 'actor': 'VargasDevelopment'}
         for name, job in self.workflow['jobs'].items():
             allowed = trust_expression(job['if'])
             # Each job in the lane that runs it (test_each_lane_runs_only_its_own_jobs).
@@ -255,9 +255,11 @@ class PublicWorkflow(unittest.TestCase):
                 passed = passes(needs('full', result, 'skipped'))
                 self.assertEqual(passed, result == 'success')
                 self.assertEqual(passes(needs('docs', 'skipped', result)), result == 'success')
-                # The tag job runs only after the gate job itself succeeded.
-                self.assertEqual(trust_expression(tag['if'])({**base, 'success': passed, 'cancelled': False}),
-                                 passed)
+                # The tag job runs only after the gate job itself succeeded. success() is false in
+                # every real run, since one lane's job is always skipped, so it cannot decide.
+                gate_result = 'success' if passed else 'failure'
+                self.assertEqual(trust_expression(tag['if'])(
+                    {**base, 'success': False, 'cancelled': False, 'needs.gate.result': gate_result}), passed)
         # Only the lane's own job stands for the gate: the other one, run or failed, never passes it.
         self.assertFalse(passes(needs('docs', 'success', 'skipped')))
         self.assertFalse(passes(needs('full', 'skipped', 'success')))
@@ -283,11 +285,54 @@ class PublicWorkflow(unittest.TestCase):
         self.assertEqual(classify['id'], 'lane')
         self.assertEqual(classify['env'], {'BASE': '${{ github.event.pull_request.base.sha }}',
                                            'HEAD': '${{ github.event.pull_request.head.sha }}'})
-        self.assertEqual(classify['run'], 'python3 -I -B tools/docs_lane.py classify --event "$GITHUB_EVENT_NAME" '
-                                          '--base "$BASE" --head "$HEAD" >> "$GITHUB_OUTPUT"')
+        self.assertIn('git show "$BASE:tools/docs_lane.py"', classify['run'])
         # Every event but a pull request takes the full gate, so release-tag and nightly never see a docs lane.
         for event in ('push', 'schedule', 'workflow_dispatch'):
             self.assertEqual(docs_lane.lane(ROOT, event, 'a' * 40, 'b' * 40)[0], 'full')
+
+    def test_a_pull_request_runs_its_bases_classifier_never_its_own(self):
+        """The real classify step in a scratch repository: a pull request that rewrites the
+        classifier to choose the docs lane still takes the full gate."""
+        [step] = [step for step in self.workflow['jobs']['classify']['steps'] if step.get('id') == 'lane']
+        with tempfile.TemporaryDirectory() as directory:
+            root, temp = Path(directory) / 'repo', Path(directory) / 'temp'
+            temp.mkdir()
+            (root / 'tools').mkdir(parents=True)
+            (root / 'docs').mkdir()
+
+            def commit(files, start=None):
+                if start:
+                    git('checkout', '-q', '--detach', start)
+                for name, text in files.items():
+                    (root / name).write_text(text)
+                git('add', '-A')
+                git('commit', '-q', '-m', 'change')
+                return git('rev-parse', 'HEAD')
+
+            def git(*arguments):
+                return subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t' + chr(64) + 't.invalid',
+                                       '-c', 'commit.gpgsign=false', *arguments], cwd=root, check=True,
+                                      capture_output=True, text=True).stdout.strip()
+
+            def lane(event, base, head):
+                output = temp / 'output'
+                output.write_text('')
+                subprocess.run(['bash', '-e', '-c', step['run']], cwd=root, check=True, capture_output=True,
+                               env={**os.environ, 'GITHUB_EVENT_NAME': event, 'BASE': base, 'HEAD': head,
+                                    'GITHUB_OUTPUT': str(output), 'RUNNER_TEMP': str(temp)})
+                return output.read_text().strip()
+
+            git('init', '-q')
+            bare = commit({'README.md': 'Newt.\n', 'tools/run.py': 'print()\n'})
+            base = commit({'tools/docs_lane.py': (ROOT / 'tools/docs_lane.py').read_text()})
+            docs = commit({'docs/CI.md': 'Words.\n'}, base)
+            forged = commit({'tools/run.py': 'print(1)\n',
+                             'tools/docs_lane.py': "print('lane=docs')\n"}, base)
+            self.assertEqual(lane('pull_request', base, docs), 'lane=docs')  # control: the base's copy decides
+            self.assertEqual(lane('pull_request', base, forged), 'lane=full')
+            self.assertEqual(lane('pull_request', bare, docs), 'lane=full')  # no classifier at the base
+            self.assertEqual(lane('push', '', forged), 'lane=full')  # checked out: the forged copy
+            self.assertEqual(lane('workflow_dispatch', base, docs), 'lane=full')
 
     def test_the_docs_job_sets_up_as_the_check_job_and_runs_the_docs_lane(self):
         job = self.workflow['jobs']['docs']
@@ -316,7 +361,10 @@ class PublicWorkflow(unittest.TestCase):
         self.assertEqual(job['concurrency'], {'group': 'nightly', 'cancel-in-progress': 'false', 'queue': 'max'})
         base = {'repository': 'VargasDevelopment/newt', 'ref': 'refs/heads/main', 'actor': 'VargasDevelopment',
                 'cancelled': False, **where(PUBLIC, 'push')}
-        self.assertFalse(trust_expression(job['if'])({**base, 'success': False}))  # never without a passed gate
+        # It runs after a passed gate although the skipped docs job makes success() false, never without one.
+        for gate, cancelled in (('success', False), ('failure', False), ('skipped', False), ('success', True)):
+            state = {**base, 'success': False, 'cancelled': cancelled, 'needs.gate.result': gate}
+            self.assertEqual(trust_expression(job['if'])(state), gate == 'success' and not cancelled, (gate, cancelled))
         # Its setup is the check job's own, step for step, and it saves no cache.
         steps = {step['name']: step for step in job['steps']}
         names = [step['name'] for step in job['steps']]

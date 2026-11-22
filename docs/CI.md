@@ -172,8 +172,10 @@ merge base with `main`, a rename as both its old and its new path. The lane is
 directly in `docs/`, as a regular file or deleted. This is an allowlist:
 `CHANGELOG.md` (release-managed), `docs/toolchain-*` (they choose the
 toolchain) and every other path take `full`, and so does a change set it
-cannot list. Pushes, nightly and manual runs always take `full`, so
-`release-tag` and `nightly` never follow the docs lane.
+cannot list. A pull request runs its base's copy of the classifier, never its
+own, so a change cannot choose its lane; a base without one takes `full`.
+Pushes, nightly and manual runs always take `full`, so `release-tag` and
+`nightly` never follow the docs lane.
 
 In the docs lane the `check` job is skipped and the `docs` job runs instead:
 
@@ -184,13 +186,16 @@ In the docs lane the `check` job is skipped and the `docs` job runs instead:
   each link from any tracked Markdown file to a changed path, must name a
   tracked file or folder (no anchors, no network);
 - every gate check that reads docs text (`DOCS_CHECKS`).
-  `tests/docs_lane_test.py` keeps that list complete: a Python source that
-  names a lane path or the `docs` folder in a string must be in it, or listed
-  with the reason it is not a docs check.
+  `tests/docs_lane_test.py` guards that list: a Python source that names a
+  lane path or the `docs` folder in a string literal must be in it, or listed
+  with the reason it is not a docs check. A path built at run time, or a
+  reader that is not Python, escapes that scan.
 
 `gate` passes only when `classify` chose a lane and that lane's job succeeded
 while the other was skipped: `check` for `full`, `docs` for `docs`. Branch
-protection still requires only `gate`.
+protection still requires only `gate`. One lane's job is always skipped,
+which makes `success()` false for every later job, so `release-tag` and
+`nightly` read `needs.gate.result` instead.
 
 **Shards come from the gate's own plan.** `tools/gate_tier.py` `shard()` takes
 the tier's plan, keeps every phase with the phases it runs `after` in one

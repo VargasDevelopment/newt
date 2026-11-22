@@ -142,7 +142,9 @@ def main():
     checks.add_argument('--base', required=True)
     args = parser.parse_args()
     if args.command == 'classify':
-        chosen, why = lane(ROOT, args.event, args.base, args.head)
+        # CI runs the base's copy from outside the checkout, so the checkout is the
+        # working directory, not this file's parent.
+        chosen, why = lane(Path.cwd(), args.event, args.base, args.head)
         print(f'LANE {chosen}: {why}', file=sys.stderr)
         print(f'lane={chosen}')
     else:

@@ -48,13 +48,21 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           set-safe-directory: false
-      # Standard library only, so the runner's python3; no toolchain.
+      # Standard library only, so the runner's python3; no toolchain. A pull request
+      # runs its base's classifier, never its own, so a change cannot choose its
+      # lane; a base without one, and every other event, takes the full gate.
       - name: Docs lane or full gate
         id: lane
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
-        run: python3 -I -B tools/docs_lane.py classify --event "$GITHUB_EVENT_NAME" --base "$BASE" --head "$HEAD" >> "$GITHUB_OUTPUT"
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]] &&
+             git show "$BASE:tools/docs_lane.py" > "$RUNNER_TEMP/docs_lane.py"; then
+            python3 -I -B "$RUNNER_TEMP/docs_lane.py" classify --event "$GITHUB_EVENT_NAME" --base "$BASE" --head "$HEAD" >> "$GITHUB_OUTPUT"
+          else
+            echo lane=full >> "$GITHUB_OUTPUT"
+          fi
 
   # The gate, split into parallel parts: the host gate's shards, cut from its own
   # plan (tools/gate_tier.py), and the one clean firmware build.
@@ -347,10 +355,13 @@ jobs:
 
   # The one job with a write token, as in fresh-gates.yml: after this push run's
   # gate passed, it tags the commit that run checked if that commit is the release.
+  # Both publishing jobs read gate's own result: success() also needs every
+  # ancestor to succeed, and one lane's job is always skipped.
   release-tag:
     needs: gate
     if: >-
-      success() && toJSON(github.event.repository.private) == 'false' &&
+      !cancelled() && needs.gate.result == 'success' &&
+      toJSON(github.event.repository.private) == 'false' &&
       github.repository == 'VargasDevelopment/newt' &&
       github.ref == 'refs/heads/main' && github.actor == 'VargasDevelopment' &&
       github.event_name == 'push'
@@ -403,7 +414,8 @@ jobs:
   nightly:
     needs: gate
     if: >-
-      success() && toJSON(github.event.repository.private) == 'false' &&
+      !cancelled() && needs.gate.result == 'success' &&
+      toJSON(github.event.repository.private) == 'false' &&
       github.repository == 'VargasDevelopment/newt' &&
       github.ref == 'refs/heads/main' && github.actor == 'VargasDevelopment' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
