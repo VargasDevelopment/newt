@@ -32,7 +32,7 @@
       "before": 3635712,
       "after": 3638976,
       "reason": "NEWT-99 / NEWT-113: the first-Newt page (mascot port), the hidden Developer page with its Test builds switch, the durable newt_builds SD record and the one-release list parsing for the test-build update check. Measured by a clean firmware-build.py --clean --health-report of 0e06bba6: 3,638,976 B (+3,264 B over the 3,635,712 B ceiling; +3,952 B over main's committed measurement, 3,635,024 B). 3,377,472 B stay below the 7,016,448 B usable limit. RTC 300 -> 300 (unchanged). RAM 124,096, lend 22,528, frames, floors and exclusions unchanged.",
-      "reviewer": "owner review pending (test-build channel PR)"
+      "reviewer": "Lead NEWT-99 resource ruling 2026-11-22 (size is headroom; owner policy)"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
