@@ -49,8 +49,8 @@ Newt runs only on the X3.
 
 The easiest way is the install page, in Chrome or Edge on a computer:
 [vargasdevelopment.github.io/newt](https://vargasdevelopment.github.io/newt/).
-It works from any X3 firmware, the stock one included. Your current firmware
-stays as the spare until Newt's first update.
+It works from the stock firmware and others, on an X3 with its usual storage
+layout. Your current firmware stays as the spare until Newt's first update.
 
 If your X3 runs CrossInk, you can also install from the card with `newt.bin`
 from the
@@ -73,10 +73,10 @@ Your books, reading progress and settings stay as they are.
 ## Going back
 
 Your old firmware stays in the spare slot until Newt's first update, which
-installs into that slot and replaces it (Newt asks first). After that, go
-back by installing its `.bin` file.
+installs into that slot and replaces it (Newt asks first). To go back after
+that, you need its `.bin` file, so get it before you update.
 
-- **Restart into the other firmware:** Settings, Restart into (its name).
+- **Restart into the other firmware** (while it is still installed): Settings, Restart into (its name).
   Newt stays in its own slot. If that firmware updates itself, it replaces
   Newt. Install Newt again the same way.
 - **Install another firmware:** copy its `.bin` file to the `Newt/Update`

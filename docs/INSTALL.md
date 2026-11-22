@@ -11,8 +11,9 @@ Newt is firmware for the Xteink X3. It installs into the X3's spare slot, so
 the firmware you run now stays on the X3 and you can go back to it (see
 [Going back](#going-back)). Your books and card stay as they are.
 
-You can install it from any X3 firmware: the stock Xteink firmware,
-CrossPoint, CrossInk or another.
+You can install it from the stock Xteink firmware, CrossPoint, CrossInk or
+another, on an X3 with its usual storage layout (see
+[If the page refuses](#if-the-page-refuses)).
 
 **Which X3.** Newer X3 units with the UC8279d screen controller (sold from
 about July 2026) are tested. Earlier units with the UC8253 controller are
@@ -33,15 +34,19 @@ You need a computer with Chrome or Edge, and a USB cable that carries data.
 5. Keep the cable on until Newt's Home appears.
 
 Safari, Firefox and phones can't use the page. On the stock firmware, use
-Chrome or Edge on a computer. On CrossInk or CrossPoint you can also install
-from the card. If something stops, the page says whether your X3 changed.
+Chrome or Edge on a computer. On CrossInk you can also install from the
+card (untested from CrossPoint). If something stops, the page says whether
+your X3 changed.
 
-**On Linux**, if the page can't connect to your X3, add yourself to the
-serial group (`dialout`, or `uucp` on Arch), then log out and back in.
+**On Linux**, if Chrome sees your X3 but can't open it, add yourself to the
+group that owns the serial port (usually `dialout`, or `uucp` on Arch), then
+log out and back in.
 
 **To report a problem**, open the page as
 [vargasdevelopment.github.io/newt/?debug](https://vargasdevelopment.github.io/newt/?debug).
-It adds a **Save debug log** button; attach the file to your issue.
+It adds a **Save debug log** button. Put the error message in your issue
+and keep the log in case we ask for it. Don't post the log publicly: it
+holds your X3's hardware address.
 
 ## From the card
 
@@ -53,9 +58,9 @@ If your X3 runs CrossInk or CrossPoint:
 3. On the X3, open Settings, then System, then SD Card Firmware Update, and
    pick `newt.bin`.
 
-This is tested from CrossInk. From CrossPoint it is untested: nobody has
-tried it yet. If you do, please tell us how it went. On the stock firmware,
-use the install page.
+This is tested from CrossInk and untested from CrossPoint. If you try it
+from CrossPoint, please tell us how it went. On the stock firmware, use the
+install page.
 
 Copy EPUB books anywhere on the card.
 
@@ -75,10 +80,10 @@ needs Wi-Fi.
 
 Your old firmware stays in the spare slot until Newt's first update. An
 update installs into that slot, so it replaces your old firmware (Newt asks
-first). After that, go back by installing your old firmware's `.bin` file.
-For the stock firmware, you need its file.
+first). To go back after that, you need your old firmware's `.bin` file, so
+get it before you update.
 
-- **Restart into your other firmware:** Settings, Restart into (its name).
+- **Restart into your other firmware** (while it is still installed): Settings, Restart into (its name).
   Newt stays in its own slot. If that firmware updates itself, it replaces
   Newt. Install Newt again the same way.
 - **Install another firmware:** on the install page, click **Install another
