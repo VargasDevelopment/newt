@@ -33,6 +33,8 @@ from x3_slots import NEWT_MARK
 import update_publish
 
 TAG = 'v' + VERSION
+# A nightly: CI's stamp REVISION of the main commit MAIN, whose own release is 0.2.0.
+MAIN, NIGHTLY = 'e' * 40, '0.2.1-dev.20261122.1'
 HEADER = '''inline constexpr WhatsNewUpdate kWhatsNew[] = {
     {"Oct 30, 2026",
      {"Updates arrive over \\"Wi-Fi\\".",
@@ -83,6 +85,7 @@ class FakeGit:
         self.mainline = {REVISION}
         self.files = {(REVISION, NOTICES): NOTICE_TEXT, (REVISION, WHATS_NEW): HEADER,
                       (REVISION, UPDATE_SOURCE): online(HOP_REPOSITORY)}
+        self.versions, self.stamps = {}, {}  # each commit's own version (VERSION otherwise); stamp -> main
         self.__dict__.update(changes)
 
     def tag_commit(self, tag):
@@ -95,10 +98,24 @@ class FakeGit:
         return commit in self.mainline
 
     def version(self, commit):
-        return VERSION
+        return self.versions.get(commit, VERSION)
+
+    def stamp_source(self, commit):
+        return self.stamps.get(commit)
+
+    def subject(self, commit):
+        return 'fix(reader): keep the page'
 
     def show(self, commit, path):
         return self.files.get((commit, path))
+
+
+def stamped_git(**changes):
+    """CI's nightly stamp of MAIN, tagged here and on origin, its firmware reading the source repository."""
+    tag = 'v' + NIGHTLY
+    return FakeGit(**{'tags': {tag: REVISION}, 'origin': {tag: REVISION}, 'mainline': {MAIN}, 'stamps': {REVISION: MAIN},
+                      'versions': {REVISION: NIGHTLY, MAIN: '0.2.0'},
+                      'files': {**FakeGit().files, **moved(SOURCE_REPOSITORY)}, **changes})
 
 
 
@@ -139,10 +156,11 @@ class FakeGitHub:
         if self.corrupt:
             files['newt.bin'] = files['newt.bin'][:-1] + b'\xff'
         self.add(command[3], files, name=command[command.index('--title') + 1],
-                 body=Path(command[command.index('--notes-file') + 1]).read_text())
+                 body=Path(command[command.index('--notes-file') + 1]).read_text(), prerelease='--prerelease' in command)
 
-    def publish(self, release_id):
+    def publish(self, release_id, latest=True):
         self.patched.append(release_id)
+        self.made_latest = latest
         if self.answer != 'failed':
             self.releases[release_id]['draft'] = False
             self.tags.setdefault(self.releases[release_id]['tag_name'], REVISION)
@@ -155,6 +173,11 @@ class FakeGitHub:
         return older + list(self.releases.values())
 
     def latest(self):
+        published = [release for release in self.releases.values()
+                     if not release['draft'] and (not release['prerelease'] or self.answer == 'latest')]
+        return dict(published[-1]) if published else {}
+
+    def newest(self):
         published = [release for release in self.releases.values() if not release['draft']]
         return dict(published[-1]) if published else {}
 
@@ -294,7 +317,53 @@ class ReleasePublishTests(unittest.TestCase):
             self.refused(message, github=github)
 
     def test_refuses_the_prerelease_flag(self):
-        self.refused('pre-release flag', prerelease=True)
+        self.refused('only a nightly, is a pre-release', prerelease=True)
+
+    def nightly(self, **options):
+        image = newt_image(NIGHTLY)
+        github = options.pop('github', FakeGitHub(tags={'v' + NIGHTLY: REVISION}))
+        return self.plan(image, options.pop('git', stamped_git()), github, bench_receipt=None,
+                         prerelease=options.pop('prerelease', True), firmware_version=NIGHTLY, **options), github
+
+    def test_a_nightly_is_a_prerelease_with_test_build_notes_and_no_bench_check(self):
+        release, _ = self.nightly()
+        self.assertEqual((release.refusals, release.prerelease, release.tag), ([], True, 'v' + NIGHTLY))
+        self.assertIn('--prerelease', release.command(self.dir))
+        self.assertTrue(release.notes.startswith('## Test build\n'), release.notes)
+        self.assertIn(f'- Built from: fix(reader): keep the page ({MAIN})\n', release.notes)
+        self.assertIn(f'https://github.com/{SOURCE_REPOSITORY}/compare/v0.2.0...{MAIN}\n', release.notes)
+        self.assertIn(f'- Version: {NIGHTLY}\n', release.notes)
+        self.assertNotIn("What's new", release.notes)
+        # A stable release's What's new ignores whatever a nightly's notes said.
+        github = FakeGitHub()
+        github.add('v' + NIGHTLY, {}, draft=False, prerelease=True, body=self.plan(github=FakeGitHub(previous=None)).notes)
+        self.assertEqual(self.plan(github=github).notes, self.plan().notes)
+
+    def test_refuses_a_nightly_without_the_flag_off_a_stamp_or_hopping(self):
+        self.assertIn('only a nightly, is a pre-release', self.nightly(prerelease=False)[0].refusals[0])
+        self.assertIn('only a nightly, is a pre-release', self.nightly(hop=True)[0].refusals[0])
+        release, _ = self.nightly(git=stamped_git(stamps={}))
+        self.assertIn("is not a nightly stamp of a commit on origin/main's first-parent history", release.refusals[0])
+        self.assertNotIn('## Test build', release.notes)
+        # A nightly version stamped by hand on a main commit is no stamp either.
+        self.assertTrue(self.nightly(git=stamped_git(stamps={}, mainline={MAIN, REVISION}))[0].refusals)
+
+    def test_refuses_a_version_longer_than_devices_hold(self):
+        version = '10.10.11-dev.20261122.10'  # 24 characters: devices hold 23
+        with self.assertRaisesRegex(ValueError, 'longer than 23 characters'):
+            self.plan(newt_image(version), stamped_git(), FakeGitHub(tags={'v' + version: REVISION}),
+                      bench_receipt=None, prerelease=True, firmware_version=version)
+
+    def test_publishing_a_nightly_never_makes_it_latest(self):
+        release, github = self.nightly()
+        publish(release, self.dir / 'out', github)
+        self.assertEqual((github.patched, github.made_latest, github.latest(), github.newest()['id']), ([100], False, {}, 100))
+        self.assertTrue(github.release(100)['prerelease'])
+        # GitHub showing it as Latest anyway is reported, never deleted.
+        release, github = self.nightly(github=FakeGitHub('latest', tags={'v' + NIGHTLY: REVISION}))
+        with self.assertRaisesRegex(ValueError, 'it is Latest, or not the newest release'):
+            publish(release, self.dir / 'out2', github)
+        self.assertFalse(github.release(100)['draft'])
 
     def test_refuses_a_host_path_in_the_image(self):
         self.refused('newt.bin contains the home folder', image=carrying(os.fsencode(Path.home()) + b'/x.cpp\0'))
@@ -396,7 +465,7 @@ class ReleasePublishTests(unittest.TestCase):
         self.assertEqual(github.created, [[
             'gh', 'release', 'create', TAG, '--repo', HOP_REPOSITORY, '--title', f'Newt {VERSION}',
             '--notes-file', str(out / 'notes.md'), '--draft', *(str(out / name) for name in ASSETS)]])
-        self.assertEqual((github.patched, github.latest()['tag_name']), ([100], TAG))
+        self.assertEqual((github.patched, github.made_latest, github.latest()['tag_name']), ([100], True, TAG))
         self.assertEqual({name: (out / name).read_bytes() for name in ASSETS}, pair())
 
     def test_lost_publish_answer_that_published_succeeds(self):
@@ -460,14 +529,27 @@ CONTROLS = (
      'test_lost_publish_answer_that_published_succeeds'),
     ("    require(shown.get('draft') is False,", '    require(True,', 'test_failed_publish_keeps_the_draft_and_stops'),
     ('    if draft is None:', '    if True:', 'test_resumes_a_matching_draft_without_creating_one'),
-    ('    if prerelease:', '    if False:', 'test_refuses_the_prerelease_flag'),
+    ('    if prerelease != night or (hop and night):', '    if False:', 'test_refuses_the_prerelease_flag'),
+    ('    if prerelease != night or (hop and night):', '    if prerelease and not night:',
+     'test_refuses_a_nightly_without_the_flag_off_a_stamp_or_hopping'),
+    ('    elif not (main if night else git.on_mainline(commit)):', '    elif not git.on_mainline(commit) and not night:',
+     'test_refuses_a_nightly_without_the_flag_off_a_stamp_or_hopping'),
+    ('    if not night:  # CI publishes', '    if True:  # CI publishes',
+     'test_a_nightly_is_a_prerelease_with_test_build_notes_and_no_bench_check'),
+    ('    if main:\n', '    if False:\n', 'test_a_nightly_is_a_prerelease_with_test_build_notes_and_no_bench_check'),
+    ("            and not release.get('prerelease')", '',
+     'test_a_nightly_is_a_prerelease_with_test_build_notes_and_no_bench_check'),
+    ("    if release.prerelease:\n        newest = github.newest()", "    if release.prerelease:\n        return",
+     'test_publishing_a_nightly_never_makes_it_latest'),
+    ("        github.publish(draft['id'], not release.prerelease)", "        github.publish(draft['id'])",
+     'test_publishing_a_nightly_never_makes_it_latest'),
     ("    return {line for release in releases if not release['draft'] and release['tag_name'] != tag",
      '    return {line for release in releases', 'test_notes_list_what_this_repository_has_not_published'),
     ("            for section in re.findall(r\"^## What's new\\n(.*?)(?=^## |\\Z)\",",
      "            for section in re.findall(r'(.*)',", 'test_notes_list_what_this_repository_has_not_published'),
     ("leaks('newt.bin', image, patterns, allowed) + ", '', 'test_refuses_a_host_path_in_the_image'),
     (" + leaks('The notes', notes.encode(), patterns, allowed)", '', 'test_refuses_a_host_detail_in_the_notes'),
-    ('    refusals += bench_refusals(bench_receipt, version, build, image, manifest)', '',
+    ('        refusals += bench_refusals(bench_receipt, version, build, image, manifest)', '        pass',
      'test_refuses_without_a_matching_bench_receipt'),
     ('    elif DRAFT in notices:', '    elif False:', 'test_refuses_the_draft_marker'),
     ('    repository = HOP_REPOSITORY if hop else source', '    repository = HOP_REPOSITORY',

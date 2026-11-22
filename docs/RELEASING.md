@@ -47,8 +47,9 @@ release-tool regression tests. The current reviewed Actions workflow runs fresh
 host gate and the one firmware build's native resource gate; Linux coverage also
 requires the separate exact-source Mac ImageIO cover check. See [CI.md](CI.md)
 for pinned setup, platform coverage and evidence limits. Versioning adds no
-credentials or publication job. CI's one write permission is the small job
-that tags a release ([Tag the release](#tag-the-release)).
+credentials. CI's two write permissions are the small job that tags a release
+([Tag the release](#tag-the-release)) and the job that publishes nightly test
+builds ([Nightly test builds](#nightly-test-builds)).
 History through the adoption baseline is exempt. Subsequent commits are checked
 in full, including merge/fixup subjects; use Conventional Commits or squash/rebase
 them before integration. CI must fetch enough history to include the adoption
@@ -156,7 +157,9 @@ mandatory independently validated latency admission with a reviewed proper
 baseline, physical/battery/optical/button acceptance, recovery requirements, source/license
 review and publication exclusions. Release review must inspect compatibility and
 deliberate breaking declarations. Nothing here releases or flashes
-automatically; the release tag below is the one thing CI pushes.
+automatically; CI pushes the release tag below and nothing else for a release.
+A nightly test build is not a release
+([Nightly test builds](#nightly-test-builds)).
 
 ## Tag the release
 
@@ -261,8 +264,9 @@ below and publishes the release there; only the Lead runs it with `--publish`.
 5. GitHub's pre-release flag stays off, and each release is marked Latest.
    `/releases/latest` skips pre-releases and drafts, so a flagged release would
    be invisible to devices. The SemVer tag (`alpha.N`) states the maturity.
-   The tool refuses `--prerelease` until a reviewed device change adds release
-   channels. Publishing goes through a draft, which is never public: the tool
+   The tool refuses `--prerelease` for everything but a nightly test build,
+   and refuses a nightly without it
+   ([Nightly test builds](#nightly-test-builds)). Publishing goes through a draft, which is never public: the tool
    creates the draft with its three assets, verifies them, then publishes it
    with one request. (`gh release create` without `--draft` does those steps
    itself, and deletes the release when the publish answer is lost, even if
@@ -400,6 +404,59 @@ read this repository. Publish nothing more there.
 Never archive `newt-releases`. Its releases promise source on request through
 its issues for at least three years, and archiving makes issues read-only.
 
+## Nightly test builds
+
+Devices with the hidden Test builds setting on read
+`GET /repos/VargasDevelopment/newt/releases?per_page=1`, the newest release,
+pre-releases included, instead of `/releases/latest`. CI gives them a nightly
+test build of `main`: a GitHub pre-release with the same three assets as a
+release. Every other device never sees it, because `/releases/latest` skips
+pre-releases. A nightly has had no bench or hardware check.
+
+**When.** Public CI's `nightly` job runs after the `gate` job passes on an
+owner push to `main`, and by hand (Actions, "Public CI", Run workflow on
+`main`). A push builds a nightly only when something the image is built from
+changed since the last one: a change only to `.github/`, `docs/`,
+`installer/`, `tests/`, `rust/tests/`, `rust/host/` or a top-level `*.md`
+gets none. A manual run always builds one. If `main` has moved on by the time
+the job starts, it builds nothing; the newer push's own run does.
+
+**Version.** `<next>-dev.YYYYMMDD.N`. `<next>` is the patch after the
+version `main` declares (`0.2.0` gives `0.2.1`), so the next release outranks
+every nightly built on the current one. `YYYYMMDD` is the UTC day, and `N`
+counts that day's nightly tags for `<next>`, from 1: `0.2.1-dev.20261122.1`.
+Devices hold at most 23 characters of a version (the image's identity block,
+the manifest and the seen-build record), so the stamp and the publish refuse a
+longer one; the job fails rather than cut it. Nightlies build only on a stable
+version; while `main` declares a prerelease, the job fails.
+
+**How.** `tools/nightly.py stamp` writes the nightly version into `.cz.toml`
+and `firmware_version.h` and commits only that change on top of `main`'s tip,
+then tags that commit `v<version>` (annotated, naming its source). No branch
+carries the stamp commit, and the release gate refuses a nightly version on
+any branch. The job builds the stamped commit as a release is built
+(`tools/firmware-build.py --clean`, then `--clean --health-report`), so its
+build ID is the stamp commit's. Then it pushes the one tag and runs
+`tools/release_publish.py --prerelease --publish`, which holds a nightly to
+every release rule except these:
+
+- It must be exactly a stamp of a commit on `origin/main`'s first-parent
+  history, not itself on it, and it must carry the pre-release flag. Only a
+  `-dev.` version may, and a nightly never goes to another repository.
+- It skips the bench check.
+- Its notes are short: a Test build heading, the source commit and its
+  subject, and a compare link from the last release, then the build's
+  identity. No What's new.
+- It is published with `make_latest=false`, then must read back as the
+  newest release, flagged pre-release, not Latest, with exactly its three
+  assets.
+
+The install page follows only published releases (`release: released`),
+which a pre-release never fires, and the release tag tooling and
+`cz bump` ignore nightly tags. CI keeps every nightly; nothing deletes one.
+If the publish fails after the tag was pushed, the tag stays, and the next
+push with no image change gets no nightly: run the workflow by hand.
+
 ## Install page
 
 The install page ([installer/README.md](../installer/README.md)) is served by the
@@ -426,7 +483,8 @@ locally, see `installer/README.md`, "Try the site locally".
 - **Who.** The Lead prepares each release as a pull request (What's new and
   the version bump). The owner alone merges, outside contributions included.
   CI tags the release merge. The Lead builds from the tag, makes the bench
-  install check and publishes. Nobody else publishes.
+  install check and publishes. Nobody else publishes a release; CI publishes
+  only nightly test builds ([Nightly test builds](#nightly-test-builds)).
 - **Outside contributions.** A pull request from anyone, forks included, runs
   public CI ([CI.md](CI.md), "Public CI") with a read-only token and no
   secret: the same gate as the owner's own work, at the local tier (every
@@ -439,6 +497,7 @@ locally, see `installer/README.md`, "Try the site locally".
   and the notes, the manifest and the tag already name the exact source
   commit, build ID and image SHA-256, so anyone can rebuild and compare.
 - **What stays manual.** Preparing a release, the bench install check and its
-  receipt, publishing (`release_publish.py --publish`) and Pages settings. CI's only writes are the release tag and the
-  Pages deployment. CI never publishes a release, and releases need no new
-  secret, token or credential.
+  receipt, publishing (`release_publish.py --publish`) and Pages settings. CI's only writes are the release tag, the
+  nightly tag and its pre-release, and the Pages deployment. CI never
+  publishes a release, and neither releases nor nightlies need a new secret,
+  token or credential: CI uses the job's own short-lived token.
