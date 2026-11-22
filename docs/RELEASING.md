@@ -236,9 +236,9 @@ release permission.
 
 Updates are GitHub Releases in the repository the release's own firmware
 reads: `LATEST_RELEASE_URL` in `rust/core/src/update_online.rs`, read at the
-release commit. Until launch that is `VargasDevelopment/newt-releases`, because
-this source repository is private; from launch it is the public
-`VargasDevelopment/newt` ([Launch](#launch-releases-move-to-the-public-repository)).
+release commit: this repository, `VargasDevelopment/newt`. Releases up to
+v0.2.0 also went to `VargasDevelopment/newt-releases`
+([below](#newt-releases-releases-before-launch)).
 A device reads `GET /repos/<repository>/releases/latest`, then that release's
 `newt.manifest` and `newt.bin`. `tools/release_publish.py` checks every rule
 below and publishes the release there; only the Lead runs it with `--publish`.
@@ -373,8 +373,6 @@ creating another. Any difference is refused like a partial draft.
   version is taken for good. Release a new version. In
   `VargasDevelopment/newt` a missing tag, or one on another commit, is the
   first case above.
-- `--hop` refuses until `VargasDevelopment/newt` has published the same tag
-  with the same three files: publish there first, as launch step 6 says.
 - A draft for the tag holds other files than this pair: the tool refuses and
   names them. A draft is never public, so the Lead deletes it by hand
   (`gh release delete vVERSION --repo REPOSITORY`, as the refusal prints, or
@@ -392,68 +390,15 @@ creating another. Any difference is refused like a partial draft.
 - The `/releases/latest` check fails: the release is public. Never delete or
   edit it; tell the owner, and fix it in a new version.
 
-### Launch: releases move to the public repository
+### `newt-releases`: releases before launch
 
-Until launch every release goes to `newt-releases`. At launch (NEWT-77; the
-owner approves each public step) they move to the public `VargasDevelopment/newt`,
-in this order:
+Until v0.2.0 the source repository was private, so releases went to
+`VargasDevelopment/newt-releases`. v0.2.0 went to both (`release_publish.py
+--hop`): devices on older releases find it there, install it, and from then on
+read this repository. Publish nothing more there.
 
-1. **Export.** From the private `main`, once its latest release is tagged:
-   `python3 -B tools/clean_export.py --rev origin/main --out DIR --terms TERMS
-   --commit "$(git config user.name) <6808194+VargasDevelopment@users.noreply.github.com>"`,
-   run in the owner's checkout: the root commit carries the owner's name with
-   the GitHub no-reply e-mail. After a clean scan it prints the root commit. `LICENSE` names the
-   copyright holder, so a TERMS file that lists the owner's name also needs
-   one `allow<TAB>LICENSE<TAB>TERM` line for each such term, or the scan
-   fails on `LICENSE`.
-2. **The root.** Before its first CI run, set the public repository's `NEWT_RUST_ACQUISITION_APPROVED` variable to `sha256:7dbaa01b1773832093cfd8e64867b6aa0c253c85aa8132fd809eebd8ab796ca0` (the same owner-approved value; see [CI.md](CI.md)).
-   Push it as the public repository's `main`. Its public CI push
-   run passes and the release-tag job tags the root with the version it
-   carries, the private repository's last release. That tag only marks the
-   exported source: `newt-releases` already has that version, so it is never
-   published. Everything after it builds on that tag. (Exported from a later
-   commit than that release's merge, the root holds newer source under the
-   same version; exporting right after a release keeps them equal.)
-3. **The flip, in the release pull request.** A release branch from `main`
-   whose first commit, `feat(update): read updates from the public source
-   repository`, moves two lines: `LATEST_RELEASE_URL` in
-   `rust/core/src/update_online.rs` to `https://api.github.com/repos/VargasDevelopment/newt/releases/latest`, and the written
-   offer in `docs/NOTICES.txt` to `https://github.com/VargasDevelopment/newt/issues`
-   (`tests/release_publish_test.py` fails if only one moves). README's
-   Install section already points at the public releases, the install page
-   and [INSTALL.md](INSTALL.md) (#365). Then What's new and the version bump
-   as in [Prepare a reviewed release](#prepare-a-reviewed-release); the owner picks
-   the version. Run the full tier, and the release gate on the planned merge
-   from the root:
-   `python3 -B tools/release_tools.py --rev-range "$(git rev-list --max-parents=0 HEAD)..MERGE"`.
-4. **The release merge and its tag.** The owner merges it; CI tags it.
-5. **The bench receipt**, as in [Steps](#steps).
-6. **Publish to the public repository:** `release_publish.py --publish`, as
-   in [Steps](#steps). The tool reads `VargasDevelopment/newt` from the
-   release commit. CI has already tagged the release merge there, so the
-   tool requires that tag to name the build commit, and still refuses an
-   existing release.
-7. **The hop:** the same command with `--hop`, first as a dry run, then with
-   `--publish`. It publishes the same checked release to `newt-releases`. It
-   refuses unless the firmware reads `VargasDevelopment/newt` and
-   `VargasDevelopment/newt` has published that tag (not a draft) with the
-   same `newt.bin`, `newt.manifest` and `NOTICES.txt` (compared by the
-   GitHub API's SHA-256 digests; read only). Devices on older releases find
-   it there, install it, and from then on read the public repository. It is
-   the last release `newt-releases` gets: publish nothing there afterwards.
-8. **Never archive `newt-releases`.** Releases up to the hop promise source
-   on request through its issues for at least three years, and archiving
-   makes issues read-only. Keep the repository and its issues open, so
-   devices that never updated still find the hop and old offers stay
-   answerable. Add a short note to its README pointing to
-   `VargasDevelopment/newt` for new releases, the install page and new
-   issues.
-9. **Enable Pages:** Settings, Pages, Source: GitHub Actions. In Settings,
-   Environments, `github-pages`, allow the tags `v*` as well: by default it
-   allows only `main`, and a release's run runs on its tag. Step 6 ran before
-   Pages existed, so its deploy failed; run the workflow once by hand
-   (`gh workflow run install-page.yml --repo VargasDevelopment/newt`) and
-   check the page offers the release's version.
+Never archive `newt-releases`. Its releases promise source on request through
+its issues for at least three years, and archiving makes issues read-only.
 
 ## Install page
 
@@ -474,7 +419,7 @@ Only the deploy job writes (`pages: write`, `id-token: write`); there is no
 secret, and it runs only in the public repository. So the page follows each
 release with no step of its own. If a deploy fails, rerun it in Actions; the
 page keeps serving the previous release meanwhile. To try the same site
-before launch, see `installer/README.md`, "Try the site locally".
+locally, see `installer/README.md`, "Try the site locally".
 
 ## Releases in the public repository
 
@@ -494,7 +439,6 @@ before launch, see `installer/README.md`, "Try the site locally".
   and the notes, the manifest and the tag already name the exact source
   commit, build ID and image SHA-256, so anyone can rebuild and compare.
 - **What stays manual.** Preparing a release, the bench install check and its
-  receipt, publishing (`release_publish.py --publish`), the launch hop and
-  `newt-releases`' README note, and Pages settings. CI's only writes are the release tag and the
+  receipt, publishing (`release_publish.py --publish`) and Pages settings. CI's only writes are the release tag and the
   Pages deployment. CI never publishes a release, and releases need no new
   secret, token or credential.
