@@ -37,7 +37,8 @@ SECONDS = '.build/gate-phase-seconds.json'  # the last run's wall seconds per ph
 # Each phase's CPU seconds in a measured push-tier run; they only balance CI's shards.
 SHARD_SECONDS = 'tools/gate-shard-seconds.json'
 # Rust test packets a tests/ script runs, by that script (#360).
-RUST_PACKETS = {'slot_vectors_test.py': 'rust/tests/slot_vectors/'}
+RUST_PACKETS = {'slot_vectors_test.py': 'rust/tests/slot_vectors/',
+                'app_store_test.py': 'rust/tests/app_store/'}
 # tests/ files whose text can name another tests/ file
 TEXT = frozenset(('.py', '.h', '.hpp', '.inc', '.cpp', '.c', '.json', '.txt', '.md'))
 # Product owners select moved positives only; test/harness changes select
