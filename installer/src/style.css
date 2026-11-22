@@ -211,3 +211,10 @@ a {
 h1 .name {
   white-space: nowrap;
 }
+
+/* ?debug only (debug.ts). */
+.debug-save {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+}

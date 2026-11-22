@@ -1,5 +1,6 @@
 // The page: Web Serial and fetch wiring around the session and the view.
 import './style.css';
+import { debugEnabled, startDebugLog } from './debug.ts';
 import { openX3, X3_PORT_FILTERS } from './esp.ts';
 import { checkFile, checkNewt, type Firmware } from './image.ts';
 import { Session } from './session.ts';
@@ -21,6 +22,8 @@ async function loadNewt(): Promise<Firmware | null> {
   }
 }
 
+if (debugEnabled) startDebugLog();
+
 const serial = navigator.serial;
 const newt = loadNewt();
 let offer: NewtOffer = { status: 'loading' };
@@ -28,7 +31,7 @@ let offer: NewtOffer = { status: 'loading' };
 const session = new Session<SerialPort>(
   {
     requestPort: () => (serial ? serial.requestPort({ filters: X3_PORT_FILTERS }).catch(() => null) : Promise.resolve(null)),
-    open: openX3,
+    open: (port) => openX3(port, debugEnabled),
     newt,
     wait: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   },
@@ -56,6 +59,7 @@ const actions = {
 };
 
 const show = () => render(root, session.screen, actions, offer);
+if (debugEnabled) session.subscribe((screen) => console.log(`newt: screen ${screen.kind}${screen.kind === 'error' ? ` ${screen.problem.code}` : ''}`));
 session.subscribe(show);
 void newt.then((firmware) => {
   offer = firmware ? { status: 'ready', name: firmware.name } : { status: 'failed' };

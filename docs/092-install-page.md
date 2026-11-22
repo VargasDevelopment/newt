@@ -114,8 +114,26 @@ and writes nothing.
 
 The read takes only the image's own bytes, following its segment headers:
 3.3 MB for Newt 0.1.0-alpha.11, 6.3 MB for CrossInk v1.6.1, plus one small
-read per segment header. Its time on a real X3 is not measured yet (B1
-times it); the screen says "This can take a minute."
+read per segment header. The screen says "This can take a minute."
+
+Every read goes in 256-byte packets with one in flight (`readFlash`,
+`installer/src/esp.ts`), not esptool-js's 4 KiB. On macOS, Chrome opens the
+port with PARMRK, so the kernel queues each 0xFF byte twice and silently drops
+whatever overflows its 1024-byte input queue. A 4 KiB packet of erased flash
+(the partition table, otadata) then loses its end, and the stub waits forever
+for an ack. Each packet's length and the stub's closing MD5 are checked. The
+cost: about 60 s for Newt's 3.6 MB on the Linux bench, against about 33 s
+with 4 KiB packets.
+
+The page restarts the X3 with esptool's hard reset (RTS pulsed while DTR is
+released), after a failed connect too. esptool-js 0.7.1's
+`after('hard_reset')` never asserts RTS, so it leaves the chip in the flasher
+stub (espressif/esptool-js#279); on macOS the X3 then stayed frozen until it
+was power-cycled.
+
+Opening the page with `?debug` logs esptool-js's steps, the bytes of the
+connect and small reads, and each operation's result and time. A "Save debug
+log" button saves the log as one file.
 
 ## Known tables
 
