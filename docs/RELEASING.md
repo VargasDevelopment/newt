@@ -452,10 +452,11 @@ every release rule except these:
   subject, and a compare link from the last release, then the build's
   identity. No What's new.
 - Its release state comes only from release objects addressed by tag or
-  id, never a list position or `/releases/latest`. Every check runs before
-  the one step that cannot be undone: the tool pushes the tag itself, after
-  every check and after confirming `main`'s tip is still the stamp's source
-  (otherwise it publishes nothing). It publishes with `make_latest=false`,
+  id, never a list position or `/releases/latest`. Every check, including
+  the uploaded draft's assets, runs before the one step that cannot be
+  undone: the tool pushes the tag itself, after confirming `main`'s tip is
+  still the stamp's source (otherwise it publishes nothing and the draft
+  stays private). It publishes with `make_latest=false`,
   then reads back only the release it created, by id: its tag, the
   pre-release flag (GitHub never makes a pre-release Latest) and exactly its
   three assets.
@@ -465,8 +466,9 @@ nightly for devices with Test builds on, until the next nightly, built on the
 new release, outranks it. The install page follows only published releases
 (`release: released`), which a pre-release never fires, and the release tag
 tooling and `cz bump` ignore nightly tags. CI keeps every nightly; nothing
-deletes one. If the publish fails after the tag was pushed, the tag stays
-without a release; the next push that changes the image, or a manual run,
+deletes one. A run that stops before its tag push leaves at most a private
+draft. If the publish fails after the tag was pushed, the tag stays without a
+release; rerun the workflow (or the next push that changes the image), which
 builds the next number.
 
 ## Install page

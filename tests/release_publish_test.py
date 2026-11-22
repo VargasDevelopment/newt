@@ -387,14 +387,20 @@ class ReleasePublishTests(unittest.TestCase):
         git = stamped_git(tip='f' * 40)
         release, github = self.nightly(git=git)
         self.assertFalse(publish(release, self.dir / 'out', github, git))
-        self.assertEqual((git.pushed, github.created), ([], []))
+        # Its verified draft stays private: no tag, nothing published.
+        self.assertEqual((git.pushed, github.patched, github.release(100)['draft']), ([], [], True))
         # A local write that fails stops before the tag push.
-        git = stamped_git()
+        git, github = stamped_git(), FakeGitHub()
         (self.dir / 'taken').mkdir()
         (self.dir / 'taken' / 'notes.md').write_text('')
         with self.assertRaises(OSError):
             publish(self.nightly(git=git)[0], self.dir / 'taken', github, git)
         self.assertEqual((git.pushed, github.created), ([], []))
+        # A draft whose upload does not verify stays private, and no tag goes out.
+        git, github = stamped_git(), FakeGitHub(corrupt=True)
+        with self.assertRaisesRegex(ValueError, 'newt.bin SHA-256 is not'):
+            publish(self.nightly(git=git, github=github)[0], self.dir / 'out3', github, git)
+        self.assertEqual((git.pushed, github.patched), ([], []))
 
     def test_refuses_a_host_path_in_the_image(self):
         self.refused('newt.bin contains the home folder', image=carrying(os.fsencode(Path.home()) + b'/x.cpp\0'))
@@ -503,6 +509,11 @@ class ReleasePublishTests(unittest.TestCase):
         github.latest = lambda: {'id': 1}
         with self.assertRaisesRegex(ValueError, '/releases/latest does not show it'):
             publish(self.plan(github=github), self.dir / 'out2', github)
+        # It must show this release's assets too, not only its id.
+        github = FakeGitHub()
+        github.latest = lambda: {**github.release(100), 'assets': []}
+        with self.assertRaisesRegex(ValueError, '/releases/latest does not show it'):
+            publish(self.plan(github=github), self.dir / 'out3', github)
 
     def test_lost_publish_answer_that_published_succeeds(self):
         github = FakeGitHub('lost')
@@ -586,8 +597,10 @@ CONTROLS = (
      'test_publishing_a_nightly_pushes_its_tag_last_and_verifies_it_by_id'),
     ('    if release.prerelease and not (git or Git()).push_nightly(', '    if False and not (git or Git()).push_nightly(',
      'test_a_nightly_publishes_nothing_once_main_has_moved_on_or_a_check_fails'),
-    ("    require(release.prerelease or github.latest().get('id') == draft['id'],", '    require(True,',
+    ("        require(latest.get('id') == draft['id'] and", '        require(True or',
      'test_publish_creates_a_draft_then_publishes_it'),
+    ("latest.get('prerelease') is False and not asset_refusals(github, latest, release.assets()),",
+     "latest.get('prerelease') is False,", 'test_publish_creates_a_draft_then_publishes_it'),
     ("    return {line for release in releases if not release['draft'] and release['tag_name'] != tag",
      '    return {line for release in releases', 'test_notes_list_what_this_repository_has_not_published'),
     ("            for section in re.findall(r\"^## What's new\\n(.*?)(?=^## |\\Z)\",",

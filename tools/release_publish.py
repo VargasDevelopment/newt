@@ -414,9 +414,8 @@ def describe(release, out):
 
 def publish(release, out, github, git=None):
     """Creates (or resumes) the draft, verifies its assets, publishes it with one PATCH, then reads it
-    back by id (and a release as devices will). Never deletes: a draft that stays a draft is reported.
-    A nightly first pushes its tag, unless main has moved on: then it publishes nothing and returns
-    False, since the newer main's own run publishes."""
+    back by id (and a stable release as devices will). Never deletes. A nightly pushes its tag only after
+    its draft verifies, so a failed check or a newer main (returns False) leaves at most a private draft."""
     draft = release.draft
     if draft is None:
         digests = dict(update_publish.publish(out, 'newt', release.image, release.manifest))
@@ -425,8 +424,6 @@ def publish(release, out, github, git=None):
         for name, text in (('NOTICES.txt', release.notices), ('notes.md', release.notes)):
             with (out / name).open('x', encoding='utf-8') as file:
                 file.write(text)
-    if release.prerelease and not (git or Git()).push_nightly(release.tag, release.source):
-        return False
     if draft is None:
         github.create_draft(release.command(out))
         draft = github.release_for(release.tag)
@@ -434,6 +431,9 @@ def publish(release, out, github, git=None):
                 f'{release.repository} shows no draft for {release.tag} after creating it')
         mismatch = draft_mismatch(github, draft, release)
         require(not mismatch, draft_refusals(release, mismatch)[0])
+    # The one irreversible step for a nightly: GitHub publishes the draft at this pushed tag.
+    if release.prerelease and not (git or Git()).push_nightly(release.tag, release.source):
+        return False
     try:
         github.publish(draft['id'], not release.prerelease)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
@@ -449,10 +449,13 @@ def publish(release, out, github, git=None):
             f'{release.repository} published {release.tag}, but release {draft["id"]} does not show it '
             f'{"flagged" if release.prerelease else "unflagged"} with exactly {", ".join(ASSETS)}; never delete it '
             '(docs/RELEASING.md)')
-    # Devices read /releases/latest, so a release must be it; a nightly never is.
-    require(release.prerelease or github.latest().get('id') == draft['id'],
-            f'{release.repository} published {release.tag}, but /releases/latest does not show it; never delete it '
-            '(docs/RELEASING.md)')
+    # Devices read /releases/latest, so a stable release must be it, with its assets; a nightly never is.
+    if not release.prerelease:
+        latest = github.latest()
+        require(latest.get('id') == draft['id'] and latest.get('tag_name') == release.tag and
+                latest.get('prerelease') is False and not asset_refusals(github, latest, release.assets()),
+                f'{release.repository} published {release.tag}, but /releases/latest does not show it with exactly '
+                f'{", ".join(ASSETS)}; never delete it (docs/RELEASING.md)')
     return True
 
 
