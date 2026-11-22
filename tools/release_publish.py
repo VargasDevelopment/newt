@@ -50,7 +50,6 @@ NOTICES = 'docs/NOTICES.txt'
 # NOTICES.txt marks each item that still needs the owner's decision with this.
 DRAFT = 'DRAFT: needs owner approval'
 WHATS_NEW = 'rust/device-ui/whats_new_notes.h'
-LEGACY_WHATS_NEW = 'include/newt/whats_new_notes.h'
 EMAIL = re.compile(rb'[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}')
 
 
@@ -80,12 +79,6 @@ class Git:
         """A file's text at a commit, or None where it does not exist."""
         shown = subprocess.run(['git', 'show', f'{commit}:{path}'], cwd=self.root, capture_output=True, text=True)
         return None if shown.returncode else shown.stdout
-
-    def previous_tag(self, commit):
-        """The newest release tag on the commit's first parent's history, or None."""
-        found = subprocess.run(['git', 'describe', '--tags', '--abbrev=0', '--match', 'v[0-9]*', commit + '^'],
-                               cwd=self.root, capture_output=True, text=True)
-        return found.stdout.strip() or None
 
 
 def update_repository(source):
@@ -149,6 +142,12 @@ class GitHub:
     def latest(self):
         return self.api(f'repos/{self.repository}/releases/latest')
 
+    def all_releases(self):
+        """Every release here, drafts included, as {tag_name, draft, body}."""
+        rows = self.run(['gh', 'api', '--paginate', f'repos/{self.repository}/releases?per_page=100',
+                         '--jq', '.[] | {tag_name, draft, body} | tojson'])
+        return [json.loads(row) for row in rows.splitlines()]
+
 
 @dataclass
 class Plan:
@@ -194,10 +193,12 @@ def whats_new(header):
             for date, lines in re.findall(r'\{\s*("[^"]*")\s*,\s*\{(.*?)\}\s*\}', header, re.DOTALL)]
 
 
-def notes_at(git, commit):
-    """Older release tags predate the shared data path; retain their history."""
-    header = git.show(commit, WHATS_NEW)
-    return header if header is not None else (git.show(commit, LEGACY_WHATS_NEW) or '')
+def announced(releases, tag):
+    """Every What's new line that the published notes here, other than `tag`'s, already showed readers."""
+    return {line for release in releases if not release['draft'] and release['tag_name'] != tag
+            for section in re.findall(r"^## What's new\n(.*?)(?=^## |\Z)",
+                                      (release['body'] or '').replace('\r\n', '\n'), re.MULTILINE | re.DOTALL)
+            for line in re.findall(r'^- (.+)$', section, re.MULTILINE)}
 
 
 def render_notes(version, commit, build, image, news):
@@ -325,9 +326,10 @@ def plan(image, receipt, bench_receipt=None, prerelease=False, git=None, github=
     refusals += bench_refusals(bench_receipt, version, build, image, manifest)
     header = git.show(commit, WHATS_NEW)
     require(header is not None, f'{commit} has no {WHATS_NEW}')
-    previous = git.previous_tag(commit)
-    shipped = whats_new(notes_at(git, previous)) if previous else []
-    news = list(dict.fromkeys(line for update in whats_new(header) if update not in shipped for line in update[1]))
+    # News is what this repository's published notes have not yet shown. Git tags are no guide: the public
+    # export put every older tag on one commit, and a first release here (or the hop) has other readers.
+    shown = announced(github.all_releases(), tag)
+    news = list(dict.fromkeys(line for _, lines in whats_new(header) for line in lines if line not in shown))
     notes = render_notes(version, commit, build, image, news)
     # Until its firmware reads it, the source repository is private and its links 404.
     if source != SOURCE_REPOSITORY and re.search(r'VargasDevelopment/newt(?!-releases)', notes):

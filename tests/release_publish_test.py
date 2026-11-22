@@ -33,7 +33,6 @@ from x3_slots import NEWT_MARK
 import update_publish
 
 TAG = 'v' + VERSION
-PREVIOUS = 'v0.2.0-alpha.0'
 HEADER = '''inline constexpr WhatsNewUpdate kWhatsNew[] = {
     {"Oct 30, 2026",
      {"Updates arrive over \\"Wi-Fi\\".",
@@ -41,10 +40,14 @@ HEADER = '''inline constexpr WhatsNewUpdate kWhatsNew[] = {
     {"Oct 28, 2026",
      {"Update in Settings installs Newt from the SD card."}},
 };'''
-SHIPPED = '''inline constexpr WhatsNewUpdate kWhatsNew[] = {
-    {"Oct 28, 2026",
-     {"Update in Settings installs Newt from the SD card."}},
-};'''
+SHOWN = '''## What's new\r
+\r
+- Update in Settings installs Newt from the SD card.\r
+\r
+## This build\r
+\r
+- Reading is faster.\r
+'''
 NOTES = f'''## What's new
 
 - Updates arrive over "Wi-Fi".
@@ -78,7 +81,7 @@ class FakeGit:
         self.tags = {TAG: REVISION}
         self.origin = {TAG: REVISION}
         self.mainline = {REVISION}
-        self.files = {(REVISION, NOTICES): NOTICE_TEXT, (REVISION, WHATS_NEW): HEADER, (PREVIOUS, WHATS_NEW): SHIPPED,
+        self.files = {(REVISION, NOTICES): NOTICE_TEXT, (REVISION, WHATS_NEW): HEADER,
                       (REVISION, UPDATE_SOURCE): online(HOP_REPOSITORY)}
         self.__dict__.update(changes)
 
@@ -97,16 +100,14 @@ class FakeGit:
     def show(self, commit, path):
         return self.files.get((commit, path))
 
-    def previous_tag(self, commit):
-        return PREVIOUS
 
 
 class FakeGitHub:
     """One repository as GitHub keeps it. `answer` is what the publish PATCH does: 'ok', 'lost' (GitHub
     publishes, the answer never arrives) or 'failed' (nothing changes). It has no delete."""
 
-    def __init__(self, answer='ok', corrupt=False, tags=None):
-        self.answer, self.corrupt, self.tags = answer, corrupt, dict(tags or {})
+    def __init__(self, answer='ok', corrupt=False, tags=None, previous=SHOWN):
+        self.answer, self.corrupt, self.tags, self.previous = answer, corrupt, dict(tags or {}), previous
         self.releases, self.blobs, self.created, self.patched = {}, {}, [], []
 
     def add(self, tag, files, draft=True, name=None, body=None, prerelease=False):
@@ -147,6 +148,11 @@ class FakeGitHub:
             self.tags.setdefault(self.releases[release_id]['tag_name'], REVISION)
         if self.answer != 'ok':
             raise subprocess.CalledProcessError(1, 'gh api -X PATCH')
+
+    def all_releases(self):
+        """`previous` is the notes of an older published release this fake holds no assets for."""
+        older = [{'tag_name': 'v0.2.0-alpha.0', 'draft': False, 'body': self.previous}] if self.previous else []
+        return older + list(self.releases.values())
 
     def latest(self):
         published = [release for release in self.releases.values() if not release['draft']]
@@ -206,16 +212,19 @@ class ReleasePublishTests(unittest.TestCase):
         self.assertEqual(release.notes, NOTES + size)
         self.assertEqual(self.plan().notes, release.notes)
 
-    def test_legacy_notes_are_only_read_for_previous_releases(self):
-        expected = self.plan().notes
-        git = FakeGit()
-        for revision in (PREVIOUS, REVISION):
-            git.files[revision, release_publish.LEGACY_WHATS_NEW] = git.files.pop((revision, WHATS_NEW))
-            if revision == PREVIOUS:
-                self.assertEqual(self.plan(git=git).notes, expected)
-            else:
-                with self.assertRaisesRegex(ValueError, 'has no ' + WHATS_NEW):
-                    self.plan(git=git)
+    def test_notes_list_what_this_repository_has_not_published(self):
+        # A first release here lists every current note, even if git history carried them already.
+        first = self.plan(github=FakeGitHub(previous=None)).notes
+        shown = '- Update in Settings installs Newt from the SD card.\n'
+        self.assertIn(shown, first)
+        self.assertNotIn(shown, self.plan().notes)
+        # A line under "This build" was never a What's new line.
+        self.assertIn('- Reading is faster.\n', self.plan().notes)
+        # Neither a private draft nor this release's own published notes count as shown.
+        github = FakeGitHub()
+        github.add('v0.2.0-alpha.1', {}, body=first)
+        github.add(TAG, {}, draft=False, body=first)
+        self.assertEqual(self.plan(github=github).notes, self.plan().notes)
 
     def test_cpp_repository_cannot_override_the_shipped_rust_url(self):
         git = FakeGit()
@@ -452,6 +461,10 @@ CONTROLS = (
     ("    require(shown.get('draft') is False,", '    require(True,', 'test_failed_publish_keeps_the_draft_and_stops'),
     ('    if draft is None:', '    if True:', 'test_resumes_a_matching_draft_without_creating_one'),
     ('    if prerelease:', '    if False:', 'test_refuses_the_prerelease_flag'),
+    ("    return {line for release in releases if not release['draft'] and release['tag_name'] != tag",
+     '    return {line for release in releases', 'test_notes_list_what_this_repository_has_not_published'),
+    ("            for section in re.findall(r\"^## What's new\\n(.*?)(?=^## |\\Z)\",",
+     "            for section in re.findall(r'(.*)',", 'test_notes_list_what_this_repository_has_not_published'),
     ("leaks('newt.bin', image, patterns, allowed) + ", '', 'test_refuses_a_host_path_in_the_image'),
     (" + leaks('The notes', notes.encode(), patterns, allowed)", '', 'test_refuses_a_host_detail_in_the_notes'),
     ('    refusals += bench_refusals(bench_receipt, version, build, image, manifest)', '',
@@ -469,9 +482,6 @@ CONTROLS = (
      'test_publishes_where_the_release_firmware_reads_updates'),
     ("UPDATE_SOURCE = 'rust/core/src/update_online.rs'", "UPDATE_SOURCE = 'include/newt/update_online.h'",
      'test_cpp_repository_cannot_override_the_shipped_rust_url'),
-    ('    header = git.show(commit, WHATS_NEW)\n    require(header is not None,',
-     '    header = notes_at(git, commit)\n    require(header is not None,',
-     'test_legacy_notes_are_only_read_for_previous_releases'),
     ("        while target is not None and target['type'] == 'tag':", '        while False:',
      'test_reads_ci_annotated_tag_as_its_commit'),
     ("        if shown is None or shown.get('draft') is not False:", '        if shown is None:',
