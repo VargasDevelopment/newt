@@ -14,6 +14,14 @@ Newt's Settings can restart into it.
 Newt is early alpha software. Expect rough edges, and please
 [report what you find](https://github.com/VargasDevelopment/newt/issues).
 
+<p align="center">
+  <img src="docs/screen-home.png" alt="Home: the book you are reading, with Books, Apps and Settings" width="264">
+  <img src="docs/screen-reader.png" alt="A page of a book in the reader" width="264">
+  <img src="docs/screen-settings.png" alt="Settings" width="264">
+</p>
+
+<p align="center"><sub>Home, the reader and Settings, rendered from the real firmware by the host preview.</sub></p>
+
 ## What works today
 
 - **Reading.** EPUB books from anywhere on the card. Chapters, a reading
