@@ -58,6 +58,15 @@ your pull request, say which of these you have. If you tested on an X3, name
 its screen controller (UC8253 or UC8279d) and its power (USB or battery). On
 battery, sleep is a full power-off, so it behaves differently from USB.
 
+## Working notes stay out of the repo
+
+Working notes, logs, measurements, evidence, review rounds and plans never
+go in the repository. Put them in the pull request, its issue, or your own
+notes outside the checkout. Docs describe the current system only: when the
+system changes, change the doc, and don't add a dated record of the change.
+`tests/repo_docs_allowlist_test.py` holds `docs/` and `artifacts/` to a
+fixed list; a new file there needs a reviewed entry in that list.
+
 ## Rules that keep Newt correct
 
 1. **One copy of each screen.** The preview runs the real firmware, built for
