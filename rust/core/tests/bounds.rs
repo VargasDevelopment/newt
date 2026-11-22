@@ -18,6 +18,7 @@ fn hostile_lengths_never_index_before_validation() {
             let _ = TimeZoneCodec::decode(&bytes[..length]);
             let _ = ClockFormatCodec::decode(&bytes[..length]);
             let _ = SleepScreenCodec::decode(&bytes[..length]);
+            let _ = TestBuildsCodec::decode(&bytes[..length]);
         }
     }
 }

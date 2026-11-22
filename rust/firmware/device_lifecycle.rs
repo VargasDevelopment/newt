@@ -4,7 +4,7 @@
 #![forbid(unsafe_code)]
 use crate::{home_startup::{CardPort, HomeChoice, HomeRuntime}, nvs};
 use core::fmt::Write;
-use newt_core::{app::{self, Action, AppState, DevicePage, Screen, SettingsNotice, SettingsRow}, clock_format::ClockFormat, durable::Commit, time_zone::{TimeZone,TIME_ZONE_LABELS}};
+use newt_core::{app::{self, Action, AppState, DevicePage, Screen, SettingsNotice, SettingsRow}, clock_format::ClockFormat, durable::Commit, time_zone::{TimeZone,TIME_ZONE_LABELS}, update_online::TestBuilds};
 use newt_system_ui::{ListOverlay,ListOverlayResult,dispatch_list_overlay};
 
 /// Required real Root operations; no success defaults. One borrowed capability
@@ -25,6 +25,7 @@ pub fn dispatch<'sdk,L:Write,N:nvs::Native,P:CardPort>(
     if zone(home,app,action) {return true;}
     if format(home,app,action) {return true;}
     if sleep(home,app,action) {return true;}
+    if test_builds(home,app,action) {return true;}
     if platform.firmware_switch(home,app,action) {return true;}
     platform.update_entry(home,app,action)
 }
@@ -55,4 +56,9 @@ fn sleep<L:Write,N:nvs::Native,P:CardPort>(home:&mut HomeRuntime<'_,L,N,P>,app:&
     let mut next=home.clock.sleep_screen();
     match app.list_focus {0=>next.progress=!next.progress,1=>next.week=!next.week,_=>next.habit=!next.habit}
     app.settings_notice=if home.commit(HomeChoice::SleepScreen(next))==Commit::Saved {SettingsNotice::None}else{match app.list_focus {0=>SettingsNotice::SleepProgressSaveFailed,1=>SettingsNotice::SleepWeekSaveFailed,_=>SettingsNotice::SleepHabitSaveFailed}};true
+}
+fn test_builds<L:Write,N:nvs::Native,P:CardPort>(home:&mut HomeRuntime<'_,L,N,P>,app:&mut AppState,action:Action)->bool {
+    if app.screen!=Screen::Device || app::device_page(app)!=DevicePage::Developer || action!=Action::Activate {return false;}
+    let next=if home.clock.test_builds()==TestBuilds::On {TestBuilds::Off}else{TestBuilds::On};
+    app.settings_notice=if home.commit(HomeChoice::TestBuilds(next))==Commit::Saved {SettingsNotice::None}else{SettingsNotice::TestBuildsSaveFailed};true
 }

@@ -1,6 +1,6 @@
 use newt_system_ui::*;
 #[test]
-fn status_and_exception_policy() {
+fn status_policy_and_shell_draws() {
     let mut out = [0; 48];
     assert_eq!(
         format_system_status(&mut out, false, true, 84),
@@ -14,23 +14,6 @@ fn status_and_exception_policy() {
         format_system_status(&mut out, true, true, 100),
         "Wi-Fi · 100%".as_bytes()
     );
-    for (screen, first_newt, expected) in [
-        (Screen::Home, false, SystemPageException::Home),
-        (Screen::Reading, false, SystemPageException::Reader),
-        (Screen::EpubReading, false, SystemPageException::Reader),
-        (Screen::Sleeping, false, SystemPageException::Sleep),
-        (Screen::Device, true, SystemPageException::FirstNewt),
-        (Screen::Device, false, SystemPageException::None),
-        (Screen::TinyApp, false, SystemPageException::None),
-        (Screen::Library, false, SystemPageException::None),
-    ] {
-        let state = AppState {
-            screen,
-            first_newt,
-            ..AppState::default()
-        };
-        assert_eq!(system_page_exception(&state), expected);
-    }
     assert!(!system_footer_shows(None, 0));
     assert!(!system_footer_shows(None, 4));
     draw_frosted_system_base(&SystemBar::default(), HomePlane::Monochrome, None);

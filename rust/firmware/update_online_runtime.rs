@@ -10,7 +10,7 @@ use crate::{app_image::Events, app_runtime::run_loop::ImageError,
 use newt_c3_board::{Board, Error, MonotonicClock};
 use newt_core::{frame::Frame, network_clock::{self, NetworkTime}, update_card,
     update_manifest::{MAX_BYTES, UpdateManifest}, update_mode_request::UpdateModeRequest,
-    update_online::{self, Clock, Http, OnlineCheck, OnlineWork, READ_BYTES, URL_BYTES},
+    update_online::{self, Clock, Http, OnlineCheck, OnlineWork, READ_BYTES, TestBuilds, URL_BYTES},
     update_release::ReleaseJson, wifi_network_store::workflow::WifiChoice};
 use newt_device_ui::update::{OnlineStatus, UpdatePage};
 use newt_native_io::UpdateFiles;
@@ -28,6 +28,8 @@ impl update_mode::Online for Online {
             time: NetworkTime { seconds: 0, at_ms: 0 }, frame_kept: false };
         let mut network = WifiChoice::default();
         state.restore(&mut ui.bus.board, &mut network, Some(&mut view.password), sdk);
+        // This boot restored it from the card with the clock choices (restore_clock).
+        let test_builds = ui.clock.test_builds();
         // The inert lexical owner starts no SDK client/timer/loan. It spans
         // join cleanup so a kept frame can restart before permission returns.
         update_https::with_https(logical, |http| {
@@ -49,7 +51,7 @@ impl update_mode::Online for Online {
                                 }
                             }
                             JoinDuty::Online => {
-                                if let Err(error) = fetch(board, parts, &mut page, http, events, &mut outcome) { fault = Some(error); }
+                                if let Err(error) = fetch(board, parts, &mut page, http, events, test_builds, &mut outcome) { fault = Some(error); }
                                 // SDK deadline/client lifetime ends at the
                                 // frozen local Http destructor, before teardown.
                                 let _ = ports;
@@ -129,7 +131,7 @@ impl Page<'_> {
 
 #[inline(never)]
 fn fetch(board: &mut Board<'_>, parts: &mut Parts<'_, '_>, page: &mut Page<'_>, http: &mut Https<'_>,
-    events: &mut Events<'_, '_>, outcome: &mut Outcome,
+    events: &mut Events<'_, '_>, test_builds: TestBuilds, outcome: &mut Outcome,
 ) -> Result<(), ImageError> {
     parts.trace_heap("online-joined")?;
     *page.online = OnlineCheck::Looking;
@@ -145,7 +147,7 @@ fn fetch(board: &mut Board<'_>, parts: &mut Parts<'_, '_>, page: &mut Page<'_>, 
             outcome.result = update_online::fetch_online_update_with_http(http, &mut card, hash, &mut clock,
                 &mut |http, done, total| {
                     if page.progress(board, parts, http, events, done, total).is_err() { crate::app_power::stop(); }
-                }, &mut work.borrow(), Some(running), &mut outcome.manifest);
+                }, &mut work.borrow(), test_builds, Some(running), &mut outcome.manifest);
             http.close();
             #[cfg(feature = "dev-usb")]
             {

@@ -27,7 +27,7 @@ fn show(board: &mut Board<'_>, logical: &mut Frame, reason: &str) -> Result<(), 
     let mut info = DeviceInfo::default();
     info.panel = Some(reason.as_bytes());
     render_device_ui(&state, &info, &SystemBar::default(), Some(logical), Default::default(),
-        None, None, FIRMWARE_BUILD, Default::default());
+        None, None, FIRMWARE_BUILD, Default::default(), Default::default());
     let native = board.frame()?.try_into().map_err(|_| Error::Length)?;
     frame::to_native_frame(logical, native, Orientation::Portrait);
     board.update(Refresh::Full, false)

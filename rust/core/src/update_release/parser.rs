@@ -14,6 +14,8 @@ enum Literal { True, False, Null }
 pub struct ReleaseJson {
     object: [bool; DEPTH],
     depth: u8,
+    // The release sits inside a top-level one-element list (`releases?per_page=1`).
+    listed: bool,
     assets_at: u8,
     expect: Expect,
     token: Token,
@@ -44,7 +46,7 @@ pub struct ReleaseJson {
 impl Default for ReleaseJson {
     fn default() -> Self {
         Self {
-            object: [false; DEPTH], depth: 0, assets_at: 0, expect: Expect::Value, token: Token::None,
+            object: [false; DEPTH], depth: 0, listed: false, assets_at: 0, expect: Expect::Value, token: Token::None,
             failed: false, opened: false, key: false, escape: false, hex_left: 0, code: 0,
             into: Destination::None, length: 0, usable: true, key_text: [0;24], key_usable: false,
             literal: Literal::True, literal_at: 0, size_number: false, size_usable: false,
@@ -74,6 +76,10 @@ impl ReleaseJson {
     }
     pub fn assets(&self) -> &ReleaseAssets { &self.assets }
     fn in_asset(&self) -> bool { self.assets_at != 0 && self.depth == self.assets_at + 1 }
+    /// The depth of the release object's own keys.
+    fn release_depth(&self) -> u8 { 1 + u8::from(self.listed) }
+    /// Inside the top-level list, outside its release.
+    fn in_list(&self) -> bool { self.listed && self.depth == 1 }
     fn fail(&mut self) -> bool { self.failed = true; true }
     fn value_done(&mut self) { self.expect = if self.depth != 0 { Expect::Next } else { Expect::Done }; }
     fn step(&mut self, c: u8) -> bool {
@@ -115,20 +121,23 @@ impl ReleaseJson {
                 true
             }
             Expect::Next => {
-                if c == b',' { self.expect = if self.object[usize::from(self.depth)-1] { Expect::Key } else { Expect::Value }; }
+                if c == b',' && self.in_list() { self.fail(); }
+                else if c == b',' { self.expect = if self.object[usize::from(self.depth)-1] { Expect::Key } else { Expect::Value }; }
                 else if c == if self.object[usize::from(self.depth)-1] { b'}' } else { b']' } { self.close(); }
                 else { self.fail(); }
                 true
             }
             Expect::Value => {
-                if c == b']' && fresh { self.close(); }
+                if c == b']' && fresh && !self.in_list() { self.close(); }
                 else if !self.begin(c) { self.fail(); }
                 true
             }
         }
     }
     fn begin(&mut self, c: u8) -> bool {
-        if self.depth == 0 && c != b'{' { return false; }
+        // The top level is the release, or a list holding exactly one release.
+        if self.depth == 0 && c == b'[' { self.listed = true; }
+        else if (self.depth == 0 || self.in_list()) && c != b'{' { return false; }
         match c {
             b'{' => { self.open(true); return true; }
             b'[' => { self.open(false); return true; }
@@ -152,7 +161,7 @@ impl ReleaseJson {
     }
     fn open(&mut self, object: bool) {
         if usize::from(self.depth) == DEPTH { self.fail(); return; }
-        if !object && self.depth == 1 && self.key_is(b"assets") && self.assets_at == 0 { self.assets_at = 2; }
+        if !object && self.depth == self.release_depth() && self.key_is(b"assets") && self.assets_at == 0 { self.assets_at = self.depth + 1; }
         if object && self.assets_at != 0 && self.depth == self.assets_at {
             self.name[0] = 0; self.url[0] = 0;
             self.name_usable = false; self.url_usable = false; self.size = -1;

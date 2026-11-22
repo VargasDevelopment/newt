@@ -27,6 +27,7 @@ EDIT = POCKET + ",activate"
 # networks through the Wi-Fi row below it.
 UPDATE = SETTINGS + ",next" * 6 + ",activate"
 WIFI = SETTINGS + ",next" * 7 + ",activate"
+FIRST_NEWT = SETTINGS + ",next,next,next,activate,activate" + ",activate" * 5
 # Every system page state the shell preview reaches, by the presses that reach it.
 SCREENS = {
     "library": "activate",
@@ -52,6 +53,11 @@ SCREENS = {
     "about": SETTINGS + ",next,next,next,activate,activate",
     "about-whats-new-row": SETTINGS + ",next,next,next,activate,activate,next",
     "whats-new": SETTINGS + ",next,next,next,activate,activate,next,activate",
+    # Five Selects on About's Version open the first newt; Previous, Next,
+    # Previous, Next there open the hidden Developer page.
+    "first-newt": FIRST_NEWT,
+    "developer": FIRST_NEWT + ",previous,next,previous,next",
+    "developer-on": FIRST_NEWT + ",previous,next,previous,next,activate",
     "reading-statistics": SETTINGS + ",next" * 4 + ",activate",
     "pocket-pause": POCKET,
     "pocket-pause-two-enabled": EDIT + ",activate,next,next,next,activate",
@@ -228,6 +234,9 @@ class SystemUiRuleTests(unittest.TestCase):
                             # About's Version Select only counts toward the first newt.
                             ("about", "previous"), ("about", "activate"), ("about-whats-new-row", "next"),
                             ("whats-new", "previous"), ("whats-new", "next"), ("whats-new", "activate"),
+                            # The unlock's presses change nothing shown until the last one.
+                            ("first-newt", "previous"), ("first-newt", "next"), ("first-newt", "activate"),
+                            ("developer", "previous"), ("developer", "next"),
                             ("updated", "previous"), ("updated", "next"), ("updated", "activate")):
             with self.subTest(name, press=press):
                 self.assertEqual(self.screen(name, press), self.screen(name))
@@ -245,6 +254,17 @@ class SystemUiRuleTests(unittest.TestCase):
         # Back from What's new returns to About with focus on its row.
         self.assertEqual(self.screen("whats-new", "back"), self.screen("about-whats-new-row"))
         self.assertNotEqual(self.screen("zone-list-middle", "next"), self.screen("zone-list-middle"))
+
+    def test_the_developer_unlock(self):
+        developer, first = self.screen("developer"), self.screen("first-newt")
+        self.assertNotEqual(developer, first)
+        self.assertEqual(self.screen("first-newt", "back"), self.screen("about"))
+        self.assertEqual(self.screen("developer", "back"), first)
+        # A wrong press restarts the sequence; Previous starts it again.
+        self.assertEqual(self.screen("first-newt", "previous,next,next,previous,next"), first)
+        self.assertEqual(self.screen("first-newt", "previous,previous,next,previous,next"), developer)
+        # The unlock is never kept: leaving the first newt forgets it.
+        self.assertEqual(self.screen("developer", "back,back" + ",activate" * 5), first)
 
     def test_update_writing_waits(self):
         # While writing, checking GitHub and on the success page (which

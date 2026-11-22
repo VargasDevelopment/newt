@@ -21,7 +21,7 @@ import rust_preview  # noqa: E402
 from gate_tier import negative_controls  # noqa: E402
 import update_fixtures  # noqa: E402
 
-BACK, CONFIRM, DOWN = 0, 1, 5
+BACK, CONFIRM, UP, DOWN = 0, 1, 4, 5
 # A new card shows Quick Start: Start, keep Upright, skip the time zone; the
 # Wi-Fi step's Set up Wi-Fi restarts into update mode on its networks page.
 TO_WIFI_STEP = [CONFIRM, CONFIRM, DOWN, CONFIRM]
@@ -31,7 +31,15 @@ PICK_OPEN = [*[DOWN] * 5, CONFIRM]
 # From Home on a card that ran Newt: Settings, then a row of its list.
 def settings_row(row):
     return [DOWN, DOWN, CONFIRM, *[DOWN] * row]
-SWITCH_ROW, WIFI_ROW = 5, 7
+SWITCH_ROW, UPDATE_ROW, WIFI_ROW = 5, 6, 7
+# Settings' Diagnostics row, About, five Selects on its Version (the first
+# newt), then Previous, Next, Previous, Next: the hidden Developer page. Select
+# there switches Test builds.
+UNLOCK = [*settings_row(3), CONFIRM, CONFIRM, *[CONFIRM] * 5, UP, DOWN, UP, DOWN]
+SWITCH_TEST_BUILDS = [*UNLOCK, CONFIRM]
+# Settings' Update row restarts into update mode; Select checks GitHub.
+CHECK = [*settings_row(UPDATE_ROW), CONFIRM, CONFIRM]
+READY, LATEST = 3, 4  # newt_core::update_online::OnlineCheck
 
 
 def world(directory, binary, update=None, other_firmware='crossink', new_card=False):
@@ -98,6 +106,44 @@ def switch_notice(binary):
         return 'a missing slot draws the switch page'
 
 
+def check_result(log):
+    results = [line for line in log.splitlines() if line.startswith('Newt update online: result ')]
+    return int(results[-1].split()[4].rstrip(',')) if results else None
+
+
+def test_builds(binary):
+    """Test builds On asks for the newest release, which is a test build. Each
+    run below is a power-on, so RAM and RTC are gone and only the card holds
+    the choice. An explicit Off, and a corrupt record, read as Off."""
+    def check(*switches, corrupt=False):
+        with tempfile.TemporaryDirectory() as scratch:
+            directory = Path(scratch)
+            world(directory, binary, update='test-builds')
+            for _ in range(switches[0] if switches else 0):
+                rust_preview.run(binary, directory, SWITCH_TEST_BUILDS)
+            if corrupt:
+                record = directory / 'card/Newt/State/newt-builds.nrs'
+                record.write_bytes(bytes(b ^ 0x5a for b in record.read_bytes()))
+            return check_result(rust_preview.run(binary, directory, CHECK)[1])
+    if check() != LATEST:
+        return 'Test builds Off offered more than the latest release'
+    if check(1) != READY:
+        return 'Test builds On did not offer the test build after a cold boot'
+    if check(2) != LATEST:
+        return 'an explicit Off did not survive a cold boot'
+    if check(1, corrupt=True) != LATEST:
+        return 'a corrupt Test builds record did not read as Off'
+
+
+def test_builds_unconfirmed(binary):
+    """A switch whose save cannot be confirmed says so, and keeps the old choice."""
+    off = play(binary, UNLOCK, update='test-builds')[0][-1]
+    saved = play(binary, SWITCH_TEST_BUILDS, update='test-builds')[0][-1]
+    unconfirmed = play(binary, SWITCH_TEST_BUILDS, update='test-builds-unconfirmed')[0][-1]
+    if len({off, saved, unconfirmed}) != 3:
+        return 'an unconfirmed switch draws the Off or the saved page'
+
+
 # (case, generated firmware file, exact text, replacement)
 CASES = [
     (check_after_save, 'update_mode.rs',
@@ -108,6 +154,12 @@ CASES = [
      'Load::Loaded(sealed) if sealed.network)', 'Load::Loaded(sealed) if sealed.network && false)'),
     (switch_notice, 'firmware_switch.rs',
      'board.with_image_partitions(false, |parts| locate(parts, name).is_some())', '{ let _ = (board, name); false }'),
+    # Update mode no longer restores the card's choices at its boot.
+    (test_builds, 'update_state.rs',
+     '|store| { clock.restore_preferences(store); !store.reading_state_unavailable() })',
+     '|store| { let _ = &clock; !store.reading_state_unavailable() })'),
+    (test_builds_unconfirmed, 'device_lifecycle.rs',
+     '{SettingsNotice::None}else{SettingsNotice::TestBuildsSaveFailed}', '{SettingsNotice::None}else{SettingsNotice::None}'),
 ]
 
 
@@ -118,12 +170,12 @@ def main():
         problem = case(binary)
         assert problem is None, f'{case.__name__}: {problem}'
     if not negative_controls(__file__):
-        print(f'PASS: {len(CASES)} update, Wi-Fi and switch flows run the firmware (controls not in this tier)')
+        print(f'PASS: {len(CASES)} update, Wi-Fi, switch and test-build flows run the firmware (controls not in this tier)')
         return
     for case, name, old, new in CASES:
         control = rust_preview.build(edits=[(name, old, new)])
         assert case(control) is not None, f'{case.__name__}: passes with {name} changed'
-    print(f'PASS: {len(CASES)} update, Wi-Fi and switch flows run the firmware; each control fails')
+    print(f'PASS: {len(CASES)} update, Wi-Fi, switch and test-build flows run the firmware; each control fails')
 
 
 if __name__ == '__main__':

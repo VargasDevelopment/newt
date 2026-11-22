@@ -24,4 +24,6 @@ archives are outside the firmware and host build inputs; they do not change
 the deployed baseline or the current application.
 
 In the firmware, five Select presses on About's Version row open it, and
-Back returns to About (`rust/core/src/app.rs`).
+Back returns to About (`rust/core/src/app.rs`). The page draws the original
+awake mascot at its original place and scale (`rust/device-ui/src/first_newt.rs`).
+There, Previous, Next, Previous, Next opens the hidden Developer page.

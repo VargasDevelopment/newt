@@ -1,15 +1,15 @@
 use super::*;
 
 /// One frozen workflow over required borrowed capabilities; caller owns all data.
-pub fn fetch_online_update(http: &mut dyn Http, card: &mut dyn CardDownload, hash: &mut dyn Hash, clock: &mut dyn Clock, progress: &mut dyn Progress, work: &mut OnlineWork<'_>, running: Option<&CStr>, manifest: &mut UpdateManifest) -> OnlineCheck {
+pub fn fetch_online_update(http: &mut dyn Http, card: &mut dyn CardDownload, hash: &mut dyn Hash, clock: &mut dyn Clock, progress: &mut dyn Progress, work: &mut OnlineWork<'_>, test_builds: TestBuilds, running: Option<&CStr>, manifest: &mut UpdateManifest) -> OnlineCheck {
     fetch_online_update_with_http(http, card, hash, clock,
-        &mut |_, done, total| progress.report(done, total), work, running, manifest)
+        &mut |_, done, total| progress.report(done, total), work, test_builds, running, manifest)
 }
 
 /// Same workflow and report sites, with the concrete client's short loan.
-pub fn fetch_online_update_with_http<H: Http + ?Sized>(http: &mut H, card: &mut dyn CardDownload, hash: &mut dyn Hash, clock: &mut dyn Clock, progress: &mut dyn FnMut(&mut H, u32, u32), work: &mut OnlineWork<'_>, running: Option<&CStr>, manifest: &mut UpdateManifest) -> OnlineCheck {
+pub fn fetch_online_update_with_http<H: Http + ?Sized>(http: &mut H, card: &mut dyn CardDownload, hash: &mut dyn Hash, clock: &mut dyn Clock, progress: &mut dyn FnMut(&mut H, u32, u32), work: &mut OnlineWork<'_>, test_builds: TestBuilds, running: Option<&CStr>, manifest: &mut UpdateManifest) -> OnlineCheck {
     let mut head = HttpHead::default();
-    copy_url(work.url, LATEST_RELEASE_URL);
+    copy_url(work.url, test_builds.release_url());
     http.limit(30000, clock);
     if !open_following(http, clock, work.url, work.location, true, &mut head) { return OnlineCheck::Unreachable; }
     if head.status != 200 { http.close(); return if head.status == 404 { OnlineCheck::NoRelease } else { OnlineCheck::Unreachable }; }

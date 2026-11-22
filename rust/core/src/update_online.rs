@@ -9,12 +9,28 @@ pub use check::{fetch_online_update, fetch_online_update_with_http};
 #[cfg(test)]
 #[path = "update_online/loan_tests.rs"]
 mod loan_tests;
+#[cfg(test)]
+#[path = "update_online/test_builds_tests.rs"]
+mod test_builds_tests;
 
 pub const URL_BYTES: usize = 2048;
 pub const READ_BYTES: usize = 2048;
 pub const LATEST_RELEASE_URL: &CStr = c"https://api.github.com/repos/VargasDevelopment/newt/releases/latest";
+/// The newest published release, pre-release or stable, as a one-element list.
+pub const NEWEST_RELEASE_URL: &CStr = c"https://api.github.com/repos/VargasDevelopment/newt/releases?per_page=1";
 pub const USABLE_SLOT_BYTES: u32 = 7016448;
 pub const SLOT_HEAD_BYTES: u32 = 512;
+
+/// The Developer page's Test builds choice. On, the check also offers test
+/// builds (GitHub pre-releases); a stable release still outranks its own.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum TestBuilds { #[default] Off, On }
+impl TestBuilds {
+    pub const fn release_url(self) -> &'static CStr {
+        match self { Self::Off => LATEST_RELEASE_URL, Self::On => NEWEST_RELEASE_URL }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]

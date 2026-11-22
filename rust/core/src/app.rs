@@ -13,7 +13,7 @@ pub enum Action { Previous, Next, Activate, Back, Sleep, Read }
 pub enum Screen { #[default] Home, Reading, Device, Sleeping, EpubReading, TinyApp, Library, QuickStart }
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DevicePage { Settings, Diagnostics, About, FirstNewt, ReadingStats, FirmwareSwitch, WhatsNew, SleepScreen }
+pub enum DevicePage { Settings, Diagnostics, About, FirstNewt, ReadingStats, FirmwareSwitch, WhatsNew, SleepScreen, Developer }
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AboutView { #[default] Closed, Version, WhatsNewRow, WhatsNew, Updated }
@@ -22,7 +22,7 @@ pub enum AboutView { #[default] Closed, Version, WhatsNewRow, WhatsNew, Updated 
 pub enum SettingsRow { #[default] TimeZone, TimeFormat, SleepScreen, Diagnostics, ReadingStats, FirmwareSwitch, Update, Wifi, About, QuickStart }
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SettingsNotice { #[default] None, Saved, SaveFailed, FormatSaved, FormatSaveFailed, UpdateNotStarted, WifiNotStarted, SleepProgressSaveFailed, SleepWeekSaveFailed, SleepHabitSaveFailed, QuickStartSaveFailed }
+pub enum SettingsNotice { #[default] None, Saved, SaveFailed, FormatSaved, FormatSaveFailed, UpdateNotStarted, WifiNotStarted, SleepProgressSaveFailed, SleepWeekSaveFailed, SleepHabitSaveFailed, QuickStartSaveFailed, TestBuildsSaveFailed }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AppState {
@@ -33,6 +33,10 @@ pub struct AppState {
     pub about_presses: u8,
     pub about: AboutView,
     pub first_newt: bool,
+    /// Presses of DEVELOPER_UNLOCK matched so far on the first newt. Never
+    /// saved: the hidden Developer page needs the sequence on every visit.
+    pub unlock_presses: u8,
+    pub developer: bool,
     pub row_open: bool,
     pub settings_row: SettingsRow,
     pub zone_list_open: bool,
@@ -49,11 +53,15 @@ pub fn home_section_title(section: HomeSection) -> &'static str {
 pub fn home_section_route(section: HomeSection) -> Screen {
     match section { HomeSection::Books => Screen::Library, HomeSection::Apps => Screen::TinyApp, HomeSection::Settings => Screen::Device }
 }
+/// On the first newt, these presses in order open the hidden Developer page.
+pub const DEVELOPER_UNLOCK: [Action; 4] = [Action::Previous, Action::Next, Action::Previous, Action::Next];
 pub fn sleep_destination(screen: Screen) -> Screen {
     if screen == Screen::EpubReading { screen } else { Screen::Home }
 }
 fn close_device(state: &mut AppState) {
     state.first_newt = false;
+    state.unlock_presses = 0;
+    state.developer = false;
     state.row_open = false;
     state.zone_list_open = false;
     state.about = AboutView::Closed;
@@ -63,7 +71,8 @@ fn close_device(state: &mut AppState) {
     state.settings_notice = SettingsNotice::None;
 }
 pub fn device_page(state: &AppState) -> DevicePage {
-    if state.first_newt { DevicePage::FirstNewt }
+    if state.first_newt && state.developer { DevicePage::Developer }
+    else if state.first_newt { DevicePage::FirstNewt }
     else if matches!(state.about, AboutView::WhatsNew | AboutView::Updated) { DevicePage::WhatsNew }
     else if state.about != AboutView::Closed { DevicePage::About }
     else if !state.row_open { DevicePage::Settings }
@@ -112,6 +121,21 @@ fn about(state: &mut AppState, action: Action) -> bool {
         Action::Previous if !version => state.about = AboutView::Version,
         _ => return false,
     }
+    true
+}
+/// A wrong press restarts the sequence, counting itself if it is the first
+/// step. Only the last press changes the screen.
+fn first_newt(state: &mut AppState, action: Action) -> bool {
+    if DEVELOPER_UNLOCK.get(usize::from(state.unlock_presses)) != Some(&action) {
+        state.unlock_presses = u8::from(action == DEVELOPER_UNLOCK[0]);
+        return false;
+    }
+    state.unlock_presses += 1;
+    if usize::from(state.unlock_presses) < DEVELOPER_UNLOCK.len() { return false; }
+    state.unlock_presses = 0;
+    state.developer = true;
+    // A new visit never shows an earlier visit's unconfirmed save.
+    state.settings_notice = SettingsNotice::None;
     true
 }
 fn sleep_screen(state: &mut AppState, action: Action) -> bool {
@@ -169,16 +193,19 @@ pub fn dispatch(state: &mut AppState, action: Action) -> bool {
         if action == Action::Back && page != DevicePage::Settings {
             match page {
                 DevicePage::FirstNewt => state.first_newt = false,
+                DevicePage::Developer => state.developer = false,
                 DevicePage::WhatsNew => state.about = AboutView::WhatsNewRow,
                 DevicePage::About => state.about = AboutView::Closed,
                 _ => state.row_open = false,
             }
             state.about_presses = 0;
+            state.unlock_presses = 0;
             return true;
         }
         if page == DevicePage::Settings && state.zone_list_open { return false; }
         if page == DevicePage::Settings && action != Action::Back { return settings(state, action); }
         if page == DevicePage::About { return about(state, action); }
+        if page == DevicePage::FirstNewt { return first_newt(state, action); }
         if page == DevicePage::SleepScreen { return sleep_screen(state, action); }
         if page == DevicePage::ReadingStats { return step_stats_graph(&mut state.list_focus, action); }
         if action == Action::Activate && page == DevicePage::Diagnostics {
