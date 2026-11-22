@@ -92,7 +92,7 @@ CARD_FILES = {'crosspoint-2.0.0-x3.bin': image('crosspoint-reader', '2.0.0'),
               'reader-6.5.bin': image('x3-reader', 'V6.5.5'), 'notes.bin': b'not firmware\n' * 64}
 MORE_FILES = {'crosspoint-2.0.0-x3.bin': CARD_FILES['crosspoint-2.0.0-x3.bin'], 'newt-old.bin': newt_image(OLDER),
               'reader-6.5.bin': CARD_FILES['reader-6.5.bin'], 'zz-extra.bin': image('x3-reader', 'V7.0.0')}
-LATEST = 'https://api.github.com/repos/VargasDevelopment/newt-releases/releases/latest'
+LATEST = 'https://api.github.com/repos/VargasDevelopment/newt/releases/latest'
 
 
 def release(version):
