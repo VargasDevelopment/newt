@@ -325,6 +325,25 @@ python3() {
                     self.assertEqual(result.returncode, status, result.stderr)
                     self.assertIn('Firmware size before stamp:', result.stdout)
 
+    def test_only_fixed_fields_hold_the_firmware_version(self):
+        # The nightly's size compare catches a variable-length version copy only after merge; this
+        # catches it in the PR. The image reads the version from the fixed descriptor fields alone.
+        def holders(root, paths):
+            return {path for path in paths if path.endswith(('.rs', '.c', '.cc', '.cpp', '.h', '.hpp', '.ino'))
+                    and any(name in (root / path).read_text(errors='replace')
+                            for name in ('NEWT_FIRMWARE_VERSION', 'CARGO_PKG_VERSION'))}
+        fixed = {'rust/firmware/native/app_descriptor.h', 'rust/firmware/native/firmware_version.h',
+                 'rust/host/preview/fakes/partitions.c'}
+        tracked = subprocess.run(['git', 'ls-files', '-z', '--', 'rust'], cwd=ROOT, check=True,
+                                 capture_output=True, text=True).stdout.split('\0')
+        self.assertEqual(holders(ROOT, [path for path in tracked if path]), fixed)
+        with tempfile.TemporaryDirectory() as directory:  # control: a new label copy is caught
+            label = Path(directory) / 'rust/device-ui/src/about.rs'
+            label.parent.mkdir(parents=True)
+            label.write_text('const LABEL: &str = concat!("Version: ", env!("NEWT_FIRMWARE_VERSION"));\n')
+            self.assertEqual(holders(Path(directory), ['rust/device-ui/src/about.rs']),
+                             {'rust/device-ui/src/about.rs'})
+
     def test_the_release_tag_job_tags_like_fresh_gates(self):
         jobs, private = self.workflow['jobs'], self.private['jobs']
         tag, expected = jobs['release-tag'], private['release-tag']

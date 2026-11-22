@@ -439,9 +439,11 @@ longer one; the job fails rather than cut it.
 and `firmware_version.h` and commits only that change on top of `main`'s tip,
 then tags that commit `v<version>` (annotated, naming its source). No branch
 carries the stamp commit, and the release gate refuses a nightly version on
-any branch. The job builds the stamped commit as a release is built
-(`tools/firmware-build.py --clean`, then `--clean --health-report`), so its
-build ID is the stamp commit's. Then it runs
+any branch. The job builds `main`'s tip plainly (`tools/firmware-build.py
+--clean`), then the stamped commit as a release is built (`--clean
+--health-report`), so its build ID is the stamp commit's, and fails unless both
+images are the same size: the firmware reads its version from the fixed-width
+app descriptor, so a longer version must not grow the image. Then it runs
 `tools/release_publish.py --prerelease --publish`, which holds a nightly to
 every release rule except these:
 
