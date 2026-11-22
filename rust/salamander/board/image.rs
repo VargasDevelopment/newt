@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
 //! SDK image-state operations, without first-paint or readback policy.
 use super::{Board, Error};
-use core::ffi::c_void;
+use core::ffi::{c_char, c_void, CStr};
 use newt_core::update_card::slot_installer::{identity::{OtaRecord, OTA_SECTOR_BYTES}, selection::OtaFlash};
 #[path = "image/hash.rs"]
 mod hash;
 // SAFETY: these synchronous SDK calls retain no Rust pointers or owners.
 unsafe extern "C" {
+    fn nb_running_image_version() -> *const c_char;
     fn nb_running_image_digest(out: *mut u8);
     fn nb_running_image_state(out: *mut u32) -> i32;
     fn nb_mark_running_image_valid() -> i32;
@@ -20,6 +21,12 @@ unsafe extern "C" {
 }
 fn result(code: i32) -> Result<(), Error> {
     if code == 0 { Ok(()) } else { Err(Error::Native(code)) }
+}
+/// The running image's fixed-width, NUL-padded ESP-IDF version field.
+pub fn running_image_version() -> &'static CStr {
+    // SAFETY: the native port returns the immutable mapped descriptor field.
+    // The image build requires its version to fit including the trailing NUL.
+    unsafe { CStr::from_ptr(nb_running_image_version()) }
 }
 impl Board<'_> {
     /// The current firmware's SDK-provided ELF SHA-256, without hashing work.

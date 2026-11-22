@@ -426,11 +426,27 @@ jobs:
           force=()
           if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then force=(--force); fi
           python3 -B tools/nightly.py stamp --repository "$GITHUB_REPOSITORY" "${force[@]}" >> "$GITHUB_OUTPUT"
-      - name: Build the stamped commit as a release is built
+      - name: Compare unstamped and stamped firmware image sizes
         if: steps.stamp.outputs.version != ''
+        shell: bash
         run: |
+          set -euo pipefail
+          stamped=$(git rev-parse HEAD)
+          image=.pio/regional-dev-usb/build/newt_x3/firmware.bin
+
+          # Use the existing plain preparation build for the unstamped image.
+          # Only the stamped image gets a resource and release identity receipt.
+          git switch --detach "$EXPECTED_COMMIT"
+          trap 'git switch --detach "$stamped"' EXIT
           python3 -B tools/firmware-build.py --clean
+          unstamped_bytes=$(stat -c '%s' "$image")
+
+          git switch --detach "$stamped"
+          trap - EXIT
           python3 -B tools/firmware-build.py --clean --health-report
+          stamped_bytes=$(stat -c '%s' "$image")
+          echo "Firmware size before stamp: $unstamped_bytes B; after stamp: $stamped_bytes B"
+          test "$unstamped_bytes" -eq "$stamped_bytes"
       # release_publish.py makes every check, rechecks main's tip, then pushes the
       # one tag and publishes; it publishes nothing if main has moved on.
       - name: Push the nightly tag and publish its pre-release

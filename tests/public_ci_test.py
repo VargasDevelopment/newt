@@ -272,7 +272,7 @@ class PublicWorkflow(unittest.TestCase):
         self.assertEqual(job['env']['EXPECTED_COMMIT'], '${{ github.sha }}')
         self.assertFalse(any(step.get('uses', '').startswith('actions/cache/save@') for step in job['steps']))
         self.assertEqual(names[stamp:], ["Stamp main's tip with the nightly version",
-                                         'Build the stamped commit as a release is built',
+                                         'Compare unstamped and stamped firmware image sizes',
                                          'Push the nightly tag and publish its pre-release'])
         # Only a manual run forces a nightly with no image change.
         run = steps["Stamp main's tip with the nightly version"]['run']
@@ -280,7 +280,8 @@ class PublicWorkflow(unittest.TestCase):
         self.assertIn('python3 -B tools/nightly.py stamp --repository "$GITHUB_REPOSITORY" "${force[@]}" >> '
                       '"$GITHUB_OUTPUT"', run)
         # The one firmware build exactly as the gate's native part makes it, then the checked publish.
-        build = steps['Build the stamped commit as a release is built']['run'].splitlines()
+        compare = steps['Compare unstamped and stamped firmware image sizes']['run']
+        build = [line for line in compare.splitlines() if line.startswith('python3 ')]
         python = Path(sys.executable)
         self.assertEqual([command for _, command in ci_gate.commands(ROOT, python, 'push', 'native')],
                          [[str(python), flag, str(ROOT / script), *rest] for _, flag, script, *rest in map(str.split, build)])
@@ -292,6 +293,37 @@ class PublicWorkflow(unittest.TestCase):
         self.assertNotIn('git push', publish['run'])
         for name in names[stamp + 1:]:
             self.assertEqual(steps[name]['if'], "steps.stamp.outputs.version != ''", name)
+
+    def test_nightly_compare_detects_a_variable_length_version_copy(self):
+        build = next(step['run'] for step in self.workflow['jobs']['nightly']['steps']
+                     if step['name'] == 'Compare unstamped and stamped firmware image sizes')
+        # The native job builds real images. Here exercise its comparison
+        # with two descriptors and, in the control, one extra unpadded label.
+        fake_build = '''
+git() {
+    case "$1" in
+        rev-parse) echo stamped ;;
+        switch) revision="$3" ;;
+        *) exit 2 ;;
+    esac
+}
+python3() {
+    local version=0.2.0
+    if [[ "$revision" == stamped ]]; then version=0.2.1-dev.20261122.1234; fi
+    mkdir -p "$(dirname "$image")"
+    printf '%-32s%-24s' "$version" "$version" > "$image"
+    if [[ "$EXTRA_COPY" == yes ]]; then printf 'Version: %s' "$version" >> "$image"; fi
+}
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            for extra_copy, status in [('no', 0), ('yes', 1)]:
+                with self.subTest(extra_copy=extra_copy):
+                    result = subprocess.run(['bash', '-c', fake_build + build], cwd=directory,
+                                            env={**os.environ, 'EXPECTED_COMMIT': 'main',
+                                                 'EXTRA_COPY': extra_copy},
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, status, result.stderr)
+                    self.assertIn('Firmware size before stamp:', result.stdout)
 
     def test_the_release_tag_job_tags_like_fresh_gates(self):
         jobs, private = self.workflow['jobs'], self.private['jobs']

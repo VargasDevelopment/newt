@@ -77,14 +77,12 @@ class Build:
         self.command = None
 
     def environment(self, base, build_id):
-        """The cargo/rustc environment; the UI build needs the release version."""
+        """The cargo/rustc environment for the real firmware and its dependencies."""
         env = dict(base)
         env.update(RUSTC=str(self.rustc), RUSTDOC=str(self.tool / 'rust/toolchain/bin/rustdoc'),
                    CARGO_HOME=str(self.tool / 'rust/cargo-home'), CARGO_NET_OFFLINE='true',
                    CARGO_INCREMENTAL='0', CARGO_PROFILE_DEV_DEBUG='0', RUSTFLAGS='-C panic=abort',
-                   NEWT_DEV_BUILD_ID=build_id, NEWT_DEV_BUILD_DATE='host',
-                   NEWT_FIRMWARE_VERSION=re.search(r'#define NEWT_FIRMWARE_VERSION "([^"]+)"',
-                       (FIRMWARE / 'native/firmware_version.h').read_text())[1])
+                   NEWT_DEV_BUILD_ID=build_id, NEWT_DEV_BUILD_DATE='host')
         return env
 
     def dependencies(self, extra_features=()):

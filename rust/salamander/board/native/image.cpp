@@ -6,6 +6,9 @@
 #include <mbedtls/sha256.h>
 #include <cstring>
 extern "C" {
+const char* nb_running_image_version() {
+    return esp_app_get_description()->version;
+}
 // The Rust caller supplies one live exclusive 32-byte output; no pointer is retained.
 void nb_running_image_digest(uint8_t* out) {
     std::memcpy(out, esp_app_get_description()->app_elf_sha256, 32);

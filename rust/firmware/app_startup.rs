@@ -144,7 +144,7 @@ unsafe fn run_update<'sdk, O: Online>(board: Board<'sdk>, pending: PendingInput<
             let card_ready = state.restore_clock(&mut ui.bus.board, &mut ui.clock);
             ui.begin_clock();
             // Only empty secret fields move into their final pinned slot.
-            let mut view = core::pin::pin!(crate::update_runtime::empty_view(crate::app_dev::FIRMWARE_VERSION));
+            let mut view = core::pin::pin!(crate::update_runtime::empty_view(newt_c3_board::image::running_image_version()));
             let view = view.as_mut().get_unchecked_mut();
             crate::update_mode::run_started(&mut ui, &mut state, view, logical,
                 &mut sdk, &mut events, request, card_ready, online)

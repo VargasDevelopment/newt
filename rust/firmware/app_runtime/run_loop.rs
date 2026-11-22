@@ -14,7 +14,6 @@ use crate::{
 use core::{convert::Infallible, fmt::Write};
 use newt_c3_board::{Board, Error, PendingInput, Probe, hardware::HardwareError};
 use newt_core::{app::{self, Action, Screen}, update_confirm};
-use newt_device_ui::BuildIdentity;
 use newt_input_policy::{self as input, Consumption, native::QueueItem};
 use newt_native_input_owner::{InputStart, StartFailure, TaskNotRunning};
 use newt_ui_canvas::Frame;
@@ -248,9 +247,6 @@ fn background_ready(ui: &Application<'_>) -> bool {
     #[cfg(not(feature = "dev-usb"))]
     { let _ = ui; true }
 }
-fn build() -> BuildIdentity<'static> {
-    BuildIdentity { id: Some(crate::app_dev::BUILD_ID.as_bytes()), date: Some(crate::app_dev::BUILD_DATE.as_bytes()) }
-}
 pub fn paint(home: &mut Home<'_>, ui: &mut Application<'_>, reader: &mut impl Reader,
     logical: &mut Frame, events: &mut Events<'_, '_>, force: bool, status_only: bool,
 ) -> Result<(), Error> {
@@ -265,7 +261,7 @@ pub fn paint(home: &mut Home<'_>, ui: &mut Application<'_>, reader: &mut impl Re
         Screen::Reading => ui.paint_sample(home, logical, force, events.action).map(|painted| painted.then_some(true)),
         Screen::EpubReading | Screen::Sleeping => reader.paint(home, ui, logical, events, force)
             .map(|painted| painted.then_some(true)),
-        _ => ui.paint_system(home, logical, build(), force, events.action).map(|painted| painted.then_some(true)),
+        _ => ui.paint_system(home, logical, crate::app_dev::build_identity(), force, events.action).map(|painted| painted.then_some(true)),
     };
     if let Some(includes_cover) = result? {
         reader.note_paint(ui.app.screen, ui.displayed.generation, includes_cover, home.bus.board.millis());
@@ -289,7 +285,7 @@ fn finish_first_paint(home: &mut Home<'_>, ui: &mut Application<'_>, reader: &mu
     if matches!(loaded, newt_core::durable::Load::Loaded(_)) {
         ui.app.screen = Screen::Device;
         ui.app.about = app::AboutView::Updated;
-        if ui.paint_system(home, logical, build(), true, events.action)? {
+        if ui.paint_system(home, logical, crate::app_dev::build_identity(), true, events.action)? {
             reader.note_paint(ui.app.screen, ui.displayed.generation, true, home.bus.board.millis());
         }
     }
