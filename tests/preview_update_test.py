@@ -4,9 +4,9 @@
 The preview is the real firmware built for the host over C fakes
 (rust/host/preview/fakes). Each case drives it with presses from a fixture
 world (rust/host/preview/update_fixtures.py) and checks what the firmware
-did: its serial log, its frames and what it wrote. Every case has a
-negative control: the same build with one firmware line changed in its
-generated copy (never in rust/firmware). The control must fail the case.
+did: its serial log, its frames and what it wrote. Every case has at least
+one negative control: the same build with one firmware line changed in its
+generated copy (never in rust/firmware). Each control must fail its case.
 
 These are host facts only. They say nothing about the X3's radio, TLS,
 flash or panel.
@@ -136,12 +136,19 @@ def test_builds(binary):
 
 
 def test_builds_unconfirmed(binary):
-    """A switch whose save cannot be confirmed says so, and keeps the old choice."""
+    """A switch whose save cannot be confirmed says so, and keeps the old choice.
+    Backing out and unlocking again in the same boot clears the notice, so the
+    row alone shows the choice the firmware kept."""
     off = play(binary, UNLOCK, update='test-builds')[0][-1]
     saved = play(binary, SWITCH_TEST_BUILDS, update='test-builds')[0][-1]
     unconfirmed = play(binary, SWITCH_TEST_BUILDS, update='test-builds-unconfirmed')[0][-1]
     if len({off, saved, unconfirmed}) != 3:
         return 'an unconfirmed switch draws the Off or the saved page'
+    reopen = [*SWITCH_TEST_BUILDS, BACK, UP, DOWN, UP, DOWN]
+    if play(binary, reopen, update='test-builds')[0][-1] != saved:
+        return 'a saved switch did not keep On in the same boot'
+    if play(binary, reopen, update='test-builds-unconfirmed')[0][-1] != off:
+        return 'an unconfirmed switch changed the choice in the same boot'
 
 
 # (case, generated firmware file, exact text, replacement)
@@ -160,22 +167,38 @@ CASES = [
      '|store| { let _ = &clock; !store.reading_state_unavailable() })'),
     (test_builds_unconfirmed, 'device_lifecycle.rs',
      '{SettingsNotice::None}else{SettingsNotice::TestBuildsSaveFailed}', '{SettingsNotice::None}else{SettingsNotice::None}'),
+    # A failed card save still publishes the attempted choice, while the page
+    # keeps its unconfirmed notice: the clock also commits it to a store that
+    # always saves, which publishes it.
+    (test_builds_unconfirmed, 'home_startup.rs',
+     'Self::TestBuilds(choice) => clock.commit_test_builds(store, choice),',
+     'Self::TestBuilds(choice) => { use newt_core::durable::{BlobRead, DurableWrite, StorageOpen}; '
+     'struct Saves([u8; 128], usize); impl Backend for Saves { '
+     'fn begin(&mut self, _: &str, _: bool) -> StorageOpen { StorageOpen::Opened } '
+     'fn end(&mut self) {} fn readback_durable(&self) -> bool { true } '
+     'fn read_blob(&mut self, _: &str, out: &mut [u8]) -> BlobRead { if self.1 == 0 { return BlobRead::Missing; } '
+     'out[..self.1].copy_from_slice(&self.0[..self.1]); BlobRead::Present(self.1) } '
+     'fn put_bytes(&mut self, _: DurableWrite, _: &str, bytes: &[u8]) -> usize { '
+     'self.0[..bytes.len()].copy_from_slice(bytes); self.1 = bytes.len(); bytes.len() } } '
+     'let c = clock.commit_test_builds(store, choice); '
+     'if c != Commit::Saved { let _ = clock.commit_test_builds(&mut Saves([0; 128], 0), choice); } c }'),
 ]
 
 
 def main():
     # The gate passes its one preview build; controls relink from it.
     binary = rust_preview.FIRMWARE if len(sys.argv) == 2 else rust_preview.build()
-    for case, *_ in CASES:
+    flows = list(dict.fromkeys(case for case, *_ in CASES))  # a flow may have several controls
+    for case in flows:
         problem = case(binary)
         assert problem is None, f'{case.__name__}: {problem}'
     if not negative_controls(__file__):
-        print(f'PASS: {len(CASES)} update, Wi-Fi, switch and test-build flows run the firmware (controls not in this tier)')
+        print(f'PASS: {len(flows)} update, Wi-Fi, switch and test-build flows run the firmware (controls not in this tier)')
         return
     for case, name, old, new in CASES:
         control = rust_preview.build(edits=[(name, old, new)])
         assert case(control) is not None, f'{case.__name__}: passes with {name} changed'
-    print(f'PASS: {len(CASES)} update, Wi-Fi, switch and test-build flows run the firmware; each control fails')
+    print(f'PASS: {len(flows)} update, Wi-Fi, switch and test-build flows run the firmware; each of {len(CASES)} controls fails')
 
 
 if __name__ == '__main__':
