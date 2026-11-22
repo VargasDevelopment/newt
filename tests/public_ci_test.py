@@ -1,8 +1,9 @@
 """The public workflow (.github/workflows/public-ci.yml): GitHub-hosted runners
 only, jobs only in a public repository, first-party actions pinned to commits,
 read-only but for the tag job and the nightly job; its host shards, which
-together run exactly the tier's plan; and the hosted toolchain cache, never
-trusted over its check."""
+together run exactly the tier's plan; the docs lane, which stands in for them
+only on a docs pull request; and the hosted toolchain cache, never trusted over
+its check."""
 import json
 import os
 from pathlib import Path
@@ -22,6 +23,7 @@ import ci_environment as setup
 import ci_gate
 import ci_hosted
 import ci_persist
+import docs_lane
 from ci_toolchain import read_lock
 from workflow_expression import PRIVATE, PUBLIC, trust_expression, where
 import gate_plan
@@ -63,7 +65,7 @@ class PublicWorkflow(unittest.TestCase):
         self.assertEqual(len(self.workflow['on']['schedule']), 1)  # The nightly full tier.
         self.assertNotIn('pull_request_target', self.text)
         self.assertEqual(self.workflow['permissions'], {'contents': 'read'})
-        self.assertEqual(list(self.workflow['jobs']), ['check', 'gate', 'release-tag', 'nightly'])
+        self.assertEqual(list(self.workflow['jobs']), ['classify', 'check', 'docs', 'gate', 'release-tag', 'nightly'])
         tokens = ('Tag the release if this run checked it', "Stamp main's tip with the nightly version",
                   'Push the nightly tag and publish its pre-release')
         for name, job in self.workflow['jobs'].items():
@@ -93,6 +95,8 @@ class PublicWorkflow(unittest.TestCase):
                 'ref': 'refs/heads/main', 'actor': 'VargasDevelopment'}
         for name, job in self.workflow['jobs'].items():
             allowed = trust_expression(job['if'])
+            # Each job in the lane that runs it (test_each_lane_runs_only_its_own_jobs).
+            base['needs.classify.outputs.lane'] = 'docs' if name == 'docs' else 'full'
             with self.subTest(job=name):
                 for event_name in ('push', 'pull_request', 'schedule', 'workflow_dispatch'):
                     self.assertFalse(allowed(where({**base, **PRIVATE}, event_name)), event_name)
@@ -225,31 +229,84 @@ class PublicWorkflow(unittest.TestCase):
         store = '${{ github.workspace }}/../' + ci_persist.STORE.name
         self.assertEqual(objects, [f'{store}/host-objects', f'{store}/gate-phase-seconds.json'])
 
-    def test_the_gate_job_runs_and_fails_unless_every_job_it_needs_succeeded(self):
-        """The real `if` and step, for each result GitHub gives a needed job."""
+    def test_the_gate_job_runs_and_fails_unless_its_lanes_jobs_succeeded(self):
+        """The real `if` and step, for each lane and each result GitHub gives a needed job."""
         jobs = self.workflow['jobs']
         self.assertEqual(release_tag.GATES['public-ci.yml'], 'gate')
         gate, tag = jobs['gate'], jobs['release-tag']
-        self.assertEqual(gate['needs'], 'check')
+        self.assertEqual(gate['needs'], ['classify', 'check', 'docs'])
         [step] = gate['steps']
         self.assertEqual(step['env'], {'NEEDS': '${{ toJSON(needs) }}'})
         base = {'repository': 'VargasDevelopment/newt', 'ref': 'refs/heads/main', 'actor': 'VargasDevelopment',
                 **where(PUBLIC, 'push')}
+
+        def passes(needs):
+            return subprocess.run(['bash', '-c', step['run']], env={**os.environ, 'NEEDS': json.dumps(needs)},
+                                  capture_output=True).returncode == 0
+
+        def needs(lane, check, docs, classify='success'):
+            return {'classify': {'result': classify, 'outputs': {'lane': lane} if lane else {}},
+                    'check': {'result': check, 'outputs': {}}, 'docs': {'result': docs, 'outputs': {}}}
         for result in ('success', 'failure', 'cancelled', 'skipped'):
             with self.subTest(check=result):
                 # success() holds only when every need succeeded; cancelled() when the run was cancelled.
                 state = {**base, 'success': result == 'success', 'cancelled': result == 'cancelled'}
                 self.assertTrue(trust_expression(gate['if'])(state))  # it runs, so it can fail
-                needs = json.dumps({'check': {'result': result, 'outputs': {}}})
-                passed = subprocess.run(['bash', '-c', step['run']], env={**os.environ, 'NEEDS': needs},
-                                        capture_output=True).returncode == 0
+                passed = passes(needs('full', result, 'skipped'))
                 self.assertEqual(passed, result == 'success')
+                self.assertEqual(passes(needs('docs', 'skipped', result)), result == 'success')
                 # The tag job runs only after the gate job itself succeeded.
                 self.assertEqual(trust_expression(tag['if'])({**base, 'success': passed, 'cancelled': False}),
                                  passed)
+        # Only the lane's own job stands for the gate: the other one, run or failed, never passes it.
+        self.assertFalse(passes(needs('docs', 'success', 'skipped')))
+        self.assertFalse(passes(needs('full', 'skipped', 'success')))
+        self.assertFalse(passes(needs('docs', 'success', 'success')))
+        # No lane, an unknown lane or a failed classification passes nothing.
+        for lane, classify in ((None, 'success'), ('other', 'success'), ('full', 'failure'), (None, 'failure')):
+            self.assertFalse(passes(needs(lane, 'success', 'skipped', classify)), (lane, classify))
         # A gate with nothing to judge does not pass either.
-        self.assertNotEqual(subprocess.run(['bash', '-c', step['run']], env={**os.environ, 'NEEDS': '{}'},
-                                           capture_output=True).returncode, 0)
+        self.assertFalse(passes({}))
+
+    def test_each_lane_runs_only_its_own_jobs(self):
+        """check runs only in the full lane and docs only in the docs lane; a missing lane runs neither."""
+        jobs = self.workflow['jobs']
+        self.assertEqual(jobs['check']['needs'], 'classify')
+        self.assertEqual(jobs['docs']['needs'], 'classify')
+        self.assertEqual(jobs['classify']['outputs'], {'lane': '${{ steps.lane.outputs.lane }}'})
+        state = {'success': True, 'cancelled': False, **where(PUBLIC, 'pull_request')}
+        for lane in ('full', 'docs', None, ''):
+            for name in ('check', 'docs'):
+                runs = trust_expression(jobs[name]['if'])({**state, 'needs.classify.outputs.lane': lane})
+                self.assertEqual(runs, lane == {'check': 'full', 'docs': 'docs'}[name], (name, lane))
+        classify = {step.get('name'): step for step in jobs['classify']['steps']}['Docs lane or full gate']
+        self.assertEqual(classify['id'], 'lane')
+        self.assertEqual(classify['env'], {'BASE': '${{ github.event.pull_request.base.sha }}',
+                                           'HEAD': '${{ github.event.pull_request.head.sha }}'})
+        self.assertEqual(classify['run'], 'python3 -I -B tools/docs_lane.py classify --event "$GITHUB_EVENT_NAME" '
+                                          '--base "$BASE" --head "$HEAD" >> "$GITHUB_OUTPUT"')
+        # Every event but a pull request takes the full gate, so release-tag and nightly never see a docs lane.
+        for event in ('push', 'schedule', 'workflow_dispatch'):
+            self.assertEqual(docs_lane.lane(ROOT, event, 'a' * 40, 'b' * 40)[0], 'full')
+
+    def test_the_docs_job_sets_up_as_the_check_job_and_runs_the_docs_lane(self):
+        job = self.workflow['jobs']['docs']
+        names = [step['name'] for step in job['steps']]
+        steps = {step['name']: step for step in job['steps']}
+        prepare = names.index('Pinned release tools alone (tools/ci_environment.py)')
+        for name in names[:prepare]:
+            self.assertEqual(steps[name], self.step(name), name)
+        self.assertEqual(names[:prepare], ['Check out the exact commit, complete release history and release tags',
+                                           'Locked uv for workspace-local Python',
+                                           'Exact managed Python and real runtime checks'])
+        shared = set(self.check['env']) - {'EXPECTED_COMMIT', 'PART', 'NEWT_RUST_ACQUISITION_APPROVED'}
+        self.assertEqual(set(job['env']), shared | {'EXPECTED_COMMIT', 'BASE'})
+        self.assertEqual({key: job['env'][key] for key in shared}, {key: self.check['env'][key] for key in shared})
+        self.assertEqual(job['env']['EXPECTED_COMMIT'], '${{ github.event.pull_request.head.sha }}')
+        self.assertEqual(job['env']['BASE'], '${{ github.event.pull_request.base.sha }}')
+        self.assertEqual([steps[name]['run'] for name in names[prepare:]],
+                         ['python3 -B tools/ci_environment.py --prepare-release',
+                          'python3 -B tools/docs_lane.py check --base "$BASE"'])
 
     def test_the_nightly_job_builds_and_publishes_after_the_gate_as_releases_are_built(self):
         jobs = self.workflow['jobs']
