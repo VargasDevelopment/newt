@@ -50,12 +50,13 @@ Newt runs only on the X3.
 The easiest way is the install page, in Chrome or Edge on a computer:
 [vargasdevelopment.github.io/newt](https://vargasdevelopment.github.io/newt/).
 It works from any X3 firmware, the stock one included. Your current firmware
-stays as the spare.
+stays as the spare until Newt's first update.
 
-If your X3 runs CrossPoint or CrossInk, you can also install from the card
-with `newt.bin` from the
+If your X3 runs CrossInk, you can also install from the card with `newt.bin`
+from the
 [latest release](https://github.com/VargasDevelopment/newt/releases/latest).
-[INSTALL.md](docs/INSTALL.md) walks through both.
+From CrossPoint this is untested. [INSTALL.md](docs/INSTALL.md) walks
+through both.
 
 Copy EPUB books anywhere on the card.
 
@@ -70,6 +71,10 @@ Copy EPUB books anywhere on the card.
 Your books, reading progress and settings stay as they are.
 
 ## Going back
+
+Your old firmware stays in the spare slot until Newt's first update, which
+installs into that slot and replaces it (Newt asks first). After that, go
+back by installing its `.bin` file.
 
 - **Restart into the other firmware:** Settings, Restart into (its name).
   Newt stays in its own slot. If that firmware updates itself, it replaces

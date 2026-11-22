@@ -8,8 +8,8 @@
 # Install Newt on your X3
 
 Newt is firmware for the Xteink X3. It installs into the X3's spare slot, so
-the firmware you run now stays on the X3, and you can go back to it at any
-time. Your books and card stay as they are.
+the firmware you run now stays on the X3 and you can go back to it (see
+[Going back](#going-back)). Your books and card stay as they are.
 
 You can install it from any X3 firmware: the stock Xteink firmware,
 CrossPoint, CrossInk or another.
@@ -32,12 +32,20 @@ You need a computer with Chrome or Edge, and a USB cable that carries data.
    **Install**.
 5. Keep the cable on until Newt's Home appears.
 
-Safari, Firefox and phones can't use the page; install from the card instead.
-If something stops, the page says whether your X3 changed.
+Safari, Firefox and phones can't use the page. On the stock firmware, use
+Chrome or Edge on a computer. On CrossInk or CrossPoint you can also install
+from the card. If something stops, the page says whether your X3 changed.
+
+**On Linux**, if the page can't connect to your X3, add yourself to the
+serial group (`dialout`, or `uucp` on Arch), then log out and back in.
+
+**To report a problem**, open the page as
+[vargasdevelopment.github.io/newt/?debug](https://vargasdevelopment.github.io/newt/?debug).
+It adds a **Save debug log** button; attach the file to your issue.
 
 ## From the card
 
-If your X3 runs CrossPoint or CrossInk:
+If your X3 runs CrossInk or CrossPoint:
 
 1. Download `newt.bin` from the
    [latest release](https://github.com/VargasDevelopment/newt/releases/latest).
@@ -45,7 +53,9 @@ If your X3 runs CrossPoint or CrossInk:
 3. On the X3, open Settings, then System, then SD Card Firmware Update, and
    pick `newt.bin`.
 
-On the stock firmware, use the install page.
+This is tested from CrossInk. From CrossPoint it is untested: nobody has
+tried it yet. If you do, please tell us how it went. On the stock firmware,
+use the install page.
 
 Copy EPUB books anywhere on the card.
 
@@ -62,6 +72,11 @@ Your books, reading progress and settings stay as they are. Reading never
 needs Wi-Fi.
 
 ## Going back
+
+Your old firmware stays in the spare slot until Newt's first update. An
+update installs into that slot, so it replaces your old firmware (Newt asks
+first). After that, go back by installing your old firmware's `.bin` file.
+For the stock firmware, you need its file.
 
 - **Restart into your other firmware:** Settings, Restart into (its name).
   Newt stays in its own slot. If that firmware updates itself, it replaces
