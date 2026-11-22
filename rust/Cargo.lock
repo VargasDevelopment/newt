@@ -233,6 +233,7 @@ version = "0.0.0"
 dependencies = [
  "newt-core",
  "newt-device-ui",
+ "newt-sdk-heap",
  "newt-system-ui",
  "newt-ui-canvas",
 ]

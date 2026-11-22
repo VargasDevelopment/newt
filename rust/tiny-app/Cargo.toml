@@ -13,3 +13,12 @@ newt-device-ui = { path = "../device-ui" }
 newt-core = { path = "../core" }
 newt-system-ui = { path = "../system-ui" }
 newt-ui-canvas = { path = "../ui-canvas" }
+[dev-dependencies]
+newt-sdk-heap = { path = "../salamander/sdk-heap" }
+
+# Characterizes the installed-app record loader through the firmware's own
+# source; tests/app_store_test.py runs it with its negative controls.
+[[test]]
+name = "app_store"
+path = "../tests/app_store/record.rs"
+test = false

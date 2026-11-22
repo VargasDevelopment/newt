@@ -2,6 +2,7 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+pub mod app_store;
 pub mod durable;
 pub mod reader_action_profile;
 pub mod preferences;
