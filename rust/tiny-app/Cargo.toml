@@ -22,3 +22,10 @@ newt-sdk-heap = { path = "../salamander/sdk-heap" }
 name = "app_store"
 path = "../tests/app_store/record.rs"
 test = false
+
+# The installed-app writer and the card scan, over a fake NVS that models
+# torn puts and a fake card; tests/app_store_test.py runs it with its controls.
+[[test]]
+name = "app_install"
+path = "../tests/app_store/install.rs"
+test = false

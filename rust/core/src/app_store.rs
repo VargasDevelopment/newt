@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT
-//! The installed-app record, read only: NVS `newt_apps`, slots slot0 and
-//! slot1, each `NEWTGEN1 | generation u32 LE | package SHA-256 | package |
-//! record SHA-256`. The app decoder sits above core, so a `Payload` port
-//! supplies the hash and the decoder's verdict. Validation order and the
-//! Failed, then Unsupported, then selection precedence are the shipped ones.
-use crate::durable::{Backend, BlobRead, SLOT_KEYS, StorageOpen};
+//! The installed-app record: NVS `newt_apps`, slots slot0 and slot1, each
+//! `NEWTGEN1 | generation u32 LE | package SHA-256 | package | record SHA-256`.
+//! The app decoder sits above core, so a `Payload` port supplies the hash and
+//! the decoder's verdict. Validation order and the Failed, then Unsupported,
+//! then selection precedence are the shipped ones. `install` is the only
+//! writer: it never writes over the selected slot, and the running app changes
+//! only after a fresh selection reads the new record back.
+use crate::durable::{Backend, BlobRead, Commit, SLOT_KEYS, StorageOpen, Transaction, commit_bytes};
 
 pub const NAMESPACE: &str = "newt_apps";
 pub const PACKAGE_BYTES: usize = 615;
@@ -52,23 +54,69 @@ enum Slot {
     Failed,
 }
 
+/// Why an install wrote nothing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Refusal {
+    /// The card file is not a valid NEWTAPP1 package.
+    Damaged,
+    /// The card file is a newer package version.
+    Newer,
+    /// More than one app file waits in the folder.
+    Many,
+    /// The folder, its listing or the file could not be read.
+    Unreadable,
+    /// The card file no longer matches the package that was offered.
+    Changed,
+    /// The SHA-256 provider failed, so nothing was judged.
+    HashFailed,
+    /// The record could not be opened for writing, or is Failed,
+    /// Unsupported or Ambiguous: its bytes may be the only copy of an app.
+    Storage,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[must_use]
+pub enum Install {
+    /// Read back, selected, and handed to the activation callback.
+    Installed,
+    /// Nothing was written and the running app is unchanged.
+    Refused(Refusal),
+    /// A write was attempted but not verified. The running app is unchanged;
+    /// after a restart a complete old or new record may load, never "unsaved".
+    Unconfirmed,
+}
+
 /// One package against its expected digest. A newer package version is
 /// Unsupported before any size or hash check.
 pub fn check_package(payload: &mut impl Payload, bytes: &[u8], expected: &[u8]) -> Package {
-    if bytes.len() >= 8 && &bytes[..7] == b"NEWTAPP" && bytes[7] != b'1' {
+    let mut digest = [0; 32];
+    match identify(payload, bytes, &mut digest) {
+        Package::Valid if digest != expected => Package::Corrupt,
+        verdict => verdict,
+    }
+}
+
+/// One package's own verdict and its SHA-256, which names it.
+pub fn identify(payload: &mut impl Payload, bytes: &[u8], digest: &mut [u8; 32]) -> Package {
+    if newer_package(bytes) {
         return Package::Unsupported;
     }
     let Ok(wire) = <&[u8; PACKAGE_BYTES]>::try_from(bytes) else {
         return Package::Corrupt;
     };
-    let mut digest = [0; 32];
-    if !payload.hash(wire, &mut digest) {
+    if !payload.hash(wire, digest) {
         return Package::Failed;
     }
-    if digest != expected || !payload.accepts(wire) {
+    if !payload.accepts(wire) {
         return Package::Corrupt;
     }
     Package::Valid
+}
+
+/// A NEWTAPP header of another version: read before size, so a newer
+/// format of any length is never called damaged.
+pub(crate) fn newer_package(bytes: &[u8]) -> bool {
+    bytes.len() >= 8 && &bytes[..7] == b"NEWTAPP" && bytes[7] != b'1'
 }
 
 /// The package inside a record.
@@ -84,11 +132,109 @@ pub fn load(store: &mut impl Backend, payload: &mut impl Payload, slots: &mut Sl
         StorageOpen::Opened => {}
         _ => return Load::Failed,
     }
-    let [first_bytes, second_bytes] = slots;
-    let first = read_slot(store, payload, SLOT_KEYS[0], first_bytes);
-    let second = read_slot(store, payload, SLOT_KEYS[1], second_bytes);
+    let [first, second] = read_slots(store, payload, slots);
     store.end();
     select(first, second, slots)
+}
+
+/// Installs the package `offered` names, after the user chose it. `read_card`
+/// fills a wire from the card file again, so a file that changed since the
+/// offer is refused. The lent slots are the only buffers. `activate` receives
+/// the selected record's package only after it was committed, read back and
+/// selected; on every other outcome the running app is left alone.
+pub fn install(
+    store: &mut impl Backend,
+    payload: &mut impl Payload,
+    slots: &mut Slots,
+    offered: &[u8; 32],
+    read_card: impl FnOnce(&mut [u8; PACKAGE_BYTES]) -> Result<(), Refusal>,
+    activate: impl FnOnce(&[u8; PACKAGE_BYTES]),
+) -> Install {
+    if store.begin(NAMESPACE, false) != StorageOpen::Opened {
+        return Install::Refused(Refusal::Storage);
+    }
+    let verified = {
+        let session = Transaction(store);
+        commit_and_verify(session.0, payload, slots, offered, read_card)
+    };
+    match verified {
+        Ok(wire) => {
+            activate(wire);
+            Install::Installed
+        }
+        Err(outcome) => outcome,
+    }
+}
+
+/// Steps before activation; Ok is the package of the slot that now selects it.
+fn commit_and_verify<'s>(
+    store: &mut impl Backend,
+    payload: &mut impl Payload,
+    slots: &'s mut Slots,
+    offered: &[u8; 32],
+    read_card: impl FnOnce(&mut [u8; PACKAGE_BYTES]) -> Result<(), Refusal>,
+) -> Result<&'s [u8; PACKAGE_BYTES], Install> {
+    let states = read_slots(store, payload, slots);
+    let load = select(states[0], states[1], slots);
+    let (target, generation) = target(load, states).ok_or(Install::Refused(Refusal::Storage))?;
+    let [first, second] = slots;
+    let (readback, record) = if target == 0 { (first, second) } else { (second, first) };
+    // The card is read into the buffer that is not written, which may hold
+    // the selected record: its digest field stays intact for the check below.
+    let wire = <&mut [u8; PACKAGE_BYTES]>::try_from(&mut record[PACKAGE_AT..HASH_AT])
+        .map_err(|_| Install::Refused(Refusal::Storage))?;
+    read_card(wire).map_err(|refusal| {
+        Install::Refused(if refusal == Refusal::Unreadable { refusal } else { Refusal::Changed })
+    })?;
+    match check_package(payload, wire, offered) {
+        Package::Valid => {}
+        Package::Failed => return Err(Install::Refused(Refusal::HashFailed)),
+        _ => return Err(Install::Refused(Refusal::Changed)),
+    }
+    // Same app already stored: skip only the write, and only when a readback
+    // proves durable bytes. Verification and activation still run.
+    let stored = matches!(load, Load::Selected(_)) && record[DIGEST_AT..PACKAGE_AT] == *offered;
+    if !(stored && store.readback_durable()) {
+        record[..8].copy_from_slice(b"NEWTGEN1");
+        record[8..DIGEST_AT].copy_from_slice(&generation.to_le_bytes());
+        record[DIGEST_AT..PACKAGE_AT].copy_from_slice(offered);
+        let mut digest = [0; 32];
+        if !payload.hash(&record[..HASH_AT], &mut digest) {
+            return Err(Install::Refused(Refusal::HashFailed));
+        }
+        record[HASH_AT..].copy_from_slice(&digest);
+        if commit_bytes(store, SLOT_KEYS[target], record, readback) != Commit::Saved {
+            return Err(Install::Unconfirmed);
+        }
+    }
+    let [first, second] = read_slots(store, payload, slots);
+    match select(first, second, slots) {
+        Load::Selected(slot) if slots[slot][DIGEST_AT..PACKAGE_AT] == *offered => {
+            <&[u8; PACKAGE_BYTES]>::try_from(package(&slots[slot])).map_err(|_| Install::Unconfirmed)
+        }
+        _ => Err(Install::Unconfirmed),
+    }
+}
+
+/// The slot an install writes and its generation (owner decisions 1 and 2):
+/// never the selected slot; a Corrupt slot's generation is untrusted, and it
+/// can never validate again, so 1 outranks it. Corrupt beside Missing writes
+/// the Missing slot and leaves the damaged bytes as they are.
+fn target(load: Load, states: [Slot; 2]) -> Option<(usize, u32)> {
+    match load {
+        Load::Selected(slot) => match states[slot] {
+            Slot::Valid(generation) => Some((slot ^ 1, generation.wrapping_add(1))),
+            _ => None,
+        },
+        // Only Missing and Corrupt remain here.
+        Load::Empty | Load::Corrupt => Some((usize::from(states == [Slot::Corrupt, Slot::Missing]), 1)),
+        _ => None,
+    }
+}
+
+fn read_slots(store: &mut impl Backend, payload: &mut impl Payload, slots: &mut Slots) -> [Slot; 2] {
+    let [first, second] = slots;
+    [read_slot(store, payload, SLOT_KEYS[0], first), read_slot(store, payload, SLOT_KEYS[1], second)]
 }
 
 fn read_slot(
