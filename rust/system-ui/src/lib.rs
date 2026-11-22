@@ -71,15 +71,32 @@ pub fn clamped_list_buttons<'a>(
     }
 }
 pub const SYSTEM_ROW_PITCH: i32 = 43;
+// The card sits under the 64 px system bar and above the footer, inset from
+// the frame's sides, so system pages follow the device's screen size.
+const SYSTEM_BAR_HEIGHT: i32 = 64;
+const CARD_SIDE_INSET: i32 = 28;
+/// The 44 px footer plus a 30 px gap above it.
+const CARD_BOTTOM_INSET: i32 = 74;
+const CONTENT_INSET: i32 = 22;
 pub const SYSTEM_CARD: Card = Card {
-    x: 28,
-    y: 64,
-    width: 472,
-    height: 654,
+    x: CARD_SIDE_INSET,
+    y: SYSTEM_BAR_HEIGHT,
+    width: WIDTH as i32 - 2 * CARD_SIDE_INSET,
+    height: HEIGHT as i32 - SYSTEM_BAR_HEIGHT - CARD_BOTTOM_INSET,
 };
-pub const SYSTEM_CONTENT_LEFT: i32 = 50;
-pub const SYSTEM_CONTENT_WIDTH: i32 = 428;
-pub const SYSTEM_TITLE_TOP: i32 = 84;
+pub const SYSTEM_CONTENT_LEFT: i32 = SYSTEM_CARD.x + CONTENT_INSET;
+pub const SYSTEM_CONTENT_WIDTH: i32 = SYSTEM_CARD.width - 2 * CONTENT_INSET;
+pub const SYSTEM_TITLE_TOP: i32 = SYSTEM_CARD.y + 20;
+// Pinned to the X3 values every reviewed frame was drawn with.
+const _: () = assert!(
+    SYSTEM_CARD.x == 28
+        && SYSTEM_CARD.y == 64
+        && SYSTEM_CARD.width == 472
+        && SYSTEM_CARD.height == 654
+        && SYSTEM_CONTENT_LEFT == 50
+        && SYSTEM_CONTENT_WIDTH == 428
+        && SYSTEM_TITLE_TOP == 84
+);
 pub struct SystemPage<'a> {
     canvas: UiCanvas<'a>,
 }

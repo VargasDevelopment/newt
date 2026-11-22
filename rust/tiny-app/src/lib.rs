@@ -2,7 +2,10 @@
 #![no_std]
 #![forbid(unsafe_code)]
 use newt_core::app::{self, Action, AppState, Screen};
-use newt_system_ui::{SystemBar, SystemButtons, SystemPage};
+use newt_system_ui::{
+    SystemBar, SystemButtons, SystemPage, SYSTEM_CARD, SYSTEM_CONTENT_LEFT as LEFT,
+    SYSTEM_CONTENT_WIDTH as WIDTH, SYSTEM_TITLE_TOP as TOP,
+};
 use newt_ui_canvas::{Frame, UiCanvas};
 pub const WIRE_BYTES: usize = 615;
 pub const MAX_CARDS: usize = 3;
@@ -210,10 +213,7 @@ pub fn apply_intent(state: &mut AppState, intent: Intent) -> bool {
     }
     state.screen != before
 }
-const LEFT: i32 = 50;
-const WIDTH: i32 = 428;
-const TOP: i32 = 84;
-const BOTTOM: i32 = 700;
+const BOTTOM: i32 = SYSTEM_CARD.y + SYSTEM_CARD.height - 18;
 pub fn draw_note(canvas: &mut UiCanvas<'_>, app: &Definition, selected: u32, mut top: i32) -> i32 {
     let index = if selected < u32::from(app.card_count) {
         selected as usize
