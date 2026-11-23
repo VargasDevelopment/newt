@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # Every gate check that reads a lane path, run as the gate runs it.
 DOCS_CHECKS = (
-    ('tests/repo_docs_allowlist_test.py',),
+    ('tests/repo_files_test.py',),
     ('tools/make-install-wordmark.py', '--check'),  # tests/installer_test.py runs it
 )
 # Sources that name a lane path or the docs folder but are no check of this

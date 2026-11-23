@@ -27,7 +27,7 @@ UNIT_TESTS = (("sd_shared_bus_test.cpp", "sd-shared-bus-tests"),)
 # policy tests, build boundaries, generator checks, the native unit binary and
 # the preview contracts, with their prerequisites, in the complete gate's order.
 # The Rust families run only in the complete gate.
-QUICK = ("bench_flash_test.py --negative-controls", "bench_flash_layouts_test.py --negative-controls", "bench_handshake_test.py", "x3_slots_test.py", "installer_test.py --negative-controls", "clean_export_test.py", "history_fixtures_test.py", "repo_docs_allowlist_test.py", "crt_bundle_test.py", "update_publish_test.py", "release_publish_test.py --negative-controls", "nightly_test.py --negative-controls", "nvs_namespaces_test.py", "legacy_nvs_test.py", "gate_scratch_test.py", "native_fixture_roots_test.py", "host_scratch_inputs_test.py", "trusted_host_test.py", "source_fixture_test.py", "code_health_test.py",
+QUICK = ("bench_flash_test.py --negative-controls", "bench_flash_layouts_test.py --negative-controls", "bench_handshake_test.py", "x3_slots_test.py", "installer_test.py --negative-controls", "clean_export_test.py", "history_fixtures_test.py", "repo_files_test.py", "crt_bundle_test.py", "update_publish_test.py", "release_publish_test.py --negative-controls", "nightly_test.py --negative-controls", "nvs_namespaces_test.py", "legacy_nvs_test.py", "gate_scratch_test.py", "native_fixture_roots_test.py", "host_scratch_inputs_test.py", "trusted_host_test.py", "source_fixture_test.py", "code_health_test.py",
          "code_health_resources_test.py", "code_health_capacity_test.py", "code_health_lent_test.py", "code_health_procedure_cache_test.py",
          "python_runtime_test.py", "reading_acceptance_test.py", "reading_latency_test.py",
          "reading_latency_ready_test.py", "host_objects_test.py", "host_object_reuse_test.py",
@@ -88,7 +88,7 @@ def plan(profile: str, fresh_objects: bool, controls=None) -> list[Phase]:
     test("nightly_test.py", "--negative-controls")
     test("clean_export_test.py")
     test("history_fixtures_test.py")
-    test("repo_docs_allowlist_test.py")
+    test("repo_files_test.py")
     test("crt_bundle_test.py")
     test("nvs_namespaces_test.py")
     test("gate_scratch_test.py")
