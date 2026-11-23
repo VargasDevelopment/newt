@@ -21,19 +21,18 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 from gate_tier import negative_controls
 
-SOURCE = 'core/src/dev_put.rs'
 BINARY = 'dev_put'
-TESTS = 20
-# (what breaks, its text in rust/core/src/dev_put.rs, the broken text, the test that must fail)
+TESTS = 21
+# (what breaks, its file under rust/core/src, its text there, the broken text, the test that must fail)
 CONTROLS = (
-    ('the SHA-256 is not compared', "        if digest != sha256 { return Err(Refused::DigestMismatch); }\n", "",
+    ('the SHA-256 is not compared', 'dev_put/lease.rs', "        if digest != sha256 { return Err(Refused::DigestMismatch); }\n", "",
      'a_digest_mismatch_leaves_no_final_file'),
-    ('a `..` name is allowed', "pub fn name_allowed(name: &[u8]) -> bool {\n",
+    ('a `..` name is allowed', 'dev_put.rs', "pub fn name_allowed(name: &[u8]) -> bool {\n",
      "pub fn name_allowed(name: &[u8]) -> bool {\n    if name == b\"..\" { return true; }\n",
      'names_outside_the_safe_set_are_refused'),
-    ('an open book does not refuse', "    if facts.reader_open { return Err(Busy::Reading); }\n", "",
+    ('an open book does not refuse', 'dev_put.rs', "    if facts.reader_open { return Err(Busy::Reading); }\n", "",
      'admission_refuses_reading_opening_and_away_from_home'),
-    ('bytes go straight to the final name', "let fd = self.card.create(folder.temp())",
+    ('bytes go straight to the final name', 'dev_put/lease.rs', "let fd = self.card.create(folder.temp())",
      "let fd = self.card.create(path(&target))", 'physical_input_abandons_and_keeps_the_old_file'),
 )
 
@@ -47,8 +46,8 @@ def load(name, path):
 
 def test_binary(run, workspace, target):
     """Compiles the test; a compiler error is a failure, never a control's kill."""
-    wire = run.cargo(workspace, target, 'test', '-p', 'newt-core', '--features', 'dev-usb', '--test', BINARY,
-                     '--no-run', '--message-format=json')
+    wire = run.cargo(workspace, target, 'test', '-p', 'newt-core', '--test', BINARY, '--no-run',
+                     '--message-format=json')
     outputs = [row['executable'] for row in map(json.loads, wire.splitlines())
                if row.get('reason') == 'compiler-artifact' and row.get('executable')
                and row['target']['name'] == BINARY]
@@ -57,10 +56,10 @@ def test_binary(run, workspace, target):
     return outputs[0]
 
 
-def control(run, workspace, target, support, name, good, bad, test):
-    path = workspace / SOURCE
+def control(run, workspace, target, support, name, source, good, bad, test):
+    path = workspace / 'core/src' / source
     text = path.read_text()
-    support.require(text.count(good) == 1, f'control "{name}": its anchor is not in rust/{SOURCE} exactly once')
+    support.require(text.count(good) == 1, f'control "{name}": its anchor is not in rust/core/src/{source} exactly once')
     path.write_text(text.replace(good, bad))
     try:
         binary = test_binary(run, workspace, target)

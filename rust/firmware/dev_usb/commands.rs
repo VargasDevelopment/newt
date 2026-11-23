@@ -68,6 +68,14 @@ impl Bridge {
             self.panel(id, device.panel_ring());
             return;
         }
+        if count == 5 && tokens[4] == "PUT" {
+            // A granted lease sends its own first reply (newt_core::dev_put).
+            self.capture = false;
+            if let Err(busy) = device.put(newt_core::dev_put::Session { boot, session, request: id }) {
+                self.reply(id, busy.reply());
+            }
+            return;
+        }
         let status = device.status();
         if count == 5 && tokens[4] == "STATUS" {
             self.status_reply(id, status);
@@ -99,9 +107,24 @@ impl Bridge {
         let mut bytes = [0; 160];
         let mut body = Text::new(&mut bytes);
         let build = build.split('\0').next().unwrap_or("");
-        let _ = write!(body, "HELLO build={build} caps=press,status,frame,diag2 wake=physical-only");
+        let _ = write!(body, "HELLO build={build} caps=press,status,frame,diag2,put wake=physical-only");
         self.reply(0, body.written());
     }
+
+    /// A granted PUT's lease has ended: the session continues after its last
+    /// ID, needs a fresh HELLO, or is answered as one.
+    pub fn put_ended(&mut self, end: newt_core::dev_put::End, build: &str, now: u32) {
+        match end {
+            newt_core::dev_put::End::Kept { last_id } => {
+                self.last_id = last_id;
+                self.session_activity = now;
+            }
+            newt_core::dev_put::End::Cancelled => self.cancel(),
+            newt_core::dev_put::End::Hello => self.hello(build, now),
+        }
+    }
+    /// A granted PUT whose lease could not start; the session continues.
+    pub fn put_refused(&mut self, id: u32, body: &[u8]) { self.reply(id, body); }
 
     fn diagnostics(&mut self, id: u32, d: Diagnostics) {
         if !d.available {

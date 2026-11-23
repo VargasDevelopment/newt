@@ -16,6 +16,7 @@ const PUT_ID: u32 = 0x8000_0010;
 const DEV: &str = "/newt-sd/Newt/Dev";
 const TARGET: &str = "/newt-sd/Newt/Dev/runtime.bin";
 const TEMP: &str = "/newt-sd/Newt/Dev/.newt-put";
+const OLD: &str = "/newt-sd/Newt/Dev/.newt-old";
 const BANNER: &str = "PUT line=4160 chunk=3072 cap=7798784";
 
 /// The host's side of one lease: lines with fresh IDs in the PUT's session.
@@ -179,10 +180,21 @@ fn an_existing_file_is_replaced_only_after_verification() {
     let mut card = FakeCard::default();
     card.put_file(TARGET, &old);
     card.put_file(TEMP, b"left by a power loss");
+    card.put_file(OLD, b"also left by a power loss");
     let outcome = lease(&mut card, Host::new().put("dev", "runtime.bin", &new));
     assert_eq!(outcome.last(), done(&new));
     assert_eq!(card.file(TARGET), Some(&new[..]));
-    assert_eq!(card.file(TEMP), None);
+    assert_eq!((card.file(TEMP), card.file(OLD)), (None, None));
+}
+
+#[test]
+fn a_failed_rename_puts_the_old_file_back() {
+    let mut card = FakeCard { fail_rename_onto: Some(TARGET), ..FakeCard::default() };
+    card.put_file(TARGET, b"old");
+    let outcome = lease(&mut card, Host::new().put("dev", "runtime.bin", &pattern(4_000)));
+    assert_eq!(outcome.last(), format!("ERROR card step=rename code={FAILED}"));
+    unchanged(&card, Some(b"old"));
+    assert_eq!(card.file(OLD), None);
 }
 
 #[test]
@@ -320,12 +332,13 @@ fn short_free_space_is_refused_before_any_write() {
 #[test]
 fn card_failures_are_reported_with_their_step() {
     let bytes = pattern(4_000);
-    for step in ["free", "create", "write", "sync", "rename"] {
-        let mut card = FakeCard { fail: Some(step), ..FakeCard::default() };
-        card.put_file(TARGET, b"old");
+    for (step, old) in [("free", true), ("create", true), ("write", true), ("sync", true), ("replace", true),
+        ("rename", false)] {
+        let mut card = FakeCard { fail: Some(if step == "replace" { "rename" } else { step }), ..FakeCard::default() };
+        if old { card.put_file(TARGET, b"old"); }
         let outcome = lease(&mut card, Host::new().put("dev", "runtime.bin", &bytes));
         assert_eq!(outcome.last(), format!("ERROR card step={step} code={FAILED}"));
-        assert_eq!(card.file(TEMP), None, "{step}");
+        unchanged(&card, old.then_some(b"old"));
     }
     let mut card = FakeCard::default();
     for folder in ["/newt-sd/Newt", DEV, TARGET] { card.nodes.insert(folder.into(), Node::Folder); }

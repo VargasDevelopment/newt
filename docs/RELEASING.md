@@ -366,9 +366,20 @@ python3 -B tools/release_publish.py --bench-receipt .build/release/bench-VERSION
 The bench install check: install `newt.bin` and `newt.manifest` from
 `.build/release/bench-VERSION` on the bench X3 (from the card, over Wi-Fi
 once it can, or with `tools/bench_flash.py`, which writes the exact `newt.bin`;
-owner approval 2026-10-31: no tool writes the bench card, and Wi-Fi needs a
-published release), let it boot, and see the running slot's state is VALID and
-Home is on the screen. Record it as JSON in `.build/release/bench-VERSION.json`
+Wi-Fi needs a published release), let it boot, and see the running slot's
+state is VALID and Home is on the screen. For the card install, the running
+build's bridge can put the pair into `Newt/Update` (docs/dev-usb-bridge.md,
+"Card write"), with Home open and no book open:
+
+```sh
+.toolchain/platformio/penv/bin/python tools/dev-usb.py put \
+  --port /dev/BENCH_PORT --expect-build RUNNING_BUILD --folder update \
+  --file .build/release/bench-VERSION/newt.bin \
+  --file .build/release/bench-VERSION/newt.manifest
+```
+
+Both files must report `"result": "written"`; then install from the card as
+usual. Record it as JSON in `.build/release/bench-VERSION.json`
 (private; never published):
 
 ```json

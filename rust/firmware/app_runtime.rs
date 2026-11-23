@@ -28,6 +28,9 @@ pub(crate) mod publication;
 #[path = "app_runtime/restart.rs"]
 pub(crate) mod restart;
 #[cfg(feature = "dev-usb")]
+#[path = "app_runtime/card_write.rs"]
+mod card_write;
+#[cfg(feature = "dev-usb")]
 #[path = "app_runtime/trace.rs"]
 pub(crate) mod trace;
 

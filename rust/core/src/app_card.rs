@@ -2,7 +2,8 @@
 //! Finds the one app file waiting in `/Newt/Apps` and reads it, read-only.
 //! The listing keeps its errors (a missing folder is not a failed read, and a
 //! failed `next` is not the end), so a partial listing never yields an offer.
-//! Newt never writes, moves or deletes card files for apps.
+//! Newt never writes, moves or deletes card files for apps; only the
+//! development bridge's card write (dev_put) can put one there.
 use crate::app_store::{self, PACKAGE_BYTES, Package, Payload, Refusal};
 use crate::crossink_import::{EntryKind, Files as Listing, IoError};
 use crate::update_card::{FILE_BYTES, Files, read_whole};

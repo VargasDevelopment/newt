@@ -116,6 +116,7 @@ def plan(profile: str, fresh_objects: bool, controls=None) -> list[Phase]:
     test("host_sha256_test.py")
     test("page_entry_fatfs_test.py", uses=(ROOT / ".build/page-entry-fatfs",))
     test("dev_usb_serial_test.py", bytecode=True)
+    test("dev_usb_put_test.py", bytecode=True)
     test("build_scope_test.py", bytecode=True)
     test("rust_app_build_test.py")
     run(ROOT / "rust-health/rust_health.py")

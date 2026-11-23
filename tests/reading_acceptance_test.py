@@ -73,9 +73,9 @@ class FakeClient:
         self.connection['events'].append({'event': value, 'utc': 'synthetic', 'monotonic': 1})
     def hello(self, expected):
         for session in (1, 2):
-            self.protocol['records'].extend([{'direction': 'request', 'kind': 'HELLO', 'request_id': 0, 'boot': None, 'session': None, 'body': 'HELLO', 'monotonic': 100}, {'direction': 'response', 'kind': 'HELLO', 'request_id': 0, 'boot': 5, 'session': session, 'body': f'HELLO build={expected} caps=press,status,frame,diag2 wake=physical-only', 'monotonic': 100}])
+            self.protocol['records'].extend([{'direction': 'request', 'kind': 'HELLO', 'request_id': 0, 'boot': None, 'session': None, 'body': 'HELLO', 'monotonic': 100}, {'direction': 'response', 'kind': 'HELLO', 'request_id': 0, 'boot': 5, 'session': session, 'body': f'HELLO build={expected} caps=press,status,frame,diag2,put wake=physical-only', 'monotonic': 100}])
         self.request('STATUS')
-        return f'HELLO build={expected} caps=press,status,frame,diag2 wake=physical-only'
+        return f'HELLO build={expected} caps=press,status,frame,diag2,put wake=physical-only'
     def request(self, command, capture_deadline=None):
         self.request_id += 1
         self.protocol['last_request_id'] = self.request_id

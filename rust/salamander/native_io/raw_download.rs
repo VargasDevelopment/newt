@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-//! Raw errno leaves for the frozen download's explicit first-failure policy.
+//! Raw errno leaves for the frozen download's explicit first-failure policy,
+//! also lent to the development bridge's card write.
 use core::ffi::{c_char, CStr};
 use crate::OsNative;
 pub const MISSING_ERRNO: i32 = 2;
@@ -14,6 +15,7 @@ unsafe extern "C" {
     fn newt_download_sync(fd: i32) -> i32;
     fn newt_download_close(fd: i32) -> i32;
     fn newt_download_millis() -> u32;
+    fn newt_download_free(base: *const c_char, free_bytes: *mut u64) -> i32;
 }
 fn status(error: i32) -> core::result::Result<(), i32> {
     if error == 0 { Ok(()) } else { Err(error) }
@@ -47,6 +49,14 @@ impl OsNative<'_> {
     pub fn close_raw(&mut self, fd: i32) -> core::result::Result<(), i32> {
         // SAFETY: one close; the caller consumes ownership even on failure.
         status(unsafe { newt_download_close(fd) })
+    }
+    /// Free bytes on the FAT volume mounted at `base`, or its errno.
+    pub fn free_bytes_raw(&mut self, base: &CStr) -> core::result::Result<u64, i32> {
+        let mut free = 0;
+        // SAFETY: terminated live path and one exclusive scalar output; the
+        // synchronous FATFS query retains neither.
+        status(unsafe { newt_download_free(base.as_ptr(), &mut free) })?;
+        Ok(free)
     }
     pub fn monotonic_millis(&self) -> u32 {
         // SAFETY: one scalar CLOCK_MONOTONIC observation, no storage retained.

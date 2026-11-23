@@ -27,12 +27,14 @@ pub struct FakeCard {
     pub flip: Option<usize>,
     /// This step fails with `FAILED`.
     pub fail: Option<&'static str>,
+    /// The first rename onto this path fails with `FAILED`.
+    pub fail_rename_onto: Option<&'static str>,
 }
 
 impl Default for FakeCard {
     fn default() -> Self {
         Self { nodes: BTreeMap::from([("/newt-sd".into(), Node::Folder)]), handles: BTreeMap::new(), next_fd: 3,
-            free: 1 << 30, write_limit: usize::MAX, flip: None, fail: None }
+            free: 1 << 30, write_limit: usize::MAX, flip: None, fail: None, fail_rename_onto: None }
     }
 }
 
@@ -126,6 +128,10 @@ impl Card for FakeCard {
     fn rename(&mut self, from: &CStr, to: &CStr) -> Result<(), i32> {
         self.step("rename")?;
         let (from, to) = (text(from), text(to));
+        if self.fail_rename_onto == Some(to.as_str()) {
+            self.fail_rename_onto = None;
+            return Err(FAILED);
+        }
         if self.nodes.contains_key(&to) { return Err(-17); }
         let node = self.nodes.remove(&from).ok_or(-2)?;
         self.nodes.insert(to, node);

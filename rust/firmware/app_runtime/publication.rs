@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! One short view of the SAME app publication, also lent during restart drain.
 #![forbid(unsafe_code)]
-use crate::{app_image::{Application, Events, Home, Reader}, dev_usb::{Bridge, Diagnostics, PanelRing, Status}};
+use crate::{app_dev::Put, app_image::{Application, Events, Home, Reader}, dev_usb::{Bridge, Diagnostics, PanelRing, Status}};
 use super::display::DisplayReceipt;
 use newt_c3_board::hardware::{HardwareError, HardwareReader};
 use newt_core::{app::Screen, frame, preferences::Orientation, update_confirm::{self, FirstScreen}};
@@ -30,6 +30,8 @@ pub struct Published<'a, 'sdk> {
     pub hardware: &'a mut HardwareReader<'sdk>,
     pub bridge: &'a mut Bridge,
     pub panels: &'a PanelRing,
+    /// False while draining for a restart, when no card write may begin.
+    pub writes: bool,
 }
 impl Published<'_, '_> {
     pub fn poll(&mut self, home: &mut Home<'_>, reader: &impl Reader, logical: &newt_core::frame::Frame,
@@ -59,12 +61,18 @@ impl Published<'_, '_> {
         diagnostics.library_count = self.facts.library_count;
         diagnostics.library_selected = self.facts.library_selected;
         diagnostics.device_fingerprint = self.facts.fingerprint;
+        // An owed reopen is card work about to start, as an open in progress.
+        let put = if self.writes { Put::Admits(newt_core::dev_put::Facts { home: self.facts.screen == Screen::Home,
+            reader_open: facts.opened, opening: diagnostics.opening || facts.reopen_owed }) } else { Put::Unavailable };
         let clock = home.bus.board.monotonic_clock();
         let mut channel = home.bus.log.dev_channel(clock);
         let mut publication = crate::app_dev::Publication { status, frame: facts.frame(self.facts.screen, logical), queue: events.queue,
-            panels: self.panels, diagnostics };
+            panels: self.panels, diagnostics, put };
         crate::app_dev::poll(self.bridge, &mut channel, &mut publication, crate::app_dev::BUILD_ID,
             update_confirm::image_confirmed(self.facts.first_screen));
+        if let Put::Granted(session) = publication.put {
+            super::card_write::lease(self.bridge, home, events, session);
+        }
         Ok(())
     }
 }

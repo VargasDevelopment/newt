@@ -261,7 +261,7 @@ impl Parts<'_, '_> {
                 device_fingerprint: self.fingerprint, ..Diagnostics::default() };
             let frame = if private { None } else { logical };
             let mut publication = crate::app_dev::Publication { status, frame, queue: events.queue,
-                panels: self.panels, diagnostics };
+                panels: self.panels, diagnostics, put: crate::app_dev::Put::Unavailable };
             let mut channel = self.log.dev_channel(board.monotonic_clock());
             crate::app_dev::poll(self.bridge, &mut channel, &mut publication, crate::app_dev::BUILD_ID, true);
         }

@@ -15,9 +15,12 @@ from bench_lease import lease_port
 from dev_usb_panel_telemetry import (
     MAX_PRESS_TELEMETRY, collect_press_telemetry, decode_panel_ring)
 from dev_usb_firmware_rows import MAX_LISTEN_SECONDS, FirmwareRows, listen
+from dev_usb_put import FOLDERS, plan, put_files
 
 RECORD = re.compile(rb'!N1 ([0-9]+) ([0-9]+) ([0-9]+) (.*) \*([0-9a-f]{8})\n\Z')
 MAX_AUDIT_RECORDS = 2048  # Covers both directions of 32 PRESSes and two full captures.
+CAPS = ('press,status,frame', 'press,status,frame,diag', 'press,status,frame,diag2',
+        'press,status,frame,diag2,put')
 
 
 def timestamp():
@@ -113,6 +116,7 @@ class ProtocolClient:
         self.capabilities = frozenset()
         self.randbelow = randbelow
         self.audit = []
+        self.untraced = ()  # response prefixes summarised by their caller instead
         self.press_telemetry = []
         self.active_press = None
         self.pre_press_buffer = 0
@@ -149,7 +153,8 @@ class ProtocolClient:
                 self.pre_press_buffer = max(0, self.pre_press_buffer - len(line) - 1)
                 record = decode_record(bytes(line) + b'\n')
                 if record is not None:
-                    self.trace('response', *record[:3], record[3].partition(' ')[0], record[3])
+                    if not record[3].startswith(self.untraced):
+                        self.trace('response', *record[:3], record[3].partition(' ')[0], record[3])
                     return record
                 self.firmware_rows.keep(bytes(line))
                 if self.active_press is not None and not preexisting:
@@ -187,7 +192,7 @@ class ProtocolClient:
             if identifier != 0 or session == 0 or not body.startswith('HELLO '):
                 raise ValueError('Expected a fresh handshake')
             fields = decode_fields(body, {'caps', 'wake', 'build'})
-            if fields.get('caps') not in ('press,status,frame', 'press,status,frame,diag', 'press,status,frame,diag2') or fields.get('wake') != 'physical-only':
+            if fields.get('caps') not in CAPS or fields.get('wake') != 'physical-only':
                 raise ValueError('Unsupported bridge capabilities')
             if expected_build is not None and fields.get('build') != expected_build:
                 raise ValueError('Connected build differs from the explicitly selected image')
@@ -363,6 +368,9 @@ def run_session(client, args):
     report = {'simulation': False, 'actions': []}
     try:
         report['hello'] = client.hello(args.expect_build)
+        if args.mode == 'put':
+            report['put'] = {'folder': args.folder, 'files': []}
+            put_files(client, args.folder, args.files, args.timeout, report['put'])
         if args.mode == 'panel-ring':
             report['panel_ring'] = decode_panel_ring(client.request('PANEL')[0])
         for action in args.press:
@@ -399,7 +407,7 @@ def run_session(client, args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=['live', 'panel-ring'])
+    parser.add_argument('mode', choices=['live', 'panel-ring', 'put'])
     parser.add_argument('--port', help='explicit Linux serial port; never discovered')
     parser.add_argument('--expect-build', help='exact reviewed HELLO build identity, required live')
     parser.add_argument('--timeout', type=float, default=8, help='per-command deadline in seconds (0.1–30)')
@@ -410,6 +418,10 @@ def main():
     parser.add_argument('--output', type=Path, help='host capture basename')
     parser.add_argument('--diagnostics', action='store_true', help='read boot/reader diagnostics after STATUS')
     parser.add_argument('--listen', type=float, default=0, help='after the last press, read firmware rows (0–600 s)')
+    # put writes each --file into one fixed card folder: Newt/Apps, Newt/Update or Newt/Dev (docs/dev-usb-bridge.md).
+    parser.add_argument('--folder', choices=FOLDERS, help='put: the card folder')
+    parser.add_argument('--file', action='append', type=Path, default=[], help='put: a local file, repeatable')
+    parser.add_argument('--name', help='put: the card name for a single --file (default: its own name)')
     args = parser.parse_args()
     if not 0.1 <= args.timeout <= 30 or len(args.press) > 32 or not 0 <= args.listen <= MAX_LISTEN_SECONDS:
         parser.error('Use a 0.1–30 second deadline, at most 32 button requests and 0–600 listening seconds')
@@ -417,6 +429,15 @@ def main():
         parser.error('Live mode requires an explicit Linux --port and --expect-build')
     if args.mode == 'panel-ring' and (args.press or args.output or args.diagnostics):
         parser.error('Panel ring read accepts no actions or capture')
+    if (args.mode == 'put') != bool(args.folder or args.file or args.name):
+        parser.error('--folder, --file and --name belong to put, which needs --folder and --file')
+    if args.mode == 'put':
+        if not args.folder or args.press or args.output or args.listen:
+            parser.error('put needs --folder and takes no presses, capture or listening')
+        try:
+            args.files = plan(args.file, args.name)
+        except (ValueError, OSError) as error:
+            parser.error(str(error))
     if 'sleep' in args.press and (args.press[-1] != 'sleep' or args.press.count('sleep') != 1 or args.output or args.diagnostics or args.listen):
         parser.error('Live sleep must be the final request, with no subsequent capture; wake is physical only')
     with lease_port(args.port):

@@ -75,7 +75,7 @@ def procedure_identity(root):
     paths = [Path(root) / name for name in (
         'tools/reading_acceptance.py', 'tools/reading_sampling.py', 'tools/reading-ready.py', 'tools/dev-usb.py',
         'tools/bench_lease.py', 'tools/bench_candidate.py', 'tools/x3_slots.py', 'tools/dev_usb_panel_telemetry.py',
-        'tools/dev_usb_firmware_rows.py', 'tools/reading_latency.py', 'tests/reading_latency_test.py',
+        'tools/dev_usb_firmware_rows.py', 'tools/dev_usb_put.py', 'tools/reading_latency.py', 'tests/reading_latency_test.py',
         'tests/dev_usb_serial_test.py', 'tests/dev_usb_telemetry_test.py',
         'tools/release_tools.py', 'tools/code_health_flash_policy.py', 'tools/code_health.py',
         'tests/reading_latency_ready_test.py', 'docs/reading-latency-contract.json',
@@ -182,8 +182,8 @@ def validate_journey(receipt, install, plan, expected, target, procedure, now):
     require(0 <= mono_finish - mono_start <= MAX_RUN, 'Unbounded monotonic journey duration')
     require(install['installed_at'] <= start <= finish <= now and finish - start <= MAX_RUN and
             now - finish <= MAX_AGE, 'Journey predates installation or is stale/unbounded')
-    require(receipt['hello'] == 'HELLO build=' + install['build'] +
-            ' caps=press,status,frame,diag2 wake=physical-only', 'Wrong connected firmware build')
+    require(receipt['hello'] in (f"HELLO build={install['build']} caps=press,status,frame,diag2{put} wake=physical-only"
+                                 for put in ('', ',put')), 'Wrong connected firmware build')
     connection = receipt['connection']
     require(type(connection) is dict and connection.get('transport') == 'serial' and
             connection.get('closed') is True, 'Journey did not close its physical connection')

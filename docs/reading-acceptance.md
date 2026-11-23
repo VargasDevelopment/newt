@@ -79,7 +79,8 @@ This tooling consumes the current runtime's STATUS and the
 existing DIAG via `client.request`, reusing protocol/checksum/nonce enforcement.
 `tools/reading_acceptance.py::DIAG_KEYS` requires the existing DIAG fields plus version=2,
 `current_book`, `heap`, `largest`, `opening`, `library_count`, `library_selected`,
-and `device`. HELLO must advertise `press,status,frame,diag2`.
+and `device`. HELLO must advertise `press,status,frame,diag2`, or that and `put`
+(the card write, docs/dev-usb-bridge.md).
 `current_book` is the current selected reader source, not the retained wake target;
 `device` is the first 16 hex characters of the SHA-256 of the uppercase,
 colon-delimited factory MAC/USB serial, not a per-connection boot nonce.

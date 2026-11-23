@@ -24,5 +24,4 @@ test = false
 [[test]]
 name = "dev_put"
 path = "../tests/dev_put/lease.rs"
-required-features = ["dev-usb"]
 test = false
