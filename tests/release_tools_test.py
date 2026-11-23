@@ -1,6 +1,7 @@
 """Exercise pinned official Commitizen and the release gate (versions, commit messages
 and the release-tag guard) in disposable repos; never tag or push the checkout.
-tests/release_tag_test.py covers the tag command on this file's fixture.
+tests/release_tag_test.py covers the tag command, and tests/release_prepare_test.py release
+preparation, on this file's fixture.
 --negative-controls removes each guard in a copy of its tool and requires its test to fail."""
 import argparse
 import os
@@ -223,8 +224,7 @@ class ReleaseTests(ReleaseFixture):
         tree = self.git("rev-parse", "HEAD^{tree}").stdout.strip()
         release.check_commits(self.root, [self.base + ".." + second])
         for message, accepted in (
-                ("Merge pull request #43 from owner/fix\n\n"
-                 "fix(tests): bind ZIP codec before cover evidence starts", True),
+                ("Merge pull request #43 from owner/fix\n\nBind the ZIP codec before cover evidence starts.", True),
                 ("Merge branch 'main' into fix", True),
                 ("fix(tests): bind ZIP codec before cover evidence starts (#43)", True),
                 ("bind ZIP codec before cover evidence starts", False)):
@@ -243,6 +243,26 @@ class ReleaseTests(ReleaseFixture):
         single = self.git("commit-tree", tree, "-p", second, "-m", "Merge pull request #44 from owner/fix").stdout.strip()
         with self.assertRaisesRegex(ValueError, "Only a merge may skip"):
             release.check_commits(self.root, [self.base + ".." + single])
+
+    def test_a_merge_body_may_not_carry_a_classification(self):
+        """Bump classifies every line of a merge's message, though the changelog skips the merge."""
+        self.git("checkout", "-qB", "main")
+        self.baseline("0.1.0")
+        first = self.head()
+        self.commit("fix(reader): a fix only")
+        fix, tree = self.head(), self.git("rev-parse", "HEAD^{tree}").stdout.strip()
+        for body, proposed in (("feat!: example", "0.2.0"), ("", "0.1.1"), ("Fix the reader after a cold boot.", "0.1.1")):
+            with self.subTest(body=body):
+                merge = self.git("commit-tree", tree, "-p", first, "-p", fix, "-m",
+                                 "Merge pull request #1 from owner/fix-only", *(["-m", body] if body else [])).stdout.strip()
+                self.git("reset", "-q", "--hard", merge)
+                self.git("update-ref", "refs/remotes/origin/main", merge)
+                self.assertEqual(self.cz("bump", "--get-next").stdout.strip(), proposed)
+                if body.startswith("feat!"):
+                    with self.assertRaisesRegex(ValueError, "would classify these lines: [0-9a-f]+ feat!: example"):
+                        release.gate(self.root)
+                else:
+                    self.assertEqual(release.gate(self.root), ["v0.1.0"])
 
     def test_the_gate_checks_the_commits_versioning_reads(self):
         """Commitizen reads the commits since the release tag; with tags, the gate checks
@@ -577,9 +597,9 @@ CONTROLS = (
     ("release_tools.py", "            raise ValueError(f\"Release {version} ({base[:12]} on origin/main) has no tag",
      "            continue\n            raise ValueError(f\"Release {version} ({base[:12]} on origin/main) has no tag",
      "test_the_guard_fails_closed_without_origin_main_or_tags"),
-    ("release_tools.py", "        if committed_release(root, tagged)[0] != version:", "        if False:",
+    ("release_tools.py", "    if committed_release(root, tagged)[0] != version:", "    if False:",
      "test_a_tag_on_another_version_or_off_main_history_fails"),
-    ("release_tools.py", "        if tagged not in mainline:", "        if False:",
+    ("release_tools.py", "    if tagged not in mainline:", "    if False:",
      "test_a_tag_on_another_version_or_off_main_history_fails"),
     ("release_tools.py", "    for rev_range in ranges:", "    for rev_range in ranges[:0]:",
      "test_message_checks_and_range_reject_malformed_commits"),
@@ -588,14 +608,16 @@ CONTROLS = (
     ("release_tools.py", "        ranges = [f\"{base}..{head}\" for base in destination_bases(root, head)]", "        ranges = []",
      "test_the_gate_checks_the_commits_versioning_reads"),
     ("release_tools.py", "        if unmerged:", "        if False:", "test_a_merge_may_keep_its_default_subject_and_only_a_merge"),
+    ("release_tools.py", "        if classified:", "        if False:", "test_a_merge_body_may_not_carry_a_classification"),
     ("check.py", '*([] if args.release_tags else ["--no-tags"])', '"--no-tags"',
      "test_ci_and_only_an_explicit_request_check_the_release_tags"),
     ("ci_gate.py", "'--release-tags', ", "", "test_ci_and_only_an_explicit_request_check_the_release_tags"),
 )
 
 
-def negative_controls():
-    for tool, old, new, test in CONTROLS:
+def negative_controls(controls=CONTROLS, script=__file__):
+    """Each (tool, old, new, test) of CONTROLS, run as SCRIPT --single TEST."""
+    for tool, old, new, test in controls:
         with tempfile.TemporaryDirectory(prefix="release-control-") as scratch:
             source = (args.tool_root / tool).read_text()
             if source.count(old) != 1:
@@ -606,7 +628,7 @@ def negative_controls():
             (tools / tool).write_text(source.replace(old, new))
             (Path(scratch) / ".release-venv").symlink_to(PYTHON.parent.parent)
             shutil.copyfile(ROOT / "requirements-release.txt", Path(scratch) / "requirements-release.txt")
-            result = subprocess.run([sys.executable, "-B", __file__, "--tool-root", tools, "--single", test],
+            result = subprocess.run([sys.executable, "-B", script, "--tool-root", tools, "--single", test],
                                     capture_output=True, text=True)
             if result.returncode == 0 or "FAIL:" not in result.stderr:
                 raise RuntimeError("Guard removal was not caught: " + test + "\n" + result.stderr)

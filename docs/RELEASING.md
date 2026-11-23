@@ -10,9 +10,14 @@ contracts; a firmware bump does not migrate them.
 
 The release gate checks commit messages where versioning reads them.
 Commitizen classifies the commits since the release tag, so every commit there
-must be a Conventional Commit; a merge may instead keep Git's or GitHub's
-`Merge ...` subject, because the commits it joins carry the classification.
-History before the release tag is never read again, so it is not checked. The
+must be a Conventional Commit. A GitHub merge takes the pull request's title as
+its subject, so the title must be one too. A merge made with plain `git merge`
+may instead keep Git's `Merge ...` subject, because the commits it joins carry
+the classification. Its body stays empty or plain text: Commitizen's bump
+classifies every line of every message, so the gate refuses a line there that
+its bump pattern matches. History before the release tag is not checked: no
+bump reads it again, because release preparation starts each bump at the
+current version's own tag ([Prepare a reviewed release](#prepare-a-reviewed-release)). The
 pinned adoption boundary (`ADOPTION_BASE` in `tools/release_tools.py`), which
 only the private history carries, marks where the release rules begin.
 
@@ -71,10 +76,13 @@ The release-tag guard checks the range's end, so name the planned merge there.
 A range that ends in a merge is a planned merge onto `origin/main`: its first
 parent must already be on your `origin/main`, so `git fetch origin` first.
 
-Merge with GitHub's default subject (the merge button, or
-`gh pr merge NUMBER --merge`), keeping both parents. Before publishing,
-construct the planned two-parent merge locally and check it with the pinned
-gate: `git fetch origin`, then
+A merge's subject is its pull request's title, so write the title as a
+Conventional Commit; CI checks it on every push and every edit of the pull
+request ([CI.md](CI.md#public-ci)). Nobody types a merge subject. Merge with
+the merge button, `gh pr merge NUMBER --merge` or the API's defaults: the
+title plus ` (#N)` as the subject and an empty body, with both parents kept.
+Before publishing, construct the planned two-parent merge locally and check
+it with the pinned gate: `git fetch origin`, then
 `python3 -B tools/release_tools.py --rev-range origin/main..MERGE`.
 If it changes `code-health-baseline.json`, also run `python3 tools/code_health.py
 --variant regional-dev-usb --adopt BASE` on that merge, on its clean build
@@ -102,13 +110,22 @@ On a clean release branch from `main`, check messages and version consistency
 before generating files:
 
 ```sh
-python3 -B tools/release_tools.py
+python3 -B tools/release_tools.py --prepare
 .release-venv/bin/python -I -B -m commitizen bump --get-next --prerelease alpha
 .release-venv/bin/python -I -B -m commitizen bump \
   --version-files-only --check-consistency --yes --prerelease alpha
 git diff -- .cz.toml rust/firmware/native/firmware_version.h CHANGELOG.md
 python3 -B tools/check.py --tier full
 ```
+
+`--prepare` checks from where `cz bump` reads. It requires the current
+version's own tag, on main's first-parent history and in the branch; without
+it, bump would read the whole history as an initial release. It requires
+`CHANGELOG.md`'s latest release heading to name that tag, since the
+incremental changelog starts after that heading. Just after a release merges,
+main's version has no tag until CI tags it; wait for that, then fetch the tag.
+A parent release's tag never stands in, as it does for CI's run on the
+release merge itself.
 
 The release merge's CI runs the full tier ([CI.md](CI.md#tiers)), and a
 failure there blocks every merge after it, so run the full tier on the release
@@ -206,7 +223,7 @@ pass, re-run that push run in Actions; CI then tags it. Until the tag exists, th
 merge.
 
 The release gate makes a skipped tag impossible to miss. CI, release
-validation (`tools/release_tools.py`, as in [Prepare a reviewed
+validation (`tools/release_tools.py --prepare`, as in [Prepare a reviewed
 release](#prepare-a-reviewed-release)) and the planned-merge check above refuse
 anything built or merged on top of an untagged release, and name the missing
 tag and this command. A routine `tools/check.py` run reads no tag, so it
