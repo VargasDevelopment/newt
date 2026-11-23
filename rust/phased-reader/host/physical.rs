@@ -34,6 +34,12 @@ pub struct Store {
     pub name: Vec<u8>,
     pub file: Vec<u8>,
 }
+impl Store {
+    pub fn copy_file_from(&mut self, saved: &Self) {
+        self.name.clone_from(&saved.name);
+        self.file.clone_from(&saved.file);
+    }
+}
 impl CacheStorage for Store {
     fn file_size(&mut self, name: &[u8]) -> i64 {
         if self.name == name { self.file.len() as i64 } else { -1 }

@@ -164,16 +164,11 @@ impl<C: ReadScope + CachePresence> PhasedChapterCache<'_, C> {
         let ready = r.reader.plan.is_some()
             && (request.staged || request.spine == r.reader.info.spine)
             && session_adapter::reader_settings_match(r.reader, self.settings);
-        if let Some(language) = r.reader.book_language().filter(|_| ready) {
+        if ready && let Some(language) = r.reader.book_language() {
             let guard = r.reader.validate(source);
             if guard != Status::Ok {
                 return CapturedPage::failed(guard);
             }
-            let language = if request.staged {
-                r.reader.staged_selection().language
-            } else {
-                language
-            };
             if let Ok((mut base, mut generation)) =
                 session_adapter::identity(self.settings, digest, request.spine, self.hash, language)
             {

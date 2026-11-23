@@ -33,7 +33,7 @@ pub fn run(root: &Path) -> std::io::Result<()> {
     let mut plan = Plan::new(&mut runs, &mut text);
     let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), true);
     let mut store = Store::default();
-    let mut english = Vec::new();
+    let mut english = Store::default();
     // Hold the digest fixed to isolate language as the only cache-key input.
     let digest = [0; 32];
     let request = CacheRequest { spine: 0, target: 0, anchor: false, staged: false,
@@ -44,7 +44,6 @@ pub fn run(root: &Path) -> std::io::Result<()> {
         ("empty", c"en", true), ("unknown", c"en", true), ("overlong", c"en", true),
     ] {
         let mut source = Source::open(&root.join(format!("language-{name}.epub")))?;
-        let previous_name = store.name.clone();
         let mut breaks = Breaks { expected: tag, seen: 0 };
         assert_eq!(reader.open_phased(&mut source, &mut storage, &mut *native, &mut parser), Status::Ok);
         {
@@ -65,10 +64,10 @@ pub fn run(root: &Path) -> std::io::Result<()> {
 
                 let japanese_name = cache.store.name.clone();
                 operation.reader.close();
-                cache.store.name = previous_name;
-                cache.store.file.clone_from(&english);
+                cache.store.copy_file_from(&english);
                 assert!(cache.stored(&digest, 0, &mut operation), "old English file is a warm hint");
                 assert_eq!(operation.reader.open_phased(&mut source, operation.storage, operation.lender, operation.backend), Status::Ok);
+                assert!(!cache.stored(&digest, 0, &mut operation), "open Japanese reader checks its own cache name");
                 assert!(!cache.capture(&mut source, &digest, request, &mut operation).hit,
                     "old English cache must miss after verified Japanese selection");
                 assert_eq!(cache.build(&mut source, &digest, 0, &mut operation), Build::Ready);
@@ -76,8 +75,8 @@ pub fn run(root: &Path) -> std::io::Result<()> {
             }
         }
         assert!(breaks.seen > 0, "{name}: cache build must break text");
-        if name == "en" { english.clone_from(&store.file); }
-        if tag == c"en" { assert_eq!(store.file, english, "{name}: English-compatible pages"); }
+        if name == "en" { english.copy_file_from(&store); }
+        if tag == c"en" { assert_eq!(store.file, english.file, "{name}: English-compatible pages"); }
         breaks.seen = 0;
         assert_eq!(reader.capture_phased(&mut source, 0, 0, Target::Page, &mut storage,
             &mut *native, &mut parser, &mut breaks), Status::Ok);
