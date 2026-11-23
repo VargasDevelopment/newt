@@ -17,6 +17,7 @@ import unittest
 from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
+from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
@@ -193,10 +194,22 @@ class RustHealthTest(unittest.TestCase):
         self.assertEqual([path for path, _ in size_warnings(tree, self.baseline)], ['rust/ui/src/big.rs'])
         path = root / 'baseline.json'
         write_baseline(path, self.baseline)
-        output = io.StringIO()
-        with contextlib.redirect_stdout(output):
-            self.assertEqual(main(['--root', str(root), '--baseline', str(path)]), 0)
-        self.assertIn('WARN rust/ui/src/big.rs: 501 lines, over the 500-line guide', output.getvalue())
+        for actions, prefix in (('', 'WARN '), ('true', '::warning file=rust/ui/src/big.rs::')):
+            with self.subTest(actions=actions):
+                output = io.StringIO()
+                with patch.dict('os.environ', GITHUB_ACTIONS=actions), contextlib.redirect_stdout(output):
+                    self.assertEqual(main(['--root', str(root), '--baseline', str(path)]), 0)
+                self.assertIn(f'{prefix}rust/ui/src/big.rs: 501 lines, over the 500-line guide', output.getvalue())
+
+    def test_a_stale_generated_exclusion_fails_and_blocks_update(self) -> None:
+        root = self.fixture(lambda root: (root / 'rust/ui/src/data.rs').unlink())
+        self.assertEqual(list(run_checks(measure(root), self.baseline)), ['generated'])
+        path = root / 'baseline.json'
+        write_baseline(path, self.baseline)
+        before = path.read_bytes()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(main(['--root', str(root), '--baseline', str(path), '--update']), 1)
+        self.assertEqual(path.read_bytes(), before)
 
     def test_update_only_lowers_a_recorded_size(self) -> None:
         recorded = {**self.baseline, 'files': {**self.baseline['files'], 'rust/ui/src/big.rs': {'lines': 520}}}

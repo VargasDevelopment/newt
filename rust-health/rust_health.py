@@ -275,11 +275,16 @@ def check_banned(tree: Tree, _baseline: Baseline) -> list[str]:
             for source in tree.sources.values() if source.metrics[BANNED]]
 
 
+def check_generated(tree: Tree, baseline: Baseline) -> list[str]:
+    # A stale exclusion would silently exempt whatever file later takes its path.
+    return [f'{path}: generated exclusion matches no production file' for path in baseline['generated']
+            if path not in tree.sources]
+
+
 def size_warnings(tree: Tree, baseline: Baseline) -> list[tuple[str, str]]:
     """(path, message) for each file over the line limit and its recorded size.
     Length is a review signal, not a gate (docs/CODE_HEALTH.md)."""
-    warnings = [(path, 'generated exclusion matches no production file') for path in baseline['generated']
-                if path not in tree.sources]
+    warnings = []
     for source in tree.sources.values():
         if source.path in baseline['generated']:
             continue
@@ -339,7 +344,7 @@ CHECKS: dict[str, Check] = {
     'suppressions': lambda tree, baseline: _ceilings(tree, baseline, [ALLOW]),
     'panic_surface': lambda tree, baseline: _ceilings(tree, baseline, PANICS),
     'banned': check_banned, 'crate_edges': check_crate_edges, 'externals': check_externals,
-    'natives': check_natives,
+    'natives': check_natives, 'generated': check_generated,
 }
 
 

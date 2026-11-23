@@ -26,16 +26,19 @@ INPUTS = frozenset((
 INPUT_FOLDERS = ("docs", "artifacts")
 ORDINARY_DOC = (".md", ".png", ".jpg")
 
-# File names no product file needs, anywhere outside vendor/.
+# A working note is a document (Markdown or text) or a log. Source files and
+# test fixtures may carry dates or numbers in their names, so the name rules
+# apply only to documents; a log is a fixture only under tests/.
+DOCUMENTS = (".md", ".txt")
 NOTE_NAMES = (
-    ("a numbered note", re.compile(r"^\d{3}-.*\.md$")),
-    ("a review round", re.compile(r"(?:^|[-_.])round-?\d", re.IGNORECASE)),
-    ("a dated note", re.compile(r"\d{4}-\d{2}-\d{2}")),
-    ("a log", re.compile(r"\.log$", re.IGNORECASE)),
+    ("a numbered note", re.compile(r"^\d+[-_ ]")),
+    ("a review round", re.compile(r"round[-_ ]?\d", re.IGNORECASE)),
+    ("a dated note", re.compile(r"\d{4}-?\d{2}-?\d{2}")),
 )
-# Words that name a working note in docs/ or artifacts/. Code elsewhere may use
-# them (a session type, a notes header), so they apply only there.
-NOTE_WORDS = re.compile(r"(?:^|[-_.])(?:notes?|logs?|evidence|handoff|plans?)(?:[-_.]|$)", re.IGNORECASE)
+# Words that name a working note: in any document, and in any file under docs/
+# or artifacts/. Code may use them (a session type, a notes header), so other
+# files are exempt.
+NOTE_WORDS = re.compile(r"(?:^|[-_.])(?:notes?|logs?|evidence|handoffs?|plans?)(?:[-_.]|$)", re.IGNORECASE)
 
 HINT = ("Working notes, logs, measurements, evidence, review rounds and plans never go in the repository: "
         "put them in the pull request, its issue, or your own notes outside the checkout.")
@@ -45,11 +48,17 @@ def working_notes(paths):
     """(path, why) for each path whose name reads as a working note."""
     found = []
     for path in paths:
-        parts = PurePosixPath(path).parts
-        if parts[0] == "vendor":
+        pure = PurePosixPath(path)
+        top, suffix = pure.parts[0], pure.suffix.lower()
+        if top == "vendor":
             continue
-        why = next((kind for kind, pattern in NOTE_NAMES if pattern.search(parts[-1])), None)
-        if why is None and parts[0] in INPUT_FOLDERS and NOTE_WORDS.search(PurePosixPath(path).stem):
+        document = suffix in DOCUMENTS
+        why = None
+        if suffix == ".log" and top != "tests":
+            why = "a log"
+        elif document:
+            why = next((kind for kind, pattern in NOTE_NAMES if pattern.search(pure.stem)), None)
+        if why is None and (document or top in INPUT_FOLDERS) and NOTE_WORDS.search(pure.stem):
             why = "a working note"
         if why:
             found.append((path, why))
@@ -80,11 +89,14 @@ class WorkingNotesTest(unittest.TestCase):
         self.assertEqual(found, [], f"{', '.join(f'{path} ({why})' for path, why in found)}. {HINT}")
 
     def test_negative_control_catches_each_kind_of_note(self):
-        notes = ["docs/051-sd-reading-state.md", "tools/042-plan.md", "NEWT42-round-3.md", "docs/review_round2.md",
-                 "docs/2026-11-22-bench.md", "artifacts/bench-run.log", "rust/out.LOG", "docs/handoff.md",
-                 "docs/reader-notes.md", "docs/plans.md", "artifacts/flash-evidence.json"]
+        notes = ["docs/051-sd-reading-state.md", "tools/042-plan.md", "docs/01-reader.md", "NEWT42-round-3.md",
+                 "docs/review_round2.md", "docs/review-round_3.md", "docs/2026-11-22-bench.md", "notes/20261122.txt",
+                 "artifacts/bench-run.log", "rust/out.LOG", "docs/handoff.md", "rust/crate/HANDOFF.md",
+                 "docs/reader-notes.md", "docs/plans.md", "plans.md", "artifacts/flash-evidence.json"]
         ordinary = ["docs/CI.md", "docs/background2.png", "docs/planner-guide.md", "rust/device-ui/whats_new_notes.h",
-                    "rust/tests/wake_ui/evidence.rs", "vendor/sdk/2026-01-01.log", "tests/fixtures/round.epub"]
+                    "rust/tests/wake_ui/evidence.rs", "vendor/sdk/2026-01-01.log", "tests/fixtures/round.epub",
+                    "tests/fixtures/2026-11-23.epub", "tests/fixtures/serial.log", "rust/core/src/round2.rs",
+                    "rust/native-storage/CONTRACT.md", "README.md"]
         self.assertEqual([path for path, _ in working_notes(notes + ordinary)], sorted(notes))
 
 
