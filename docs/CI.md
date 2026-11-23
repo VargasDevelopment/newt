@@ -287,8 +287,13 @@ inputs. Failure or receipt drift stops the sequence; ceilings are unchanged.
 
 ## Explicit cover coverage boundary
 
-Production cover extraction still uses macOS ImageIO. Linux is not claimed to
-support arbitrary PNG/JPEG, EXIF orientation, resizing or general decoder parity.
+The firmware draws covers on the device with its own decoders: baseline and
+progressive JPEG, and PNG. On Linux, the `jpeg_decoder` and `png_decoder`
+families, the core `cover_tolerance` tests and the preview's cover flows
+(`tests/preview_cover_test.py`) cover them. The host prepare tool,
+`tools/prepare-library-covers.py`, extracts covers with macOS ImageIO, and the
+Mac gate below covers it. For that tool, Linux is not claimed to support
+arbitrary PNG/JPEG, EXIF orientation, resizing or general decoder parity.
 Its test-only decoder accepts only four committed, SHA-locked authored grayscale
 PNGs. Each corresponding packed cover was compared against the production Mac
 Swift helper with zero differing bytes. All 22 reviewed UI frames remain
