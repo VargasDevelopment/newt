@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3661552,
+      "flash_bytes": 3680624,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,12 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "4740b05e68314e7634dd237e25f218e3117b9417",
-      "before": 3654704,
-      "after": 3661552,
-      "reason": "NEWT-102: offer and install a card app from Apps (one shared offer renderer, InstalledApp, the card read inside the newt_apps install). Measured on 254ae47 as 3,639,168 to 3,646,016 B (+6,848 B); rebased onto 924fb87 (#26 card write), the clean regional DEV USB build of 4740b05 measures 3,661,552 B (+6,848 B over main's 3,654,704 B), below the 7,798,784 B app slot. RTC 300 to 300 B, RAM 124,096 to 124,096 B, size_of::<Application>() 224 to 232 B (+8 B, owner decision 9).",
-      "reviewer": "Lead, 2026-11-23, after an independent review of ad8616f and the review fixes in 85be88d; rebase onto 924fb87 changed only this record",
-      "owner_approval": "2026-11-22, Apps M1 owner decision 9: about +5 B static RAM and about +8 B of Application size held while unused, with this measured record"
+      "source_revision": "bcc83f958d57de9e3f818bbdc767364b1ac8294c",
+      "before": 3661552,
+      "after": 3680624,
+      "reason": "#46 part 2: cover forms (retry older no-cover records once, image/jpg, progressive JPEG first scan, guide and cover-page fallbacks, broken cover meta fallbacks, a strict first spine cover page, PNG covers, Y sampling 12 and 41). Clean regional DEV USB builds measure main b8d0d3bc at 3,661,552 B, 4d2897e4 (before PNG) at 3,670,208 B (+8,656 B) and bcc83f95 at 3,680,624 B (+19,072 B in all; PNG and sampling +10,416 B), below the 7,016,448 B usable app slot. RAM 124,096 to 124,096 B, lent Wi-Fi 22,528 to 22,528 B, RTC 300 to 300 B; every selected stack ceiling unchanged.",
+      "reviewer": "pending Lead"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
