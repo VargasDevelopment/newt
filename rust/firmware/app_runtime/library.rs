@@ -77,8 +77,8 @@ impl Application<'_> {
             }
             true
         } else {
-            let Self { app, library, tiny, pause, definition, quick_start, catalog, .. } = self;
-            let mut runtime = AppRuntime { rest: RestApp { app, library, tiny, pause, definition: definition.as_deref() }, quick_start };
+            let Self { app, library, tiny, pause, installed, prompt, quick_start, catalog, .. } = self;
+            let mut runtime = AppRuntime { rest: RestApp { app, library, tiny, pause, definition: installed.running(), prompt }, quick_start };
             let Some(includes_cover) = home.with_storage_io(|_, io| {
                 let mut files = LibraryFiles::new(io);
                 let mut native = io.port();

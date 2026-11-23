@@ -3,12 +3,18 @@
 //! that models the pinned ESP-IDF NVS: a torn put leaves its key as it was
 //! before the put, so "old or new" claims here hold under the modelled NVS
 //! only. Each restart is a cold load through the firmware's own `load_boot`
-//! over the durable bytes alone. The card scan's cases are in `card`.
+//! over the durable bytes alone. The card scan's cases are in `card`, and the
+//! firmware's own offer and install owners in `offer`.
 //! tests/app_store_test.py runs it with its negative controls.
 #[path = "../../firmware/app_runtime/package.rs"]
 mod package;
+#[path = "../../firmware/app_runtime/installed_app.rs"]
+mod installed_app;
+#[path = "../../firmware/app_runtime/card_app.rs"]
+mod card_app;
 
 mod card;
+mod offer;
 mod reader_hash;
 mod sha256;
 use sha256::sha256;

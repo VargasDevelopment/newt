@@ -6,8 +6,8 @@ newt_core::app_store) with a backend that answers like NvsBlobBackend and a
 host SHA-256 that can fail. It pins the validation order and the Failed, then
 Unsupported, then selection precedence, and holds Tiny's check to decode.
 rust/tests/app_store/install.rs drives app_store::install over a fake NVS
-that models torn puts, restarting through load_boot, and app_card's scan over
-a fake card. This runs both in a scratch copy of rust/. Each negative
+that models torn puts, restarting through load_boot, app_card's scan over a
+fake card, and the firmware's own InstalledApp and card offer owners. This runs both in a scratch copy of rust/. Each negative
 control then breaks one rule there and expects the named test to fail, never
 to fail to compile.
 """
@@ -29,8 +29,10 @@ CARD = 'core/src/app_card.rs'
 DURABLE = 'core/src/durable.rs'
 LOADER = 'firmware/app_runtime/package.rs'
 TINY = 'tiny-app/src/lib.rs'
+INSTALLED = 'firmware/app_runtime/installed_app.rs'
+OFFER = 'firmware/app_runtime/card_app.rs'
 # Each test binary and its test count.
-BINARIES = {'app_store': 13, 'app_install': 27}
+BINARIES = {'app_store': 13, 'app_install': 36}
 MALFORMED = 'a_malformed_package_loses_to_its_older_valid_peer'
 DAMAGE = 'damage_without_a_valid_slot_is_unavailable'
 FAILED = "    if first == Slot::Failed || second == Slot::Failed {\n        return Load::Failed;\n    }\n"
@@ -100,6 +102,18 @@ INSTALL_CONTROLS = (
     ('an untyped folder counts as a file', CARD, "                Ok(true) | Err(IoError::Missing) => continue,\n",
      "                Err(IoError::Missing) => continue,\n                Ok(true) => {}\n",
      'card::folders_are_never_candidates_however_the_card_types_them'),
+    # PR4: plan controls 3 and 7 (5 and 6 are tests/preview_card_app_test.py's), then Later settling the offer.
+    ('the boot keeps RAM instead of restoring the record', INSTALLED,
+     "        let unavailable = package::load_boot(store, definition).err();\n",
+     "        let unavailable = { let _ = store; None };\n",
+     'offer::a_cold_boot_restores_the_installed_app_never_stale_ram'),
+    ('the no-write path skips activation, as the runtime sees it', STORE, SKIP,
+     "    if stored && store.readback_durable() {\n        return Err(Install::Installed);\n    }\n" + SKIP,
+     'offer::an_unavailable_runtime_takes_the_stored_app_without_a_write'),
+    ('a declined offer is shown again', OFFER,
+     "            Choice::Leave | Choice::Open | Choice::Home => *self = Self::Settled,\n",
+     "            Choice::Leave | Choice::Open | Choice::Home => *self = Self::Ready,\n",
+     'offer::the_offer_settles_only_when_its_page_says_so'),
 )
 
 

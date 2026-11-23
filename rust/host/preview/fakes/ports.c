@@ -390,8 +390,37 @@ int32_t newt_nvs_visit(uint8_t (*visit)(void *, const char *, const char *, uint
 
 /* ---- the card: native_io.c's POSIX calls, relocated, plus these hooks ---- */
 static char descriptors[256][4096];
+/* "card.trace=TEXT": each file open or folder listing of a card path holding
+ * TEXT appends "open PATH" or "list PATH" to card-trace.txt, so a test can
+ * see which card work a boot did. */
+static void trace_card(const char *operation, const char *path) {
+    const char *trace = preview_conf("card.trace");
+    if (!trace || !*trace || !strstr(path, trace)) return;
+    FILE *file = fopen(preview_path("card-trace.txt"), "a");
+    if (!file) return;
+    fprintf(file, "%s %s\n", operation, path);
+    fclose(file);
+}
+void preview_io_list(const char *path) { trace_card("list", path); }
+/* "card.change=TEXT": the second open of a card path holding TEXT finds its
+ * last byte changed, as if the file were replaced between two reads. */
+static int change_opens;
+static void change_file(const char *path) {
+    const char *change = preview_conf("card.change");
+    if (!change || !*change || !strstr(path, change) || ++change_opens != 2) return;
+    FILE *file = fopen(fixture_path(path), "r+b");
+    if (!file) return;
+    if (fseek(file, -1, SEEK_END) == 0) {
+        int last = fgetc(file);
+        fseek(file, -1, SEEK_END);
+        fputc(last ^ 1, file);
+    }
+    fclose(file);
+}
 void preview_io_open(int32_t fd, const char *path) {
     if (fd >= 0 && fd < 256) snprintf(descriptors[fd], sizeof descriptors[fd], "%s", path);
+    trace_card("open", path);
+    change_file(path);
 }
 /* "open.back=TEXT", "open.eio=TEXT" or "open.slow=TEXT": once a wake has
  * refreshed the panel (its picture or working page), the first card read of a

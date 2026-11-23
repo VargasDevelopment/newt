@@ -6,7 +6,8 @@
 #![forbid(unsafe_code)]
 use newt_core::{app::{self, Action, AppState, Screen}, durable::Backend};
 use newt_library_current_ui::{self as library, LibraryIntent, LibraryUiState};
-use newt_tiny_app::{self as tiny, Definition, State, pause::PocketPause};
+use newt_tiny_app::{self as tiny, Definition, State, install::Choice, pause::PocketPause};
+use crate::app_runtime::card_app::Prompt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Work {
@@ -23,6 +24,10 @@ pub enum Work {
     QuickStartSettings,
     /// The app owner sets QuickStartSaveFailed, never generic SaveFailed.
     QuickStartOpeningUnconfirmed,
+    /// Apps opened: look once for an app file on the card.
+    EnterApps,
+    /// The reader chose Install on the card app offer.
+    InstallApp,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,13 +37,15 @@ pub struct Dispatch {
 }
 
 /// A short view of boot-owned component state; no new retained owner/buffer.
-/// `definition == None` follows the existing unavailable-app route.
+/// `definition == None` follows the existing unavailable-app route. A card
+/// app page, while one is shown, takes Apps' presses before the app does.
 pub struct RestApp<'a, 'message> {
     pub app: &'a mut AppState,
     pub library: &'a mut LibraryUiState<'message>,
     pub tiny: &'a mut State,
     pub pause: &'a mut PocketPause,
     pub definition: Option<&'a Definition>,
+    pub prompt: &'a mut Prompt,
 }
 
 impl RestApp<'_, '_> {
@@ -146,7 +153,22 @@ impl RestApp<'_, '_> {
             return self.dispatch_library(action, count);
         }
         let mut changed = settings_changed;
-        if before == Screen::TinyApp {
+        if before == Screen::TinyApp && let Some(choice) = self.prompt.choose(action) {
+            changed = choice != Choice::Stay;
+            match choice {
+                Choice::Install => return Dispatch { changed: false, work: Work::InstallApp },
+                Choice::Open => {
+                    // The app may be new; it starts fresh, as on entry.
+                    *self.tiny = State::default();
+                    if self.definition.is_some_and(tiny::pause::is_pocket_pause) {
+                        self.pause.open(self.tiny, random);
+                    }
+                }
+                Choice::Home => self.app.screen = Screen::Home,
+                Choice::Sleep => changed = app::dispatch(self.app, Action::Sleep),
+                Choice::Stay | Choice::Leave => {}
+            }
+        } else if before == Screen::TinyApp {
             if let Some(definition) = self.definition {
                 if tiny::pause::is_pocket_pause(definition) {
                     changed = self.pause.dispatch(backend, self.app, self.tiny, action, random);
@@ -168,6 +190,8 @@ impl RestApp<'_, '_> {
             Work::OpenReader
         } else if before != Screen::Sleeping && self.app.screen == Screen::Sleeping {
             Work::PrepareSleep
+        } else if before != Screen::TinyApp && self.app.screen == Screen::TinyApp {
+            Work::EnterApps
         } else {
             Work::None
         };

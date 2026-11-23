@@ -89,6 +89,25 @@ Copy EPUB books anywhere on the card.
 
 Your books, reading progress and settings stay as they are.
 
+## Apps from your card (experimental)
+
+Apps holds one small app. It is Pocket Pause unless you install another.
+
+1. Copy one `.newt` app file to the `Newt/Apps` folder on the card (make the
+   folder if it isn't there).
+2. On the X3, open Home, Apps. Newt shows the app, its version and what it
+   can do.
+3. Pick Install to replace the app in Apps, or Later to keep the current one.
+
+Newt reads `Newt/Apps` only when you open Apps, and it writes nothing until
+you pick Install. It stores the app on the X3 and never changes files on the
+card, so you can delete the file afterwards. With no file there, Apps opens
+as usual.
+
+To get Pocket Pause back, install its `pocket-pause.newt` file the same way.
+After a firmware update, an older `pocket-pause.newt` may look different
+from the built-in Pocket Pause, because Newt draws it as a card app.
+
 ## Going back
 
 Your old firmware stays in the spare slot until Newt's first update, which

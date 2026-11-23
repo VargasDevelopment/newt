@@ -51,6 +51,8 @@ impl Runtime {
                 self.open_selected_image(home, ui, logical, events, false)
             }
             Work::QuickStartHome | Work::QuickStartSettings | Work::QuickStartOpeningUnconfirmed => false,
+            Work::EnterApps => ui.enter_apps(home),
+            Work::InstallApp => ui.install_app(home),
         }
     }
 

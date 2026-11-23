@@ -1,0 +1,10 @@
+{
+  "id": "wandering-weather-of-the-mwmwmw",
+  "version": "1234.5678.901234",
+  "title": "Weather Watching Whimsy Werkhome",
+  "subtitle": "Many wide words: Wandering moorland mornings, warm mild weather.",
+  "note": "Watch the weather window while you wait for the kettle; mark what moves, what murmurs and what makes the whole world wonderfully mild and warm.",
+  "cards": [
+    {"title": "Morning windows with wide views", "detail": "Wander where the mild weather warms the moorland and meadows.", "action": "show-note"}
+  ]
+}

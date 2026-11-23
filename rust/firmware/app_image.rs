@@ -4,7 +4,8 @@
 #![forbid(unsafe_code)]
 pub use crate::app_runtime::run_loop::run;
 use crate::{
-    app_runtime::{AppRuntime, Press, display::{self, DisplayReceipt}, home_cover::HomeCover, home_refresh::HomeRefresh, package},
+    app_runtime::{AppRuntime, Press, card_app::{self, Prompt}, display::{self, DisplayReceipt}, home_cover::HomeCover,
+        home_refresh::HomeRefresh, installed_app::InstalledApp},
     dev_usb::{Bridge, Diagnostics, PanelRing},
     home_startup::{FirmwareCard, HomeRuntime},
     nvs::NvsBlobBackend,
@@ -105,8 +106,8 @@ pub struct Application<'sdk> {
     pub tiny: TinyState,
     pub pause: PocketPause,
     pub quick_start: quick_start::State,
-    pub definition: Option<&'static mut Definition>,
-    pub app_unavailable: Option<&'static [u8]>,
+    pub installed: InstalledApp,
+    pub prompt: Prompt,
     pub info: DeviceInfo<'static>,
     pub displayed: DisplayReceipt,
     pub ui_refresh: UiRefresh,
@@ -142,7 +143,7 @@ impl<'sdk> Application<'sdk> {
         #[cfg(feature = "dev-usb")]
         let device_fingerprint = crate::app_dev::fingerprint(&mut hardware);
         let definition = crate::reading_storage::initialize(definition, Definition::default);
-        let loaded = package::load_boot(&mut NvsBlobBackend::new(nvs), definition);
+        let installed = InstalledApp::restore(&mut NvsBlobBackend::new(nvs), definition);
         let mut pause = PocketPause::default();
         pause.load(&mut NvsBlobBackend::new(nvs));
         let mut info = DeviceInfo::default();
@@ -154,7 +155,7 @@ impl<'sdk> Application<'sdk> {
         Ok(Self {
             app: AppState::default(), library: LibraryUiState::default(), catalog: None,
             tiny: TinyState::default(), pause, quick_start: quick_start::State::default(),
-            definition: loaded.is_ok().then_some(definition), app_unavailable: loaded.err(), info,
+            installed, prompt: Prompt::Ready, info,
             displayed: DisplayReceipt::default(), ui_refresh: UiRefresh::default(),
             home_refresh: crate::reading_storage::initialize(home_refresh, HomeRefresh::default),
             home_cover: HomeCover::default(), hardware,
@@ -173,7 +174,8 @@ impl<'sdk> Application<'sdk> {
 
     pub fn runtime(&mut self) -> AppRuntime<'_, 'static> {
         AppRuntime { rest: RestApp { app: &mut self.app, library: &mut self.library,
-            tiny: &mut self.tiny, pause: &mut self.pause, definition: self.definition.as_deref() },
+            tiny: &mut self.tiny, pause: &mut self.pause, definition: self.installed.running(),
+            prompt: &mut self.prompt },
             quick_start: &mut self.quick_start }
     }
 
@@ -247,13 +249,13 @@ impl<'sdk> Application<'sdk> {
         let press = Press { action, catalog_count: count, random, wifi_saved };
         #[cfg(feature = "dev-usb")]
         let facts = crate::app_runtime::publication::Facts::current(self);
-        let Self { app, library, tiny, pause, definition, quick_start, info,
+        let Self { app, library, tiny, pause, installed, prompt, quick_start, info,
             displayed, ui_refresh, firmware_switch, press: press_state, hardware,
             #[cfg(feature = "dev-usb")] bridge,
             #[cfg(feature = "dev-usb")] panels,
             .. } = self;
         let mut runtime = AppRuntime { rest: RestApp { app, library, tiny, pause,
-            definition: definition.as_deref() }, quick_start };
+            definition: installed.running(), prompt }, quick_start };
         let quick = runtime.dispatch_quick_with(home, press, &mut |home, effect| match effect {
             crate::quick_start_ports::Effect::Preferences { saved, settings } => {
                 reader.preferences_result(saved, settings);
@@ -308,9 +310,10 @@ impl<'sdk> Application<'sdk> {
         build: BuildIdentity<'_>, force: bool, trace: Trace<'_>,
     ) -> Result<bool, Error> {
         let started = display::refresh_start(&mut home.bus.board);
-        let Self { app, library, tiny, pause, definition, quick_start, info, displayed,
-            ui_refresh, home_refresh, home_cover, app_unavailable, .. } = self;
-        let runtime = AppRuntime { rest: RestApp { app, library, tiny, pause, definition: definition.as_deref() }, quick_start };
+        let Self { app, library, tiny, pause, installed, prompt, quick_start, info, displayed,
+            ui_refresh, home_refresh, home_cover, .. } = self;
+        let app_unavailable = installed.unavailable();
+        let runtime = AppRuntime { rest: RestApp { app, library, tiny, pause, definition: installed.running(), prompt }, quick_start };
         let composition = display::Composition::new(trace);
         let Some(prepared) = runtime.prepare_actual_system(home, info, false) else { return Ok(false); };
         home_refresh.invalidate();
@@ -319,11 +322,11 @@ impl<'sdk> Application<'sdk> {
             && app::device_page(runtime.rest.app) == app::DevicePage::ReadingStats;
         let painted = if stats {
             runtime.paint_system_ready(prepared, info, Some(logical), None,
-                Some(&mut |shown, count| home.read_stats_screen(shown, count)), build, *app_unavailable)
+                Some(&mut |shown, count| home.read_stats_screen(shown, count)), build, app_unavailable)
         } else {
             home.bus.board.with_build_storage(|scratch| {
                 let scratch: &mut Frame = scratch.try_into().map_err(|_| Error::Length)?;
-                Ok::<_, Error>(runtime.paint_system_ready(prepared, info, Some(logical), Some(scratch), None, build, *app_unavailable))
+                Ok::<_, Error>(runtime.paint_system_ready(prepared, info, Some(logical), Some(scratch), None, build, app_unavailable))
             })??
         };
         if painted {
@@ -348,9 +351,9 @@ impl<'sdk> Application<'sdk> {
         view.data.clock = None;
         view.data.set_clock_format(home.clock.format());
         let header = HeaderInfo { battery_known: self.info.battery_known, battery_percent: self.info.battery_percent };
-        let Self { app, library, tiny, pause, definition, quick_start, home_cover, home_refresh,
+        let Self { app, library, tiny, pause, installed, prompt, quick_start, home_cover, home_refresh,
             ui_refresh, displayed, .. } = self;
-        let runtime = AppRuntime { rest: RestApp { app, library, tiny, pause, definition: definition.as_deref() }, quick_start };
+        let runtime = AppRuntime { rest: RestApp { app, library, tiny, pause, definition: installed.running(), prompt }, quick_start };
         #[cfg(feature = "dev-usb")]
         let panels = Some(&mut *self.panels);
         #[cfg(not(feature = "dev-usb"))]
@@ -362,6 +365,23 @@ impl<'sdk> Application<'sdk> {
         #[cfg(feature = "dev-usb")]
         self.runtime_lows.stage_painted(painted.grayscale, painted.full, painted.overlay);
         Ok(Some(painted.full))
+    }
+
+    /// Apps opened: one card scan, read-only. No card is no offer.
+    pub fn enter_apps(&mut self, home: &mut Home<'_>) -> bool {
+        let Self { prompt, installed, .. } = self;
+        home.with_storage_io(|_, io| {
+            let mut listing = newt_native_io::CrossInkFiles::new(io);
+            card_app::enter(prompt, installed.running(), &mut listing, &mut newt_native_io::UpdateFiles::new(io))
+        }).unwrap_or(false)
+    }
+
+    /// Install chosen: the record session reads the card again (app_store).
+    pub fn install_app(&mut self, home: &mut Home<'_>) -> bool {
+        let Self { prompt, installed, tiny, .. } = self;
+        home.with_storage_io(|home, io| card_app::install(prompt, installed, tiny,
+            &mut NvsBlobBackend::new(&mut home.nvs), &mut newt_native_io::UpdateFiles::new(io)))
+            .unwrap_or_else(|_| { card_app::unreadable(prompt); true })
     }
 
     /// HELLO stays unanswered until the existing first-finished-paint policy

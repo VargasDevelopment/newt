@@ -1,0 +1,12 @@
+{
+  "id": "quiet-hour",
+  "version": "1.2.0",
+  "title": "Quiet Hour",
+  "subtitle": "Three small ways to rest between chapters.",
+  "note": "",
+  "cards": [
+    {"title": "Back to the page", "detail": "Pick up your book where you left it.", "action": "continue-reading"},
+    {"title": "Look far away", "detail": "Find the farthest thing you can see and rest your eyes on it.", "action": "show-note"},
+    {"title": "Charge and room", "detail": "See how much battery and card space are left.", "action": "device-info"}
+  ]
+}

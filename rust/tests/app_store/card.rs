@@ -10,12 +10,15 @@ use newt_core::crossink_import::{Entry, EntryKind, Files as Listing, IoError};
 use newt_core::update_card::{FileInfo, Files};
 use std::ffi::{CStr, CString};
 
+#[derive(Clone)]
 enum Node {
     File { bytes: Vec<u8>, regular: bool },
     Folder,
 }
 
-struct Card {
+/// Clone gives the listing its own handle on the same files (offer.rs).
+#[derive(Clone)]
+pub(crate) struct Card {
     folder: Result<(), IoError>,
     entries: Vec<(CString, EntryKind, Node)>,
     /// `next` fails instead of returning this entry index (or the end).
@@ -31,7 +34,7 @@ struct Card {
 }
 
 impl Card {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             folder: Ok(()),
             entries: Vec::new(),
@@ -48,8 +51,13 @@ impl Card {
         self.entries.push((CString::new(name).unwrap(), kind, node));
         self
     }
-    fn file(self, name: &str, bytes: &[u8]) -> Self {
+    pub(crate) fn file(self, name: &str, bytes: &[u8]) -> Self {
         self.entry(name, EntryKind::Other, Node::File { bytes: bytes.to_vec(), regular: true })
+    }
+    /// The named file's bytes replaced in place, as a computer would.
+    pub(crate) fn rewrite(&mut self, name: &str, bytes: &[u8]) {
+        let (.., node) = self.entries.iter_mut().find(|(entry, ..)| entry.to_str() == Ok(name)).expect("a file");
+        *node = Node::File { bytes: bytes.to_vec(), regular: true };
     }
     fn path(name: &CStr) -> String {
         format!("/newt-sd/Newt/Apps/{}", name.to_str().unwrap())
@@ -67,7 +75,7 @@ impl Card {
 }
 
 /// The listing owns its names, as a native directory owns its entry buffer.
-struct Directory {
+pub(crate) struct Directory {
     names: Vec<(CString, EntryKind)>,
     at: usize,
 }

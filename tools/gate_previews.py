@@ -95,6 +95,35 @@ def main() -> None:
     for name, screen, telemetry, actions in previews:
         pbm, png = export_preview(binary, name, screen, telemetry, actions)
         png_roundtrip(pbm.read_bytes(), png.read_bytes())
+    # A card app in /Newt/Apps (README, "Apps from your card"), with the
+    # invented apps in tests/fixtures/apps (tools/preview_driver.py
+    # --app-package): the offer, its outcomes and a cold boot after Install.
+    card_apps = {"app-offer": ("offer", None),
+                 "app-offer-declined": ("offer", "back"),
+                 "app-installed": ("offer", "activate"),
+                 "app-installed-open": ("offer", "activate,activate"),
+                 "app-installed-restart": ("installed", None),
+                 "app-refused-damaged": ("damaged", None),
+                 "app-refused-newer": ("newer", None),
+                 "app-refused-many": ("many", None),
+                 "app-refused-changed": ("changed", "activate"),
+                 "app-refused-unreadable": ("unreadable", None),
+                 "app-storage-refused": ("storage", "activate"),
+                 "app-unconfirmed": ("unconfirmed", "activate"),
+                 "app-revert-pocket-pause": ("revert", "activate,activate"),
+                 "app-offer-unavailable": ("unavailable", None),
+                 "app-offer-long": ("long", None)}
+    for name, (package, actions) in card_apps.items():
+        pbm, png = export_preview(binary, name, "app", actions=actions, app_package=package)
+        png_roundtrip(pbm.read_bytes(), png.read_bytes())
+    app_page = {name: (ROOT / f"artifacts/{name}.pbm").read_bytes() for name in card_apps}
+    require(app_page["app-offer-declined"] == app_page["app-revert-pocket-pause"]
+            == (ROOT / "artifacts/loaded-app.pbm").read_bytes(), "Later and a reinstalled Pocket Pause open Pocket Pause")
+    require(app_page["app-installed-restart"] == app_page["app-installed-open"],
+            "a cold boot after Install opens the installed app")
+    distinct = [name for name in card_apps if name not in ("app-offer-declined", "app-revert-pocket-pause",
+                                                           "app-installed-restart")]
+    require(len({app_page[name] for name in distinct}) == len(distinct), "each card app state draws its own screen")
     # Invented clock text: Home in the default 24-hour format, then after the
     # Time format row's Select.
     for name, screen, actions in (("home-clock-24h", "home", None),

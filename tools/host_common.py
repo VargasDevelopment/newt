@@ -311,7 +311,8 @@ def export_preview(binary: Path, name: str, screen: str, telemetry: str = "unkno
                    reader_orientation: str | None = None,
                    reader_progress_bar: str | None = None,
                    clock: str | None = None, stats: str | None = None,
-                   other_firmware: str | None = None, update: str | None = None) -> tuple[Path, Path]:
+                   other_firmware: str | None = None, update: str | None = None,
+                   app_package: str | None = None) -> tuple[Path, Path]:
     destination = directory or ROOT / "artifacts"
     destination.mkdir(parents=True, exist_ok=True)
     command = [str(binary), "--screen", screen, "--telemetry", telemetry]
@@ -326,6 +327,8 @@ def export_preview(binary: Path, name: str, screen: str, telemetry: str = "unkno
     # The card fixture precedes the presses that reach update mode.
     if update is not None:
         command.extend(["--update", update])
+    if app_package is not None:
+        command.extend(["--app-package", app_package])
     if actions is not None:
         command.extend(["--actions", actions])
     if other_firmware is not None:

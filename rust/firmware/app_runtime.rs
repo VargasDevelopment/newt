@@ -8,6 +8,10 @@ mod paint;
 pub use paint::PreparedSystemPaint;
 #[path = "app_runtime/package.rs"]
 pub mod package;
+#[path = "app_runtime/installed_app.rs"]
+pub mod installed_app;
+#[path = "app_runtime/card_app.rs"]
+pub mod card_app;
 #[path = "app_runtime/home_refresh.rs"]
 pub mod home_refresh;
 #[path = "app_runtime/display.rs"]

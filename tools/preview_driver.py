@@ -49,6 +49,13 @@ TELEMETRY = ('unknown', 'sample')
 STATS = ('ready', 'counting', 'undated', 'unavailable', 'newer', 'crossink', 'crossink-undated')
 LIBRARIES = ('healthy', 'four', 'no-covers', 'cover-fault', 'shelf', 'sparse', 'long-title', 'loading',
              'unavailable', 'empty')
+# --app-package: the card app worlds. Each seeds /Newt/Apps and NVS from the
+# invented apps in tests/fixtures/apps; `installed` and `revert` first install
+# Quiet Hour with real presses in setup, so the preview boots after it.
+APP_PACKAGES = ('offer', 'long', 'damaged', 'newer', 'many', 'unreadable', 'changed', 'storage',
+                'unconfirmed', 'installed', 'revert', 'unavailable')
+APP_FIXTURES = ROOT / 'tests/fixtures/apps'
+POCKET_PAUSE = ROOT / 'rust/tiny-app/src/pocket-pause.app'
 SAMPLE = ROOT / 'tests/fixtures/the-small-lantern.epub'
 COVER_ART = ROOT / 'tests/fixtures/library-cover-images'
 LONG_TITLE = 'A very long title about the quiet orchard and the letters we carried home from the shore'
@@ -120,7 +127,7 @@ def parse(arguments):
         except ValueError as error:
             raise Invalid(str(error)) from None
     for flag in ('--build-id', '--build-date', '--working-preview', '--opening-preview', '--quick-start',
-                 '--quick-start-facts', '--radio', '--app-package'):
+                 '--quick-start-facts', '--radio'):
         if flag in flags:
             # The firmware's build identity is fixed at compile time, and these
             # states have no fixture in the real firmware yet (issue #357).
@@ -133,7 +140,8 @@ def parse(arguments):
         bar=choice('--reader-progress-bar', last('--reader-progress-bar', 'on'), ('on', 'off')),
         stats=choice('--stats', last('--stats'), (None, *STATS)),
         library=choice('--library-fixture', last('--library-fixture', 'healthy'), LIBRARIES),
-        other=other, update=update)
+        other=other, update=update,
+        app=choice('--app-package', last('--app-package'), (None, *APP_PACKAGES)))
 
 
 def epub(path, title, identifier, cover=None):
@@ -206,6 +214,39 @@ def library(name, card):
     shutil.copytree(cached, card, dirs_exist_ok=True)
     return {'loading': {'freeze': 'library.scan'},
             'unavailable': {'store.refuse': 'card-list:/newt-sd'}}.get(name, {})
+
+
+def app_package(name):
+    """One invented fixture app as its canonical NEWTAPP1 package."""
+    import newt_package
+    return newt_package.encode_app(newt_package.validate_source((APP_FIXTURES / f'{name}.json').read_bytes()))
+
+
+def app_world(firmware, directory, name):
+    """Card files, NVS slots and fixture.conf keys for one --app-package."""
+    apps = directory / 'card/Newt/Apps'
+    apps.mkdir(parents=True, exist_ok=True)
+    quiet = apps / 'quiet-hour.newt'
+    files = {'long': {'long-text.newt': app_package('long-text')},
+             'damaged': {'quiet-hour.newt': b'not an app'},
+             'newer': {'quiet-hour.newt': b'NEWTAPP2' + bytes(700)},
+             'many': {'quiet-hour.newt': app_package('quiet-hour'), 'long-text.newt': app_package('long-text')}}
+    for file, data in files.get(name, {'quiet-hour.newt': app_package('quiet-hour')}).items():
+        (apps / file).write_bytes(data)
+    slots = directory / 'nvs/newt_apps'
+    if name in ('storage', 'unavailable'):
+        slots.mkdir(parents=True, exist_ok=True)
+        # A newer record format, or a damaged slot beside a missing one.
+        (slots / 'slot0').write_bytes(b'NEWTGEN2' + bytes(683) if name == 'storage' else bytes(range(256)) * 2 + bytes(179))
+    if name in ('installed', 'revert'):
+        play(firmware, directory, [RIGHT, CONFIRM, CONFIRM])
+        fresh(directory)
+        assert (slots / 'slot0').exists(), 'setup installed no app'
+    if name == 'revert':
+        quiet.write_bytes(POCKET_PAUSE.read_bytes())
+    return {'unreadable': {'store.refuse': 'card-read:/newt-sd/Newt/Apps/'},
+            'changed': {'card.change': '/newt-sd/Newt/Apps/'},
+            'unconfirmed': {'store.drop': 'nvs-commit:newt_apps'}}.get(name, {})
 
 
 def write_conf(directory, extra):
@@ -343,6 +384,8 @@ def world(firmware, directory, options):
         older_seen_build(directory / 'card/Newt/State/newt-seen.nrs')
     if options['telemetry'] == 'sample':
         conf['telemetry'] = 'sample'
+    if options['app']:
+        conf.update(app_world(firmware, directory, options['app']))
     write_conf(directory, conf)
     fresh(directory)
     if options['clock']:
