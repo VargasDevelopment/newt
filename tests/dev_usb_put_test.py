@@ -154,7 +154,7 @@ def a_commit_left_for_a_hand_check_is_recovery_needed():
     for kind in ('DONE', 'FILE'):
         peer = LeasePeer(answers={kind: 'ERROR recovery-needed step=rename code=-5'})
         report = session(peer, FILES[1:])
-        assert 'docs/dev-usb-bridge.md' in report['error'], report['error']
+        assert 'hand check' in report['error'], report['error']
         assert report['put']['files'][0]['result'] == 'recovery-needed'
         assert peer.writes.count('PUT') == 1, 'the run stops there'
 
