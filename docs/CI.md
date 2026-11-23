@@ -199,6 +199,16 @@ protection still requires only `gate`. One lane's job is always skipped,
 which makes `success()` false for every later job, so `release-tag` and
 `nightly` read `needs.gate.result` instead.
 
+**Pull request title.** GitHub's merge commit takes a pull request's title as
+its subject, so each lane's job checks the title the event carries with the
+pinned Commitizen (`tools/release_tools.py --pr-title`), and `gate` fails on a
+title that is not a Conventional Commit. An edit of the pull request (title,
+body or base) starts a new run, which cancels the older one, so the whole gate
+runs again: about 5 minutes and 40 hosted runner-minutes in the full lane, one
+job in the docs lane. A run that checked only the title would have to post
+`gate` from an earlier run's result for the same head, and a `gate` it skipped
+would count as passing.
+
 **Shards come from the gate's own plan.** `tools/gate_tier.py` `shard()` takes
 the tier's plan, keeps every phase with the phases it runs `after` in one
 group, and deals the groups, heaviest first, to the lightest shard, weighted by

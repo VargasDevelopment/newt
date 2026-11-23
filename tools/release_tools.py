@@ -330,6 +330,13 @@ def check_commits(root, ranges):
                         "--rev-range", rev_range, "--allowed-prefixes", MERGE_PREFIX], cwd=root, check=True)
 
 
+def check_title(root, title):
+    """A pull request's title is a Conventional Commit: GitHub's merge commit
+    takes it as its subject (with " (#N)" added), and no merge subject is typed."""
+    subprocess.run([str(release_python(root)), "-I", "-B", "-m", "commitizen", "check", "--message", title],
+                   cwd=root, check=True)
+
+
 def gate(root=ROOT, rev_range=None, tags=True, prepare=False):
     """The release gate; returns the release tags head builds on, or None without tags.
 
@@ -366,7 +373,12 @@ def main():
                       help="routine local check: no release tags; CI and release validation never pass it")
     mode.add_argument("--prepare", action="store_true",
                       help="before cz bump: start at the configured version's own tag and changelog heading")
+    mode.add_argument("--pr-title", help="check only this pull request title, which becomes its merge subject")
     args = parser.parse_args()
+    if args.pr_title is not None:
+        check_title(ROOT, args.pr_title)
+        print("PASS: the pull request title, its merge subject, is a Conventional Commit")
+        return
     tags = gate(rev_range=args.rev_range, tags=not args.no_tags, prepare=args.prepare)
     if args.prepare:
         built_on = "release preparation starts at tagged release " + tags[0]

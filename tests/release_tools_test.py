@@ -244,6 +244,14 @@ class ReleaseTests(ReleaseFixture):
         with self.assertRaisesRegex(ValueError, "Only a merge may skip"):
             release.check_commits(self.root, [self.base + ".." + single])
 
+    def test_a_pull_request_title_must_be_a_conventional_merge_subject(self):
+        for title in ("fix(reader): keep the chapter after a wake", "feat!: drop old progress records"):
+            release.check_title(self.root, title)
+        for title in ("Keep the chapter after a wake", "Merge pull request #1 from owner/fix", "fix:no space",
+                      "Fix(reader): case mismatch"):
+            with self.subTest(title=title), self.assertRaises(subprocess.CalledProcessError):
+                release.check_title(self.root, title)
+
     def test_a_merge_body_may_not_carry_a_classification(self):
         """Bump classifies every line of a merge's message, though the changelog skips the merge."""
         self.git("checkout", "-qB", "main")
@@ -609,6 +617,8 @@ CONTROLS = (
      "test_the_gate_checks_the_commits_versioning_reads"),
     ("release_tools.py", "        if unmerged:", "        if False:", "test_a_merge_may_keep_its_default_subject_and_only_a_merge"),
     ("release_tools.py", "        if classified:", "        if False:", "test_a_merge_body_may_not_carry_a_classification"),
+    ("release_tools.py", '"check", "--message", title]', '"version"]',
+     "test_a_pull_request_title_must_be_a_conventional_merge_subject"),
     ("check.py", '*([] if args.release_tags else ["--no-tags"])', '"--no-tags"',
      "test_ci_and_only_an_explicit_request_check_the_release_tags"),
     ("ci_gate.py", "'--release-tags', ", "", "test_ci_and_only_an_explicit_request_check_the_release_tags"),

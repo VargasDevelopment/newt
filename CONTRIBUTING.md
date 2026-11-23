@@ -71,7 +71,8 @@ If you'd like to submit a fix:
 4. **Provide verification.** Include focused tests, reproduction steps, and
    relevant measurements.
 5. **Use [Conventional Commits](https://www.conventionalcommits.org/).** For
-   example, `fix(reader): restore chapter after wake`.
+   example, `fix(reader): restore chapter after wake`. Your pull request's
+   title becomes its merge commit's subject, so make it one too; CI checks it.
 
 ### Checks
 
