@@ -53,7 +53,7 @@ SIGNATURE = b'NLC2\x90\0\xbc\0'
 WIDTH, HEIGHT, ROW_BYTES = 144, 188, 18
 ART, NO_ART = 28 + ROW_BYTES * HEIGHT, 28
 # Routes as the card holds them (little-endian rust/core/src/cover.rs NO_ART words).
-CJB6, CJB5 = b'CJB6', b'CJB5'
+CJB6, CJB5, CJB3 = b'CJB6', b'CJB5', b'CJB3'
 MTIME = 1790812800
 # Book name: how its cover is declared and stored (epub() forms), and its
 # image (picture() kinds, a JPEG by default).
@@ -280,8 +280,14 @@ def books():
 
 
 def record(book, route):
-    """A bare cover record for `book` on the `route` (CJB5 or CJB6)."""
+    """A bare cover record for `book` on the `route` (CJB3, CJB5 or CJB6)."""
     return SIGNATURE + struct.pack('<QQ', (books() / f'{book}.epub').stat().st_size, MTIME) + route
+
+
+def prepared(book, raster):
+    """An art cover record for `book`: its check is the raster's CRC-32, so
+    it carries no route."""
+    return record(book, struct.pack('<I', zlib.crc32(raster))) + raster
 
 
 class World:
@@ -295,8 +301,8 @@ class World:
         assert not self.covers.exists(), 'the card already holds Newt/Covers'
         if records:
             self.covers.mkdir()
-            for book, route in records.items():
-                (self.covers / f'{book}.epub.nlc').write_bytes(record(book, route))
+            for book, data in records.items():
+                (self.covers / f'{book}.epub.nlc').write_bytes(data)
         preview_driver.write_conf(self.directory, conf)
 
     def run(self, keys):
@@ -419,22 +425,26 @@ def home(binary):
 
 
 def old_records(binary):
-    """A CJB5 bare record (from before #46, as v0.3.0 wrote it) is retried
-    once and then never again; a current CJB6 one is used as it is."""
+    """Bare records from older decoders (CJB5 as v0.3.0 wrote it, and the
+    oldest, CJB3) are retried once and then never again; a current CJB6 one,
+    and art an older firmware made, are used as they are."""
     # Past the first shelf only the gap is retried: the books the walk to it
     # passes, and its shelf's other books, are current.
     gap_shelf = shelves()[-1]
-    records = {**{book: CJB6 for book in BOOKS[4:]}, 'Alder': CJB5, 'Birch': CJB6, GAP: CJB5}
+    kept = prepared('Dogwood', bytes(range(256)) * 13 + bytes(56))
+    records = {**{book: record(book, CJB6) for book in BOOKS[4:]}, 'Alder': record('Alder', CJB5),
+               'Birch': record('Birch', CJB6), 'Cedar': record('Cedar', CJB3), 'Dogwood': kept, GAP: record(GAP, CJB3)}
     with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
         world = World(binary, scratch, records)
         _, results, _ = world.run(SHELF)
-        if problem := art_problem(world, 'Alder'):
-            return f'the CJB5 record was not retried: {problem}'
-        if world.cover('Birch') != record('Birch', CJB6) or results != [PRODUCED] * 3:
-            return f'the CJB6 record was not kept as it is (attempts {results})'
+        for book, route in (('Alder', 'CJB5'), ('Cedar', 'CJB3')):
+            if problem := art_problem(world, book):
+                return f'the {route} record was not retried: {problem}'
+        if world.cover('Birch') != record('Birch', CJB6) or world.cover('Dogwood') != kept or results != [PRODUCED] * 2:
+            return f'the CJB6 record or the older art was not kept as it is (attempts {results})'
         _, results, _ = world.run(to_book(gap_shelf[0]))
         if results != [UNSUPPORTED] or world.cover(GAP) != record(GAP, CJB6):
-            return f'the unsupported book\'s CJB5 retry ended {results} with {world.cover(GAP)!r}'
+            return f'the unsupported book\'s CJB3 retry ended {results} with {world.cover(GAP)!r}'
         _, results, _ = world.run(to_book(gap_shelf[0]))
         if results:
             return f'the unsupported book was retried again: {results}'
@@ -471,7 +481,7 @@ def low_heap(binary):
     heap back makes its cover."""
     shelf = next(names for names in shelves() if WIDE in names)
     # Only the wide PNG's shelf has cover work; the walk passes current books.
-    records = {book: CJB6 for book in BOOKS if book not in shelf}
+    records = {book: record(book, CJB6) for book in BOOKS if book not in shelf}
     # Room for 64 KiB kept free and 51 KiB more: enough to admit cover work
     # and for every other book's blocks, too little for the wide PNG's 53 KiB.
     low = {'cover.heap.free': str((64 + 51) * 1024)}
@@ -543,10 +553,18 @@ CASES = [
         # A CJB5 bare record reads as current.
         [('cover_probe.rs', 'match cover::record((payload!=0).then_some(crc^u32::MAX),le32(&header[24..])){',
           'match cover::record((payload!=0).then_some(crc^u32::MAX),'
-          'if le32(&header[24..])==cover::RETRIED_NO_ART[1]{cover::NO_ART}else{le32(&header[24..])}){')],
+          'if le32(&header[24..])==u32::from_le_bytes(*b"CJB5"){cover::NO_ART}else{le32(&header[24..])}){')],
+        # A CJB3 bare record reads as current, as its old flag-migration walk
+        # kept it.
+        [('cover_probe.rs', 'match cover::record((payload!=0).then_some(crc^u32::MAX),le32(&header[24..])){',
+          'match cover::record((payload!=0).then_some(crc^u32::MAX),'
+          'if le32(&header[24..])==u32::from_le_bytes(*b"CJB3"){cover::NO_ART}else{le32(&header[24..])}){')],
+        # Art is checked against the wrong CRC, so it is made again.
+        [('cover_probe.rs', 'match cover::record((payload!=0).then_some(crc^u32::MAX),le32(&header[24..])){',
+          'match cover::record((payload!=0).then_some(crc),le32(&header[24..])){')],
         # A retry records its verdict on the old route, so it retries again.
         [('cover_session.rs', 'self.commit(&self.header(cover::NO_ART),&[])',
-          'self.commit(&self.header(cover::RETRIED_NO_ART[1]),&[])')]]),
+          'self.commit(&self.header(u32::from_le_bytes(*b"CJB3")),&[])')]]),
     (low_heap, [
         # Memory admits a block however little heap would stay free.
         [('cover_memory.rs', ' || self.heap.free_bytes() < charge + RESERVE', '')]]),
