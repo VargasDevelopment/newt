@@ -8,8 +8,8 @@
 //! SHA-256, and only then renamed into place, so the final name never holds a
 //! partial file. DONE syncs a marker naming its target before any rename; a
 //! replaced file waits in a backup until the new one holds its name, and a
-//! failed rename moves it back. The folder's next FILE resolves a commit a
-//! power loss stopped only where one name is left. Physical input, a
+//! failed rename moves it back. A marker a power loss left refuses the
+//! folder's writes until the card is checked by hand. Physical input, a
 //! disconnect, a stall or a new HELLO abandons the transfer up to DONE's
 //! commit point; until then every exit closes the file and removes the temp.
 use core::ffi::CStr;

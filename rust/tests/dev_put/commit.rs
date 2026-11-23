@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! DONE's commit: what ends it before the first rename, how a refused rename
-//! is reported, and what the folder's next FILE may resolve after a power
-//! loss. A FAT rename cut short leaves two names on one file, so recovery
-//! never deletes while two of the target, backup and temp are present.
+//! is reported, and that a marker a power loss left refuses the folder's next
+//! FILE. A FAT rename cut short can leave two names, or a name and a hidden
+//! short alias, on one file, so recovery deletes nothing.
 use super::*;
 use fakes::FREED;
 use newt_core::dev_put::TOTAL_MS;
@@ -55,52 +55,54 @@ fn a_rename_that_fails_after_moving_keeps_the_marker() {
 
 #[test]
 fn a_rename_a_power_loss_cut_short_is_never_unlinked() {
-    // (the cut rename, whether an old file was being replaced)
-    for (from, to, old) in [(TARGET, OLD, true), (TEMP, TARGET, true), (TEMP, TARGET, false)] {
+    // (the cut rename, whether an old file was being replaced), each cut with
+    // both long names left or with only the source's hidden short alias left.
+    for cut in [FakeCard::cut_rename, FakeCard::orphan_rename] {
+        for (from, to, old) in [(TARGET, OLD, true), (TEMP, TARGET, true), (TEMP, TARGET, false)] {
+            let mut card = FakeCard::default();
+            card.put_file(TEMP, b"verified new bytes");
+            card.put_file(if from == TARGET { TARGET } else { OLD }, b"the old file");
+            if !old { card.nodes.remove(OLD); }
+            card.put_file(MARKER, b"runtime.bin");
+            cut(&mut card, from, to);
+            refuses_and_keeps_everything(&mut card, &format!("{to} {old}"));
+        }
+    }
+}
+
+/// The folder's next write refuses, removes nothing and keeps the marker.
+fn refuses_and_keeps_everything(card: &mut FakeCard, case: &str) {
+    let before = card.nodes.clone();
+    let outcome = lease(card, Host::new().put("dev", "other.bin", b"other"));
+    assert_eq!(outcome.bodies(), [BANNER, "ERROR recovery-needed step=commit code=0"], "{case}");
+    assert_eq!(card.count("remove"), 0, "{case}");
+    assert_eq!(card.nodes, before, "nothing is touched: {case}");
+    assert!(card.nodes.values().all(|node| *node != Node::File(FREED.to_vec())), "{case}");
+}
+
+#[test]
+fn a_marker_left_by_any_commit_refuses_whatever_the_names_show() {
+    // A missing long name proves nothing, so every presence of the target,
+    // backup and temp beside a marker refuses. The target alone (bit 0), what
+    // a finished commit whose cleanup was lost looks like, goes first.
+    for present in (0..8).map(|n| n ^ 1) {
         let mut card = FakeCard::default();
-        card.put_file(TEMP, b"verified new bytes");
-        card.put_file(if from == TARGET { TARGET } else { OLD }, b"the old file");
-        if !old { card.nodes.remove(OLD); }
         card.put_file(MARKER, b"runtime.bin");
-        card.cut_rename(from, to);
-        let before = card.nodes.clone();
-        let outcome = lease(&mut card, Host::new().put("dev", "other.bin", b"other"));
-        assert_eq!(outcome.bodies(), [BANNER, "ERROR recovery-needed step=commit code=0"], "{to} {old}");
-        assert_eq!(card.count("remove"), 0, "{to} {old}");
-        assert_eq!(card.nodes, before, "nothing is touched: {to} {old}");
-        assert!(card.nodes.values().all(|node| *node != Node::File(FREED.to_vec())));
+        for (bit, path) in [TARGET, OLD, TEMP].into_iter().enumerate() {
+            if present & 1 << bit != 0 { card.put_file(path, path.as_bytes()); }
+        }
+        refuses_and_keeps_everything(&mut card, &format!("present {present:03b}"));
     }
 }
 
 #[test]
-fn a_commit_cut_short_with_one_name_left_is_resolved() {
-    // (the one name present beside the marker, what the target holds after)
-    for (present, target) in [(Some(OLD), Some(&b"kept"[..])), (Some(TARGET), Some(&b"kept"[..])), (Some(TEMP), None),
-        (None, None)] {
-        let mut card = FakeCard::default();
-        card.put_file(MARKER, b"runtime.bin");
-        if let Some(path) = present { card.put_file(path, b"kept"); }
-        let outcome = lease(&mut card, Host::new().put("dev", "other.bin", b"other"));
-        assert_eq!(outcome.last(), done(b"other"), "{present:?}");
-        assert_eq!((card.file(TARGET), card.file(OTHER)), (target, Some(&b"other"[..])), "{present:?}");
-        unchanged(&card, target);
-        resolved(&card);
-    }
-}
-
-#[test]
-fn a_backup_it_cannot_resolve_refuses_every_write() {
-    for (marker, reply) in [(None, "ERROR recovery-needed step=backup code=0"),
-        (Some(&b"../Books"[..]), "ERROR recovery-needed step=marker code=0"),
-        (Some(b""), "ERROR recovery-needed step=marker code=0")] {
-        let mut card = FakeCard::default();
-        card.put_file(OLD, b"the only copy");
-        if let Some(marker) = marker { card.put_file(MARKER, marker); }
-        let outcome = lease(&mut card, Host::new().put("dev", "other.bin", b"other"));
-        assert_eq!(outcome.bodies(), [BANNER, reply], "{marker:?}");
-        assert_eq!(card.file(OLD), Some(&b"the only copy"[..]), "the backup is never removed");
-        assert_eq!((card.file(TARGET), card.file(OTHER)), (None, None));
-    }
+fn a_backup_without_its_marker_refuses_every_write() {
+    let mut card = FakeCard::default();
+    card.put_file(OLD, b"the only copy");
+    let outcome = lease(&mut card, Host::new().put("dev", "other.bin", b"other"));
+    assert_eq!(outcome.bodies(), [BANNER, "ERROR recovery-needed step=backup code=0"]);
+    assert_eq!(card.file(OLD), Some(&b"the only copy"[..]), "the backup is never removed");
+    assert_eq!((card.file(TARGET), card.file(OTHER)), (None, None));
 }
 
 /// A replacement whose DONE meets `card` (a press or a late clock) when a step runs.

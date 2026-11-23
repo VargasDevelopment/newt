@@ -191,8 +191,7 @@ fn an_existing_file_is_replaced_only_after_verification() {
     let (old, new) = (pattern(9_000), pattern(4_000));
     let mut card = FakeCard::default();
     card.put_file(TARGET, &old);
-    card.put_file(TEMP, b"left by a power loss");
-    card.put_file(MARKER, b"stale.bin");
+    card.put_file(TEMP, b"left by an abandoned transfer");
     let outcome = lease(&mut card, Host::new().put("dev", "runtime.bin", &new));
     assert_eq!(outcome.last(), done(&new));
     assert_eq!(card.file(TARGET), Some(&new[..]));

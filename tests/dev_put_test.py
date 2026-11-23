@@ -4,8 +4,8 @@
 rust/tests/dev_put/lease.rs drives newt_core::dev_put over a fake card that
 stores every write at once and a scripted host. It pins the name and folder
 rules, admission, and that the final name holds only the old file or the whole
-verified new one, whatever ends the lease, while recovery never deletes a name
-that may share its data with another after a rename a power loss cut short. This runs it in a scratch copy of rust/. Each
+verified new one, whatever ends the lease, while a marker a power loss left
+refuses the folder and recovery deletes nothing that may share data. This runs it in a scratch copy of rust/. Each
 negative control then breaks one rule there and expects the named test to
 fail, never to fail to compile.
 """
@@ -24,6 +24,8 @@ from gate_tier import negative_controls
 
 BINARY = 'dev_put'
 TESTS = 32
+# Recovery's one rule: a marker the next FILE finds refuses.
+MARKED = '        if self.hidden(folder.marker(), "marker")? { return Err(Refused::Recovery("commit", 0)); }\n'
 # (what breaks, its file under rust/core/src, its text there, the broken text, the test that must fail)
 CONTROLS = (
     ('the SHA-256 is not compared', 'dev_put/lease.rs', "        if digest != sha256 { return Err(Refused::DigestMismatch); }\n", "",
@@ -35,10 +37,16 @@ CONTROLS = (
      'admission_refuses_reading_opening_and_away_from_home'),
     ('bytes go straight to the final name', 'dev_put/lease.rs', "let fd = self.card.create(folder.temp())",
      "let fd = self.card.create(path(&target))", 'physical_input_abandons_and_keeps_the_old_file'),
-    ('recovery deletes the backup or temp while a marker stands', 'dev_put/commit.rs',
-     "            _ => return Err(Refused::Recovery(\"commit\", 0)),\n",
-     "            _ => { let _ = self.card.remove(folder.old()); let _ = self.card.remove(folder.temp()); }\n",
+    ('recovery deletes a file or clears the marker while a marker stands', 'dev_put/commit.rs', MARKED,
+     "        if self.hidden(folder.marker(), \"marker\")? { let _ = self.card.remove(folder.old()); "
+     "let _ = self.card.remove(folder.temp()); let _ = self.card.remove(folder.marker()); return Ok(()); }\n",
      'commit::a_rename_a_power_loss_cut_short_is_never_unlinked'),
+    ('a marker clears once no backup or temp shows (the target alone, or nothing)', 'dev_put/commit.rs', MARKED,
+     "        if self.hidden(folder.marker(), \"marker\")? {\n"
+     "            if !old && self.card.entry(folder.temp()) == Ok(Entry::Missing) { return self.card.remove(folder.marker())"
+     ".map_err(|code| Refused::Recovery(\"marker\", code)); }\n"
+     "            return Err(Refused::Recovery(\"commit\", 0));\n        }\n",
+     'commit::a_marker_left_by_any_commit_refuses_whatever_the_names_show'),
     ('a rename that fails after moving reads as a plain refusal', 'dev_put/commit.rs',
      "        if !unchanged { return Refused::Recovery(step, code); }\n", "",
      'commit::a_rename_that_fails_after_moving_keeps_the_marker'),

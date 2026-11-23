@@ -3,7 +3,8 @@
 //! firmware's: the card stores every write at once (so a partial file is
 //! visible), refuses a rename onto an existing name, fails a named step on
 //! request, can press a button or jump the clock when a named step runs, and
-//! can hold two names on one file, as a FAT rename a power loss cut short.
+//! can hold two names on one file, as a FAT rename a power loss cut short
+//! leaves them (both long names, or the target and a hidden short alias).
 use newt_core::dev_put::{Card, Entry, Wire};
 use newt_core::update_online::Hash;
 use newt_core::wire::crc32;
@@ -82,6 +83,16 @@ impl FakeCard {
         let bytes = self.file(from).expect("a file to rename").to_vec();
         self.put_file(to, &bytes);
         self.cross_linked = Some((from.into(), to.into()));
+    }
+    /// A rename a power loss stopped after removing the source's long name
+    /// but not its short entry: the target is in place, and a hidden alias
+    /// still holds the same file.
+    pub fn orphan_rename(&mut self, from: &str, to: &str) {
+        let alias = format!("{}/ALIAS~1", &from[..from.rfind('/').expect("absolute")]);
+        let node = self.nodes.remove(from).expect("a file to rename");
+        self.nodes.insert(alias.clone(), node.clone());
+        self.nodes.insert(to.into(), node);
+        self.cross_linked = Some((alias, to.into()));
     }
     pub fn open_files(&self) -> usize { self.handles.len() }
     /// How many times a card step ran.

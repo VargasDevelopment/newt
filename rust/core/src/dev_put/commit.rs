@@ -4,11 +4,15 @@
 //! A FAT rename writes the new directory entry before it removes the old one,
 //! so a power loss between the two leaves both names on one cluster chain, and
 //! removing either name frees the other's data. No content check can tell that
-//! from two equal copies. So DONE syncs a marker naming its target before any
-//! rename, new files included; while the marker stands, no rename in its folder
-//! is known to be complete, and recovery deletes nothing that might share data.
-use super::{path, target_path, write_all, Lease, Refused};
-use crate::dev_put::{name_allowed, Entry, Folder, NAME_BYTES, PATH_BYTES};
+//! from two equal copies. Nor does a long name's absence prove its entry gone:
+//! FatFs removes a name's long-name entries before its short one, so a power
+//! loss between them leaves a hidden short alias on the data while `stat` of
+//! the long name reports it missing. So DONE syncs a marker naming its target
+//! before any rename, new files included, and removes it only after both
+//! renames and the backup's removal; a marker the next FILE finds refuses the
+//! folder, and recovery deletes nothing.
+use super::{write_all, Lease, Refused};
+use crate::dev_put::{Entry, Folder};
 use core::ffi::CStr;
 
 impl Lease<'_> {
@@ -46,7 +50,7 @@ impl Lease<'_> {
         // one-sector window writes the entry's sector before it loads a FAT
         // sector: a power loss inside the unlink only leaks clusters.
         if replacing { self.card.remove(folder.old()).map_err(|code| Refused::Recovery("backup", code))?; }
-        // A marker left here names a target alone in its folder; the next FILE drops it.
+        // A marker this leaves refuses the folder's next FILE: the hand check clears it.
         let _ = self.card.remove(folder.marker());
         Ok(())
     }
@@ -65,30 +69,16 @@ impl Lease<'_> {
         Refused::Card(step, code)
     }
 
-    /// Before any write to the folder, resolves what an interrupted commit
-    /// left, but only where one name alone is present.
+    /// Before any write to the folder. A marker that outlived its DONE means a
+    /// commit stopped somewhere between its marker and its cleanup, and no
+    /// presence check can say where (see the module note), so it refuses every
+    /// write until the card is checked by hand. Without one no rename began.
     pub(super) fn recover(&mut self, folder: Folder) -> Result<(), Refused> {
         let old = self.hidden(folder.old(), "backup")?;
-        if !self.hidden(folder.marker(), "marker")? {
-            // No commit began: FILE removes the temp; a backup without its marker has no known target.
-            return if old { Err(Refused::Recovery("backup", 0)) } else { Ok(()) };
-        }
-        let target = self.marked(folder)?;
-        let target = path(&target);
-        let present = match self.card.entry(target).map_err(|code| Refused::Recovery("target", code))? {
-            Entry::Missing => false,
-            Entry::File => true,
-            Entry::Folder | Entry::Other => return Err(Refused::Recovery("target", 0)),
-        };
-        let temp = self.hidden(folder.temp(), "temp")?;
-        match (present, old, temp) {
-            (false, true, false) => self.card.rename(folder.old(), target).map_err(|code| Refused::Recovery("restore", code))?,
-            (false, false, true) => self.card.remove(folder.temp()).map_err(|code| Refused::Recovery("temp", code))?,
-            (true, false, false) | (false, false, false) => {}
-            // Two names may share one file: nothing here is deleted.
-            _ => return Err(Refused::Recovery("commit", 0)),
-        }
-        self.card.remove(folder.marker()).map_err(|code| Refused::Recovery("marker", code))
+        if self.hidden(folder.marker(), "marker")? { return Err(Refused::Recovery("commit", 0)); }
+        // FILE then removes a leftover temp; a backup without its marker has no known target.
+        if old { return Err(Refused::Recovery("backup", 0)); }
+        Ok(())
     }
 
     fn hidden(&mut self, path: &CStr, step: &'static str) -> Result<bool, Refused> {
@@ -97,28 +87,5 @@ impl Lease<'_> {
             Entry::File => Ok(true),
             Entry::Folder | Entry::Other => Err(Refused::Recovery(step, 0)),
         }
-    }
-
-    /// The commit's target from its marker, which must hold one allowed name.
-    fn marked(&mut self, folder: Folder) -> Result<[u8; PATH_BYTES], Refused> {
-        let fd = self.card.open_read(folder.marker()).map_err(|code| Refused::Recovery("marker", code))?;
-        let mut name = [0; NAME_BYTES + 1];
-        let mut length = 0;
-        let read = loop {
-            match self.card.read(fd, &mut name[length..]) {
-                Ok(0) => break Ok(()),
-                Ok(got) if got <= name.len() - length => {
-                    length += got;
-                    if length == name.len() { break Ok(()); }
-                }
-                Ok(_) => break Err(0),
-                Err(code) => break Err(code),
-            }
-        };
-        let closed = self.card.close(fd);
-        read.and(closed).map_err(|code| Refused::Recovery("marker", code))?;
-        let name = &name[..length];
-        if !name_allowed(name) { return Err(Refused::Recovery("marker", 0)); }
-        Ok(target_path(folder, name))
     }
 }

@@ -198,17 +198,15 @@ idle.
   to that folder is refused until they are cleared by hand (below).
 - Each FILE first looks at its folder's marker. Without one, no rename began,
   so a leftover `.newt-put` is removed; a `.newt-old` without a marker refuses.
-  With one, it resolves a commit a power loss stopped, but only when one name
-  is left: a lone `.newt-old` goes back under the marker's name, a lone
-  `.newt-put` is removed, a lone target is the finished file. Any two of the
-  target, `.newt-old` and `.newt-put` refuse with `recovery-needed`, because a
-  FAT rename cut short leaves two names on one file, and removing either frees
-  the other's data. The app and update scans never offer a hidden name.
+  A marker means a commit stopped between its marker and its cleanup, and the
+  names alone cannot say where: a FAT rename cut short can leave two names, or
+  a name and a hidden short alias, on one file, and removing either frees the
+  other's data. So it refuses with `recovery-needed` and deletes nothing. The
+  app and update scans never offer a hidden name.
 
-To clear `recovery-needed`, put the card in a computer and let its disk check
-repair the file system (it fixes two names sharing data). Check the real file
-under the marker's name, then delete `.newt-old`, `.newt-put` and
-`.newt-old-name` from that folder.
+To clear `recovery-needed`, put the card in a computer and run its FAT check
+(it removes orphan entries and cross-links). Then delete any `.newt-put`,
+`.newt-old` and `.newt-old-name` in that folder and put the file again.
 
 ### Host
 
