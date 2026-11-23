@@ -26,7 +26,7 @@ class PersistControls(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root, self.store = Path(temporary.name, 'work/newt'), Path(temporary.name, 'work/newt-ci-store')
-        for name in ci_persist.LOCKS:
+        for name in ci_persist.STAMPED:
             (self.root / name).parent.mkdir(parents=True, exist_ok=True)
             (self.root / name).write_text('{"lock": 1}\n')
         tool = self.root / '.toolchain/llvm/bin/clang'
@@ -63,9 +63,7 @@ class PersistControls(unittest.TestCase):
                 elif change == 'lock':
                     (self.root / ci_persist.LOCKS[0]).write_text('{"lock": 2}\n')
                 elif change == 'plugin':
-                    plugin = self.root / 'tools/cz_newt/cz_newt.py'
-                    plugin.parent.mkdir(parents=True, exist_ok=True)
-                    plugin.write_text('# a changed release plugin\n')
+                    (self.root / ci_persist.PLUGIN[0]).write_text('# a changed release plugin\n')
                 else:
                     self.root = self.root.rename(self.root.with_name('other'))
                 with redirect_stdout(io.StringIO()) as output:
@@ -210,7 +208,7 @@ class RustPreparationControls(unittest.TestCase):
             cache = '.toolchain/downloads/rust' if reverted else tool.CI_CACHE
             with self.subTest(cache=cache), tempfile.TemporaryDirectory() as directory:
                 root, store = Path(directory) / 'root', Path(directory) / 'store'
-                for name in ci_persist.LOCKS:
+                for name in ci_persist.STAMPED:
                     (root / name).parent.mkdir(parents=True, exist_ok=True)
                     (root / name).write_text('{}')
                 (root / 'rust/toolchain.json').write_text(json.dumps(lock))
@@ -251,7 +249,7 @@ class RustPreparationControls(unittest.TestCase):
         for existing, migrate in ((False, True), (True, True), (False, False)):
             with self.subTest(existing=existing, migrate=migrate), tempfile.TemporaryDirectory() as directory:
                 root, store = Path(directory) / 'root', Path(directory) / 'store'
-                for name in ci_persist.LOCKS:
+                for name in ci_persist.STAMPED:
                     (root / name).parent.mkdir(parents=True, exist_ok=True)
                     (root / name).write_text('{}')
                 legacy = store / 'raw/downloads/rust'

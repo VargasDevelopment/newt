@@ -222,8 +222,9 @@ class PublicWorkflow(unittest.TestCase):
             for step in restores[:2]:
                 self.assertIn(f"'{lock}'", step['with']['key'])
         trees = self.step('Restore the toolchains a fresh run made from these locks')
-        # The release venv holds Newt's Commitizen plugin, so its source keys the cache too.
-        self.assertIn("'tools/cz_newt/**'", trees['with']['key'])
+        # The release venv holds Newt's Commitizen plugin, so its source keys the trees too.
+        for source in ci_persist.PLUGIN:
+            self.assertIn(f"'{source}'", trees['with']['key'])
         self.assertEqual(trees['with']['path'].splitlines(), ['.toolchain', '!.toolchain/downloads', '.release-venv',
                                                          ci_hosted.RECORD])
         self.assertEqual(trees['if'], "steps.tier.outputs.tier != 'full'")
@@ -497,7 +498,7 @@ class HostedToolchains(unittest.TestCase):
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)
         self.root = Path(scratch.name)
-        for lock in ci_persist.LOCKS:
+        for lock in ci_persist.STAMPED:
             (self.root / lock).parent.mkdir(parents=True, exist_ok=True)
             (self.root / lock).write_text('{}\n')
         (self.root / '.build').mkdir()

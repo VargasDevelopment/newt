@@ -33,9 +33,11 @@ from native_output import owned_directory
 ROOT = Path(__file__).resolve().parents[1]
 # Beside the workspace: the checkout cleans the workspace, not its parent.
 STORE = ROOT.parent / 'newt-ci-store'
-# .release-venv also holds Newt's Commitizen plugin, built from tools/cz_newt.
 LOCKS = ('docs/toolchain-linux-lock.json', '.github/ci-release-linux-lock.json', '.github/ci-tool-linux-lock.json',
-         'rust/toolchain.json', 'tools/rust-toolchain.py', 'tools/cz_newt/cz_newt.py', 'tools/cz_newt/cz_newt_backend.py')
+         'rust/toolchain.json', 'tools/rust-toolchain.py')
+# .release-venv also holds Newt's Commitizen plugin, built from these; the raw archives do not depend on it.
+PLUGIN = ('tools/cz_newt/cz_newt.py', 'tools/cz_newt/cz_newt_backend.py', 'tools/cz_newt/pyproject.toml')
+STAMPED = (*LOCKS, *PLUGIN)
 RAW = ('.toolchain/downloads', '.build/ci-downloads', '.build/ci-rust-downloads')
 # What the prepare commands make, minus the raw archives (RAW) they read.
 TREES = ('.toolchain', '.release-venv')
@@ -97,7 +99,7 @@ def manifest(root):
 
 def stamp(root):
     """What a snapshot must have been made from to be reused here."""
-    return {'locks': {name: sha256(root / name) for name in LOCKS}, 'workspace': str(root)}
+    return {'locks': {name: sha256(root / name) for name in STAMPED}, 'workspace': str(root)}
 
 
 def move(source, destination):
