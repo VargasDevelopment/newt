@@ -16,6 +16,7 @@ mod reader_action { pub use newt_core::reader_action_profile::ActionStage; }
 #[path = "../reader_checkpoint/card.rs"] mod card;
 #[path = "../sd_reading_state/model.rs"] mod model;
 #[path = "../phased_reader/physical/linebreak.rs"] mod linebreak;
+#[path = "upgrade.rs"] mod upgrade;
 
 use core::ffi::CStr;
 use newt_core::{progress::Progress, producer_policy::Stop, zip_window::source::BookSource};
@@ -132,6 +133,10 @@ use home_startup::CardPort;
 fn main() {
     let path = std::env::args().nth(1).expect("generated public fixture");
     let bytes = std::fs::read(path).unwrap();
+    if std::env::args().any(|arg| arg == "--cache-upgrade") {
+        upgrade::resume(bytes);
+        return;
+    }
     scenario(bytes.clone(), false); scenario(bytes, true);
     println!("PASS actual short open/action/finished plus image paint");
 }

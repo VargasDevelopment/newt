@@ -99,6 +99,12 @@ def main():
     run([*command, HERE / 'host.rs', '-o', out / 'positive'])
     result = run([out / 'positive', epub])
     assert result.stdout.startswith('PASS actual short open/action/finished')
+    layout_fixtures = native_pins.load('short_turn_layout_fixtures', ROOT/'rust/phased-reader/host/fixtures.py')
+    dense = out/'fixtures/dense.epub'
+    layout_fixtures.write_run_budget(dense)
+    result = run([out/'positive', dense, '--cache-upgrade'])
+    assert 'PASS old Pages data misses, saved content resumes, and only Pages rebuilds' in result.stdout
+    print(result.stdout, end='')
 
     book = ROOT / 'rust/firmware/reader_book.rs'
     driver = ROOT / 'rust/firmware/reader_book_run.rs'

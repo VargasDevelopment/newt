@@ -332,7 +332,7 @@ impl Runtime {
         }
         // The saved page settles after source preparation, before its picture
         // or reader backing can publish (frozen loadReaderProgress(false)).
-        if !session_checkpoint && self.restore_policy_image() != RestorePolicy::ExactPage {
+        if !session_checkpoint && !matches!(attempted_policy, RestorePolicy::ExactPage | RestorePolicy::ColdCheckpoint) {
             let ready = self.with_store(home, |this, store| {
                 let _load = events.action.scope(crate::reader_action::ActionStage::ProgressLoad);
                 let loaded = this.selection.load_progress(store, &mut this.saved);

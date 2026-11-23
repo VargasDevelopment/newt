@@ -163,6 +163,8 @@ impl Runtime {
                 policy: if if durable { target.anchor }
                     else { boot.record.recovery & 3 == record::Recovery::PendingAnchor as u32 } {
                         newt_reader_ui::RestorePolicy::Validated
+                    } else if durable {
+                        newt_reader_ui::RestorePolicy::ColdCheckpoint
                     } else { newt_reader_ui::RestorePolicy::ExactPage },
             });
         }

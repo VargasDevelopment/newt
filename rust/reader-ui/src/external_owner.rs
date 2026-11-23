@@ -278,6 +278,8 @@ impl ExternalOwner {
             return false;
         }
         let p = reader.info();
+        // A cold checkpoint uses the exact page if it still exists. Otherwise
+        // the same verified anchor may fall within the newly laid out page.
         if policy != RestorePolicy::AllowInitialFallback
             && (p.spine != locator.spine
                 || locator.character >= p.total_chars
