@@ -4,6 +4,8 @@ use core::ffi::{c_char, CStr};
 use crate::{status, Result, UiIo};
 #[path="cover_observer.rs"]
 pub mod observer;
+#[path="cover_xml.rs"]
+pub mod xml;
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct Facts {

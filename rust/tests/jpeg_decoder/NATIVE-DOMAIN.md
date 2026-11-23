@@ -19,6 +19,10 @@ fixed caller slots; native repeatedly consumes its pool and can report MEM1.
 Exact native pool exhaustion parity is pending. Input implementation must obey
 requested slice bounds; invalid count rejects.
 
+Past native, Rust also decodes Y sampling 12 and 41 (common in covers):
+native refuses them, so they are outside differential equality.
+rust/core/tests/cover_tolerance.rs checks they draw the same greys as 11.
+
 Like native (#316), Rust ignores the SOS spectral/approximation bytes and any
 SOS bytes after them, and accepts over-subscribed Huffman counts. Native's
 uint16 code words wrap only after every bit pattern already matches a shorter

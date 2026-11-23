@@ -18,7 +18,7 @@ The file only orders starts; a missing or malformed one means plan order.
 | `local` | `push` plus changed-owner full-only Rust positives and the negative controls of changed tests | `python3 tools/check.py` (the default), once per candidate; public CI on a pull request | 12 min on an idle 16-thread host; about 10 min measured (target 8 min) |
 | `push` | every positive test except the full-only Rust suites below, one clean firmware build with its resource gate, the release gate and the code-health ratchet | CI on every main push that is not a release | 24 min for the whole CI job on the runner's 8 CPUs; about 19-20 min measured (target 10 min: needs a 16-CPU cap or more cuts) |
 | `full` | everything: every negative control and exhaustive matrix, fresh objects and freshly built toolchains | CI on a release merge, nightly and manual runs; `check.py --tier full` by hand | 80 min for `check.py`, 110 min for the CI job |
-| Full-only Rust positives | `ft_font`, `png_decoder` are unreachable in the product; `inflate`, `epub_admission`, `reader_atlas` keep CI within budget. All five also run locally when their owned source or tests change. | `full`; `local` when their sources or tests change | Existing budgets unchanged |
+| Full-only Rust positives | `ft_font` is unreachable in the product; `inflate`, `epub_admission`, `reader_atlas` keep CI within budget. All four also run locally when their owned source or tests change. | `full`; `local` when their sources or tests change | Existing budgets unchanged |
 
 There is one firmware, the Rust image, so every tier tests only it: the Rust
 checks, the previews and reviewed renderer frames (the real firmware compiled
@@ -54,14 +54,14 @@ packet filenames such as `controls.py` cannot replace another family's identity.
 
 Every tier runs the bounded Rust landing phase and its contract and
 source-privacy test (`rust/tests/landing_test.py`, a separate phase to fit the
-CPU budget), the 14 other push-family
+CPU budget), the 15 other push-family
 positive suites, one synthetic RV32 target-probe build and its verifiers, and
 the read-only Rust health ratchet and its regression tests. Landing keeps the
 product `newt-app-image` RV32 archive and foundation positive corpus. Selected
 foundation mutations run as whole-module records, clock/frame, statistics and
 persistence campaigns, without repeating that
 corpus; each other
-family runs its selected mutations alongside its own positives. The five full-only
+family runs its selected mutations alongside its own positives. The four full-only
 positive suites remain in the full plan with every control. Their product-source
 owners select positives locally without selecting mutations; changed test owners
 select both. The existing
@@ -287,8 +287,13 @@ inputs. Failure or receipt drift stops the sequence; ceilings are unchanged.
 
 ## Explicit cover coverage boundary
 
-Production cover extraction still uses macOS ImageIO. Linux is not claimed to
-support arbitrary PNG/JPEG, EXIF orientation, resizing or general decoder parity.
+The firmware draws covers on the device with its own decoders: baseline and
+progressive JPEG, and PNG. On Linux, the `jpeg_decoder` and `png_decoder`
+families, the core `cover_tolerance` tests and the preview's cover flows
+(`tests/preview_cover_test.py`) cover them. The host prepare tool,
+`tools/prepare-library-covers.py`, extracts covers with macOS ImageIO, and the
+Mac gate below covers it. For that tool, Linux is not claimed to support
+arbitrary PNG/JPEG, EXIF orientation, resizing or general decoder parity.
 Its test-only decoder accepts only four committed, SHA-locked authored grayscale
 PNGs. Each corresponding packed cover was compared against the production Mac
 Swift helper with zero differing bytes. All 22 reviewed UI frames remain

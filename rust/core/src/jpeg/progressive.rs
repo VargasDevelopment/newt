@@ -68,7 +68,8 @@ fn render_inner(input:&mut dyn Input,b:Buffers<'_>,width:u16,height:u16,sink:&mu
     }
     if w==0||h==0{return Err(err(Parse))}
     let hm=comps[..nc].iter().map(|c|c.h).max().unwrap_or(1);let vm=comps[..nc].iter().map(|c|c.v).max().unwrap_or(1);let y=comps[0];let inter=ns>1;
-    if y.h!=hm||y.v!=vm||(!inter&&scan[0]!=0){return Err(err(Unsupported))}
+    // Only Y's DC draws greys, so a first scan without Y has nothing to show.
+    if y.h!=hm||y.v!=vm||!scan[..ns].contains(&0){return Err(err(Unsupported))}
     let bw=(w+7)/8;let bh=(h+7)/8;let mx=(w+8*hm-1)/(8*hm);let my=(h+8*vm-1)/(8*vm);let pad=if inter{mx*y.h}else{bw};let dw=usize::from(width);let dh=usize::from(height);
     if dw==0||dh==0{return Err(err(Parse))}if b.grid.len()<pad*y.v||b.previous.len()<dw||b.current.len()<dw||b.output.len()<dw{return Err(err(OutOfMemory))}
     b.grid[..pad*y.v].fill(0);

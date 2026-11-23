@@ -25,6 +25,8 @@ impl<'a> Files<'a> {
         value
     }
     pub fn faulted(&self) -> bool { self.faulted.get() }
+    /// The UI owner's authority these files use, for natives beside them.
+    pub fn io(&self) -> &'a UiIo { self.io }
     pub fn complete_handle_metadata(&self)->bool{cover::complete_handle_metadata()}
     pub fn rename_replaces_destination(&self)->bool{cover::rename_replaces_destination()}
     pub fn stat(&self, path: &CStr) -> Result<Facts> {

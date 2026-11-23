@@ -62,9 +62,10 @@ impl<'a> Decoder<'a> {
                     d.height=word(s,1);d.width=word(s,3);d.ncomp=usize::from(s[5]);
                     if s[0]!=8||!matches!(d.ncomp,1|3){return Err(Error::Unsupported)}
                     if len!=6+3*d.ncomp{return Err(Error::Format)}
+                    // Past native's 11/21/22, Y 12 and 41 still fit six MCU blocks and 256 pixels.
                     for i in 0..d.ncomp {
                         let b=s[7+3*i];
-                        if i==0 {if !matches!(b,0x11|0x21|0x22){return Err(Error::Unsupported)}d.mx=usize::from(b>>4);d.my=usize::from(b&15);}
+                        if i==0 {if !matches!(b,0x11|0x12|0x21|0x22|0x41){return Err(Error::Unsupported)}d.mx=usize::from(b>>4);d.my=usize::from(b&15);}
                         else if b!=0x11{return Err(Error::Unsupported)}
                         d.qt[i]=usize::from(s[8+3*i]);if d.qt[i]>3{return Err(Error::Unsupported)}
                     }

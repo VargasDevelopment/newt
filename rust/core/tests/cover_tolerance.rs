@@ -1,13 +1,16 @@
 //! #316: the cover decoder accepts what the frozen C++ (TJpgDec) drew, and old
 //! Rust no-art records are read once more. Payload CRCs below are the frozen
 //! C++ cover session's rasters for these exact bytes (stored in an EPUB).
-use newt_core::cover::{self, Record, jpeg::{Layout, Status, baseline, dither_row, placement}};
-use newt_core::jpeg::{Error, Input, Workspace, renderer::{RenderError, Rows, render}};
+use newt_core::cover::{self, Record, png, jpeg::{Layout, Status, validate, dither_row, placement}};
+use newt_core::jpeg::{Error, Input, Workspace, progressive, renderer::{RenderError, Rows, render}};
+use newt_core::page_renderer::BookStatus;
 use newt_core::page_renderer::{ImageRows, SafetyError};
 use newt_core::zip_window::source::BookSource;
 
 /// Authored grayscale baseline JPEG: quantizers 1, DC category k coded as 4-bit k,
-/// AC holds only EOB (`00`). Each 8x8 block is flat at its DC value.
+/// AC holds only EOB (`00`). Each 8x8 block is flat at its DC value. A
+/// progressive one (SOF2) holds only its DC first scan, at point transform `al`.
+/// With a Y `sampling`, it is YCbCr with flat chroma, interleaved in MCUs.
 #[derive(Clone)]
 struct Jpeg {
     width: u16,
@@ -16,13 +19,16 @@ struct Jpeg {
     dc_counts: [u8; 16],
     dc_symbols: Vec<u8>,
     sos_tail: Vec<u8>,
+    progressive: Option<u8>,
+    sampling: Option<u8>,
 }
 impl Default for Jpeg {
     fn default() -> Self {
         let mut dc_counts = [0; 16];
         dc_counts[3] = 12;
         Self { width: 64, height: 48, dc: vec![0, 64, 128, -64, 192, -128, 256, -192, 512],
-               dc_counts, dc_symbols: (0..12).collect(), sos_tail: vec![0, 63, 0] }
+               dc_counts, dc_symbols: (0..12).collect(), sos_tail: vec![0, 63, 0], progressive: None,
+               sampling: None }
     }
 }
 fn segment(out: &mut Vec<u8>, marker: u8, body: &[u8]) {
@@ -36,23 +42,46 @@ impl Jpeg {
         segment(&mut out, 0xdb, &[[0].as_slice(), &[1; 64]].concat());
         let [h0, h1] = self.height.to_be_bytes();
         let [w0, w1] = self.width.to_be_bytes();
-        segment(&mut out, 0xc0, &[8, h0, h1, w0, w1, 1, 1, 0x11, 0]);
+        let (frame, scan) = match self.sampling {
+            None => (vec![1, 1, 0x11, 0], vec![1, 1, 0x00]),
+            Some(y) => (vec![3, 1, y, 0, 2, 0x11, 0, 3, 0x11, 0], vec![3, 1, 0x00, 2, 0x11, 3, 0x11]),
+        };
+        segment(&mut out, if self.progressive.is_some() { 0xc2 } else { 0xc0 }, &[[8, h0, h1, w0, w1].as_slice(), &frame].concat());
         let mut ac_counts = [0; 16];
         ac_counts[1] = 1;
-        segment(&mut out, 0xc4, &[[0x00].as_slice(), &self.dc_counts, &self.dc_symbols, &[0x10], &ac_counts, &[0]].concat());
-        segment(&mut out, 0xda, &[[1, 1, 0x00].as_slice(), &self.sos_tail].concat());
+        // Chroma (tables 1) codes the same way as Y (tables 0).
+        for id in if self.sampling.is_some() { 0..2 } else { 0..1 } {
+            segment(&mut out, 0xc4, &[[id].as_slice(), &self.dc_counts, &self.dc_symbols, &[0x10 | id], &ac_counts, &[0]].concat());
+        }
+        let tail = self.progressive.map_or(self.sos_tail.clone(), |al| vec![0, 0, al]);
+        segment(&mut out, 0xda, &[scan, tail].concat());
         let mut bits: Vec<bool> = Vec::new();
         let mut put = |value: u32, length: u32| bits.extend((0..length).rev().map(|i| value >> i & 1 != 0));
-        let blocks = usize::from(self.width.div_ceil(8)) * usize::from(self.height.div_ceil(8));
-        let mut previous = 0;
-        for block in 0..blocks {
-            let target = self.dc[block % self.dc.len()];
-            let diff = target - previous;
-            previous = target;
+        let (bw, bh) = (usize::from(self.width.div_ceil(8)), usize::from(self.height.div_ceil(8)));
+        // Each coded block as (component, DC), in scan order; MCU padding past the image is 0.
+        let y = |x: usize, y: usize| if x < bw && y < bh { self.dc[(y * bw + x) % self.dc.len()] } else { 0 };
+        let mut units = Vec::new();
+        match self.sampling {
+            None => units.extend((0..bw * bh).map(|b| (0, y(b % bw, b / bw)))),
+            Some(sampling) => {
+                let (h, v) = (usize::from(sampling >> 4), usize::from(sampling & 15));
+                for row in 0..bh.div_ceil(v) {
+                    for column in 0..bw.div_ceil(h) {
+                        units.extend((0..h * v).map(|b| (0, y(column * h + b % h, row * v + b / h))));
+                        units.extend([(1, 0), (2, 0)]);
+                    }
+                }
+            }
+        }
+        let mut previous = [0; 3];
+        for (component, dc) in units {
+            let target = dc >> self.progressive.unwrap_or(0);
+            let diff = target - previous[component];
+            previous[component] = target;
             let category = 32 - diff.unsigned_abs().leading_zeros();
             put(category, 4);
             put((if diff < 0 { diff + (1 << category) - 1 } else { diff }) as u32, category);
-            put(0, 2);
+            if self.progressive.is_none() { put(0, 2); }
         }
         bits.resize(bits.len().div_ceil(8) * 8, true);
         for byte in bits.chunks(8) {
@@ -111,7 +140,7 @@ impl ImageRows for Grey {
 /// Renders `image` at its cover placement into `sink`; returns that placement.
 fn render_cover(image: &[u8], sink: &mut dyn ImageRows) -> Result<(u16, u16), RenderError> {
     let mut layout = Layout::default();
-    assert!(baseline(&mut Bytes(image), &mut layout) == Status::Ready);
+    assert!(validate(&mut Bytes(image), &mut layout) == Status::Ready);
     let (w, h) = placement(layout.width, layout.height);
     let (mut input, mut segment, mut quant, mut huffman) = ([0; 512], [0; 512], [0; 256], [0; 1088]);
     let (mut block, mut mcu, mut pixels) = ([0; 64], [0; 384], [0; 256]);
@@ -126,7 +155,7 @@ fn render_cover(image: &[u8], sink: &mut dyn ImageRows) -> Result<(u16, u16), Re
 /// The cover payload CRC, or the renderer's refusal (a ParseError becomes a no-art record).
 fn cover_crc(image: &[u8]) -> Result<u32, RenderError> {
     let mut layout = Layout::default();
-    assert!(baseline(&mut Bytes(image), &mut layout) == Status::Ready);
+    assert!(validate(&mut Bytes(image), &mut layout) == Status::Ready);
     let (w, h) = placement(layout.width, layout.height);
     let mut raster = Raster { px: [0; cover::PIXELS], width: w, left: usize::from(144 - w) / 2,
                               top: usize::from(188 - h) / 2, rows: 0 };
@@ -196,21 +225,196 @@ fn dc_predictor_wrap_keeps_the_full_value_in_the_pixels() {
 fn formats_both_builds_reject_stay_unsupported() {
     let base = Jpeg::default().bytes();
     let sof = base.windows(2).position(|w| w == [0xff, 0xc0]).unwrap();
-    let mut progressive = base.clone();
-    progressive[sof + 1] = 0xc2;
+    let mut arithmetic = base.clone();
+    arithmetic[sof + 1] = 0xc9;
     let mut cmyk = base.clone();
     cmyk[sof + 9] = 4;
-    let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".as_slice();
-    for image in [progressive.as_slice(), &cmyk, png] {
-        assert!(baseline(&mut Bytes(image), &mut Layout::default()) == Status::Unsupported);
+    for image in [arithmetic.as_slice(), &cmyk] {
+        assert!(validate(&mut Bytes(image), &mut Layout::default()) == Status::Unsupported);
+    }
+}
+
+/// A grayscale 8-bit PNG's signature, IHDR and IEND: all `png::validate` reads.
+fn png_header(width: u32, height: u32, interlace: u8) -> Vec<u8> {
+    let mut out = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+    out.extend(width.to_be_bytes());
+    out.extend(height.to_be_bytes());
+    // Depth, color, compression, filter, interlace, then an unchecked CRC.
+    out.extend([8, 0, 0, 0, interlace, 0, 0, 0, 0]);
+    out.extend([0, 0, 0, 0, b'I', b'E', b'N', b'D', 0xae, 0x42, 0x60, 0x82]);
+    out
+}
+
+#[test]
+fn a_png_row_past_the_cap_or_interlaced_is_unsupported() {
+    // Grey 8-bit: the row is the width, and the ring the width plus two.
+    let fits = (png::ROW_BYTES - 2) / 2;
+    let mut layout = Layout::default();
+    assert!(png::validate(&mut Bytes(&png_header(fits as u32, 8, 0)), &mut layout) == Status::Ready);
+    assert_eq!((usize::from(layout.width), usize::from(layout.ring)), (fits, fits + 2));
+    for image in [png_header(fits as u32 + 1, 8, 0), png_header(64, 8, 1)] {
+        assert!(png::validate(&mut Bytes(&image), &mut Layout::default()) == Status::Unsupported);
+    }
+}
+
+#[test]
+fn a_png_whose_slot_pixel_counts_past_u16_is_unsupported() {
+    // 1024 wide takes a 4x188 slot up to 47,940 rows: 256 x 255 samples per
+    // slot pixel. One row more needs 256 x 256, past the scaler's u16 counts.
+    let mut layout = Layout::default();
+    assert!(png::validate(&mut Bytes(&png_header(1024, 47_940, 0)), &mut layout) == Status::Ready);
+    for height in [47_941, 65_535] {
+        assert!(png::validate(&mut Bytes(&png_header(1024, height, 0)), &mut layout) == Status::Unsupported, "{height}");
+    }
+}
+
+/// `body` as a PNG chunk, with its CRC.
+fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], body: &[u8]) {
+    out.extend((body.len() as u32).to_be_bytes());
+    let start = out.len();
+    out.extend(kind);
+    out.extend(body);
+    let crc = cover::crc(u32::MAX, &out[start..]) ^ u32::MAX;
+    out.extend(crc.to_be_bytes());
+}
+/// `raw` as a zlib stream of stored blocks; `end` false leaves the last block
+/// open and the checksum out.
+fn zlib(raw: &[u8], end: bool) -> Vec<u8> {
+    let mut out = vec![0x78, 0x01];
+    let blocks: Vec<&[u8]> = if raw.is_empty() { vec![&[]] } else { raw.chunks(0xffff).collect() };
+    for (i, block) in blocks.iter().enumerate() {
+        out.push(u8::from(end && i + 1 == blocks.len()));
+        let len = block.len() as u16;
+        out.extend(len.to_le_bytes());
+        out.extend((!len).to_le_bytes());
+        out.extend(*block);
+    }
+    let (mut a, mut b) = (1u32, 0u32);
+    for &byte in raw { a = (a + u32::from(byte)) % 65_521; b = (b + a) % 65_521; }
+    if end { out.extend((b << 16 | a).to_be_bytes()); }
+    out
+}
+/// A grey 8-bit PNG of `width` x `height` whose one IDAT is `idat`.
+fn png_image(width: u32, height: u32, idat: &[u8]) -> Vec<u8> {
+    let mut out = png::SIGNATURE.to_vec();
+    chunk(&mut out, b"IHDR", &[width.to_be_bytes().as_slice(), &height.to_be_bytes(), &[8, 0, 0, 0, 0]].concat());
+    chunk(&mut out, b"IDAT", idat);
+    chunk(&mut out, b"IEND", &[]);
+    out
+}
+/// A PNG at its cover placement, as grey rows, as firmware cover_decode.rs draws it.
+fn render_png(image: &[u8]) -> Result<Grey, BookStatus> {
+    let mut layout = Layout::default();
+    assert!(png::validate(&mut Bytes(image), &mut layout) == Status::Ready);
+    let (w, h) = placement(layout.width, layout.height);
+    let mut inflate = Box::new(newt_core::inflate::State::new(newt_core::inflate::BitBuffer::Bits32));
+    let (mut read, mut dictionary) = (vec![0; png::READ], vec![0; newt_core::inflate::DICTIONARY_SIZE]);
+    let (mut palette, mut transparency) = (vec![0; png::PALETTE], vec![0; png::TRANSPARENCY]);
+    let (mut ring, mut src) = (vec![0; usize::from(layout.ring)], vec![0; usize::from(layout.width)]);
+    let (mut dst, mut sums, mut counts) = (vec![0; usize::from(w)], vec![0; usize::from(w)], vec![0; usize::from(w)]);
+    let buffers = png::Buffers { read: &mut read, inflate: &mut inflate, dictionary: &mut dictionary, palette: &mut palette,
+                                 transparency: &mut transparency, ring: &mut ring, src: &mut src, dst: &mut dst,
+                                 sums: &mut sums, counts: &mut counts };
+    let mut grey = Grey::default();
+    match png::render(&mut Bytes(image), buffers, (layout.width, layout.height), (w, h), &mut grey) {
+        Ok(()) => Ok(grey),
+        Err(RenderError::Status(status)) => Err(status),
+        Err(RenderError::Safety(error)) => panic!("{error:?}"),
+    }
+}
+
+#[test]
+fn a_png_is_drawn_only_when_every_pixel_arrives() {
+    // Rows of grey 128, each led by filter 0. IEND follows in every case.
+    let rows = |width: usize, height: usize| [[0].as_slice(), &vec![128; width]].concat().repeat(height);
+    let whole = render_png(&png_image(16, 4, &zlib(&rows(16, 4), true))).unwrap();
+    assert_eq!(whole.0, vec![vec![128; 16]; 4]);
+    let short = [rows(16, 3), rows(10, 1)].concat();
+    // 255x128 fills pngle's 32 KiB window exactly, so every pixel is drawn
+    // though the stream never ends.
+    for (name, image) in [("no pixels", png_image(288, 1, &zlib(&[], true))),
+                          ("last row short", png_image(16, 4, &zlib(&short, true))),
+                          ("zlib unfinished", png_image(255, 128, &zlib(&rows(255, 128), false)))] {
+        assert_eq!(render_png(&image).err(), Some(BookStatus::ParseError), "{name}");
+    }
+}
+
+/// A progressive file's first scan at its cover placement, as grey rows.
+fn render_progressive(image: &[u8]) -> Result<Grey, BookStatus> {
+    let mut layout = Layout::default();
+    assert!(validate(&mut Bytes(image), &mut layout) == Status::Ready && layout.progressive);
+    let (w, h) = placement(layout.width, layout.height);
+    let (mut input, mut tables) = ([0; 512], [progressive::Huffman::default(); 4]);
+    let (mut grid, mut previous, mut current, mut output) = ([0; 512], [0; 144], [0; 144], [0; 144]);
+    let buffers = progressive::Buffers { input: &mut input, tables: &mut tables, grid: &mut grid,
+                                         previous: &mut previous, current: &mut current, output: &mut output };
+    let mut grey = Grey::default();
+    match progressive::render(&mut Bytes(image), buffers, w, h, &mut grey) {
+        Ok(()) => Ok(grey),
+        Err(RenderError::Status(status)) => Err(status),
+        Err(RenderError::Safety(error)) => panic!("{error:?}"),
+    }
+}
+
+#[test]
+fn a_progressive_first_scan_draws_its_dc_greys() {
+    // 8x2 blocks; the point transform halves each coded value. Grey = 128 + DC/8.
+    let dc: Vec<i32> = (0..16).map(|i| (i * 16 - 128) * 8).collect();
+    let image = Jpeg { width: 64, height: 16, dc, progressive: Some(1), ..Jpeg::default() };
+    let grey = render_progressive(&image.bytes()).unwrap();
+    assert_eq!(grey.0.len(), 16);
+    // Corners hold their blocks' greys exactly; between, rows blend bilinearly.
+    assert_eq!((grey.0[0][0], grey.0[0][63], grey.0[15][0], grey.0[15][63]), (0, 112, 128, 240));
+    assert!(grey.0.iter().all(|row| row.windows(2).all(|pair| pair[0] <= pair[1])));
+}
+
+#[test]
+fn a_progressive_file_without_a_dc_first_scan_is_unsupported() {
+    // A first scan of AC bands (Ss 1, Se 63) holds no DC greys to draw.
+    let mut image = Jpeg { progressive: Some(0), ..Jpeg::default() }.bytes();
+    let sos = image.windows(2).position(|w| w == [0xff, 0xda]).unwrap();
+    image[sos + 7..sos + 9].copy_from_slice(&[1, 63]);
+    assert_eq!(render_progressive(&image).err(), Some(BookStatus::Unsupported));
+}
+
+#[test]
+fn a_progressive_first_scan_without_luminance_is_unsupported() {
+    // A YCbCr file whose first scan is Cb and Cr DC only: no Y greys to draw.
+    let mut image = Jpeg { progressive: Some(0), sampling: Some(0x11), ..Jpeg::default() }.bytes();
+    let sos = image.windows(2).position(|w| w == [0xff, 0xda]).unwrap();
+    image.splice(sos + 2..sos + 7, [0, 10, 2]);
+    assert_eq!(render_progressive(&image).err(), Some(BookStatus::Unsupported));
+}
+
+#[test]
+fn y_sampling_12_and_41_draw_the_grey_frame() {
+    // Chroma never reaches the greys, so a YCbCr frame draws its Y blocks as a
+    // grayscale one does. These sizes pad MCUs and take baseline scales 0, 1 and 3.
+    let dc: Vec<i32> = (0..23).map(|i| (i * 11 - 128) * 8).collect();
+    let baseline = |image: &Jpeg| { let mut grey = Grey::default(); render_cover(&image.bytes(), &mut grey).unwrap(); grey.0 };
+    for (width, height) in [(72, 40), (320, 72), (1200, 200)] {
+        let grey = Jpeg { width, height, dc: dc.clone(), ..Jpeg::default() };
+        for sampling in [0x12, 0x41] {
+            let image = Jpeg { sampling: Some(sampling), ..grey.clone() };
+            assert_eq!(baseline(&image), baseline(&grey), "{sampling:#x} at {width}x{height}");
+            if width == 72 {
+                let (image, grey) = (Jpeg { progressive: Some(1), ..image }, Jpeg { progressive: Some(1), ..grey.clone() });
+                assert_eq!(render_progressive(&image.bytes()).unwrap().0, render_progressive(&grey.bytes()).unwrap().0,
+                           "progressive {sampling:#x}");
+            }
+        }
     }
 }
 
 #[test]
 fn old_no_art_records_retry_once() {
-    // Before #316 Rust wrote CJB4: generate once more, show no cover meanwhile.
-    assert_eq!(cover::record(None, cover::RETRIED_NO_ART), Record::Generate);
-    assert!(cover::no_art(cover::RETRIED_NO_ART));
+    // Older decoders wrote CJB4 (before #316) and CJB5 (before #46): generate
+    // once more, show no cover meanwhile.
+    for route in [*b"CJB4", *b"CJB5"].map(u32::from_le_bytes) {
+        assert_eq!(cover::record(None, route), Record::Generate);
+        assert!(cover::no_art(route));
+    }
+    assert_eq!(cover::NO_ART, u32::from_le_bytes(*b"CJB6"));
     // The record a new attempt writes settles: no repeat.
     let header = cover::header(1234, 5678, cover::NO_ART);
     let written = u32::from_le_bytes(header[24..].try_into().unwrap());
