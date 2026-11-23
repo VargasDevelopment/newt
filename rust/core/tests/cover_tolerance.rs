@@ -208,9 +208,13 @@ fn formats_both_builds_reject_stay_unsupported() {
 
 #[test]
 fn old_no_art_records_retry_once() {
-    // Before #316 Rust wrote CJB4: generate once more, show no cover meanwhile.
-    assert_eq!(cover::record(None, cover::RETRIED_NO_ART), Record::Generate);
-    assert!(cover::no_art(cover::RETRIED_NO_ART));
+    // Older decoders wrote CJB4 (before #316) and CJB5 (before #46): generate
+    // once more, show no cover meanwhile.
+    for route in [*b"CJB4", *b"CJB5"].map(u32::from_le_bytes) {
+        assert_eq!(cover::record(None, route), Record::Generate);
+        assert!(cover::no_art(route));
+    }
+    assert_eq!(cover::NO_ART, u32::from_le_bytes(*b"CJB6"));
     // The record a new attempt writes settles: no repeat.
     let header = cover::header(1234, 5678, cover::NO_ART);
     let written = u32::from_le_bytes(header[24..].try_into().unwrap());

@@ -46,7 +46,7 @@ SIGNATURE = b'NLC2\x90\0\xbc\0'
 WIDTH, HEIGHT, ROW_BYTES = 144, 188, 18
 ART, NO_ART = 28 + ROW_BYTES * HEIGHT, 28
 # Routes as the card holds them (little-endian rust/core/src/cover.rs NO_ART words).
-CJB5, CJB4 = b'CJB5', b'CJB4'
+CJB6, CJB5 = b'CJB6', b'CJB5'
 MTIME = 1790812800
 # Book name: (declaration, deflated, cover form). Names sort into shelf order.
 SUPPORTED = {'Alder': ('epub3', False), 'Birch': ('epub3', True),
@@ -126,7 +126,7 @@ def books():
 
 
 def record(book, route):
-    """A bare cover record for `book` on the `route` (CJB4 or CJB5)."""
+    """A bare cover record for `book` on the `route` (CJB5 or CJB6)."""
     return SIGNATURE + struct.pack('<QQ', (books() / f'{book}.epub').stat().st_size, MTIME) + route
 
 
@@ -216,7 +216,7 @@ def books_shelf(binary):
             if slot(shelf, index) != world.cover(book)[28:]:
                 return f'the shelf does not show {book}\'s new cover'
         gap, results, _ = world.run(NEXT_SHELF)
-        if results != [UNSUPPORTED] or world.cover(GAP) != record(GAP, CJB5):
+        if results != [UNSUPPORTED] or world.cover(GAP) != record(GAP, CJB6):
             return f'the unsupported book ended {results} with {world.cover(GAP)!r}'
         if any(slot(shelf, index) == slot(gap, 0) for index in range(len(SUPPORTED))):
             return 'a shelf cover looks like the "No cover" slot'
@@ -242,18 +242,18 @@ def home(binary):
 
 
 def old_records(binary):
-    """A CJB4 bare record (from before #316) is retried once; a current CJB5
-    one is used as it is."""
+    """A CJB5 bare record (from before #46, as v0.3.0 wrote it) is retried
+    once and then never again; a current CJB6 one is used as it is."""
     with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
-        world = World(binary, scratch, {'Alder': CJB4, 'Birch': CJB5, GAP: CJB4})
+        world = World(binary, scratch, {'Alder': CJB5, 'Birch': CJB6, GAP: CJB5})
         _, results, _ = world.run(SHELF)
         if problem := art_problem(world, 'Alder'):
-            return f'the CJB4 record was not retried: {problem}'
-        if world.cover('Birch') != record('Birch', CJB5) or results != [PRODUCED] * 3:
-            return f'the CJB5 record was not kept as it is (attempts {results})'
+            return f'the CJB5 record was not retried: {problem}'
+        if world.cover('Birch') != record('Birch', CJB6) or results != [PRODUCED] * 3:
+            return f'the CJB6 record was not kept as it is (attempts {results})'
         _, results, _ = world.run(NEXT_SHELF)
-        if results != [UNSUPPORTED] or world.cover(GAP) != record(GAP, CJB5):
-            return f'the unsupported book\'s CJB4 retry ended {results} with {world.cover(GAP)!r}'
+        if results != [UNSUPPORTED] or world.cover(GAP) != record(GAP, CJB6):
+            return f'the unsupported book\'s CJB5 retry ended {results} with {world.cover(GAP)!r}'
         _, results, _ = world.run(NEXT_SHELF)
         if results:
             return f'the unsupported book was retried again: {results}'
@@ -306,10 +306,13 @@ CASES = [
         [('app_runtime/home_cover.rs', 'prepare_home_cover(&mut covers, Some(&identity.filename), pixels)',
           'prepare_home_cover(&mut covers, newt_core::library_name::name_bytes(&identity.filename), pixels)')]]),
     (old_records, [
-        # A CJB4 bare record reads as current.
+        # A CJB5 bare record reads as current.
         [('cover_probe.rs', 'match cover::record((payload!=0).then_some(crc^u32::MAX),le32(&header[24..])){',
           'match cover::record((payload!=0).then_some(crc^u32::MAX),'
-          'if le32(&header[24..])==cover::RETRIED_NO_ART{cover::NO_ART}else{le32(&header[24..])}){')]]),
+          'if le32(&header[24..])==cover::RETRIED_NO_ART[1]{cover::NO_ART}else{le32(&header[24..])}){')],
+        # A retry records its verdict on the old route, so it retries again.
+        [('cover_session.rs', 'self.commit(&self.header(cover::NO_ART),&[])',
+          'self.commit(&self.header(cover::RETRIED_NO_ART[1]),&[])')]]),
     (transient, [
         # An I/O fault records the book as having no cover.
         [('cover_session.rs', 'if !verdict(result)||!self.unfaulted(){self.no_art=false;return(result,false);}',
