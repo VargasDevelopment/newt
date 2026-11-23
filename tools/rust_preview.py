@@ -10,9 +10,11 @@ and the driver (tools/preview_driver.py) that turns the CLI into boots,
 presses and fixture files. .build/newt-preview runs that driver.
 
 `build(edits=...)` relinks a control: the generated firmware copy with exact
-text edits, never rust/firmware. `run(binary, directory, keys)` is one
-preview world's boots: presses through the input fake, a software reset on
-each restart (exit 75), until the presses are used up and the loop is idle.
+text edits, never rust/firmware. A nested module the copy includes by its
+path (app_runtime/home_cover.rs) is copied in for its edit.
+`run(binary, directory, keys)` is one preview world's boots: presses through
+the input fake, a software reset on each restart (exit 75), until the presses
+are used up and the loop is idle.
 """
 import json
 import os
@@ -79,9 +81,9 @@ def download(text: str) -> str:
 
 
 def build(edits=None) -> Path:
-    """The firmware host binary. With `edits` ([(top-level firmware file,
-    exact old text, new text)]), a control relinked from the last build's
-    generated copy; each old text must occur exactly once."""
+    """The firmware host binary. With `edits` ([(firmware file under
+    rust/firmware, exact old text, new text)]), a control relinked from the
+    last build's generated copy; each old text must occur exactly once."""
     if edits:
         return control(edits)
     WORK.mkdir(parents=True, exist_ok=True)
@@ -135,6 +137,15 @@ def control(edits) -> Path:
         path.write_text(rewire(path.read_text()))
     for name, old, new in edits:
         path = copies / name
+        if not path.exists():
+            original = host_build.FIRMWARE / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(original, path)
+            quoted = json.dumps(str(original))
+            for module in copies.glob('*.rs'):
+                text = module.read_text()
+                if quoted in text:
+                    module.write_text(text.replace(quoted, json.dumps(str(path))))
         text = path.read_text()
         if text.count(old) != 1:
             raise ValueError(f'{name}: the control text must occur exactly once')

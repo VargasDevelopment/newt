@@ -99,8 +99,17 @@ impl ImageRows for Raster {
         Ok(true)
     }
 }
-/// The cover payload CRC, or the renderer's refusal (a ParseError becomes a no-art record).
-fn cover_crc(image: &[u8]) -> Result<u32, RenderError> {
+/// Grey rows as the firmware's cover decode receives them, before dithering.
+#[derive(Default)]
+struct Grey(Vec<Vec<u8>>);
+impl ImageRows for Grey {
+    fn on_row(&mut self, _y: u16, gray: &[u8], width: u16) -> Result<bool, SafetyError> {
+        self.0.push(gray[..usize::from(width)].to_vec());
+        Ok(true)
+    }
+}
+/// Renders `image` at its cover placement into `sink`; returns that placement.
+fn render_cover(image: &[u8], sink: &mut dyn ImageRows) -> Result<(u16, u16), RenderError> {
     let mut layout = Layout::default();
     assert!(baseline(&mut Bytes(image), &mut layout) == Status::Ready);
     let (w, h) = placement(layout.width, layout.height);
@@ -111,9 +120,17 @@ fn cover_crc(image: &[u8]) -> Result<u32, RenderError> {
     let (mut band, mut row, mut sums, mut counts) = (vec![0; 16 * usize::from(layout.width)], vec![0; usize::from(w)],
                                                      vec![0; usize::from(w)], vec![0; usize::from(w)]);
     let rows = Rows { band: &mut band, row: &mut row, sums: &mut sums, counts: &mut counts };
+    render(&mut Bytes(image), workspace, rows, w, h, sink)?;
+    Ok((w, h))
+}
+/// The cover payload CRC, or the renderer's refusal (a ParseError becomes a no-art record).
+fn cover_crc(image: &[u8]) -> Result<u32, RenderError> {
+    let mut layout = Layout::default();
+    assert!(baseline(&mut Bytes(image), &mut layout) == Status::Ready);
+    let (w, h) = placement(layout.width, layout.height);
     let mut raster = Raster { px: [0; cover::PIXELS], width: w, left: usize::from(144 - w) / 2,
                               top: usize::from(188 - h) / 2, rows: 0 };
-    render(&mut Bytes(image), workspace, rows, w, h, &mut raster)?;
+    render_cover(image, &mut raster)?;
     assert_eq!(raster.rows, h);
     Ok(cover::crc(u32::MAX, &raster.px) ^ u32::MAX)
 }
@@ -156,6 +173,23 @@ fn dc_predictor_wraps_like_tjpgdec() {
     // Steps of 2000 carry the predictor past i16::MAX; TJpgDec narrows only the stored predictor.
     let image = Jpeg { width: 192, height: 8, dc: (0..24).map(|i| 2000 * i).collect(), ..Jpeg::default() };
     assert_eq!(cover_crc(&image.bytes()).unwrap(), 0xc2c8_2d8c);
+}
+
+#[test]
+fn dc_predictor_wrap_keeps_the_full_value_in_the_pixels() {
+    // The last block's DC, 34017, is past i16::MAX and not a multiple of 8, so the
+    // truncating /8 tells the full value (grey 28) from one narrowed first (29).
+    // Multiples of 8, as above, give the same grey either way.
+    let mut dc: Vec<i32> = (0..17).map(|i| 2000 * i).collect();
+    dc.push(34017);
+    let image = Jpeg { width: 144, height: 8, dc, ..Jpeg::default() };
+    let mut grey = Grey::default();
+    assert_eq!(render_cover(&image.bytes(), &mut grey).unwrap(), (144, 8));
+    assert_eq!(grey.0.len(), 8);
+    for row in &grey.0 {
+        assert_eq!(row[..8], [128; 8]);
+        assert_eq!(row[136..], [28; 8]);
+    }
 }
 
 #[test]
