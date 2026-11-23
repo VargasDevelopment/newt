@@ -5,6 +5,8 @@ it provides no image decoding evidence. Default execution requires Mac ImageIO.
 """
 import hashlib
 import importlib.util
+import io
+import json
 import os
 from pathlib import Path
 import struct
@@ -33,9 +35,9 @@ PORTABLE_CASES = (
     'test_corrupt_deflate_is_one_fallback_and_later_book_still_prepares',
     'test_helper_failures_and_wrong_payload_remove_old_cache',
     'test_authored_png_corpus_has_locked_payloads_and_rejects_unknown_bytes',
-    'test_authored_fixture_routing_prepares_all_four_or_fails',
+    'test_authored_fixtures_prepare_all_four_or_fail',
     'test_general_decoder_explicitly_rejects_linux',
-    'test_required_mac_gate_rejects_linux_and_source_drift_before_report',
+    'test_required_mac_gate_checks_only_imageio_for_exact_source',
 )
 
 
@@ -310,15 +312,14 @@ precondition(CGImageDestinationFinalize(output))
                 with self.assertRaisesRegex(ValueError, 'four exact authored'):
                     fixture.bitmap(unknown)
 
-    def test_authored_fixture_routing_prepares_all_four_or_fails(self):
+    def test_authored_fixtures_prepare_all_four_or_fail(self):
         _, art = fixture_tools()
         art.authored_books(self.books)
-        with patch.object(art.platform, 'system', return_value='Linux'):
+        art.prepare_authored_covers(self.books, self.output)
+        self.assertEqual(len(list(self.output.glob('*.nlc'))), 4)
+        epub(self.books / 'Unknown.epub', png())
+        with self.assertRaisesRegex(RuntimeError, 'four exact authored'):
             art.prepare_authored_covers(self.books, self.output)
-            self.assertEqual(len(list(self.output.glob('*.nlc'))), 4)
-            epub(self.books / 'Unknown.epub', png())
-            with self.assertRaisesRegex(RuntimeError, 'four exact authored'):
-                art.prepare_authored_covers(self.books, self.output)
 
     def test_general_decoder_explicitly_rejects_linux(self):
         with patch.object(COVERS.platform, 'system', return_value='Linux'), \
@@ -328,16 +329,17 @@ precondition(CGImageDestinationFinalize(output))
             compiler.assert_not_called()
 
     def test_four_authored_payloads_match_actual_imageio(self):
-        fixture, art = fixture_tools()
+        fixture, _ = fixture_tools()
         image, bitmap = self.work / 'authored.png', self.work / 'native-bitmap'
         for style in range(4):
             source = (ROOT / f'tests/fixtures/library-cover-images/style-{style}.png').read_bytes()
-            self.assertEqual(art.cover_art(style), source)
+            self.assertEqual(fixture.cover_art(style), source)
             image.write_bytes(source)
             subprocess.run([str(self.helper), str(image), str(bitmap)], check=True)
             self.assertEqual(bitmap.read_bytes(), fixture.bitmap(image.read_bytes()))
 
-    def test_required_mac_gate_rejects_linux_and_source_drift_before_report(self):
+    @patch('sys.stdout', new_callable=io.StringIO)
+    def test_required_mac_gate_checks_only_imageio_for_exact_source(self, stdout):
         sys.path.insert(0, str(ROOT / 'tools'))
         spec = importlib.util.spec_from_file_location('mac_cover_gate', ROOT / 'tools/check-mac-covers.py')
         gate = importlib.util.module_from_spec(spec)
@@ -345,18 +347,42 @@ precondition(CGImageDestinationFinalize(output))
         report = self.root / '.build/mac-covers/report.json'
         report.parent.mkdir(parents=True)
         report.write_text('{"passed":true}')
+        expected = 'a' * 40
         with patch.object(gate.platform, 'system', return_value='Linux'), \
+             patch.object(gate, 'ROOT', self.root.resolve()), \
+             patch.object(sys, 'argv', ['check-mac-covers.py', '--expected-commit', expected]), \
              patch.object(gate.subprocess, 'run') as run:
-            with self.assertRaisesRegex(RuntimeError, 'needs macOS ImageIO'):
-                gate.run_gate(self.root.resolve(), 'a' * 40)
+            with self.assertRaises(SystemExit) as error:
+                gate.main()
+            self.assertEqual(str(error.exception), 'The host cover helper gate needs macOS ImageIO')
             run.assert_not_called()
         self.assertFalse(report.exists())
         with patch.object(gate.platform, 'system', return_value='Darwin'), \
              patch.object(gate, 'committed_source', side_effect=[{'sha': 'a'}, {'sha': 'b'}]), \
-             patch.object(gate, 'reviewed_frames'), \
              patch.object(gate.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)):
             with self.assertRaisesRegex(RuntimeError, 'source changed'):
-                gate.run_gate(self.root.resolve(), 'a' * 40)
+                gate.run_gate(self.root.resolve(), expected)
+        self.assertFalse(report.exists())
+        source = {'sha': expected}
+        root = self.root.resolve()
+        with patch.object(gate.platform, 'system', return_value='Darwin'), \
+             patch.object(gate.platform, 'platform', return_value='Darwin test'), \
+             patch.object(gate, 'committed_source', return_value=source), \
+             patch.object(gate.subprocess, 'run') as run:
+            gate.run_gate(root, expected)
+            run.assert_called_once_with(
+                [sys.executable, '-B', str(root / 'tests/library_cover_prepare_test.py')],
+                cwd=root, check=True)
+        receipt = json.loads(report.read_text())
+        self.assertEqual(receipt['phases'], ['mac-imageio-cover-tests'])
+        self.assertEqual(receipt['source'], source)
+        self.assertIn(f'PASS Mac ImageIO cover helper gate for {expected}\n', stdout.getvalue())
+        failure = subprocess.CalledProcessError(1, 'library_cover_prepare_test.py')
+        with patch.object(gate.platform, 'system', return_value='Darwin'), \
+             patch.object(gate, 'committed_source', return_value=source), \
+             patch.object(gate.subprocess, 'run', side_effect=failure):
+            with self.assertRaises(subprocess.CalledProcessError):
+                gate.run_gate(root, expected)
         self.assertFalse(report.exists())
 
 
@@ -364,7 +390,8 @@ if __name__ == '__main__':
     if '--portable-only' in sys.argv:
         sys.argv.remove('--portable-only')
         PORTABLE_ONLY = True
-        print('PORTABLE: synthetic EPUB/cache contracts and four exact UI PNG fixtures; required Mac ImageIO evidence is separate', flush=True)
+        print('PORTABLE: synthetic EPUB/cache contracts and four exact UI PNG fixtures; see '
+              'docs/CI.md#explicit-cover-coverage-boundary for Mac ImageIO coverage', flush=True)
         unittest.main(defaultTest=['CoverPreparationTests.' + name for name in PORTABLE_CASES])
     else:
         unittest.main()

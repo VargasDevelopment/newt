@@ -15,6 +15,7 @@ from code_health import read_baseline
 from code_health_resources import check_resources
 from daily_firmware import require_daily_image
 from freeink_sdk_routes import FIRMWARE_BUILD
+import gate_plan
 import gate_tier
 import host_jobs
 from native_output import owned_directory, owned_file, write_text
@@ -41,7 +42,7 @@ def committed_ui_authority(root):
     actual = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
     if actual != blob.decode() or stat.S_IMODE(path.stat().st_mode) & 0o111:
         raise RuntimeError('Reviewed UI authority bytes/mode differ from requested commit')
-    return hashlib.sha256(data).hexdigest()
+    return data
 
 
 def committed_source(root, expected):
@@ -73,29 +74,40 @@ def committed_source(root, expected):
         digest.update(relative + b'\0' + bytes.fromhex(actual))
     verify_source_pin(root / 'vendor/freeink-sdk')
     return {**identity, 'tracked_source_sha256': digest.hexdigest(), 'sdk_revision': SDK_PIN,
-            'reviewed_ui_manifest_sha256': committed_ui_authority(root)}
+            'reviewed_ui_manifest_sha256': hashlib.sha256(committed_ui_authority(root)).hexdigest()}
+
+
+def host_options(tier, part):
+    """Use the same host options for execution and coverage."""
+    profile = 'linux' if sys.platform == 'linux' else 'canonical'
+    shard = None
+    if part not in ('all', 'native'):
+        index, count = part.split('/')
+        shard = int(index), int(count)
+    return profile, tier == 'full', shard
 
 
 def commands(root, python, tier, part='all'):
     """part: 'all', the self-hosted job's whole sequence; 'native', the firmware
     builds alone; or 'I/N', shard I of N of the host gate (tools/gate_tier.py),
     one of the public workflow's parallel jobs."""
+    profile, fresh_objects, shard = host_options(tier, part)
     prefix = [str(python), '-B']
     # The job's own budget covers the host gate; check.py's is for an idle 16-thread host.
     # CI always checks the release tags, so nothing merges onto an untagged release.
     result = [('host', [*prefix, str(root / 'tools/check.py'), '--tier', tier, '--release-tags', '--no-time-budget',
-                        *(['--fresh-objects'] if tier == 'full' else []),
+                        *(['--fresh-objects'] if fresh_objects else []),
                         '-j', str(host_jobs.available_cpus()[0])]),
               # A plain compile makes the platform's first-use package edits
               # before any resource identity is captured. No resource proof.
               ('native-preparation', [*prefix, str(root / 'tools/firmware-build.py'), '--clean'])]
-    if sys.platform == 'linux':
-        result[0][1].extend(['--profile', 'linux'])
+    if profile == 'linux':
+        result[0][1].extend(['--profile', profile])
     result.append(('native-' + FIRMWARE_BUILD,
                    [*prefix, str(root / 'tools/firmware-build.py'), '--clean', '--health-report']))
     if part == 'native':
         return result[1:]
-    if part != 'all':
+    if shard is not None:
         result[0][1].extend(['--shard', part])
         return result[:1]
     return result
@@ -119,6 +131,21 @@ def validate_native(root, expected):
         raise RuntimeError('CI native release identity differs from exact committed source')
 
 
+def coverage(root, tier, part, included):
+    """Report the UI contract only for the job that runs its host phase."""
+    profile, fresh_objects, shard = host_options(tier, part)
+    linux = profile == 'linux'
+    result = {'profile': profile, 'complete_software_coverage': not linux,
+              'fixture_decoder_scope': 'four SHA-locked authored PNGs; no arbitrary image decode equivalence'}
+    if not linux:
+        result['required_mac_imageio_gate'] = 'included'
+    if part != 'native':
+        phases, _, _ = gate_plan.host_phases(root, profile, fresh_objects, included, shard)
+        if any(phase.name == gate_plan.REVIEWED_UI_TEST for phase in phases):
+            result['reviewed_ui_frames'] = len(json.loads(committed_ui_authority(root))['frames'])
+    return result
+
+
 def run_gate(root, expected, store=None, started=None, part='all'):
     started = time.time() if started is None else started
     tier = gate_tier.ci_tier(root, expected)
@@ -127,6 +154,8 @@ def run_gate(root, expected, store=None, started=None, part='all'):
     report = owned_file(root, directory / 'report.json')
     report.unlink(missing_ok=True)
     before = committed_source(root, expected)
+    # The host subprocess announces and enforces its own control selection.
+    included = gate_tier.controls(tier, root, announce=False) if part != 'native' else ''
     if store is not None:
         ci_persist.restore_objects(root, store, tier)
     try:
@@ -145,16 +174,13 @@ def run_gate(root, expected, store=None, started=None, part='all'):
         raise RuntimeError('Committed source changed during CI gates')
     write_text(root, report, json.dumps({'purpose': 'Fresh software diagnostics; no reusable/device proof',
                'source': after, 'tier': tier, 'part': part, 'phases': phases, 'reusable_proof': False,
-               'coverage': {'profile': 'linux' if sys.platform == 'linux' else 'canonical',
-                            'reviewed_ui_frames': 20,  # tests/system_ui_contract_test.py on the host-built firmware
-                            'complete_software_coverage': sys.platform != 'linux',
-                            'required_mac_imageio_gate': 'pending separate exact-source run' if sys.platform == 'linux' else 'included',
-                            'fixture_decoder_scope': 'four SHA-locked authored PNGs; no arbitrary image decode equivalence'},
+               'coverage': coverage(root, tier, part, included),
                'hardware': 'not-tested', 'ui_approval': 'separate', 'owner': 'pending'}, indent=2) + '\n')
     if part != 'all':
         print(f'PASS {tier} tier part {part} for {expected}; the run passes only when every part does', flush=True)
     elif sys.platform == 'linux':
-        print(f'PASS {tier} tier Linux software checks for {expected}; required exact-source Mac ImageIO coverage remains separate', flush=True)
+        print(f'PASS {tier} tier Linux software checks for {expected}; for Mac ImageIO coverage see '
+              'docs/CI.md#explicit-cover-coverage-boundary', flush=True)
     else:
         print(f'PASS {tier} tier software gates for {expected}; physical acceptance remains separate', flush=True)
 

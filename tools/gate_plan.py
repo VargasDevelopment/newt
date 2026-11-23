@@ -9,12 +9,14 @@ from pathlib import Path
 import sys
 
 from gate_runner import Phase, label
+import gate_tier
 from host_common import ROOT
 
 from rust_gate_families import (ADAPTER_FAMILIES, FOUNDATION_CAMPAIGNS, FULL_POSITIVE_SOURCES,
                            owner as rust_owner, positive_owner as rust_positive_owner)
 
 PYTHON = sys.executable
+REVIEWED_UI_TEST = "system_ui_contract_test.py"
 
 # Arguments that only add a test's negative controls (tools/gate_tier.py).
 CONTROL_FLAGS = frozenset(("--negative-controls", "--negative-control", "--baseline-controls",
@@ -37,7 +39,7 @@ QUICK = ("bench_flash_test.py --negative-controls", "bench_flash_layouts_test.py
          "native_reader_stack_test.py", "native_rollback_hook_test.py", "native_timer_task_test.py", "native_flash_writers_test.py", "native_crash_output_test.py", "wifi_link_test.py", "next_boot_test.py", "heap_clear_test.py", "build_scope_test.py", "rust_app_build_test.py",
          "freeink_patch_destination_test.py", "toolchain_share_test.py",
          "native_output_test.py", "make-reader-fixture.py --check", "make-builtin-app.py --check", "newt_package_test.py", "newt_delivery_test.py",
-         "library_preview_test.py", "system_ui_contract_test.py", "system_ui_rule_test.py",
+         "library_preview_test.py", REVIEWED_UI_TEST, "system_ui_rule_test.py",
          *(name for _, name in UNIT_TESTS), "gate_previews.py")
 
 
@@ -153,7 +155,7 @@ def plan(profile: str, fresh_objects: bool, controls=None) -> list[Phase]:
                         uses=(preview,)))
     test("library_preview_test.py", preview, bytecode=True, after=("compile newt-preview",))
     test("library_cover_prepare_test.py", *(("--portable-only",) if profile == "linux" else ()))
-    test("system_ui_contract_test.py", preview, after=("compile newt-preview",))
+    test(REVIEWED_UI_TEST, preview, after=("compile newt-preview",))
     test("system_ui_rule_test.py", preview, after=("compile newt-preview",))
     test("preview_owners_test.py", preview, after=("compile newt-preview",))
     test("preview_update_test.py", preview, after=("compile newt-preview",))
@@ -164,6 +166,18 @@ def plan(profile: str, fresh_objects: bool, controls=None) -> list[Phase]:
         unit(source, name)
     run(ROOT / "tools/gate_previews.py", preview, after=("compile newt-preview",))
     return phases
+
+
+def host_phases(root, profile: str, fresh_objects: bool, included: str, shard=None):
+    """Return the selected host phases, total phase count and shard weights."""
+    selected = set(included.split(','))
+    phases = plan(profile, fresh_objects, None if included == 'all' else selected.__contains__)
+    total = len(phases)
+    weights = {}
+    if shard is not None:
+        weights = gate_tier.phase_seconds(root, gate_tier.SHARD_SECONDS)
+        phases = gate_tier.shard(phases, *shard, weights)
+    return phases, total, weights
 
 
 def quick(profile: str, fresh_objects: bool) -> list[Phase]:

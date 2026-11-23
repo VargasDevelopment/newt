@@ -53,7 +53,7 @@ def negative_controls(script) -> bool:
     return value == 'all' or Path(script).name in value.split(',')
 
 
-def controls(tier, root) -> str:
+def controls(tier, root, *, announce=True) -> str:
     """The NEWT_GATE_CONTROLS value for a check.py tier."""
     if tier == 'full':
         return 'all'
@@ -61,7 +61,8 @@ def controls(tier, root) -> str:
         return ''
     base = subprocess.run(['git', 'merge-base', 'HEAD', BASE], cwd=root, capture_output=True, text=True)
     if base.returncode:  # Without the base, run them all: more work, never less proof.
-        print(f'TIER local: no {BASE} to diff against, so every negative control runs (git fetch origin)', flush=True)
+        if announce:
+            print(f'TIER local: no {BASE} to diff against, so every negative control runs (git fetch origin)', flush=True)
         return 'all'
     changed = subprocess.run(['git', 'diff', '--name-only', base.stdout.strip(), '--', *TEST_PATHS], cwd=root,
                              check=True, capture_output=True, text=True).stdout.split()
@@ -69,8 +70,9 @@ def controls(tier, root) -> str:
                               check=True, capture_output=True, text=True).stdout.split()
     selected = changed_tests(root, changed)
     if selected is None:
-        print('TIER local: a changed test/harness input has no owner, so every negative control runs',
-              flush=True)
+        if announce:
+            print('TIER local: a changed test/harness input has no owner, so every negative control runs',
+                  flush=True)
         return 'all'
     return ','.join(selected)
 

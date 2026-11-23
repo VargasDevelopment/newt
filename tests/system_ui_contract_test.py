@@ -73,7 +73,7 @@ class UiContractTests(unittest.TestCase):
         ui.verify_reviewed(frames, manifest)
         manifest['frames']['library'] = '0' * 64
         with self.assertRaises(ValueError): ui.verify_reviewed(frames, manifest)
-    def test_all_22_actual_reviewed_frames_are_required(self):
+    def test_all_actual_reviewed_frames_are_required(self):
         # Losing a renderer feature must fail its golden, never reduce coverage.
         ui.verify_reviewed(ui.render_frames(self.binary), load(ROOT / 'artifacts/library-ui-review.json'))
     def reading(self, actions):

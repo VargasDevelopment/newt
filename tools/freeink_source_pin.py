@@ -45,7 +45,8 @@ def verify_source_origin(source: Path) -> None:
 def verify_source_pin(source: Path) -> str:
     """Establish the actual checkout, including injected untracked inputs."""
     if source.is_symlink() or not (source / '.git').exists():
-        raise RuntimeError('Missing real pinned FreeInk checkout')
+        raise RuntimeError('Missing real pinned FreeInk checkout. In a fresh clone, run '
+                           'git submodule update --init vendor/freeink-sdk')
     reject_replace_refs(source)
 
     def git(*arguments):

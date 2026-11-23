@@ -108,7 +108,7 @@ def configured_main() -> None:
                         help="Skip the tier's wall-time budget: the caller budgets the whole run (tools/ci_gate.py)")
     parser.add_argument('--fresh-objects', action='store_true', help='Recompile reusable objects for cache comparison')
     parser.add_argument('--profile', choices=('canonical', 'linux'), default='canonical',
-                        help='Linux explicitly omits ImageIO decode coverage; separate exact-source Mac cover gate is required')
+                        help='Linux profile uses portable cover/cache checks')
     parser.add_argument('-j', '--jobs', type=int, default=gate_runner.default_jobs(),
                         help='Phases and compiler jobs at once (default: the usable CPUs); 1 is the serial gate')
     parser.add_argument('--host-jobs', type=int, help='Per-user phase/compiler slots across checkouts (default usable CPUs; NEWT_HOST_GLOBAL_JOBS)')
@@ -127,7 +127,7 @@ def configured_main() -> None:
     if args.profile == 'linux' and sys.platform != 'linux':
         parser.error('The Linux coverage profile requires a real Linux host')
     if args.profile == 'canonical' and sys.platform == 'linux':
-        parser.error('Linux must explicitly select --profile linux; complete software coverage also requires the Mac cover gate')
+        parser.error('Linux must explicitly select --profile linux')
     if args.fresh_objects:
         os.environ['NEWT_HOST_OBJECT_CACHE'] = '0'
     with gate_runner.job_environment(ROOT, args.jobs, args.host_jobs):
@@ -159,13 +159,10 @@ def gate(args) -> None:
         return
     print(f"PASS: official FreeInk source {FREEINK_COMMIT}, checkout inputs clean", flush=True)
     print(f"TIER {args.tier}: negative controls of {included or 'no test'}", flush=True)
-    chosen = set(included.split(','))
-    controls = None if included == 'all' else lambda script: script in chosen
-    phases, seconds = gate_plan.plan(args.profile, args.fresh_objects, controls), gate_tier.phase_seconds(ROOT)
+    phases, complete, weights = gate_plan.host_phases(ROOT, args.profile, args.fresh_objects, included, args.shard)
+    # A fresh CI runner has no last run to order its starts.
+    seconds = weights | gate_tier.phase_seconds(ROOT)
     if args.shard:
-        weights = gate_tier.phase_seconds(ROOT, gate_tier.SHARD_SECONDS)
-        complete, phases = len(phases), gate_tier.shard(phases, *args.shard, weights)
-        seconds = weights | seconds  # A fresh CI runner has no last run to order its starts.
         print(f"SHARD {args.shard[0]}/{args.shard[1]}: {len(phases)} of the tier's {complete} phases", flush=True)
     timings = gate_runner.run(phases, ROOT, args.jobs, args.keep_going, cpu_budgets=gate_runner.cpu_budgets(),
                               seconds=seconds)
@@ -176,7 +173,7 @@ def gate(args) -> None:
     print("PASS: host compile (ASan/UBSan), Rust checks and CLI validation")
     if args.profile == 'linux':
         print('Linux software coverage: portable cover/cache controls; '
-              'arbitrary PNG/JPEG ImageIO decode tests remain REQUIRED on this exact source via tools/check-mac-covers.py')
+              'for Mac ImageIO coverage see docs/CI.md#explicit-cover-coverage-boundary')
     print("Hardware firmware compilation and physical bring-up are separate gates.")
 
 

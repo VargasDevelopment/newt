@@ -287,31 +287,47 @@ inputs. Failure or receipt drift stops the sequence; ceilings are unchanged.
 
 ## Explicit cover coverage boundary
 
-The firmware draws covers on the device with its own decoders: baseline and
-progressive JPEG, and PNG. On Linux, the `jpeg_decoder` and `png_decoder`
-families, the core `cover_tolerance` tests and the preview's cover flows
-(`tests/preview_cover_test.py`) cover them. The host prepare tool,
-`tools/prepare-library-covers.py`, extracts covers with macOS ImageIO, and the
-Mac gate below covers it. For that tool, Linux is not claimed to support
-arbitrary PNG/JPEG, EXIF orientation, resizing or general decoder parity.
-Its test-only decoder accepts only four committed, SHA-locked authored grayscale
-PNGs. Each corresponding packed cover was compared against the production Mac
-Swift helper with zero differing bytes. All 22 reviewed UI frames remain
-mandatory and unchanged; unknown fixture bytes fail closed.
+**Linux.** The firmware uses its own baseline JPEG, progressive JPEG and PNG
+decoders. The `jpeg_decoder` and `png_decoder` families, the core
+`cover_tolerance` tests and the preview's cover flows
+(`tests/preview_cover_test.py`) exercise those paths. The Linux gate also
+verifies all frames in `artifacts/library-ui-review.json` using the firmware
+host build. The prepared-cover cases use a test helper that accepts only four
+committed, SHA-locked authored PNGs and returns their matching packed ImageIO output.
+Unknown fixture bytes fail closed.
 
-Linux reports `complete_software_coverage: false` and requires a separate fresh
-Mac gate for the exact candidate:
+**Mac.** Run the host-only Swift ImageIO cover gate on the exact commit for
+release acceptance and for any change to the ImageIO path.
+The ImageIO path is these files:
+
+- `tools/prepare-library-covers.py`
+- `tools/library-cover-image.swift`
+- `tools/library-cover-fixture.py`
+- `tests/fixtures/library-cover-images/`
+- `tests/library_cover_prepare_test.py`
+- `tools/check-mac-covers.py`
+
+The gate runs the cover preparation suite with authored PNG and JPEG inputs
+and compares the four locked fixtures against actual ImageIO output.
+The Mac gate does not build the firmware or render frames; the firmware host
+build is Linux x86_64 only.
+
+From a fresh clone, replace `FULL_SHA` with the candidate's full commit SHA.
+For a pull request, replace `PR_NUMBER` with its number and fetch its head
+before checking out the commit.
 
 ```sh
+git clone https://github.com/VargasDevelopment/newt.git
+cd newt
+git fetch origin pull/PR_NUMBER/head  # For a pull request
+git checkout --detach FULL_SHA
+git submodule update --init vendor/freeink-sdk
 python3 -B tools/check-mac-covers.py --expected-commit FULL_SHA
 ```
 
-That gate runs the complete ImageIO suite and directly verifies all 22 actual
-renderer frames, with committed source and golden authority checked before and
-after. Its report is `.build/mac-covers/report.json`. A Linux PASS alone cannot
-satisfy complete software acceptance. The Mac report is reviewed separately;
-no saved report can bypass Linux or Mac execution. Canonical local Mac
-`tools/check.py` retains its full cover suite.
+The Mac gate checks committed source before and after the suite and writes
+`.build/mac-covers/report.json`. The Linux report marks
+`complete_software_coverage: false` because it does not include ImageIO evidence.
 
 ## Locked inputs and fresh environments
 
