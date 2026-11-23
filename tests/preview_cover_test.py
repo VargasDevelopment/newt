@@ -86,9 +86,14 @@ def jpeg(width, height, dc, frame=0xc0):
     return out + bytes(data) + b'\xff\xd9'
 
 
+def grey(seed, x, y):
+    """The grey of art(seed)'s 8x8 block (x, y): diagonal bands."""
+    return (x * 8 + y * 4 + seed * 64) % 256
+
+
 def art(seed):
     """A 288x376 cover (twice the slot) of diagonal bands; `seed` shifts them."""
-    return jpeg(288, 376, lambda x, y: ((x * 8 + y * 4 + seed * 64) % 256 - 128) * 8)
+    return jpeg(288, 376, lambda x, y: (grey(seed, x, y) - 128) * 8)
 
 
 def epub(path, title, image, declaration='epub3', deflated=False):
@@ -171,10 +176,26 @@ def slot(frame, index):
     return region(frame, 74 + index % 2 * 236, 138 + index // 2 * 232)
 
 
+def ink_problem(raster, seed):
+    """Whether `raster` shows art(seed). The cover is the art at half size, so
+    each source block is a 4x4 cell; a cell's black share follows its grey
+    within any 4x4 ordered dither."""
+    for cy in range(HEIGHT // 4):
+        for cx in range(WIDTH // 4):
+            black = sum(raster[(cy * 4 + y) * ROW_BYTES + cx // 2] >> (7 - (cx % 2 * 4 + x)) & 1
+                        for y in range(4) for x in range(4))
+            expected = 16 * (255 - grey(seed, cx, cy)) / 255
+            if abs(black - expected) > 2:
+                return f'cell ({cx}, {cy}) has {black} of 16 black, not about {expected:.0f}'
+
+
 def art_problem(world, book):
+    """Whether `book` has a cover record that shows its own art."""
     data = world.cover(book)
     if data is None or len(data) != ART or data[:8] != SIGNATURE:
         return f'{book} has no {ART}-byte cover record ({None if data is None else len(data)})'
+    if problem := ink_problem(data[28:], list(SUPPORTED).index(book)):
+        return f'{book}\'s cover does not show its art: {problem}'
 
 
 # Each case returns None when the firmware behaved, else what went wrong.
@@ -189,6 +210,8 @@ def books_shelf(binary):
                 return problem
         if results != [PRODUCED] * len(SUPPORTED):
             return f'the shelf\'s attempts ended {results}'
+        if len({world.cover(book) for book in SUPPORTED}) != len(SUPPORTED):
+            return 'two books share one cover'
         for index, book in enumerate(SUPPORTED):
             if slot(shelf, index) != world.cover(book)[28:]:
                 return f'the shelf does not show {book}\'s new cover'
@@ -271,7 +294,11 @@ CASES = [
           '                crate::app_power::delay_ms(10);\n'
           '                if result!=CoverResult::Produced||poll.stopped(){return false;}\n'
           '                self.idle.consume_repaint();true',
-          '                let _=result;false')]]),
+          '                let _=result;false')],
+        # The decode counts its rows but draws none, so every cover is blank.
+        [('cover_decode.rs',
+          'for x in 0..usize::from(width){if bits[x/8]&(0x80>>(x%8))!=0{let target=x+self.left;out[target/8]|=0x80>>(target%8);}}',
+          'let _=(bits,out);')]]),
     (home, [
         # A produced cover does not advance the publication counter.
         [('cover_idle_step.rs', '    if outcome.result==R::Produced{published();}\n', '')],
