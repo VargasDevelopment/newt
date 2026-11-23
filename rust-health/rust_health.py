@@ -5,7 +5,7 @@
 Production Rust is every .rs file under rust/ outside any tests/ or target/
 directory, minus files declared only as #[cfg(test)] modules. Code inside
 #[cfg(test)] items is not production either. baseline.json records today's
-values per file; only growth fails.
+values per file; only growth fails, except size, which only warns.
 
 - unsafe: per-file ceilings per kind. A new file may contain unsafe only in a
   crate that already does. A crate here is a first-level source directory
@@ -16,8 +16,9 @@ values per file; only growth fails.
 - suppressions: per-file ceilings on #[allow( and #![allow(.
 - panic surface: per-file ceilings on .unwrap(), .expect(, panic! and
   unreachable!. todo! and unimplemented! always fail.
-- size: 500 lines. Existing oversized files keep their current ceiling.
-  Generated data files are exempt from size only, by exact path.
+- size (advisory): a file over 500 lines and over its recorded size prints a
+  warning; it never fails. --update only lowers a recorded size, so a grown
+  file keeps warning. Generated data files are exempt by exact path.
 - crates: a shared crate may not gain a Cargo path dependency on a platform
   (firmware, host or native) crate; today's such edges are listed exceptions.
   The external package set in rust/Cargo.lock is pinned.
@@ -274,18 +275,26 @@ def check_banned(tree: Tree, _baseline: Baseline) -> list[str]:
             for source in tree.sources.values() if source.metrics[BANNED]]
 
 
-def check_size(tree: Tree, baseline: Baseline) -> list[str]:
-    failures = [f'{path}: generated exclusion matches no production file' for path in baseline['generated']
+def size_warnings(tree: Tree, baseline: Baseline) -> list[tuple[str, str]]:
+    """(path, message) for each file over the line limit and its recorded size.
+    Length is a review signal, not a gate (docs/CODE_HEALTH.md)."""
+    warnings = [(path, 'generated exclusion matches no production file') for path in baseline['generated']
                 if path not in tree.sources]
     for source in tree.sources.values():
         if source.path in baseline['generated']:
             continue
-        recorded = baseline['files'].get(source.path, {})
-        ceiling = max(baseline['line_limit'], recorded.get('lines', 0))
-        if source.lines > ceiling:
-            failures.append(f'{source.path}: {source.lines} lines exceeds ceiling {ceiling}; '
-                            'simplify a cohesive boundary instead of squeezing formatting')
-    return failures
+        recorded = baseline['files'].get(source.path, {}).get('lines', 0)
+        if source.lines > max(baseline['line_limit'], recorded):
+            size = f', recorded size {recorded}' if recorded else ''
+            warnings.append((source.path, f"{source.lines} lines, over the {baseline['line_limit']}-line guide"
+                                          f'{size}; split it where a cohesive boundary makes the design simpler'))
+    return warnings
+
+
+def print_warning(path: str, message: str) -> None:
+    # On GitHub Actions this workflow command annotates the file in the pull request.
+    prefix = f'::warning file={path}::' if os.environ.get('GITHUB_ACTIONS') == 'true' else 'WARN '
+    print(f'{prefix}{path}: {message}')
 
 
 def _platform(crate: str, platform: list[str]) -> bool:
@@ -329,7 +338,7 @@ CHECKS: dict[str, Check] = {
     'safety': lambda tree, baseline: _ceilings(tree, baseline, [UNDOCUMENTED]),
     'suppressions': lambda tree, baseline: _ceilings(tree, baseline, [ALLOW]),
     'panic_surface': lambda tree, baseline: _ceilings(tree, baseline, PANICS),
-    'banned': check_banned, 'size': check_size, 'crate_edges': check_crate_edges, 'externals': check_externals,
+    'banned': check_banned, 'crate_edges': check_crate_edges, 'externals': check_externals,
     'natives': check_natives,
 }
 
@@ -341,13 +350,16 @@ def run_checks(tree: Tree, baseline: Baseline, checks: dict[str, Check] = CHECKS
 # ---- baseline ----
 
 def baseline_from(tree: Tree, policy: Baseline) -> Baseline:
-    """Today's values under an existing policy (limit, generated paths, platform and native owners)."""
+    """Today's values under an existing policy (limit, generated paths, platform and native owners)
+    and its recorded sizes."""
     files = {}
     for path, source in sorted(tree.sources.items()):
         entry = {metric: count for metric, count in sorted(source.metrics.items())
                  if count and metric not in (BANNED, NATIVE)}
-        if path not in policy['generated'] and source.lines > policy['line_limit']:
-            entry['lines'] = source.lines
+        # A recorded size only shrinks; a new or grown file keeps its warning.
+        recorded = policy['files'].get(path, {}).get('lines')
+        if recorded and path not in policy['generated'] and source.lines > policy['line_limit']:
+            entry['lines'] = min(source.lines, recorded)
         files[path] = entry
     return Baseline(line_limit=policy['line_limit'], generated=policy['generated'],
                     platform_crates=policy['platform_crates'],
@@ -401,6 +413,8 @@ def main(argv: list[str] | None = None) -> int:
         if raised := _raised(baseline, current):  # unreachable after a pass; guards the tighten-only contract
             raise ValueError('update would raise: ' + ', '.join(raised))
         write_baseline(args.baseline, current)
+    for path, message in size_warnings(tree, baseline):
+        print_warning(path, message)
     print(f'PASS rust-health: {_summary(tree)} ({time.monotonic() - started:.1f}s)')
     if tree.forbid_gaps:
         print('NOTE zero-unsafe crate roots without #![forbid(unsafe_code)]: ' + ', '.join(tree.forbid_gaps))

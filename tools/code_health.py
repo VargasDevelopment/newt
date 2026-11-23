@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Read-only tool/test line ratchet; optional verified C3 resource evidence."""
+"""Read-only code-health checks: limits against the base commit, advisory
+tool/test line counts and optional verified C3 resource evidence."""
 import sys
 
 sys.dont_write_bytecode = True
@@ -7,6 +8,7 @@ sys.pycache_prefix = None
 
 import argparse
 import json
+import os
 from pathlib import Path, PurePosixPath
 import subprocess
 
@@ -89,18 +91,24 @@ def discover(root):
     return files
 
 
-def check_structure(root, baseline):
-    files = discover(root)
-    oversized, failures = {}, []
-    for path, content in files.items():
-        lines = len(content.splitlines())
-        if lines > POLICY["line_thresholds"][classify(path)]:
-            oversized[path] = lines
-            ceiling = baseline["large_files"].get(path, 0)
-            if lines > ceiling:
-                failures.append(f"{path}: {lines} lines exceeds reviewed ceiling {ceiling}; "
-                                "simplify a cohesive boundary or explain a narrow exception")
-    return oversized, failures
+def length_warnings(root, baseline):
+    """Files over their line guide and their reviewed size. Length is a review
+    signal, not a gate: a reviewer judges the growth (docs/CODE_HEALTH.md)."""
+    warnings = []
+    for path, content in discover(root).items():
+        lines, guide = len(content.splitlines()), POLICY["line_thresholds"][classify(path)]
+        reviewed = baseline["large_files"].get(path, 0)
+        if lines > max(guide, reviewed):
+            size = f", reviewed size {reviewed}" if reviewed else ""
+            warnings.append((path, f"{lines} lines, over the {guide}-line guide{size}; "
+                                   "split it where a cohesive boundary makes the design simpler"))
+    return warnings
+
+
+def print_warning(path, message):
+    # On GitHub Actions this workflow command annotates the file in the pull request.
+    prefix = f"::warning file={path}::" if os.environ.get("GITHUB_ACTIONS") == "true" else "WARN "
+    print(f"{prefix}{path}: {message}")
 
 
 def verify_existing_inputs(root):
@@ -119,16 +127,17 @@ def main():
     if args.adopt and not args.variant:
         parser.error("--adopt requires --variant")
     baseline = read_baseline(ROOT)
-    _, failures = check_structure(ROOT, baseline)
-    failures.extend(base_failures(ROOT, baseline))
+    for path, message in length_warnings(ROOT, baseline):
+        print_warning(path, message)
+    failures = base_failures(ROOT, baseline)
     verify_existing_inputs(ROOT)
     if args.variant:
         from code_health_resources import check_resources
         base = read_baseline(ROOT, args.adopt) if args.adopt else None
         failures.extend(check_resources(ROOT, baseline, args.variant, base))
     if failures:
-        raise ValueError("Code-health ratchet failed:\n" + "\n".join(failures))
-    print("PASS: code-health line ratchet" + (f" and {args.variant} resources" if args.variant else ""))
+        raise ValueError("Code-health checks failed:\n" + "\n".join(failures))
+    print("PASS: code-health limits" + (f" and {args.variant} resources" if args.variant else ""))
     print("ADVISORY: function complexity and duplicated decisions require full review workflow judgment; no parser score enforced")
 
 
