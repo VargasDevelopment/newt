@@ -3,6 +3,8 @@
 use super::{arabic, style, text::*, types::*};
 mod links;
 mod initialization;
+mod segments;
+use segments::{MAX_SEGMENTS, Segment};
 use crate::{
     css::{self, CssDecl, CssStylesheetBuilder, TextAlign},
     hyphenator::Hyphenator,
@@ -842,76 +844,15 @@ impl<'a> EngineState<'a> {
             - indent;
         let mut left = max - r.width;
         let mut gaps = justification_gaps(r);
-        let hs = r.spaces == 0;
         let justify =
             self.paragraph.align == TextAlign::Justify && r.flags & 1 == 0 && gaps > 0 && left > 0;
-        let mut segs = [Segment::default(); 64];
-        let mut n = 0;
-        let mut seg = Segment {
-            start: r.start,
-            span: self.span_index(r.start),
-            level: self.storage.levels[r.start] & 7,
-            extra: self.extra(r.start),
-            ..Segment::default()
-        };
-        let (mut prev, mut i) = (0, r.start);
-        while i < r.end && n < segs.len() {
-            let at = i;
-            let si = self.span_index(at);
-            let level = self.storage.levels[at] & 7;
-            let extra = self.extra(at);
-            let cp = self.shaped(backend, r.end, &mut i, si);
-            if justify && cp == 32 {
-                close_segment(&mut segs, &mut n, seg, at);
-                let next = if i < r.end { i } else { at };
-                seg = Segment {
-                    start: i,
-                    span: self.span_index(next),
-                    level: self.storage.levels[next] & 7,
-                    extra: self.extra(next),
-                    gap: true,
-                    space: true,
-                    ..Segment::default()
-                };
-                prev = cp;
-                continue;
-            }
-            let compress = prev != 0 && compression(prev, cp, 2) != 0;
-            let cg = prev != 0
-                && !compress
-                && justify
-                && cjk(prev)
-                && cjk(cp)
-                && (hs || !(hangul(prev) && hangul(cp)));
-            let mixed = prev != 0 && crosses(prev, cp);
-            if si != seg.span || level != seg.level || extra != seg.extra || cg || mixed || compress
-            {
-                close_segment(&mut segs, &mut n, seg, at);
-                seg = Segment {
-                    start: at,
-                    span: si,
-                    level,
-                    extra,
-                    gap: cg,
-                    script: mixed,
-                    compress,
-                    ..Segment::default()
-                }
-            }
-            prev = cp
-        }
-        let rest = if n < segs.len() {
-            close_segment(&mut segs, &mut n, seg, r.end);
-            None
-        } else {
-            // A new segment after the last slot starts a forced line break.
-            let mut start = seg.start;
-            while start < r.end && self.storage.text[start] == b' ' { start += 1; }
+        let mut segs = [Segment::default(); MAX_SEGMENTS];
+        let (n, rest) = self.segment_line(backend, r, justify, &mut segs);
+        if rest.is_some() {
             r = self.line_metrics(backend, r.start, segs[n - 1].end, r.flags & !2);
             left = max - r.width;
             gaps = justification_gaps(r);
-            Some(start)
-        };
+        }
         if n == 0 {
             self.y = self.y.wrapping_add(lh);
             return LinePlacement::Placed(None);
@@ -940,7 +881,7 @@ impl<'a> EngineState<'a> {
         }
         let baseline = self.y.wrapping_add(backend.ascent(size));
         // Match frozen placeLine's byte indices for at most 64 segments.
-        let mut order = [0u8; 64];
+        let mut order = [0u8; MAX_SEGMENTS];
         let (mut high, mut odd) = (0, 255);
         for s in 0..n {
             order[s] = s as u8;
@@ -1182,18 +1123,6 @@ impl<'a> EngineState<'a> {
         self.y = self.params.top
     }
 }
-#[derive(Clone, Copy, Default)]
-struct Segment {
-    start: usize,
-    end: usize,
-    span: usize,
-    level: u8,
-    gap: bool,
-    space: bool,
-    script: bool,
-    compress: bool,
-    extra: u8,
-}
 enum LinePlacement {
     /// The next byte offset if the measured line crossed the segment cap.
     Placed(Option<usize>),
@@ -1203,11 +1132,4 @@ enum LinePlacement {
 fn justification_gaps(line: Line) -> i32 {
     i32::from(line.spaces) + i32::from(line.cjk)
         + if line.spaces == 0 { i32::from(line.hangul) } else { 0 }
-}
-fn close_segment(segs: &mut [Segment; 64], n: &mut usize, mut seg: Segment, end: usize) {
-    if end > seg.start {
-        seg.end = end;
-        segs[*n] = seg;
-        *n += 1;
-    }
 }
