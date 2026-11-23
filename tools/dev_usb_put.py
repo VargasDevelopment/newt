@@ -32,7 +32,7 @@ class Refused(ValueError):
 
 
 class RecoveryNeeded(ValueError):
-    """The folder holds a replaced file's only copy as .newt-old."""
+    """The device cannot prove a commit finished or undone; the folder needs a hand check."""
 
 
 class CommitUnknown(ValueError):
@@ -153,8 +153,8 @@ def put_files(client, folder, files, timeout, report):
                 if not str(error).startswith('ERROR recovery-needed'):
                     raise
                 entry['result'] = 'recovery-needed'
-                raise RecoveryNeeded(f'{error}: the folder holds a replaced file as .newt-old. The next put to '
-                                     'this folder restores it if its name is missing; otherwise check the card.') from error
+                raise RecoveryNeeded(f'{error}: the folder keeps .newt-old, .newt-put and .newt-old-name for a '
+                                     'hand check; see "Card write" in docs/dev-usb-bridge.md.') from error
     finally:
         client.untraced = ()
     total = sum(entry['size'] for entry in report['files'])

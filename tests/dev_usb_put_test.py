@@ -150,11 +150,11 @@ def an_unknown_commit_is_never_retried():
     assert peer.writes.count('DONE') == 1
 
 
-def a_kept_backup_is_reported_as_recovery_needed():
+def a_commit_left_for_a_hand_check_is_recovery_needed():
     for kind in ('DONE', 'FILE'):
         peer = LeasePeer(answers={kind: 'ERROR recovery-needed step=rename code=-5'})
         report = session(peer, FILES[1:])
-        assert '.newt-old' in report['error'], report['error']
+        assert 'docs/dev-usb-bridge.md' in report['error'], report['error']
         assert report['put']['files'][0]['result'] == 'recovery-needed'
         assert peer.writes.count('PUT') == 1, 'the run stops there'
 
@@ -205,7 +205,7 @@ def main():
     refusals_before_any_write()
     failures_before_done_leave_the_name_unchanged()
     an_unknown_commit_is_never_retried()
-    a_kept_backup_is_reported_as_recovery_needed()
+    a_commit_left_for_a_hand_check_is_recovery_needed()
     plans_are_checked_before_the_port_opens()
     print('PASS: dev-usb put: verified final SHA-256, lines within the receive queue, fragmented replies, '
           'deadlines, short writes, no retry of an unknown commit, recovery-needed and plan refusals; '

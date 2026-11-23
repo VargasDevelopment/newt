@@ -2,7 +2,8 @@
 //! A card, a serial channel and a SHA-256 for the lease, each as plain as the
 //! firmware's: the card stores every write at once (so a partial file is
 //! visible), refuses a rename onto an existing name, fails a named step on
-//! request, and can press a button when a named step runs.
+//! request, can press a button or jump the clock when a named step runs, and
+//! can hold two names on one file, as a FAT rename a power loss cut short.
 use newt_core::dev_put::{Card, Entry, Wire};
 use newt_core::update_online::Hash;
 use newt_core::wire::crc32;
@@ -12,6 +13,8 @@ use std::ffi::CStr;
 use std::rc::Rc;
 
 pub const FAILED: i32 = -5;
+/// What a cross-linked name reads once the other name's remove freed its data.
+pub const FREED: &[u8] = b"<freed clusters>";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Node { File(Vec<u8>), Folder }
@@ -31,18 +34,28 @@ pub struct FakeCard {
     pub fail: Option<&'static str>,
     /// The next renames onto this path fail with `FAILED`, this many times.
     pub fail_rename_onto: Option<(&'static str, u32)>,
+    /// The next rename onto this path moves the file, then fails with
+    /// `FAILED`, as a rename whose final sync fails.
+    pub fail_after_rename_onto: Option<&'static str>,
+    /// Two names on one file: removing either frees the other's data.
+    pub cross_linked: Option<(String, String)>,
     /// When this step runs for the given time (from 1), a button is pressed:
     /// the wire sharing `pressed` reports it at its next look.
     pub press_on: Option<(&'static str, u32)>,
     pub pressed: Rc<Cell<bool>>,
+    /// When this step runs for the given time (from 1), the wire sharing
+    /// `late` reads the clock this much later.
+    pub late_on: Option<(&'static str, u32, u32)>,
+    pub late: Rc<Cell<u32>>,
     pub steps: BTreeMap<&'static str, u32>,
 }
 
 impl Default for FakeCard {
     fn default() -> Self {
         Self { nodes: BTreeMap::from([("/newt-sd".into(), Node::Folder)]), handles: BTreeMap::new(), next_fd: 3,
-            free: 1 << 30, write_limit: usize::MAX, flip: None, fail: None, fail_rename_onto: None, press_on: None,
-            pressed: Rc::default(), steps: BTreeMap::new() }
+            free: 1 << 30, write_limit: usize::MAX, flip: None, fail: None, fail_rename_onto: None,
+            fail_after_rename_onto: None, cross_linked: None, press_on: None, pressed: Rc::default(), late_on: None,
+            late: Rc::default(), steps: BTreeMap::new() }
     }
 }
 
@@ -63,6 +76,13 @@ impl FakeCard {
         self.nodes.insert(parent.into(), Node::Folder);
         self.nodes.insert(path.into(), Node::File(bytes.to_vec()));
     }
+    /// A rename a power loss stopped between writing the new entry and
+    /// removing the old: both names hold one file.
+    pub fn cut_rename(&mut self, from: &str, to: &str) {
+        let bytes = self.file(from).expect("a file to rename").to_vec();
+        self.put_file(to, &bytes);
+        self.cross_linked = Some((from.into(), to.into()));
+    }
     pub fn open_files(&self) -> usize { self.handles.len() }
     /// How many times a card step ran.
     pub fn count(&self, step: &str) -> u32 { self.steps.get(step).copied().unwrap_or(0) }
@@ -70,6 +90,9 @@ impl FakeCard {
         let count = self.steps.entry(name).or_default();
         *count += 1;
         if self.press_on == Some((name, *count)) { self.pressed.set(true); }
+        if let Some((_, _, ms)) = self.late_on.filter(|&(step, nth, _)| (step, nth) == (name, *count)) {
+            self.late.set(self.late.get() + ms);
+        }
         if self.fail == Some(name) { Err(FAILED) } else { Ok(()) }
     }
     fn parent_is_folder(&self, path: &str) -> bool {
@@ -134,10 +157,18 @@ impl Card for FakeCard {
         self.handles.remove(&fd).map(drop).ok_or(-9)
     }
     fn remove(&mut self, path: &CStr) -> Result<(), i32> {
-        match self.nodes.remove(&text(path)) {
-            Some(Node::File(_)) => Ok(()),
-            _ => Err(-2),
+        self.step("remove")?;
+        let path = text(path);
+        if !matches!(self.nodes.get(&path), Some(Node::File(_))) { return Err(-2); }
+        self.nodes.remove(&path);
+        if let Some((one, other)) = self.cross_linked.take() {
+            let survivor = if path == one { other } else if path == other { one } else {
+                self.cross_linked = Some((one, other));
+                return Ok(());
+            };
+            self.nodes.insert(survivor, Node::File(FREED.to_vec()));
         }
+        Ok(())
     }
     fn rename(&mut self, from: &CStr, to: &CStr) -> Result<(), i32> {
         self.step("rename")?;
@@ -148,8 +179,12 @@ impl Card for FakeCard {
         }
         if self.nodes.contains_key(&to) { return Err(-17); }
         let node = self.nodes.remove(&from).ok_or(-2)?;
+        if let Some(pair) = &mut self.cross_linked {
+            for name in [&mut pair.0, &mut pair.1] { if *name == from { name.clone_from(&to); } }
+        }
+        let failed = self.fail_after_rename_onto.take_if(|path| *path == to).is_some();
         self.nodes.insert(to, node);
-        Ok(())
+        if failed { Err(FAILED) } else { Ok(()) }
     }
     fn free_bytes(&mut self) -> Result<u64, i32> {
         self.step("free")?;
@@ -173,17 +208,25 @@ pub struct FakeWire {
     pub stalled: bool,
     /// A press the card made (FakeCard::press_on), taken at the next look.
     pub pressed: Rc<Cell<bool>>,
+    /// Time the card added (FakeCard::late_on).
+    pub late: Rc<Cell<u32>>,
 }
 
 impl FakeWire {
     pub fn new(script: Vec<Event>) -> Self {
         Self { script: script.into(), pending: VecDeque::new(), connected: true, clock: 1_000, sent: Vec::new(),
-            write_limit: usize::MAX, stalled: false, pressed: Rc::default() }
+            write_limit: usize::MAX, stalled: false, pressed: Rc::default(), late: Rc::default() }
     }
     fn front(&mut self, wanted: fn(&Event) -> bool) -> bool {
         if !self.pending.is_empty() || !self.script.front().is_some_and(wanted) { return false; }
         self.script.pop_front();
         true
+    }
+    /// The input the lease left unread, as the bridge would next see it.
+    pub fn unread(&self) -> String {
+        let mut text: String = self.pending.iter().map(|&b| char::from(b)).collect();
+        for event in &self.script { if let Event::Line(line) = event { text.push_str(line); } }
+        text
     }
     /// Each reply's ID and body, after checking its framing and CRC.
     pub fn replies(&self, boot: u32, session: u32) -> Vec<(u32, String)> {
@@ -219,7 +262,7 @@ impl Wire for FakeWire {
         self.sent.extend_from_slice(&bytes[..put]);
         put
     }
-    fn now(&mut self) -> u32 { self.clock }
+    fn now(&mut self) -> u32 { self.clock + self.late.get() }
     fn physical_input(&mut self) -> bool {
         self.pressed.take() || self.front(|event| matches!(event, Event::Press))
     }

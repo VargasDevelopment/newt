@@ -174,27 +174,41 @@ heap block that exists only while it runs, so the bridge holds no new RAM while
 idle.
 
 - Bytes go to the folder's hidden `.newt-put`, never to the final name.
-- A replaced file moves to the folder's `.newt-old`, after the folder's
-  `.newt-old-name` marker holding its name is synced. If the new file's rename
-  fails, the old file moves back.
+- DONE is the commit point. Before its first rename it syncs the folder's
+  `.newt-old-name` marker, holding the target's name, even for a new file. A
+  replaced file then moves to the folder's `.newt-old`, the temp takes its
+  name, and only then are `.newt-old` and the marker removed. If the new
+  file's rename fails, the old file moves back.
 - Physical input, a disconnect, 3 s without a complete line, a 1 s reply
   stall, 600 s in all, or a malformed or stale line abandons the lease: the
   temp is removed, the final name keeps what it held, and the session ends
   (`ERROR abandoned reason=...` while the host is still there). Physical input,
   a disconnect and the 600 s bound also stop DONE while it reads the temp back
-  and just before its first rename. From the first rename on, DONE always
-  finishes or moves the old file back. A HELLO also ends the lease and is
-  answered as a new handshake.
+  and just before its first rename. From the first rename on, DONE finishes,
+  moves the old file back or reports `recovery-needed`. A HELLO ends the lease
+  and is answered as a new handshake, except during DONE: DONE reads no line,
+  so a HELLO sent meanwhile is read after DONE answers, and that answer gives
+  the commit's result.
 - A refused request (`ERROR REASON` or `ERROR card step=STEP code=ERRNO`) ends
-  the lease with the temp removed; the session continues.
-- `ERROR recovery-needed step=STEP code=ERRNO` means the folder holds a
-  replaced file's only copy as `.newt-old`. It is kept, never removed.
-- Each FILE first resolves its folder's `.newt-old`, the trace of a power loss
-  or a failed move back. If the marker's file is missing, the backup goes back
-  under that name. If it is present, it already holds the new file, so the
-  backup is removed. A backup without a readable marker refuses every write to
-  that folder until the card is checked by hand. A leftover `.newt-put` is
-  removed. The app and update scans never offer a hidden name.
+  the lease with the temp removed and the final name as it was; the session
+  continues.
+- `ERROR recovery-needed step=STEP code=ERRNO` means the device cannot prove
+  the commit finished or was undone, for example a rename that failed after it
+  changed the card. The folder's hidden files and marker stay, and every write
+  to that folder is refused until they are cleared by hand (below).
+- Each FILE first looks at its folder's marker. Without one, no rename began,
+  so a leftover `.newt-put` is removed; a `.newt-old` without a marker refuses.
+  With one, it resolves a commit a power loss stopped, but only when one name
+  is left: a lone `.newt-old` goes back under the marker's name, a lone
+  `.newt-put` is removed, a lone target is the finished file. Any two of the
+  target, `.newt-old` and `.newt-put` refuse with `recovery-needed`, because a
+  FAT rename cut short leaves two names on one file, and removing either frees
+  the other's data. The app and update scans never offer a hidden name.
+
+To clear `recovery-needed`, put the card in a computer and let its disk check
+repair the file system (it fixes two names sharing data). Check the real file
+under the marker's name, then delete `.newt-old`, `.newt-put` and
+`.newt-old-name` from that folder.
 
 ### Host
 
@@ -209,8 +223,8 @@ checked before the port opens. The client checks the device's final size and
 SHA-256 against its own, stops at the first failure and never retries. When
 DONE's answer never arrives the file may or may not be in place: the receipt
 says `"result": "unknown"`, and the card must be checked after a fresh
-handshake. `"result": "recovery-needed"` means the device kept the old file as
-`.newt-old`; the next put to that folder restores it if its name is missing. Each file's receipt entry gives its result, `free_before` and
+handshake. `"result": "recovery-needed"` means the folder needs the hand check above
+before its next put. Each file's receipt entry gives its result, `free_before` and
 seconds; DATA lines are summarised once per file instead of traced one by one.
 
 Each 150-byte chunk waits for its answer, so speed depends on the USB round

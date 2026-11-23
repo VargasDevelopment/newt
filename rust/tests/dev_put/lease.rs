@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! The bridge's card write (newt_core::dev_put) over a fake card and host:
 //! the name and folder rules, admission, and that the final name only ever
-//! holds the old file or the whole verified new one, whatever ends the lease,
-//! with a backup never removed while it may be a file's only copy.
+//! holds the old file or the whole verified new one, whatever ends the lease.
+//! commit.rs covers DONE's commit and the recovery an interrupted one needs.
+mod commit;
 mod fakes;
 mod sha256;
 
@@ -61,6 +62,7 @@ fn lease(card: &mut FakeCard, host: &mut Host) -> Outcome {
 
 fn lease_with(card: &mut FakeCard, mut wire: FakeWire) -> Outcome {
     wire.pressed = card.pressed.clone();
+    wire.late = card.late.clone();
     let mut memory: Box<[u8; MEMORY_BYTES]> = vec![0; MEMORY_BYTES].try_into().expect("lease memory");
     let session = Session { boot: BOOT, session: SESSION, request: PUT_ID };
     let end = dev_put::run(session, &mut memory, &mut wire, card, &mut HostHash::default());
@@ -196,118 +198,6 @@ fn an_existing_file_is_replaced_only_after_verification() {
     assert_eq!(card.file(TARGET), Some(&new[..]));
     assert_eq!(card.file(TEMP), None);
     resolved(&card);
-}
-
-#[test]
-fn a_failed_rename_puts_the_old_file_back() {
-    let mut card = FakeCard { fail_rename_onto: Some((TARGET, 1)), ..FakeCard::default() };
-    card.put_file(TARGET, b"old");
-    let outcome = lease(&mut card, Host::new().put("dev", "runtime.bin", &pattern(4_000)));
-    assert_eq!(outcome.last(), format!("ERROR card step=rename code={FAILED}"));
-    unchanged(&card, Some(b"old"));
-    resolved(&card);
-}
-
-#[test]
-fn a_failed_restore_keeps_the_backup_and_says_so() {
-    let mut card = FakeCard { fail_rename_onto: Some((TARGET, 2)), ..FakeCard::default() };
-    card.put_file(TARGET, b"old");
-    let mut host = Host::new();
-    host.put("dev", "runtime.bin", &pattern(4_000));
-    let last_id = host.id;
-    let outcome = lease(&mut card, &mut host);
-    assert_eq!(outcome.last(), format!("ERROR recovery-needed step=rename code={FAILED}"));
-    assert_eq!(outcome.end, End::Kept { last_id });
-    assert_eq!((card.file(TARGET), card.file(TEMP)), (None, None));
-    assert_eq!((card.file(OLD), card.file(MARKER)), (Some(&b"old"[..]), Some(&b"runtime.bin"[..])));
-    // The folder's next write, of any name, first puts the old file back.
-    let outcome = lease(&mut card, Host::new().put("dev", "other.bin", b"other"));
-    assert_eq!(outcome.last(), done(b"other"));
-    assert_eq!((card.file(TARGET), card.file(OTHER)), (Some(&b"old"[..]), Some(&b"other"[..])));
-    resolved(&card);
-}
-
-/// A replacement a power loss stopped after the target moved aside.
-fn moved_aside(target: Option<&[u8]>) -> FakeCard {
-    let mut card = FakeCard::default();
-    card.put_file(OLD, b"the only copy");
-    card.put_file(MARKER, b"runtime.bin");
-    card.put_file(TEMP, b"verified new bytes");
-    if let Some(bytes) = target { card.put_file(TARGET, bytes); }
-    card
-}
-
-#[test]
-fn a_power_loss_mid_replace_is_restored_before_another_file() {
-    let mut card = moved_aside(None);
-    let outcome = lease(&mut card, Host::new().put("dev", "other.bin", b"other"));
-    assert_eq!(outcome.last(), done(b"other"));
-    assert_eq!(card.file(TARGET), Some(&b"the only copy"[..]));
-    assert_eq!(card.file(OTHER), Some(&b"other"[..]));
-    resolved(&card);
-}
-
-#[test]
-fn a_power_loss_after_the_install_drops_only_the_backup() {
-    let mut card = moved_aside(Some(b"installed"));
-    let outcome = lease(&mut card, Host::new().put("dev", "other.bin", b"other"));
-    assert_eq!(outcome.last(), done(b"other"));
-    assert_eq!(card.file(TARGET), Some(&b"installed"[..]));
-    resolved(&card);
-}
-
-#[test]
-fn a_backup_it_cannot_resolve_refuses_every_write() {
-    for (marker, reply) in [(None, "ERROR recovery-needed step=marker code=-2"),
-        (Some(&b"../Books"[..]), "ERROR recovery-needed step=marker code=0"),
-        (Some(b""), "ERROR recovery-needed step=marker code=0")] {
-        let mut card = moved_aside(None);
-        card.nodes.remove(MARKER);
-        if let Some(marker) = marker { card.put_file(MARKER, marker); }
-        let outcome = lease(&mut card, Host::new().put("dev", "other.bin", b"other"));
-        assert_eq!(outcome.bodies(), [BANNER, reply], "{marker:?}");
-        assert_eq!(card.file(OLD), Some(&b"the only copy"[..]), "the backup is never removed");
-        assert_eq!((card.file(TARGET), card.file(OTHER)), (None, None));
-    }
-}
-
-/// A replacement whose DONE sees a press when `step` runs for the `nth` time.
-fn pressed_during_done(step: &'static str, nth: u32) -> (FakeCard, Outcome, Vec<u8>) {
-    let new = pattern(4_000);
-    let mut card = FakeCard { press_on: Some((step, nth)), ..FakeCard::default() };
-    card.put_file(TARGET, b"old");
-    let outcome = lease(&mut card, Host::new().put("dev", "runtime.bin", &new));
-    (card, outcome, new)
-}
-
-#[test]
-fn a_press_while_done_reads_back_stops_it_there() {
-    let (card, outcome, _) = pressed_during_done("read", 1);
-    assert_eq!(outcome.end, End::Cancelled);
-    assert_eq!(outcome.last(), "ERROR abandoned reason=physical-input");
-    assert_eq!(card.count("read"), 1, "the read-back stops at the next chunk, not at its end");
-    unchanged(&card, Some(b"old"));
-    resolved(&card);
-}
-
-#[test]
-fn a_press_just_before_the_first_rename_keeps_the_old_file() {
-    // The second sync is the marker's, the last card step before the renames.
-    let (card, outcome, _) = pressed_during_done("sync", 2);
-    assert_eq!(outcome.end, End::Cancelled);
-    assert_eq!(outcome.last(), "ERROR abandoned reason=physical-input");
-    assert_eq!(card.count("rename"), 0);
-    unchanged(&card, Some(b"old"));
-    resolved(&card);
-}
-
-#[test]
-fn a_press_after_the_first_rename_never_stops_it_halfway() {
-    let (card, outcome, new) = pressed_during_done("rename", 1);
-    assert_eq!(outcome.last(), done(&new));
-    assert_eq!(card.file(TARGET), Some(&new[..]));
-    resolved(&card);
-    assert!(outcome.wire.pressed.get(), "the press is left for the screen");
 }
 
 #[test]

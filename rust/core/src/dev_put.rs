@@ -6,11 +6,12 @@
 //! exists only for the lease. Bytes go to the folder's fixed temp name, are
 //! synced, read back from the card and checked against the offered size and
 //! SHA-256, and only then renamed into place, so the final name never holds a
-//! partial file. A replaced file is moved aside to a backup whose target a
-//! synced marker names; a failed rename moves it back, and the folder's next
-//! FILE finishes or undoes a replacement a power loss interrupted. Physical
-//! input, a disconnect, a stall or a new HELLO abandons the transfer up to the
-//! first rename; every exit closes the file and removes the temp.
+//! partial file. DONE syncs a marker naming its target before any rename; a
+//! replaced file waits in a backup until the new one holds its name, and a
+//! failed rename moves it back. The folder's next FILE resolves a commit a
+//! power loss stopped only where one name is left. Physical input, a
+//! disconnect, a stall or a new HELLO abandons the transfer up to DONE's
+//! commit point; until then every exit closes the file and removes the temp.
 use core::ffi::CStr;
 
 #[path = "dev_put/lease.rs"]
@@ -83,7 +84,7 @@ impl Folder {
             Self::Dev => c"/newt-sd/Newt/Dev/.newt-old",
         }
     }
-    /// The backup's target name, synced before the target moves aside.
+    /// DONE's target name, synced before its first rename.
     pub fn marker(self) -> &'static CStr {
         match self {
             Self::Apps => c"/newt-sd/Newt/Apps/.newt-old-name",
