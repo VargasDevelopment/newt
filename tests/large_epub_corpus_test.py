@@ -158,7 +158,59 @@ def rustflags(objects: list[Path], *, warnings: bool) -> str:
     return shlex.join(flags)
 
 
-def run_control(run, workspace, target, support, manifest, name, source, good, bad, failing_case):
+def run_clean_cases(binary, run, workspace, support, manifest):
+    run.env["NEWT_LARGE_EPUB_MANIFEST"] = str(manifest)
+    out = run.run([binary, "--nocapture"], workspace)
+    support.require("test result: ok. 1 passed; 0 failed; 0 ignored" in out, "corpus runner failed")
+    return out
+
+
+def prepare_control_baselines(binary, run, workspace, epubs_dir, output, support, by_name, verified, controls, *, tag="baseline"):
+    """Ensure every control target case passes on unchanged code before mutating."""
+    needed = []
+    for row in controls:
+        name = row[4]
+        if name not in verified and name not in needed:
+            needed.append(name)
+    if not needed:
+        return
+    to_generate = [corpus.CASES_BY_NAME[name] for name in needed if name not in by_name]
+    if to_generate:
+        for rec in corpus.write_corpus(epubs_dir, to_generate):
+            by_name[rec["name"]] = rec
+    baseline_manifest = output / f"ctrl-{tag}.tsv"
+    write_manifest(baseline_manifest, [by_name[name] for name in needed])
+    run_clean_cases(binary, run, workspace, support, baseline_manifest)
+    verified.update(needed)
+
+
+def verify_control_baseline_guard(binary, run, workspace, epubs_dir, output, support, by_name):
+    """Self-test: a broken control expectation must fail on unchanged code before any mutation."""
+    bad_name = "chapter-pages-over-768"
+    bad_by_name = {bad_name: {**by_name[bad_name], "expected_pages_range": (1, 1)}}
+    bad_verified = set()
+    number = len(run.commands)
+    try:
+        prepare_control_baselines(
+            binary, run, workspace, epubs_dir, output, support,
+            bad_by_name, bad_verified, [("self-test", "", "", "", bad_name)],
+            tag="baseline-selftest",
+        )
+    except RuntimeError:
+        stdout = (run.output / f"{number:03d}.stdout").read_text()
+        stderr = (run.output / f"{number:03d}.stderr").read_text()
+        combined = stdout + "\n" + stderr
+        support.require(
+            "test result: FAILED." in stdout and f"{bad_name}:" in combined and bad_name not in bad_verified,
+            f"baseline self-test must fail cleanly on {bad_name}",
+        )
+    else:
+        raise RuntimeError(f"baseline self-test passed with broken expectation on {bad_name}")
+    print(f"PASS self-test: clean baseline rejects broken expectation on {bad_name}", flush=True)
+
+
+def run_control(run, workspace, target, support, manifest, verified, name, source, good, bad, failing_case):
+    support.require(failing_case in verified, f'control "{name}": {failing_case} has no clean baseline')
     path = workspace / source
     text = path.read_text()
     support.require(text.count(good) == 1, f'control "{name}": anchor not in rust/{source} exactly once')
@@ -281,9 +333,8 @@ def main(argv=None):
         try:
             binary = test_binary(run, workspace, target)
             exec_t0 = time.perf_counter()
-            out = run.run([binary, "--nocapture"], workspace)
+            out = run_clean_cases(binary, run, workspace, support, manifest)
             exec_s = time.perf_counter() - exec_t0
-            support.require("test result: ok. 1 passed; 0 failed; 0 ignored" in out, "corpus runner failed")
             if args.measure:
                 for line in out.splitlines():
                     if line.startswith(("SIZES ", "CASE ")):
@@ -291,15 +342,16 @@ def main(argv=None):
             if args.sweep:
                 run_sweep(binary, run, workspace, output / "sweep")
             if not args.no_controls and negative_controls(__file__):
-                run.env["RUSTFLAGS"] = rustflags(objects, warnings=False)
                 by_name = {r["name"]: r for r in records}
+                verified = set(by_name)
+                prepare_control_baselines(binary, run, workspace, epubs_dir, output, support, by_name, verified, CONTROLS)
+                verify_control_baseline_guard(binary, run, workspace, epubs_dir, output, support, by_name)
+                run.env["RUSTFLAGS"] = rustflags(objects, warnings=False)
                 for row in CONTROLS:
                     case_name = row[4]
-                    if case_name not in by_name:
-                        by_name[case_name] = corpus.write_corpus(epubs_dir, [corpus.CASES_BY_NAME[case_name]])[0]
                     case_manifest = output / f"ctrl-{case_name}.tsv"
                     write_manifest(case_manifest, [by_name[case_name]])
-                    run_control(run, workspace, target, support, case_manifest, *row)
+                    run_control(run, workspace, target, support, case_manifest, verified, *row)
         except RuntimeError:
             for log in sorted((output / "logs").glob("*.std*"))[-2:]:
                 print(log.read_text(), file=sys.stderr, end="")
