@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
-//! Actual Core baseline JPEG decoder with frozen arena/CRC/layout/row policy.
+//! Core cover JPEG decoders (baseline, or a progressive file's first scan)
+//! with frozen arena/CRC/layout/row policy.
 use super::{memory::Memory,io::Control,CoverResult as R,member::INFLATE_BYTES};
 use core::mem::{size_of,align_of};
 use newt_core::{cover::{self,jpeg::{self,Layout}},jpeg::{Input,Error,Workspace,
-    renderer::{self,Rows,RenderError}},page_renderer::{ImageRows,SafetyError,BookStatus},
+    progressive::{self,Huffman},renderer::{self,Rows,RenderError}},page_renderer::{ImageRows,SafetyError,BookStatus},
     zip_window::source::BookSource};
 #[derive(Default)]
 pub struct Drift {pub layout:bool,pub crc:bool}
@@ -62,12 +63,13 @@ impl<'a> Parts<'a>{
         let (a,b)=core::mem::take(&mut self.0).split_at_mut(n);self.0=b;Some(a)
     }
     /// # Safety
-    /// T is a numeric all-zero-valid type, and the backing's bytes are initialized.
+    /// T is plain data that all-zero bytes make valid, and the backing's bytes are initialized.
     unsafe fn numeric<T>(&mut self,n:usize)->Option<&'a mut[T]>{
         let pad=self.0.as_ptr().align_offset(align_of::<T>());self.bytes(pad)?;
         let bytes=self.bytes(size_of::<T>().checked_mul(n)?)?;
-        // SAFETY: private callers use only i32/i16/u32/u16 with initialized zero
-        // bytes; checked aligned disjoint prefix, exact element count.
+        // SAFETY: private callers use only i32/i16/u32/u16 and Huffman (bytes,
+        // u16s and a bool) with initialized zero bytes; checked aligned
+        // disjoint prefix, exact element count.
         Some(unsafe{core::slice::from_raw_parts_mut(bytes.as_mut_ptr().cast(),n)})
     }
 }
@@ -77,7 +79,7 @@ pub fn decode(source:&mut dyn BookSource,expected:u32,memory:&Memory<'_>,control
     // SAFETY: actual max-aligned Layout-sized exclusive allocation, initialized
     // before reference formation; scalar/array-only Layout has no destructor.
     let layout=unsafe{let p=layout_block.pointer().cast::<Layout>();p.write(Layout::default());&mut*p};
-    let baseline=jpeg::baseline(source,layout);
+    let baseline=jpeg::validate(source,layout);
     if baseline!=jpeg::Status::Ready && control.stopped(){return R::Cancelled;}
     match baseline{
         jpeg::Status::Ready=>{},jpeg::Status::Unsupported=>return R::Unsupported,
@@ -89,7 +91,7 @@ pub fn decode(source:&mut dyn BookSource,expected:u32,memory:&Memory<'_>,control
     if !cover::read(source,bytes-2,&mut end){return if control.stopped(){R::Cancelled}else{R::IoError};}
     if end!=[255,217]{return R::Incomplete;}
     let target=jpeg::placement(layout.width,layout.height);
-    let arena_bytes=jpeg::arena_bytes((layout.width,layout.height),target);
+    let arena_bytes=jpeg::arena_bytes(layout,target);
     let object=(size_of::<Ahead<'_>>()+15)&!15;
     let ahead=if Memory::charge(size_of::<Layout>())+Memory::charge(cover::PIXELS)+Memory::charge(object+4096+arena_bytes)
         <=Memory::charge(INFLATE_BYTES){object+4096}else{0};
@@ -101,27 +103,40 @@ pub fn decode(source:&mut dyn BookSource,expected:u32,memory:&Memory<'_>,control
         // disjoint initialized window. Its borrowed source never escapes decode.
         unsafe{let p=place.as_mut_ptr().cast::<Ahead<'_>>();p.write(Ahead{source,window,held:0,start:0});&mut*p}
     };
-    let scaled=usize::from(layout.width>>jpeg::scale((layout.width,layout.height),target));
+    let progressive=layout.progressive;
     let mut parts=Parts(arena);let Some(skip)=parts.bytes(1024)else{return R::Declined;};
-    let Some(pool)=parts.bytes(8192)else{return R::Declined;};let mut pool=Parts(pool);
-    // SAFETY: numeric zero-valid initialized arrays withdrawn disjointly from
-    // the original 8KiB JPEG pool. No decoder allocation occurs outside it.
-    let Some((workspace,rows))=(unsafe{(||{
-        let workspace=Workspace{input:pool.bytes(512)?,segment:pool.bytes(512)?,quant:pool.numeric::<i32>(256)?,
-            huffman:pool.bytes(1088)?,block:pool.numeric::<i32>(64)?,mcu:pool.numeric::<i16>(384)?,pixels:pool.bytes(256)?};
-        let rows=Rows{band:parts.bytes(16*scaled)?,row:parts.bytes(usize::from(target.0))?,
-            sums:parts.numeric::<u32>(usize::from(target.0))?,counts:parts.numeric::<u16>(usize::from(target.0))?};
-        Some((workspace,rows))
-    })()})else{return R::Declined;};
     pixels.fill(0);
     let mut raster=Raster{control,pixels,width:target.0,height:target.1,left:usize::from(144-target.0)/2,
         top:usize::from(188-target.1)/2,rows:0,cancelled:false,invalid:false};
     let mut checked=Checked{source:input,layout,at:0,crc:u32::MAX,changed:false,io_error:false};
-    let result=renderer::render(&mut checked,workspace,rows,target.0,target.1,&mut raster);
+    let result=if progressive{
+        let width=usize::from(target.0);
+        // SAFETY: zero-valid initialized Huffman tables withdrawn disjointly
+        // from this arena, sized by arena_bytes. No decoder allocation occurs outside it.
+        let Some(buffers)=(unsafe{(||Some(progressive::Buffers{input:parts.bytes(512)?,tables:parts.numeric::<Huffman>(4)?,
+            previous:parts.bytes(width)?,current:parts.bytes(width)?,output:parts.bytes(width)?,
+            grid:core::mem::take(&mut parts.0)}))()})else{return R::Declined;};
+        progressive::render(&mut checked,buffers,target.0,target.1,&mut raster)
+    }else{
+        let scaled=usize::from(checked.layout.width>>jpeg::scale((checked.layout.width,checked.layout.height),target));
+        let Some(pool)=parts.bytes(8192)else{return R::Declined;};let mut pool=Parts(pool);
+        // SAFETY: numeric zero-valid initialized arrays withdrawn disjointly from
+        // the original 8KiB JPEG pool. No decoder allocation occurs outside it.
+        let Some((workspace,rows))=(unsafe{(||{
+            let workspace=Workspace{input:pool.bytes(512)?,segment:pool.bytes(512)?,quant:pool.numeric::<i32>(256)?,
+                huffman:pool.bytes(1088)?,block:pool.numeric::<i32>(64)?,mcu:pool.numeric::<i16>(384)?,pixels:pool.bytes(256)?};
+            let rows=Rows{band:parts.bytes(16*scaled)?,row:parts.bytes(usize::from(target.0))?,
+                sums:parts.numeric::<u32>(usize::from(target.0))?,counts:parts.numeric::<u16>(usize::from(target.0))?};
+            Some((workspace,rows))
+        })()})else{return R::Declined;};
+        renderer::render(&mut checked,workspace,rows,target.0,target.1,&mut raster)
+    };
     if raster.cancelled || control.stopped(){return R::Cancelled;}
     if checked.changed{drift.layout=true;return R::Invalid;}
     if matches!(result,Err(RenderError::Status(BookStatus::OutOfMemory))){return R::Declined;}
     if checked.io_error{return R::IoError;}
+    // A later first scan than the DC one, or a refused frame, is a form the decoder lacks.
+    if matches!(result,Err(RenderError::Status(BookStatus::Unsupported))){return R::Unsupported;}
     if matches!(result,Err(RenderError::Status(BookStatus::Truncated))) || (result.is_ok()&&raster.rows!=target.1){return R::Incomplete;}
     if result.is_err() || raster.invalid{return if control.stopped(){R::Cancelled}else{R::Invalid};}
     if !checked.finish(expected,skip){drift.layout=checked.changed;drift.crc=!checked.changed;

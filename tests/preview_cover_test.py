@@ -5,7 +5,8 @@ The preview is the real firmware built for the host over C fakes
 (rust/host/preview/fakes). Each world is a card with no Newt/Covers and
 synthetic books whose covers are made here: baseline grayscale JPEGs declared
 the EPUB3 way (cover-image) and the EPUB2 way (<meta name="cover">), stored
-and deflated, one with the common "image/jpg" media type, and one book whose cover form the firmware does not decode, the
+and deflated, one with the common "image/jpg" media type, a progressive
+JPEG (the firmware draws its first scan, at 1/8 scale), and one book whose cover form the firmware does not decode, the
 known gap. Cover work starts after 2 s without input; the preview presses
 only after 4 s without a refresh, press or card access, so staying on a
 screen lets that work finish. Each control is the same build with one
@@ -52,6 +53,7 @@ SUPPORTED = {
     'Cedar': {'declaration': 'epub2'},
     'Dogwood': {'declaration': 'epub2', 'deflated': True},
     'Elm': {'declaration': 'epub3', 'media': 'image/jpg'},
+    'Fir': {'declaration': 'epub3', 'deflated': True, 'frame': 0xc2},
 }
 # A cover form the firmware does not decode, the known gap; last on the shelves.
 GAP = 'Yew'
@@ -63,41 +65,57 @@ def segment(marker, body):
     return bytes([0xff, marker]) + (len(body) + 2).to_bytes(2, 'big') + body
 
 
-def jpeg(width, height, dc, frame=0xc0):
-    """A grayscale JPEG of flat 8x8 blocks: quantizers 1, DC category k coded
-    as the 4-bit k, every AC an end of block (rust/core/tests/cover_tolerance.rs
-    builds the same). `dc(x, y)` is block (x, y)'s DC value; `frame` is its
-    SOF marker (0xc0 baseline)."""
-    out = b'\xff\xd8' + segment(0xdb, bytes(1) + bytes([1] * 64))
-    out += segment(frame, bytes([8]) + struct.pack('>HH', height, width) + bytes([1, 1, 0x11, 0]))
-    dc_counts, ac_counts = [0] * 16, [0] * 16
-    dc_counts[3], ac_counts[1] = 12, 1
-    out += segment(0xc4, bytes([0x00, *dc_counts, *range(12), 0x10, *ac_counts, 0]))
-    out += segment(0xda, bytes([1, 1, 0x00, 0, 63, 0]))
-    bits, previous = [], 0
-    for y in range(-(-height // 8)):
-        for x in range(-(-width // 8)):
-            diff, previous = dc(x, y) - previous, dc(x, y)
-            category = abs(diff).bit_length()
-            for value, length in ((category, 4), (diff + (1 << category) - 1 if diff < 0 else diff, category), (0, 2)):
-                bits += [value >> i & 1 for i in reversed(range(length))]
-    bits += [1] * (-len(bits) % 8)
+def entropy(bits):
+    """Scan bits padded with ones, a zero stuffed after each 0xff."""
+    bits = bits + [1] * (-len(bits) % 8)
     data = bytearray()
     for at in range(0, len(bits), 8):
         data.append(int(''.join(map(str, bits[at:at + 8])), 2))
         if data[-1] == 0xff:
             data.append(0)
-    return out + bytes(data) + b'\xff\xd9'
+    return bytes(data)
+
+
+def jpeg(width, height, dc, frame=0xc0):
+    """A grayscale JPEG of flat 8x8 blocks: quantizers 1, DC category k coded
+    as the 4-bit k, every AC an end of block (rust/core/tests/cover_tolerance.rs
+    builds the same). `dc(x, y)` is block (x, y)'s DC value; `frame` is its
+    SOF marker (0xc0 baseline). A progressive frame (0xc2) holds the DC first
+    scan at point transform 1, as encoders write it, then one AC scan."""
+    progressive = frame == 0xc2
+    out = b'\xff\xd8' + segment(0xdb, bytes(1) + bytes([1] * 64))
+    out += segment(frame, bytes([8]) + struct.pack('>HH', height, width) + bytes([1, 1, 0x11, 0]))
+    dc_counts, ac_counts = [0] * 16, [0] * 16
+    dc_counts[3], ac_counts[1] = 12, 1
+    out += segment(0xc4, bytes([0x00, *dc_counts, *range(12), 0x10, *ac_counts, 0]))
+    out += segment(0xda, bytes([1, 1, 0x00, 0, 0, 1] if progressive else [1, 1, 0x00, 0, 63, 0]))
+    bits, previous = [], 0
+    blocks = [(x, y) for y in range(-(-height // 8)) for x in range(-(-width // 8))]
+    for x, y in blocks:
+        value = dc(x, y) >> progressive
+        diff, previous = value - previous, value
+        category = abs(diff).bit_length()
+        for value, length in ((category, 4), (diff + (1 << category) - 1 if diff < 0 else diff, category)):
+            bits += [value >> i & 1 for i in reversed(range(length))]
+        if not progressive:
+            bits += [0, 0]
+    out += entropy(bits)
+    if progressive:
+        # Every block's AC band ends at once.
+        out += segment(0xda, bytes([1, 1, 0x00, 1, 63, 0])) + entropy([0, 0] * len(blocks))
+    return out + b'\xff\xd9'
 
 
 def grey(seed, x, y):
-    """The grey of art(seed)'s 8x8 block (x, y): diagonal bands."""
-    return (x * 8 + y * 4 + seed * 48) % 256
+    """The grey of art(seed)'s 8x8 block (x, y): diagonal bands that rise and
+    fall smoothly, so a cover scaled up from block greys stays close."""
+    step = (x * 8 + y * 4 + seed * 48) % 512
+    return min(step, 511 - step)
 
 
-def art(seed):
+def art(seed, frame=0xc0):
     """A 288x376 cover (twice the slot) of diagonal bands; `seed` shifts them."""
-    return jpeg(288, 376, lambda x, y: (grey(seed, x, y) - 128) * 8)
+    return jpeg(288, 376, lambda x, y: (grey(seed, x, y) - 128) * 8, frame)
 
 
 def epub(path, title, image, declaration='epub3', deflated=False, media='image/jpeg'):
@@ -123,9 +141,10 @@ def books():
     """Newt/Books for every world, made once per run."""
     folder = Path(tempfile.mkdtemp(prefix='newt-cover-books-'))
     for seed, (name, form) in enumerate(SUPPORTED.items()):
-        epub(folder / f'{name}.epub', name, art(seed), **form)
-    # Progressive (SOF2): the decoder takes only baseline frames.
-    epub(folder / f'{GAP}.epub', GAP, jpeg(288, 376, lambda x, y: 0, frame=0xc2))
+        form = dict(form)
+        epub(folder / f'{name}.epub', name, art(seed, form.pop('frame', 0xc0)), **form)
+    # Arithmetic coding (SOF9): the decoders take Huffman frames only.
+    epub(folder / f'{GAP}.epub', GAP, jpeg(288, 376, lambda x, y: 0, frame=0xc9))
     return folder
 
 

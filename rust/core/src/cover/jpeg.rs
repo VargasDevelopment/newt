@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-//! Frozen baseline validation pins and ordered cover placement.
+//! Cover JPEG validation pins (baseline, or progressive for its first scan)
+//! and ordered cover placement.
 use super::read;
 use crate::zip_window::source::BookSource;
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -8,10 +9,14 @@ pub enum Status { Ready, Unsupported, Incomplete, Invalid, IoError }
 pub struct Layout {
     at: [u32; 18], length: [u8; 18], bytes: [u8; 85], pins: u32, used: u32,
     pub width: u16, pub height: u16,
+    /// SOF2: only the first scan, which holds the DC values, is drawn.
+    pub progressive: bool,
+    /// The first component's sampling factors (high nibble horizontal).
+    pub sampling: u8,
 }
 impl Default for Layout {
     fn default() -> Self { Self { at: [0;18], length: [0;18], bytes: [0;85], pins: 0,
-        used: 0, width: 0, height: 0 } }
+        used: 0, width: 0, height: 0, progressive: false, sampling: 0x11 } }
 }
 impl Layout {
     fn pin(&mut self, at: u64, data: &[u8]) {
@@ -35,7 +40,7 @@ impl Layout {
         true
     }
 }
-pub fn baseline(source: &mut dyn BookSource, layout: &mut Layout) -> Status {
+pub fn validate(source: &mut dyn BookSource, layout: &mut Layout) -> Status {
     use Status::*;
     let mut header = [0;4];
     if source.size() < 4 { return Incomplete; }
@@ -54,7 +59,7 @@ pub fn baseline(source: &mut dyn BookSource, layout: &mut Layout) -> Status {
         if bytes == 2 { return Unsupported; }
         if at + 2 + bytes as u64 > source.size() { return Incomplete; }
         let frame = (0xc0..=0xcf).contains(&marker) && !matches!(marker, 0xc4 | 0xc8 | 0xcc);
-        if frame && marker != 0xc0 { return Unsupported; }
+        if frame && !matches!(marker, 0xc0 | 0xc2) { return Unsupported; }
         if !frame {
             if segments == 16 { return Unsupported; }
             layout.pin(at,&header); at += 2 + bytes as u64; segments += 1; continue;
@@ -72,6 +77,7 @@ pub fn baseline(source: &mut dyn BookSource, layout: &mut Layout) -> Status {
             if sof[12+3*i] > 3 { return Invalid; }
             if i != 0 && sof[11+3*i] != 0x11 { return Unsupported; }
         }
+        layout.progressive = marker == 0xc2; layout.sampling = sof[11];
         layout.height = u16::from_be_bytes([sof[5],sof[6]]);
         layout.width = u16::from_be_bytes([sof[7],sof[8]]);
         if layout.width == 0 || layout.height == 0 || layout.width > 2048 || layout.height > 3072 { return Unsupported; }
@@ -88,7 +94,16 @@ pub fn scale(frame: (u16,u16), target: (u16,u16)) -> u8 {
     while s < 3 && frame.0 >> (s+1) >= target.0 && frame.1 >> (s+1) >= target.1 { s += 1; }
     s
 }
-pub fn arena_bytes(frame: (u16,u16), target: (u16,u16)) -> usize {
+/// Decode scratch after the 1 KiB CRC skip buffer, with 128 B for alignment.
+pub fn arena_bytes(layout: &Layout, target: (u16,u16)) -> usize {
+    let frame = (layout.width, layout.height);
+    if layout.progressive {
+        // progressive::render: input, four tables, one MCU row of DC greys, three rows.
+        let (h, v) = (usize::from(layout.sampling >> 4), usize::from(layout.sampling & 15));
+        let grid = usize::from(layout.width).div_ceil(8 * h) * h * v;
+        return 1024 + 512 + 4 * core::mem::size_of::<crate::jpeg::progressive::Huffman>()
+            + grid + 3 * usize::from(target.0) + 128;
+    }
     let scaled = usize::from(frame.0 >> scale(frame,target));
     1024 + 8192 + 16 * scaled + 7 * usize::from(target.0).min(scaled) + 128
 }
