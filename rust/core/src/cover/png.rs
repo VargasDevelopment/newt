@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Cover PNG: the header policy and a driver that feeds pngle the whole
 //! stream, keeping each feed's unconsumed tail for the next.
-use super::{read, jpeg::{Layout, Status}};
+use super::{read, jpeg::{Layout, Status, placement}};
 use crate::{image_renderer::{PngState, RowScaler}, inflate, jpeg::{Input, renderer::RenderError},
     page_renderer::{BookStatus, ImageRows}, pngle::{self, CallbackError, Callbacks, Decoder, Header, Math},
     zip_window::source::BookSource};
@@ -43,6 +43,12 @@ pub fn validate(source: &mut dyn BookSource, layout: &mut Layout) -> Status {
     let ring = (width as usize).saturating_mul(bits).div_ceil(8) + 2 * bits.div_ceil(8);
     // Adam7 (interlace 1) gives no row in order until its last pass.
     if head[28] == 1 || width > 0xffff || height > 0xffff || width as usize + ring > ROW_BYTES {
+        return Status::Unsupported;
+    }
+    // The row scaler counts each slot pixel's samples in a u16, as the reader
+    // does; a taller or wider bucket would wrap and draw wrong greys.
+    let (tw, th) = placement(width as u16, height as u16);
+    if (width as usize).div_ceil(tw.into()) * (height as usize).div_ceil(th.into()) > usize::from(u16::MAX) {
         return Status::Unsupported;
     }
     let mut end = [0; 12];

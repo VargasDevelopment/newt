@@ -346,7 +346,7 @@ class LandingTest(unittest.TestCase):
                 if command[:2] == ['git', 'rev-parse']: return 'a'*12+'\n'
                 if command[:2] == ['git', 'status']: return ''
                 if command[:2] == ['git', 'show']: return '2026-11-16\n'
-                return passed(415 if fail == 'portable' else 416)
+                return passed(416 if fail == 'portable' else 417)
             def cargo(self, ws, target, *args):
                 result = self.run(['cargo', *args], ws)
                 if 'build' in args:
@@ -380,7 +380,7 @@ class LandingTest(unittest.TestCase):
                 landing.check(checker, {}, snapshot, {'verified': True})
                 evidence = json.loads(receipt.read_text())
                 self.assertFalse(evidence['complete_rust_gate'])
-                self.assertEqual(evidence['portable']['passed_tests'], 416)
+                self.assertEqual(evidence['portable']['passed_tests'], 417)
                 self.assertEqual(evidence['foundation']['comparisons'], 60368)
                 self.assertEqual(evidence['archive']['features'], landing.FEATURES)
                 self.assertTrue(evidence['archive']['default_features'])

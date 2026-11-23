@@ -235,10 +235,10 @@ fn formats_both_builds_reject_stay_unsupported() {
 }
 
 /// A grayscale 8-bit PNG's signature, IHDR and IEND: all `png::validate` reads.
-fn png_header(width: u32, interlace: u8) -> Vec<u8> {
+fn png_header(width: u32, height: u32, interlace: u8) -> Vec<u8> {
     let mut out = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
     out.extend(width.to_be_bytes());
-    out.extend(8u32.to_be_bytes());
+    out.extend(height.to_be_bytes());
     // Depth, color, compression, filter, interlace, then an unchecked CRC.
     out.extend([8, 0, 0, 0, interlace, 0, 0, 0, 0]);
     out.extend([0, 0, 0, 0, b'I', b'E', b'N', b'D', 0xae, 0x42, 0x60, 0x82]);
@@ -250,10 +250,21 @@ fn a_png_row_past_the_cap_or_interlaced_is_unsupported() {
     // Grey 8-bit: the row is the width, and the ring the width plus two.
     let fits = (png::ROW_BYTES - 2) / 2;
     let mut layout = Layout::default();
-    assert!(png::validate(&mut Bytes(&png_header(fits as u32, 0)), &mut layout) == Status::Ready);
+    assert!(png::validate(&mut Bytes(&png_header(fits as u32, 8, 0)), &mut layout) == Status::Ready);
     assert_eq!((usize::from(layout.width), usize::from(layout.ring)), (fits, fits + 2));
-    for image in [png_header(fits as u32 + 1, 0), png_header(64, 1)] {
+    for image in [png_header(fits as u32 + 1, 8, 0), png_header(64, 8, 1)] {
         assert!(png::validate(&mut Bytes(&image), &mut Layout::default()) == Status::Unsupported);
+    }
+}
+
+#[test]
+fn a_png_whose_slot_pixel_counts_past_u16_is_unsupported() {
+    // 1024 wide takes a 4x188 slot up to 47,940 rows: 256 x 255 samples per
+    // slot pixel. One row more needs 256 x 256, past the scaler's u16 counts.
+    let mut layout = Layout::default();
+    assert!(png::validate(&mut Bytes(&png_header(1024, 47_940, 0)), &mut layout) == Status::Ready);
+    for height in [47_941, 65_535] {
+        assert!(png::validate(&mut Bytes(&png_header(1024, height, 0)), &mut layout) == Status::Unsupported, "{height}");
     }
 }
 
