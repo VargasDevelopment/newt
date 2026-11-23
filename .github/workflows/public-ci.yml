@@ -10,6 +10,9 @@ on:
   # (tools/gate_tier.py), so another base would select the wrong controls.
   pull_request:
     branches: [main]
+    # GitHub's merge commit takes the title as its subject, so an edit runs the
+    # gate again (the title step in each lane); it cancels the older run below.
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
   # The nightly full tier (docs/CI.md, "Tiers").
@@ -21,7 +24,7 @@ on:
 permissions:
   contents: read
 
-# A newer push to a pull request cancels its older run. Every main push and
+# A newer push to or edit of a pull request cancels its older run. Every main push and
 # nightly run finishes, so a release merge's run always tags it.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
@@ -80,9 +83,9 @@ jobs:
       matrix:
         part: ['0/7', '1/7', '2/7', '3/7', '4/7', '5/7', '6/7', native]
     env:
-      # A pull request's github.sha is GitHub's own "Merge X into Y" commit, which
-      # the Conventional Commits check refuses; gate the PR's head instead. Main's
-      # push run then gates the real merge commit.
+      # A pull request's github.sha is GitHub's own trial "Merge X into Y" commit,
+      # which nothing merges; gate the PR's head instead. Main's push run then
+      # gates the real merge commit.
       EXPECTED_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
       PART: ${{ matrix.part }}
       # Set only after the owner approves the four rust/toolchain.json archives.
@@ -196,7 +199,7 @@ jobs:
             !.toolchain/downloads
             .release-venv
             .build/ci-toolchain.json
-          key: toolchains-${{ hashFiles('docs/toolchain-linux-lock.json', '.github/ci-release-linux-lock.json', '.github/ci-tool-linux-lock.json', 'rust/toolchain.json', 'tools/rust-toolchain.py', 'tools/ci_toolchain.py', 'tools/ci_environment.py', 'tools/ci_persist.py', 'tools/ci_hosted.py') }}
+          key: toolchains-${{ hashFiles('docs/toolchain-linux-lock.json', '.github/ci-release-linux-lock.json', '.github/ci-tool-linux-lock.json', 'rust/toolchain.json', 'tools/rust-toolchain.py', 'tools/ci_toolchain.py', 'tools/ci_environment.py', 'tools/ci_persist.py', 'tools/ci_hosted.py', 'tools/cz_newt/cz_newt.py', 'tools/cz_newt/cz_newt_backend.py', 'tools/cz_newt/pyproject.toml') }}
       - name: Restore the raw locked archives
         id: raw
         if: steps.trees.outputs.cache-hit != 'true'
@@ -228,7 +231,7 @@ jobs:
             !.toolchain/downloads
             .release-venv
             .build/ci-toolchain.json
-          key: toolchains-${{ hashFiles('docs/toolchain-linux-lock.json', '.github/ci-release-linux-lock.json', '.github/ci-tool-linux-lock.json', 'rust/toolchain.json', 'tools/rust-toolchain.py', 'tools/ci_toolchain.py', 'tools/ci_environment.py', 'tools/ci_persist.py', 'tools/ci_hosted.py') }}
+          key: toolchains-${{ hashFiles('docs/toolchain-linux-lock.json', '.github/ci-release-linux-lock.json', '.github/ci-tool-linux-lock.json', 'rust/toolchain.json', 'tools/rust-toolchain.py', 'tools/ci_toolchain.py', 'tools/ci_environment.py', 'tools/ci_persist.py', 'tools/ci_hosted.py', 'tools/cz_newt/cz_newt.py', 'tools/cz_newt/cz_newt_backend.py', 'tools/cz_newt/pyproject.toml') }}
       # Host objects carry their own complete keys and are rechecked on every hit
       # (tools/host_objects.py); the full tier starts from none. The last phase
       # seconds only order starts. tools/ci_gate.py moves both in and out of this store.
@@ -241,6 +244,11 @@ jobs:
             ${{ github.workspace }}/../newt-ci-store/gate-phase-seconds.json
           key: host-objects-${{ strategy.job-index }}-${{ github.sha }}
           restore-keys: host-objects-${{ strategy.job-index }}-
+      - name: The pull request's title, its merge subject
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: python3 -B tools/release_tools.py --pr-title "$PR_TITLE"
       - name: This part of the gate
         run: python3 -B tools/ci_gate.py --expected-commit "$EXPECTED_COMMIT" --part "$PART"
       - name: Save this part's host objects
@@ -323,6 +331,11 @@ jobs:
           echo "$(dirname "$python_path")" >> "$GITHUB_PATH"
       - name: Pinned release tools alone (tools/ci_environment.py)
         run: python3 -B tools/ci_environment.py --prepare-release
+      - name: The pull request's title, its merge subject
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: python3 -B tools/release_tools.py --pr-title "$PR_TITLE"
       - name: The docs lane's checks (tools/docs_lane.py)
         run: python3 -B tools/docs_lane.py check --base "$BASE"
 
@@ -518,7 +531,7 @@ jobs:
             !.toolchain/downloads
             .release-venv
             .build/ci-toolchain.json
-          key: toolchains-${{ hashFiles('docs/toolchain-linux-lock.json', '.github/ci-release-linux-lock.json', '.github/ci-tool-linux-lock.json', 'rust/toolchain.json', 'tools/rust-toolchain.py', 'tools/ci_toolchain.py', 'tools/ci_environment.py', 'tools/ci_persist.py', 'tools/ci_hosted.py') }}
+          key: toolchains-${{ hashFiles('docs/toolchain-linux-lock.json', '.github/ci-release-linux-lock.json', '.github/ci-tool-linux-lock.json', 'rust/toolchain.json', 'tools/rust-toolchain.py', 'tools/ci_toolchain.py', 'tools/ci_environment.py', 'tools/ci_persist.py', 'tools/ci_hosted.py', 'tools/cz_newt/cz_newt.py', 'tools/cz_newt/cz_newt_backend.py', 'tools/cz_newt/pyproject.toml') }}
       - name: Restore the raw locked archives
         id: raw
         if: steps.trees.outputs.cache-hit != 'true'

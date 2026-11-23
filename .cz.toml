@@ -1,5 +1,7 @@
 [tool.commitizen]
-name = "cz_conventional_commits"
+# Newt's plugin (tools/cz_newt), registered under its own path: when it is
+# missing, Commitizen's "Try running 'pip install NAME'" names the local package.
+name = "./tools/cz_newt"
 version = "0.3.0"
 version_scheme = "semver2"
 version_provider = "commitizen"

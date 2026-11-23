@@ -19,17 +19,9 @@ no firmware version, tag or installed image is changed by that closure.
 
 ### Feat
 - **update**: offer test builds behind a hidden Developer page (NEWT-99, NEWT-113, #15)
-- **update**: offer test builds behind a hidden Developer page (NEWT-99, NEWT-113)
-- **update**: offer test builds behind a hidden Developer page (NEWT-99, NEWT-113)
 - **release**: stamp and publish nightly test builds (NEWT-99)
 ### Fix
-- **installer**: send stock firmware to the install page, not CrossPoint
-- **release**: verify a nightly's draft before its tag push, and keep the stable /releases/latest asset check (NEWT-99)
-- **release**: read nightly state by tag or id and push its tag last (NEWT-99)
 - **release**: list What's new lines the repository's published notes have not shown (NEWT-77, #9)
-- **release**: take shown What's new lines from the repository's published notes (NEWT-77)
-- **release**: measure news from the latest published release and refuse an unfetched base (NEWT-77)
-- **release**: list What's new since the repository's own previous release (NEWT-77)
 
 ## v0.2.0
 
@@ -37,22 +29,9 @@ no firmware version, tag or installed image is changed by that closure.
 - **update**: read updates from the public source repository
 ### Fix
 - **installer**: read in 256-byte packets and really reset the X3, so macOS Chrome can check it (NEWT-77, #4)
-- **installer**: read in 256-byte packets and really reset the X3, so macOS Chrome can check it
 - **ci**: gate a pull request's own head, not GitHub's merge commit (NEWT-77, #3)
-- **ci**: gate a pull request's own head, not GitHub's merge commit (NEWT-77)
 - **copy**: send newcomers to the install page and say what is untested (NEWT-69, #396)
-- **ui**: newcomer copy and Update's Wi-Fi setup for the first public release (NEWT-69)
-- **update**: drop "slot" from the install confirm page (NEWT-69)
-- **installer**: link the install guide and repository, and call one card route untested (NEWT-69)
-- **update**: set up Wi-Fi from Update when no network is saved (NEWT-69)
-- **ui**: plainer newcomer copy on Settings, Switch firmware, Update and Home (NEWT-69)
-- **ui**: write What's new for a newcomer on the first public release (NEWT-69)
 - **gate**: run the gate from a stock Linux shell (NEWT-69, #394)
-- **gate**: hand off to pinned Python and reset child stop signals (NEWT-69)
-- **gate**: hand off to the pinned Python before the gate's imports (NEWT-69, #279)
-- **tests**: compare external interpreter path with home_relative under TMPDIR (NEWT-69)
-- **gate**: reset inherited ignored stop signals for gate children (NEWT-69)
-- **gate**: hand off check.py to the pinned toolchain Python (NEWT-69)
 
 ## v0.1.0-alpha.22
 

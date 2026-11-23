@@ -49,7 +49,7 @@ class WorkflowControls(unittest.TestCase):
                 calls = []
                 def phase(command, **kwargs):
                     calls.append(command)
-                    if Path(command[-1]).name == 'release_tools_test.py':
+                    if Path(command[2]).name == 'release_tools_test.py':
                         raise PrerequisiteFailure('authored prerequisite failure')
                 arguments = ['check.py', '--suite', suite]
                 if sys.platform == 'linux':
@@ -61,7 +61,7 @@ class WorkflowControls(unittest.TestCase):
                     with self.assertRaises(PrerequisiteFailure):
                         host_check.main()
                     focused.assert_not_called()
-                self.assertEqual([Path(command[-1]).name for command in calls],
+                self.assertEqual([Path(command[2]).name for command in calls],
                                  ['release_tools.py', 'release_tools_test.py'])
 
     def test_workflow_scope_permissions_pins_cache_and_fresh_commands(self):
@@ -375,6 +375,12 @@ with patch.object(venv, 'EnvBuilder', BrokenVenv):
                 setup.require_host(tools)
         command = setup.installation_command(Path('/fixture/python'), [Path('/fixture/wheel.whl')])
         self.assertTrue({'--isolated', '--no-index', '--no-deps', '--no-compile'}.issubset(command))
+        # The fresh release venv gets Newt's Commitizen plugin offline, in the same install.
+        with tempfile.TemporaryDirectory() as directory, patch.object(setup, 'acquire', return_value=Path('/w.whl')), \
+             patch.object(setup, 'owned_directory'), patch.object(setup.venv, 'EnvBuilder'), \
+             patch.object(setup.subprocess, 'run') as run:
+            setup.prepare_release(Path(directory), {'artifacts': [{}]}, Path(directory), True)
+        self.assertEqual(run.call_args_list[0].args[0][-2:], [str(Path('/w.whl')), str(Path(directory) / 'tools/cz_newt')])
         self.assertTrue(setup.llvm_member(PurePosixPath('bin/clang-tidy'), 'file'))
         self.assertTrue(setup.llvm_member(PurePosixPath('lib/libLLVM.dylib'), 'file'))
         self.assertFalse(setup.llvm_member(PurePosixPath('bin/clang'), 'file'))

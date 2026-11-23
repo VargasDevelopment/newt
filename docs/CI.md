@@ -180,8 +180,9 @@ Pushes, nightly and manual runs always take `full`, so `release-tag` and
 
 In the docs lane the `check` job is skipped and the `docs` job runs instead:
 
-- the release gate as `check.py` runs it (Conventional Commits and the
-  release-tag guard), with the pinned Commitizen alone
+- the release gate as CI's `check.py --release-tags` runs it (Conventional
+  Commits since the release tag and the release-tag guard), with the pinned
+  Commitizen alone
   (`ci_environment.py --prepare-release`);
 - a links check: each relative link or image in a changed Markdown file, and
   each link from any tracked Markdown file to a changed path, must name a
@@ -197,6 +198,16 @@ while the other was skipped: `check` for `full`, `docs` for `docs`. Branch
 protection still requires only `gate`. One lane's job is always skipped,
 which makes `success()` false for every later job, so `release-tag` and
 `nightly` read `needs.gate.result` instead.
+
+**Pull request title.** GitHub's merge commit takes a pull request's title as
+its subject, so each lane's job checks the title the event carries with the
+pinned Commitizen (`tools/release_tools.py --pr-title`), and `gate` fails on a
+title that is not a Conventional Commit. An edit of the pull request (title,
+body or base) starts a new run, which cancels the older one, so the whole gate
+runs again: about 5 minutes and 40 hosted runner-minutes in the full lane, one
+job in the docs lane. A run that checked only the title would have to post
+`gate` from an earlier run's result for the same head, and a `gate` it skipped
+would count as passing.
 
 **Shards come from the gate's own plan.** `tools/gate_tier.py` `shard()` takes
 the tier's plan, keeps every phase with the phases it runs `after` in one
@@ -216,7 +227,7 @@ pinned, verified downloads, as the self-hosted job does (`ci_toolchain.py`,
 
 | Cache | Key | Reused when |
 |---|---|---|
-| toolchain trees | hash of the toolchain locks and scripts | not the full tier, and every entry matches the manifest recorded when a fresh run made them (else set aside and made fresh) |
+| toolchain trees | hash of the toolchain locks and scripts and the release venv's plugin (`tools/cz_newt`) | not the full tier, and every entry matches the manifest recorded when a fresh run made them (else set aside and made fresh) |
 | raw archives | hash of the toolchain locks | a fresh materialization rechecks each against its pinned size and SHA-256 |
 | host objects, per part | `host-objects-<part>-<sha>`, restoring main's latest | not the full tier; each object's key binds its exact inputs (`host_objects.py`) |
 
@@ -241,8 +252,9 @@ without a separately reviewed authorization and validation procedure. These
 checks constrain events; they do not sandbox trusted code or isolate the host.
 
 Checkout uses exact source, complete history, the release tags and no persisted
-credentials. Full history preserves Commitizen’s adoption boundary; the tags let
-the release gate refuse work built on an untagged release
+credentials. Full history and the tags let the release gate read the commits
+since the release tag, as Commitizen does, and refuse work built on an untagged
+release
 ([RELEASING.md](RELEASING.md#tag-the-release)). Source bytes and modes
 are checked before acquisition and around gates. Generated receipts cannot
 grant admission. The tracked `artifacts/library-ui-review.json` is a separate

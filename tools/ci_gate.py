@@ -82,7 +82,8 @@ def commands(root, python, tier, part='all'):
     one of the public workflow's parallel jobs."""
     prefix = [str(python), '-B']
     # The job's own budget covers the host gate; check.py's is for an idle 16-thread host.
-    result = [('host', [*prefix, str(root / 'tools/check.py'), '--tier', tier, '--no-time-budget',
+    # CI always checks the release tags, so nothing merges onto an untagged release.
+    result = [('host', [*prefix, str(root / 'tools/check.py'), '--tier', tier, '--release-tags', '--no-time-budget',
                         *(['--fresh-objects'] if tier == 'full' else []),
                         '-j', str(host_jobs.available_cpus()[0])]),
               # A plain compile makes the platform's first-use package edits

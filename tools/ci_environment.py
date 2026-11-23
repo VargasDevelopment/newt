@@ -138,7 +138,8 @@ def prepare_openssl(root, record, cache, llvm):
 
 
 def prepare_release(root, release, cache, linux):
-    """A fresh .release-venv from the locked wheels: the release gate's Commitizen."""
+    """A fresh .release-venv from the locked wheels and Newt's own plugin (tools/cz_newt,
+    built offline by its in-tree backend): the release gate's Commitizen."""
     wheel_paths = [acquire(root, cache, record) for record in release['artifacts']]
     release_directory = root / '.release-venv'
     if release_directory.exists() or release_directory.is_symlink():
@@ -147,7 +148,7 @@ def prepare_release(root, release, cache, linux):
     # Managed Linux Python resolves its shared library beside its real executable.
     venv.EnvBuilder(with_pip=True, symlinks=linux).create(release_directory)
     python = release_directory / 'bin/python'
-    subprocess.run(installation_command(python, wheel_paths), cwd=root, check=True)
+    subprocess.run(installation_command(python, [*wheel_paths, root / 'tools/cz_newt']), cwd=root, check=True)
     subprocess.run([str(python), '-I', '-B', '-m', 'pip', '--isolated', 'check'], cwd=root, check=True)
 
 

@@ -45,7 +45,7 @@ def gh_answer(status, release=None):
     head = f'HTTP/2.0 {status} {"OK" if status == 200 else "Error"}\nContent-Type: application/json\n'
     return subprocess.CompletedProcess([], 0 if status == 200 else 1, (head + '\n' + body).encode(),
                                        b'' if status == 200 else f'gh: Error (HTTP {status})'.encode())
-FILES = ('.cz.toml', 'requirements-release.txt', release.VERSION_HEADER, 'tools/changelog.md.j2')
+FILES = ('.cz.toml', 'requirements-release.txt', release.VERSION_HEADER, 'tools/changelog.md.j2', 'tools/cz_newt/cz_newt.py')
 
 
 class NightlyTests(unittest.TestCase):
@@ -229,7 +229,7 @@ class NightlyTests(unittest.TestCase):
         self.stamp()
         self.change('rust/feature.rs', 'feat(reader): a feature')
         # The release gate's tag lookup and the tag tool read main's versions, never nightly tags.
-        self.assertEqual(release.check_release_tagged(self.root), 'v0.2.0')
+        self.assertEqual(release.check_release_tagged(self.root), ['v0.2.0'])
         self.assertEqual(release_tag.release_commit(self.root), self.main)
         # Commitizen's next release and its changelog skip the nightly tag off main.
         cz = [str(release.release_python()), '-I', '-B', '-m', 'commitizen', 'bump']
@@ -293,7 +293,8 @@ def negative_controls():
                 raise RuntimeError('Negative control anchor drift: ' + test)
             # A copied release_tools.py finds the release venv beside its own tools folder.
             tools = Path(scratch) / 'tools'
-            tools.mkdir()
+            (tools / 'cz_newt').mkdir(parents=True)
+            shutil.copyfile(ROOT / release.PLUGIN / 'cz_newt.py', tools / 'cz_newt/cz_newt.py')
             (tools / tool).write_text(source.replace(old, new))
             (Path(scratch) / '.release-venv').symlink_to(release.release_python().parent.parent)
             shutil.copyfile(ROOT / 'requirements-release.txt', Path(scratch) / 'requirements-release.txt')
