@@ -156,7 +156,8 @@ session:
 
 1. `FILE FOLDER NAME SIZE SHA256` (64 lowercase hex), answered `FILE free=N`.
 2. `DATA OFFSET BASE64` for each 3,072-byte chunk in order (the last can be
-   shorter; an empty file has none), answered `DATA WRITTEN`.
+   shorter; an empty file has none), answered `DATA N` with the bytes written
+   so far.
 3. `DONE`, answered `DONE size=N sha256=HEX` only after the device synced the
    temp, read it back from the card, checked its size and SHA-256 and renamed
    it into place.
