@@ -55,18 +55,21 @@ fn a_rename_that_fails_after_moving_keeps_the_marker() {
 
 #[test]
 fn a_rename_a_power_loss_cut_short_is_never_unlinked() {
-    // (the cut rename, whether an old file was being replaced), each cut with
-    // both long names left or with only the source's hidden short alias left.
-    for cut in [FakeCard::cut_rename, FakeCard::orphan_rename] {
-        for (from, to, old) in [(TARGET, OLD, true), (TEMP, TARGET, true), (TEMP, TARGET, false)] {
-            let mut card = FakeCard::default();
-            card.put_file(TEMP, b"verified new bytes");
-            card.put_file(if from == TARGET { TARGET } else { OLD }, b"the old file");
-            if !old { card.nodes.remove(OLD); }
-            card.put_file(MARKER, b"runtime.bin");
-            cut(&mut card, from, to);
-            refuses_and_keeps_everything(&mut card, &format!("{to} {old}"));
-        }
+    // (how the rename was cut, the cut rename, whether an old file was being
+    // replaced). A cut leaves both long names, or only the source's hidden short
+    // alias; `runtime.bin` fits 8.3, so it has no long name to lose.
+    let both = FakeCard::cut_rename as fn(&mut FakeCard, &str, &str);
+    let alias = FakeCard::orphan_rename as fn(&mut FakeCard, &str, &str);
+    let cases = [(both, TARGET, OLD, true), (both, TEMP, TARGET, true), (both, TEMP, TARGET, false),
+                 (alias, TEMP, TARGET, true), (alias, TEMP, TARGET, false)];
+    for (cut, from, to, old) in cases {
+        let mut card = FakeCard::default();
+        card.put_file(TEMP, b"verified new bytes");
+        card.put_file(if from == TARGET { TARGET } else { OLD }, b"the old file");
+        if !old { card.nodes.remove(OLD); }
+        card.put_file(MARKER, b"runtime.bin");
+        cut(&mut card, from, to);
+        refuses_and_keeps_everything(&mut card, &format!("{to} {old}"));
     }
 }
 

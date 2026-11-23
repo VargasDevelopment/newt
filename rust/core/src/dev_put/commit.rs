@@ -72,7 +72,8 @@ impl Lease<'_> {
     /// Before any write to the folder. A marker that outlived its DONE means a
     /// commit stopped somewhere between its marker and its cleanup, and no
     /// presence check can say where (see the module note), so it refuses every
-    /// write until the card is checked by hand. Without one no rename began.
+    /// write until the card is checked by hand. Without one no rename is left
+    /// unresolved.
     pub(super) fn recover(&mut self, folder: Folder) -> Result<(), Refused> {
         let old = self.hidden(folder.old(), "backup")?;
         if self.hidden(folder.marker(), "marker")? { return Err(Refused::Recovery("commit", 0)); }
