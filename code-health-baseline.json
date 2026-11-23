@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3656304,
+      "flash_bytes": 3654704,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,10 +28,10 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "cfb3068ef8e6571c282620481fe1f8081b05f57d",
+      "source_revision": "a02c2d17589e7bf13fa9f02782f1c5056810eed7",
       "before": 3639408,
-      "after": 3656304,
-      "reason": "#26: the development bridge's card write (PUT lease in newt_core::dev_put with its marked commit and recovery, the firmware's card_write lease, the FATFS free-space leaf and the SHA-256 scope). Clean regional DEV USB builds of origin/main 254ae47 and cfb3068 measured 3,639,168 to 3,656,304 B (+17,136 B; +16,896 B over main's 3,639,408 B ceiling), below the 7,798,784 B app slot. RTC 300 to 300 B, RAM 124,096 to 124,096 B; the lease's 447 B is heap only while it runs. New unselected stack entry newt_download_free 32 B. Floors, lend and exclusions unchanged.",
+      "after": 3654704,
+      "reason": "#26: the development bridge's card write (PUT lease in newt_core::dev_put with its marked commit and recovery, the firmware's card_write lease, the FATFS free-space leaf and the SHA-256 scope). Clean regional DEV USB builds of origin/main 254ae47 and a02c2d1 measured 3,639,168 to 3,654,704 B (+15,536 B; +15,296 B over main's 3,639,408 B ceiling), below the 7,798,784 B app slot. RTC 300 to 300 B, RAM 124,096 to 124,096 B; the lease's 447 B is heap only while it runs. New unselected stack entry newt_download_free 32 B. Floors, lend and exclusions unchanged.",
       "reviewer": "Lead (pending)"
     },
     "ram_bytes": {
