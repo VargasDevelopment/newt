@@ -6,8 +6,8 @@
   "critical_path_reason": "NEWT-36 r2: the longest single phase gets the same 360 CPU seconds, at least 1.5x the worst observed cold/loaded unchanged phase (227 seconds). Split independent work when it exceeds this ceiling; the former 240-second ceiling had insufficient cold-run margin.",
   "phases": {
     "bench_flash_test.py --negative-controls": {
-      "seconds": 60,
-      "reason": "Merged ff1793eb no-device bench guard matrix measured 9.089 CPU seconds with negative controls and cache reuse disabled. A 60-second base allowance leaves over sixfold margin; scratch-isolated fakes require no hardware lease or serial I/O."
+      "seconds": 120,
+      "reason": "#34: the guard matrix grew from the original 9.089 CPU seconds to 60 tests and 47 guard-removal controls, each control a fresh Python process. Clean local run 28.8 CPU seconds (suite 10.7). CI shard 4/7 measured 51.159, 54.307, 62.248, 62.968 and 66.959 CPU seconds (2026-11-23); the slow runs had every phase on the shard slower, not this one. 120 seconds is 1.8x the worst CI observation (the policy's 1.5x plus room for the roughly 30% runner variation) and stays well under the 360-second default, so a real regression in this phase still fails."
     }
   },
   "fresh_objects_multiplier": 3.3333333333333335,
