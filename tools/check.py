@@ -108,7 +108,7 @@ def configured_main() -> None:
                         help="Skip the tier's wall-time budget: the caller budgets the whole run (tools/ci_gate.py)")
     parser.add_argument('--fresh-objects', action='store_true', help='Recompile reusable objects for cache comparison')
     parser.add_argument('--profile', choices=('canonical', 'linux'), default='canonical',
-                        help='Linux explicitly omits ImageIO decode coverage; separate exact-source Mac cover gate is required')
+                        help='Linux profile uses portable cover/cache checks')
     parser.add_argument('-j', '--jobs', type=int, default=gate_runner.default_jobs(),
                         help='Phases and compiler jobs at once (default: the usable CPUs); 1 is the serial gate')
     parser.add_argument('--host-jobs', type=int, help='Per-user phase/compiler slots across checkouts (default usable CPUs; NEWT_HOST_GLOBAL_JOBS)')
@@ -127,7 +127,7 @@ def configured_main() -> None:
     if args.profile == 'linux' and sys.platform != 'linux':
         parser.error('The Linux coverage profile requires a real Linux host')
     if args.profile == 'canonical' and sys.platform == 'linux':
-        parser.error('Linux must explicitly select --profile linux; complete software coverage also requires the Mac cover gate')
+        parser.error('Linux must explicitly select --profile linux')
     if args.fresh_objects:
         os.environ['NEWT_HOST_OBJECT_CACHE'] = '0'
     with gate_runner.job_environment(ROOT, args.jobs, args.host_jobs):
@@ -176,7 +176,7 @@ def gate(args) -> None:
     print("PASS: host compile (ASan/UBSan), Rust checks and CLI validation")
     if args.profile == 'linux':
         print('Linux software coverage: portable cover/cache controls; '
-              'arbitrary PNG/JPEG ImageIO decode tests remain REQUIRED on this exact source via tools/check-mac-covers.py')
+              'for Mac ImageIO coverage see docs/CI.md#explicit-cover-coverage-boundary')
     print("Hardware firmware compilation and physical bring-up are separate gates.")
 
 

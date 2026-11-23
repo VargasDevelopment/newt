@@ -41,7 +41,10 @@ def committed_ui_authority(root):
     actual = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
     if actual != blob.decode() or stat.S_IMODE(path.stat().st_mode) & 0o111:
         raise RuntimeError('Reviewed UI authority bytes/mode differ from requested commit')
-    return hashlib.sha256(data).hexdigest()
+    return {
+        'reviewed_ui_manifest_sha256': hashlib.sha256(data).hexdigest(),
+        'reviewed_ui_frames': len(json.loads(data)['frames']),
+    }
 
 
 def committed_source(root, expected):
@@ -73,7 +76,7 @@ def committed_source(root, expected):
         digest.update(relative + b'\0' + bytes.fromhex(actual))
     verify_source_pin(root / 'vendor/freeink-sdk')
     return {**identity, 'tracked_source_sha256': digest.hexdigest(), 'sdk_revision': SDK_PIN,
-            'reviewed_ui_manifest_sha256': committed_ui_authority(root)}
+            **committed_ui_authority(root)}
 
 
 def commands(root, python, tier, part='all'):
@@ -146,7 +149,7 @@ def run_gate(root, expected, store=None, started=None, part='all'):
     write_text(root, report, json.dumps({'purpose': 'Fresh software diagnostics; no reusable/device proof',
                'source': after, 'tier': tier, 'part': part, 'phases': phases, 'reusable_proof': False,
                'coverage': {'profile': 'linux' if sys.platform == 'linux' else 'canonical',
-                            'reviewed_ui_frames': 20,  # tests/system_ui_contract_test.py on the host-built firmware
+                            'reviewed_ui_frames': after['reviewed_ui_frames'],
                             'complete_software_coverage': sys.platform != 'linux',
                             'required_mac_imageio_gate': 'pending separate exact-source run' if sys.platform == 'linux' else 'included',
                             'fixture_decoder_scope': 'four SHA-locked authored PNGs; no arbitrary image decode equivalence'},
@@ -154,7 +157,8 @@ def run_gate(root, expected, store=None, started=None, part='all'):
     if part != 'all':
         print(f'PASS {tier} tier part {part} for {expected}; the run passes only when every part does', flush=True)
     elif sys.platform == 'linux':
-        print(f'PASS {tier} tier Linux software checks for {expected}; required exact-source Mac ImageIO coverage remains separate', flush=True)
+        print(f'PASS {tier} tier Linux software checks for {expected}; for Mac ImageIO coverage see '
+              'docs/CI.md#explicit-cover-coverage-boundary', flush=True)
     else:
         print(f'PASS {tier} tier software gates for {expected}; physical acceptance remains separate', flush=True)
 

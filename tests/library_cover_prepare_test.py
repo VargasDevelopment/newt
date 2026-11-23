@@ -314,12 +314,11 @@ precondition(CGImageDestinationFinalize(output))
     def test_authored_fixture_routing_prepares_all_four_or_fails(self):
         _, art = fixture_tools()
         art.authored_books(self.books)
-        with patch.object(art.platform, 'system', return_value='Linux'):
+        art.prepare_authored_covers(self.books, self.output)
+        self.assertEqual(len(list(self.output.glob('*.nlc'))), 4)
+        epub(self.books / 'Unknown.epub', png())
+        with self.assertRaisesRegex(RuntimeError, 'four exact authored'):
             art.prepare_authored_covers(self.books, self.output)
-            self.assertEqual(len(list(self.output.glob('*.nlc'))), 4)
-            epub(self.books / 'Unknown.epub', png())
-            with self.assertRaisesRegex(RuntimeError, 'four exact authored'):
-                art.prepare_authored_covers(self.books, self.output)
 
     def test_general_decoder_explicitly_rejects_linux(self):
         with patch.object(COVERS.platform, 'system', return_value='Linux'), \
@@ -372,13 +371,21 @@ precondition(CGImageDestinationFinalize(output))
         receipt = json.loads(report.read_text())
         self.assertEqual(receipt['phases'], ['mac-imageio-cover-tests'])
         self.assertEqual(receipt['source'], source)
+        failure = subprocess.CalledProcessError(1, 'library_cover_prepare_test.py')
+        with patch.object(gate.platform, 'system', return_value='Darwin'), \
+             patch.object(gate, 'committed_source', return_value=source), \
+             patch.object(gate.subprocess, 'run', side_effect=failure):
+            with self.assertRaises(subprocess.CalledProcessError):
+                gate.run_gate(root, expected)
+        self.assertFalse(report.exists())
 
 
 if __name__ == '__main__':
     if '--portable-only' in sys.argv:
         sys.argv.remove('--portable-only')
         PORTABLE_ONLY = True
-        print('PORTABLE: synthetic EPUB/cache contracts and four exact UI PNG fixtures; required Mac ImageIO evidence is separate', flush=True)
+        print('PORTABLE: synthetic EPUB/cache contracts and four exact UI PNG fixtures; see '
+              'docs/CI.md#explicit-cover-coverage-boundary for Mac ImageIO coverage', flush=True)
         unittest.main(defaultTest=['CoverPreparationTests.' + name for name in PORTABLE_CASES])
     else:
         unittest.main()

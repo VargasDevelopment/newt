@@ -63,10 +63,9 @@ no tag, so a missing tag never fails it. CI runs `check.py --release-tags`,
 which also refuses work built on an untagged release
 ([Tag the release](#tag-the-release)) and checks every message since the
 release tag. The current reviewed Actions workflow runs fresh
-host gate and the one firmware build's native resource gate; Linux coverage also
-requires the separate exact-source Mac ImageIO cover check. See [CI.md](CI.md)
-for pinned setup, platform coverage and evidence limits. Versioning adds no
-credentials. CI's two write permissions are the small job that tags a release
+host gate and the one firmware build's native resource gate. See [CI.md](CI.md)
+for pinned setup and the [Mac ImageIO cover gate rules](CI.md#explicit-cover-coverage-boundary).
+Versioning adds no credentials. CI's two write permissions are the small job that tags a release
 ([Tag the release](#tag-the-release)) and the job that publishes nightly test
 builds ([Nightly test builds](#nightly-test-builds)).
 Fixup and other non-merge subjects are checked like any other; use Conventional

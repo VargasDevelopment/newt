@@ -291,25 +291,34 @@ inputs. Failure or receipt drift stops the sequence; ceilings are unchanged.
 decoders. The `jpeg_decoder` and `png_decoder` families, the core
 `cover_tolerance` tests and the preview's cover flows
 (`tests/preview_cover_test.py`) exercise those paths. The Linux gate also
-verifies all 22 reviewed UI frames rendered by the firmware host build. The
-prepared-cover cases use a test helper that accepts only four committed,
+verifies all frames in `artifacts/library-ui-review.json` using the firmware
+host build. The prepared-cover cases use a test helper that accepts only four committed,
 SHA-locked authored PNGs and returns their matching packed ImageIO output.
 Unknown fixture bytes fail closed.
 
-**Mac.** Run the host-only Swift ImageIO cover helper gate on the exact
-candidate. It runs the full cover preparation test suite, which exercises the
-helper with authored PNG and JPEG inputs and compares the four locked fixtures
-against actual ImageIO output.
+**Mac.** Run the host-only Swift ImageIO cover gate on the exact commit for
+release acceptance and for any change to the ImageIO path. That path includes:
+
+- `tools/prepare-library-covers.py`
+- `tools/library-cover-image.swift`
+- `tools/library-cover-fixture.py`
+- `tests/fixtures/library-cover-images/`
+- `cover_art` in `tools/library-redesign-preview.py`
+- `tests/library_cover_prepare_test.py`
+- `tools/check-mac-covers.py`
+
+The gate runs the cover preparation suite with authored PNG and JPEG inputs
+and compares the four locked fixtures against actual ImageIO output.
+The Mac gate does not build the firmware or render frames; the firmware host
+build is Linux x86_64 only.
 
 ```sh
 python3 -B tools/check-mac-covers.py --expected-commit FULL_SHA
 ```
 
 The Mac gate checks committed source before and after the suite and writes
-`.build/mac-covers/report.json`. Complete software acceptance requires fresh
-Linux and Mac runs for the same commit. The Linux report marks
-`complete_software_coverage: false` because the ImageIO evidence comes from the
-separate Mac run.
+`.build/mac-covers/report.json`. The Linux report marks
+`complete_software_coverage: false` because it does not include ImageIO evidence.
 
 ## Locked inputs and fresh environments
 

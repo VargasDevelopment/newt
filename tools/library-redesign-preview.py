@@ -7,9 +7,7 @@ import copy
 import importlib.util
 import os
 from pathlib import Path
-import platform
 import struct
-import subprocess
 import sys
 import tempfile
 from xml.etree import ElementTree as ET
@@ -66,25 +64,19 @@ def authored_books(directory):
             with zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_STORED) as archive:
                 for entry in source.infolist():
                     archive.writestr(copy.copy(entry), ET.tostring(package) if entry.filename == 'OEBPS/content.opf' else source.read(entry))
-                image = ((ROOT / f'tests/fixtures/library-cover-images/style-{style}.png').read_bytes()
-                         if platform.system() == 'Linux' else cover_art(style))
+                image = (ROOT / f'tests/fixtures/library-cover-images/style-{style}.png').read_bytes()
                 archive.writestr('OEBPS/cover.png', image)
             os.utime(output, (1790812800, 1790812800))
 
 
 def prepare_authored_covers(books, covers):
-    """Prepare this tool's four authored fixtures; general decoding stays on Mac."""
-    if platform.system() == 'Linux':
-        spec = importlib.util.spec_from_file_location('authored_cover_prepare', ROOT / 'tools/prepare-library-covers.py')
-        tool = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tool)
-        with tempfile.TemporaryDirectory(prefix='newt-authored-covers-') as directory:
-            result = tool.prepare(books, covers,
-                                  [sys.executable, '-I', '-B', str(ROOT / 'tools/library-cover-fixture.py')],
-                                  Path(directory))
-        if result != (4, 0):
-            raise RuntimeError('All four exact authored cover fixtures are required')
-    else:
-        subprocess.run([sys.executable, '-B', str(ROOT / 'tools/prepare-library-covers.py'),
-                        '--books', str(books), '--output', str(covers)], check=True,
-                       env={key: value for key, value in os.environ.items() if key != 'PYTHONPYCACHEPREFIX'})
+    """Prepare the preview's four authored covers using the locked fixture helper."""
+    spec = importlib.util.spec_from_file_location('authored_cover_prepare', ROOT / 'tools/prepare-library-covers.py')
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    with tempfile.TemporaryDirectory(prefix='newt-authored-covers-') as directory:
+        result = tool.prepare(books, covers,
+                              [sys.executable, '-I', '-B', str(ROOT / 'tools/library-cover-fixture.py')],
+                              Path(directory))
+    if result != (4, 0):
+        raise RuntimeError('All four exact authored cover fixtures are required')

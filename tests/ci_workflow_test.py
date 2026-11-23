@@ -476,7 +476,7 @@ class GateControls(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
         self.expected = 'a' * 40
-        self.identity = {'git_revision': self.expected, 'dirty': False}
+        self.identity = {'git_revision': self.expected, 'dirty': False, 'reviewed_ui_frames': 3}
 
     def test_native_receipt_requires_the_full_shipping_rust_image(self):
         variant = gate.FIRMWARE_BUILD
@@ -547,7 +547,9 @@ class GateControls(unittest.TestCase):
             self.assertEqual(calls[2:], [[sys.executable, '-B', str(self.root / 'tools/firmware-build.py'),
                                           '--clean', '--health-report']])
             native.assert_called_once_with(self.root, self.expected)
-            self.assertFalse(json.loads(report.read_text())['reusable_proof'])
+            receipt = json.loads(report.read_text())
+            self.assertFalse(receipt['reusable_proof'])
+            self.assertEqual(receipt['coverage']['reviewed_ui_frames'], self.identity['reviewed_ui_frames'])
 
     def test_each_gate_failure_remains_failure_and_invalidates_old_record(self):
         report = self.root / '.build/ci-gate/report.json'
@@ -655,14 +657,15 @@ class GateControls(unittest.TestCase):
         expected = git('rev-parse', 'HEAD')
         authority = self.root / gate.UI_REVIEW_AUTHORITY
         original = authority.read_bytes()
+        manifest = json.loads(original)
         with patch.object(gate, 'verify_source_pin'):
             identity = gate.committed_source(self.root, expected)
             self.assertEqual(identity['reviewed_ui_manifest_sha256'], hashlib.sha256(original).hexdigest())
+            self.assertEqual(identity['reviewed_ui_frames'], len(manifest['frames']))
             # Generated output remains outside source identity and cannot confer proof.
             (self.root / 'artifacts/generated-receipt.json').write_text('{"passed":true}')
             self.assertEqual(gate.committed_source(self.root, expected), identity)
             git('update-index', '--assume-unchanged', gate.UI_REVIEW_AUTHORITY)
-            manifest = json.loads(original)
             manifest['frames']['library'] = '0' * 64
             authority.write_text(json.dumps(manifest))
             self.assertFalse(gate.source_identity(self.root)['dirty'])
