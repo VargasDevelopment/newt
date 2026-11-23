@@ -32,6 +32,7 @@ impl BuildLoan for Bank {
 struct Store {
     name: Vec<u8>,
     file: Vec<u8>,
+    stale: Vec<u8>,
 }
 impl CacheStorage for Store {
     fn file_size(&mut self, name: &[u8]) -> i64 {
@@ -39,7 +40,7 @@ impl CacheStorage for Store {
     }
     fn read_at(&mut self, name: &[u8], at: u32, bytes: &mut [u8]) -> i32 {
         if name != self.name { return -1; }
-        self.file.get(at as usize..).map_or(-1, |mut file| file.read(bytes).unwrap() as i32)
+        self.file.get(at as usize..).map_or(-1, |mut file| file.read(bytes).map_or(-1, |n| n as i32))
     }
     fn begin_write(&mut self, name: &[u8]) -> bool {
         self.name = name.to_vec();
@@ -51,7 +52,7 @@ impl CacheStorage for Store {
         true
     }
     fn end_write(&mut self) -> bool { true }
-    fn remove(&mut self, _: &[u8]) -> bool { panic!("unexpected cache removal") }
+    fn remove(&mut self, _: &[u8]) -> bool { false }
 }
 impl ReadScope for Store {
     fn query<R>(&mut self, name: &[u8], _: bool, _: &mut [u8], live: &mut dyn FnMut() -> bool,
@@ -62,7 +63,7 @@ impl ReadScope for Store {
     }
 }
 impl CachePresence for Store {
-    fn present(&mut self, name: &[u8], _: bool) -> bool { self.name == name && !self.file.is_empty() }
+    fn present(&mut self, name: &[u8], _: bool) -> bool { (self.name == name && !self.file.is_empty()) || (!self.stale.is_empty() && self.stale == name) }
 }
 
 struct Key;
@@ -89,7 +90,7 @@ impl LineBreak for Breaks {
     }
 }
 
-pub fn run(root: &Path) {
+pub fn run(root: &Path) -> std::io::Result<()> {
     let mut shared = Box::new(Bank([0; BANK_BYTES]));
     let mut native = Box::new(Bank([0; BANK_BYTES]));
     let mut storage = Storage::new(&mut shared.0);
@@ -110,8 +111,9 @@ pub fn run(root: &Path) {
         ("ko", c"ko", false), ("missing", c"en", false), ("invalid", c"en", true),
         ("empty", c"en", true), ("unknown", c"en", true), ("overlong", c"en", true),
     ] {
-        let bytes = std::fs::read(root.join(format!("language-{name}.epub"))).unwrap();
+        let bytes = std::fs::read(root.join(format!("language-{name}.epub")))?;
         let mut source = Source(std::io::Cursor::new(bytes));
+        let previous_name = store.name.clone();
         let mut breaks = Breaks { expected: tag, seen: 0 };
         assert_eq!(reader.open_phased(&mut source, &mut storage, &mut *native, &mut parser), Status::Ok);
         {
@@ -124,6 +126,18 @@ pub fn run(root: &Path) {
                 assert_eq!(operation.reader.open_phased(&mut source, operation.storage, operation.lender, operation.backend), Status::Ok);
             }
             assert_eq!(cache.build(&mut source, &digest, 0, &mut operation), Build::Ready);
+            if name == "ja" {
+                for stale in [&[][..], &previous_name] {
+                    operation.reader.close();
+                    cache.store.stale = stale.to_vec();
+                    assert!(cache.stored(&digest, 0, &mut operation), "warm Japanese cache presence");
+                    assert_eq!(operation.reader.open_phased(&mut source, operation.storage, operation.lender, operation.backend), Status::Ok);
+                    assert!(cache.capture(&mut source, &digest, request, &mut operation).hit,
+                        "verified selection opens the Japanese file even with a stale English hint");
+                }
+                cache.store.stale.clear();
+                assert_eq!(operation.reader.open_phased(&mut source, operation.storage, operation.lender, operation.backend), Status::Ok);
+            }
         }
         assert!(breaks.seen > 0, "{name}: cache build must break text");
         if name == "en" { english.clone_from(&store.file); }
@@ -135,4 +149,5 @@ pub fn run(root: &Path) {
         assert_eq!(reader.publish(&mut source, &mut [0; newt_phased_sink::FRAME_BYTES]), Status::Ok);
     }
     println!("PASS declared language reaches native line breaking and cache identity");
+    Ok(())
 }

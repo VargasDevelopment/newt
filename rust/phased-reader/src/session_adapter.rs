@@ -247,7 +247,7 @@ impl<B: ParserBackend + ?Sized, C: CacheStorage + CachePresence>
             return false;
         }
         let opening = !r.reader.has_page();
-        cached_for_language(self.settings, digest, spine, self.hash, r.reader.selection().language, |name| {
+        cached_for_reader(r.reader, self.settings, digest, spine, self.hash, &mut |name| {
             self.store.present(name, opening)
         })
     }
@@ -332,10 +332,25 @@ pub fn cached(
     digest: &Digest,
     spine: u32,
     hash: &mut dyn crate::hash_provider::CacheHash,
-    mut present: impl FnMut(&[u8]) -> bool,
+    present: &mut dyn FnMut(&[u8]) -> bool,
 ) -> bool {
-    [BookLanguage::Default, BookLanguage::Chinese, BookLanguage::Japanese, BookLanguage::Korean]
-        .into_iter().any(|language| cached_for_language(settings, digest, spine, hash, language, &mut present))
+    BookLanguage::ALL.into_iter()
+        .any(|language| cached_for_language(settings, digest, spine, hash, language, present))
+}
+
+pub(super) fn cached_for_reader(
+    reader: &PhasedReader<'_, '_>,
+    settings: ViewSettings,
+    digest: &Digest,
+    spine: u32,
+    hash: &mut dyn crate::hash_provider::CacheHash,
+    present: &mut dyn FnMut(&[u8]) -> bool,
+) -> bool {
+    if reader.opened {
+        cached_for_language(settings, digest, spine, hash, reader.selection().language, present)
+    } else {
+        cached(settings, digest, spine, hash, present)
+    }
 }
 
 /// Probe the map only after a base miss.
@@ -345,7 +360,7 @@ pub(super) fn cached_for_language(
     spine: u32,
     hash: &mut dyn crate::hash_provider::CacheHash,
     language: BookLanguage,
-    mut present: impl FnMut(&[u8]) -> bool,
+    present: &mut dyn FnMut(&[u8]) -> bool,
 ) -> bool {
     let Ok((name, _)) = identity(settings, digest, spine, hash, language) else {
         return false;

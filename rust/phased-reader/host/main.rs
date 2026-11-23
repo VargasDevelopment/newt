@@ -2,12 +2,13 @@
 //! manifest or dependency acquisition is supplied by this packet.
 mod entry;
 mod language;
-fn main() {
+fn main() -> std::io::Result<()> {
     use entry::Case::*;
     let args: Vec<_> = std::env::args_os().collect();
-    if args.get(1).is_some_and(|arg| arg == "--language") {
-        language::run(std::path::Path::new(args.get(2).expect("fixture directory")));
-        return;
+    if let [_, flag, root, ..] = args.as_slice()
+        && flag == "--language"
+    {
+        return language::run(std::path::Path::new(root));
     }
     if args
         .get(1)
@@ -24,7 +25,7 @@ fn main() {
             },
             args.iter().any(|a| a == "--landscape"),
         );
-        return;
+        return Ok(());
     }
     let root = std::path::PathBuf::from(std::env::args_os().nth(1).expect("fixture directory"));
     for (name, case) in [
@@ -45,4 +46,5 @@ fn main() {
         entry::run(&root.join(format!("{name}.epub")), case, false);
         println!("{name}: operation assertions passed");
     }
+    Ok(())
 }

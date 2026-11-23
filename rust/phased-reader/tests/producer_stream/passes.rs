@@ -58,7 +58,7 @@ impl CacheStorage for PassStore<'_> {
         if ok{let(n,b)=card.pending.take().unwrap();card.files.insert(n,b);}ok
     }
 }
-struct PassHash<'a>(&'a Trace);
+pub(super) struct PassHash<'a>(pub(super) &'a Trace);
 impl RevisionHasher for PassHash<'_> {
     fn begin(&mut self) -> bool { false }
     fn update(&mut self, _: &[u8]) -> bool { false }

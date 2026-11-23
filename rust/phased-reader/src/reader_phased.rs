@@ -42,9 +42,8 @@ pub(crate) fn select_book_metadata<
                 .title
                 .and_then(|h| book.arena().c_string(h)),
         );
-        selected.language = book.package().metadata.language
-            .and_then(|h| book.arena().c_string(h))
-            .map_or_else(BookLanguage::default, BookLanguage::from_opf);
+        selected.language = BookLanguage::from_opf(book.package().metadata.language
+            .and_then(|h| book.arena().c_string(h)));
         let nav = book
             .navigation_item()
             .and_then(|m| m.href)

@@ -141,7 +141,7 @@ impl Runtime {
             let mut pages = ReaderPages(storage);
             let mut hash = crate::reader_hash::PackageHasher::from_live_sdk();
             newt_phased_reader::cached(binding.settings, &binding.book, binding.anchor.spine,
-                &mut hash, |name| pages.present(name, true))
+                &mut hash, &mut |name| pages.present(name, true))
         }).unwrap_or(false)
     }
 

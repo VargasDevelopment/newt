@@ -491,6 +491,13 @@ impl RevisionHasher for Hash<'_> {
 }
 #[test]
 fn independent_identity_presence_and_failures() {
+    for orientation in [Orientation::Portrait, Orientation::LandscapeCcw] {
+        let settings = ViewSettings { orientation, ..ViewSettings::default() };
+        let generations = BookLanguage::ALL.map(|language| identity_generation(settings, language));
+        for (index, generation) in generations.iter().enumerate() {
+            assert!(!generations[..index].contains(generation));
+        }
+    }
     for v in VECTORS {
         let mut h = Hash {
             v,
@@ -512,7 +519,7 @@ fn independent_identity_presence_and_failures() {
         ] {
             let mut h = Hash { v, calls: 0, fail };
             let mut calls = 0;
-            let result = cached_for_language(v.settings, &v.digest, v.spine, &mut h, BookLanguage::default(), |name| {
+            let result = cached_for_language(v.settings, &v.digest, v.spine, &mut h, BookLanguage::default(), &mut |name| {
                 calls += 1;
                 if calls == 1 {
                     assert_eq!(name, v.base);
@@ -655,7 +662,7 @@ pub fn actual_sha_cases(hash: &mut dyn crate::hash_provider::CacheHash) {
             Ok((v.base, v.generation))
         );
         let mut calls = 0;
-        assert!(cached_for_language(v.settings, &v.digest, v.spine, hash, BookLanguage::default(), |name| {
+        assert!(cached_for_language(v.settings, &v.digest, v.spine, hash, BookLanguage::default(), &mut |name| {
             calls += 1;
             if calls == 1 {
                 assert_eq!(name, v.base);

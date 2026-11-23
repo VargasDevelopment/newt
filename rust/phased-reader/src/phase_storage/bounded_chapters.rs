@@ -3,11 +3,11 @@
 #![forbid(unsafe_code)]
 use super::{Parts, ParseResources};
 use crate::{bounded::{self, Chapters, LaidOut, LAYOUT_BYTES, PARSE_BYTES},
-    reader::validate_exact_anchor_stream, xml_input::{self, EntityFilter},
+    reader::{reader_parameters, validate_exact_anchor_stream}, BookLanguage, xml_input::{self, EntityFilter},
     xml_session::{self, ParserBackend, XmlStream}, zip_container::{Entry, Reader, Status}, bounded::source::Source};
 use newt_core::{chapter_layout::{images::{self, BookImages, Catalog, Collector, Probed},
     types::{self, LineBreak, Sink}}, css::{CssRule, CssStylesheetBuilder, MAX_RULES},
-    preferences::ViewSettings};
+    preferences::{Orientation, ViewSettings}};
 use newt_reader_navigation::{BookView, metadata::Metadata};
 
 /// One sample-memory loan. The two source views below borrow these same
@@ -41,6 +41,9 @@ impl<B: ParserBackend + ?Sized> Chapters for Work<'_, B> {
         let catalog = Members(book);
         let entry = catalog.find(href).ok_or(Status::NotFound)?;
         let directory = directory(href);
+        let language = BookLanguage::from_opf(book.package.metadata.language
+            .and_then(|h| book.arena.c_string(h)));
+        let params = reader_parameters(settings.orientation == Orientation::LandscapeCcw, None, language);
         // The raw detector precedes the optional table allocation, as in the
         // SDK. Failed optional work leaves inline probes to the main pass.
         if mentions(self.epub, &entry, self.parse) {
@@ -49,7 +52,7 @@ impl<B: ParserBackend + ?Sized> Chapters for Work<'_, B> {
                 let count = prescan(self.epub, &entry, directory, &catalog,
                     self.parse, self.backend, table);
                 if count > 0 {
-                    return run(self.epub, &entry, directory, &catalog, settings,
+                    return run(self.epub, &entry, directory, &catalog, params,
                         parts.0, &table[..count], self.parse, self.backend,
                         self.breaker, sink);
                 }
@@ -57,7 +60,7 @@ impl<B: ParserBackend + ?Sized> Chapters for Work<'_, B> {
         }
         // All table views have ended; the empty/failed prescan's full prefix
         // is available again, rather than charging dead bytes to layout.
-        run(self.epub, &entry, directory, &catalog, settings, &mut *self.layout,
+        run(self.epub, &entry, directory, &catalog, params, &mut *self.layout,
             &[], self.parse, self.backend, self.breaker, sink)
     }
 
@@ -182,7 +185,7 @@ fn storage<'a>(parts: &mut Parts<'a>) -> Result<Layout<'a>, Status> {
         elements, runs, images, links, page, style_text, paragraph_links }, chapter_css })
 }
 fn run<B: ParserBackend + ?Sized>(epub: &[u8], entry: &Entry,
-    directory: &[u8], catalog: &dyn Catalog, settings: ViewSettings,
+    directory: &[u8], catalog: &dyn Catalog, params: types::Params<'_>,
     bank: &mut [u8], table: &[Probed], parse_bank: &mut [u8; PARSE_BYTES],
     backend: &mut B, breaker: &mut dyn LineBreak, sink: &mut dyn Sink,
 ) -> Result<LaidOut, Status> {
@@ -195,7 +198,7 @@ fn run<B: ParserBackend + ?Sized>(epub: &[u8], entry: &Entry,
     // against the same metadata catalog and same immutable EPUB bytes.
     let mut access = BookImages { source: &mut book_source, catalog: Some(catalog),
         directory, decoder: None, skip: io.skip, path_scratch: io.paths, table };
-    bounded::layout::Chapter { source: &mut source, entry, settings, storage, chapter_css,
+    bounded::layout::Chapter { source: &mut source, entry, params, storage, chapter_css,
         breaker, images: &mut access, parser: backend, buffer: io.buffer,
         filter: io.filter }.run(sink)
 }

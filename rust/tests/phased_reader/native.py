@@ -46,10 +46,14 @@ def native(run, support, ws, original, sdk):
     run.cargo(ws, run.output/'target', 'build', '-p', 'newt-phased-reader',
               '--bin', 'phased-reader-host', '--features', 'native-host', '--target', HOST)
     executable = run.output/'target'/HOST/'debug/phased-reader-host'
+    return None, executable
+
+
+def book_language(run, ws, executable):
     fixture_dir = run.output/'language-fixtures'
     load('phased_reader_fixtures', ws/'phased-reader/host/fixtures.py').write_languages(fixture_dir)
     run.run([executable, '--language', fixture_dir], ROOT)
-    return None, executable
+
 
 
 def assemble(output, support):
@@ -61,6 +65,9 @@ def assemble(output, support):
     (ws / resource).parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(root_ws / resource, ws / resource)
     load('producer_expected_recipe', ROOT/'rust/tests/producer_forwarding/recipe.py').stage(ws)
+    fixtures = load('phased_reader_fixtures', ws/'phased-reader/host/fixtures.py')
+    fixtures.write_producer_language(ws/'tests/producer_forwarding/ja.epub')
+    fixtures.write_language_fixture(ws/'tests/producer_forwarding/ja-short.epub', 'ja')
     return ws
 
 

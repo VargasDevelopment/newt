@@ -17,6 +17,7 @@ use newt_core::{
     },
     css::{CssStylesheetBuilder, TextAlign},
 };
+pub use newt_core::phased_metadata::BookLanguage;
 use newt_phased_sink::{Frame, Output, Plan, SelectingSink, Target};
 use newt_reader_atlas::{Geometry, PROFILE_SIZE, ReaderAtlas};
 use newt_reader_navigation::{MenuInfo, MenuRow, NO_TOC, Navigation, Section, metadata::Metadata};
@@ -43,48 +44,6 @@ pub struct Selection {
     pub spines: u32,
     pub navigation: Navigation,
 }
-/// Language tailoring supported by the line breaker.
-#[derive(Clone, Copy, Default)]
-pub enum BookLanguage {
-    #[default]
-    Default,
-    Chinese,
-    Japanese,
-    Korean,
-}
-
-impl BookLanguage {
-    fn from_opf(tag: &[u8]) -> Self {
-        // Retain only the primary language. A bad suffix invalidates the tag.
-        if tag.len() > 63 {
-            return Self::Default;
-        }
-        let mut parts = tag.split(|&byte| byte == b'-' || byte == b'_');
-        let primary = parts.next().unwrap_or_default();
-        if !parts.all(|part| (1..=8).contains(&part.len()) && part.iter().all(u8::is_ascii_alphanumeric)) {
-            return Self::Default;
-        }
-        if primary.eq_ignore_ascii_case(b"zh") {
-            Self::Chinese
-        } else if primary.eq_ignore_ascii_case(b"ja") {
-            Self::Japanese
-        } else if primary.eq_ignore_ascii_case(b"ko") {
-            Self::Korean
-        } else {
-            Self::Default
-        }
-    }
-
-    fn tag(self) -> &'static core::ffi::CStr {
-        match self {
-            Self::Default => c"en",
-            Self::Chinese => c"zh",
-            Self::Japanese => c"ja",
-            Self::Korean => c"ko",
-        }
-    }
-}
-
 #[path = "reader/selection_initialization.rs"]
 pub mod selection_initialization;
 #[path = "reader/scoped_yield.rs"]
@@ -1511,7 +1470,7 @@ impl PhasedReader<'_, '_> {
 
 include!("reader_semantic.rs");
 
-fn reader_parameters<'s>(landscape: bool, slot: Option<&'s Slot<'_>>, language: BookLanguage) -> Params<'s> {
+pub(crate) fn reader_parameters<'s>(landscape: bool, slot: Option<&'s Slot<'_>>, language: BookLanguage) -> Params<'s> {
     let g = Geometry::reader(landscape);
     Params {
         width: g.width as i16,

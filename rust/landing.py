@@ -99,7 +99,8 @@ def native_forwarding(checker, support, runner, snapshot):
     seals = (support.SourceSeal(ws), support.SourceSeal(crypto))
     runner.extra_seals = seals
     try:
-        native.native(runner, support, ws, snapshot, sdk)
+        _, executable = native.native(runner, support, ws, snapshot, sdk)
+        native.book_language(runner, ws, executable)
         obj = runner.output / 'native_sha.o'
         runner.run([runner.tools['clang++'], '--no-default-config', '-std=c++17',
                     '-O1', '-g', '-fsanitize=address,undefined', '-fno-sanitize-recover=all',
@@ -112,10 +113,10 @@ def native_forwarding(checker, support, runner, snapshot):
         output = runner.cargo(ws, runner.output/'target', 'test', '-p', 'newt-phased-reader',
                               '--lib', '--features', 'native-host', '--target', HOST,
                               'producer_stream_tests::traces')
-        require_tests(support, output, 13, filtered=True)
+        require_tests(support, output, 14, filtered=True)
         recipe = load('landing_recipe', snapshot / 'rust/tests/producer_forwarding/recipe.py')
         support.require(len(recipe.MATRIX) == 55, 'complete forwarding matrix')
-        return {'passed_tests': 13, 'forwarding_cases': 55,
+        return {'passed_tests': 14, 'forwarding_cases': 55,
                 'fixture_sha256': checker.digest(ws/'tests/producer_forwarding/expected-outputs.bin.zlib'),
                 'native_source_sha256': support.source_inventory(ws),
                 'openssl_inputs': seals[1].hashes}

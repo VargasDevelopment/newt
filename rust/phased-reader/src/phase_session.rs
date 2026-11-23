@@ -102,7 +102,7 @@ impl<B: ParserBackend + ?Sized, L: BuildLoan, C: ReadScope + CachePresence>
             return false;
         }
         let opening = !r.reader.has_page();
-        session_adapter::cached_for_language(self.settings, digest, spine, self.hash, r.reader.selection().language, |name| {
+        session_adapter::cached_for_reader(r.reader, self.settings, digest, spine, self.hash, &mut |name| {
             self.store.present(name, opening)
         })
     }
@@ -230,7 +230,7 @@ impl<C: ReadScope + CachePresence> PhasedChapterCache<'_, C> {
                                     &mut base,
                                     &mut generation,
                                     language,
-                            );
+                                );
                             name = cache_show::expanded(&base);
                             if identified
                                 && newt_core::cache_names::segment::segment_name(

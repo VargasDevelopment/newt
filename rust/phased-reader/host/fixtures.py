@@ -62,19 +62,38 @@ def write_languages(root: Path):
     for name, tag in (
         ("en", "en"), ("ja", " JA_jp "), ("zh", "zh-Hant-TW"), ("ko", "KO"),
         ("missing", None), ("invalid", "ja--JP"), ("empty", ""),
-        ("unknown", "jargon"), ("overlong", "ja" + " " * 260 + "junk"),
+        ("unknown", "jargon"), ("overlong", "ja-" + "x" * 300),
     ):
-        language = f"<dc:language>{tag}</dc:language>" if tag is not None else ""
-        opf = ('<package xmlns:dc="http://purl.org/dc/elements/1.1/"><metadata>'
-               + language + '</metadata><manifest><item id="c" href="chapter.xhtml" '
-               'media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c"/>'
-               '</spine></package>')
-        with ZipFile(root / f"language-{name}.epub", "w") as z:
-            z.writestr("mimetype", "application/epub+zip")
-            z.writestr("META-INF/container.xml", CONTAINER)
-            z.writestr("OPS/book.opf", opf)
-            # U+00A7 has UAX #14 class AI, resolved differently for CJK.
-            z.writestr("OPS/chapter.xhtml", "<html><body><p>" + "§" * 80 + "</p></body></html>")
+        write_language_fixture(root / f"language-{name}.epub", tag)
+
+
+def write_language_fixture(path: Path, tag):
+    language = f"<dc:language>{tag}</dc:language>" if tag is not None else ""
+    opf = ('<package xmlns:dc="http://purl.org/dc/elements/1.1/"><metadata>'
+           + language + '</metadata><manifest><item id="c" href="chapter.xhtml" '
+           'media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c"/>'
+           '</spine></package>')
+    with ZipFile(path, "w") as z:
+        z.writestr("mimetype", "application/epub+zip")
+        z.writestr("META-INF/container.xml", CONTAINER)
+        z.writestr("OPS/book.opf", opf)
+        # U+00A7 has UAX #14 class AI, resolved differently for CJK.
+        z.writestr("OPS/chapter.xhtml", "<html><body><p>" + "§" * 80 + "</p></body></html>")
+
+
+def write_producer_language(path: Path):
+    chapter = "<html><body>" + "§<hr/>" * 1450 + "</body></html>"
+    opf = ('<package xmlns:dc="http://purl.org/dc/elements/1.1/"><metadata>'
+           '<dc:language>ja</dc:language></metadata><manifest>'
+           '<item id="a" href="a.xhtml" media-type="application/xhtml+xml"/>'
+           '<item id="b" href="b.xhtml" media-type="application/xhtml+xml"/>'
+           '</manifest><spine><itemref idref="a"/><itemref idref="b"/></spine></package>')
+    with ZipFile(path, "w") as z:
+        z.writestr("mimetype", "application/epub+zip")
+        z.writestr("META-INF/container.xml", CONTAINER)
+        z.writestr("OPS/book.opf", opf)
+        z.writestr("OPS/a.xhtml", chapter)
+        z.writestr("OPS/b.xhtml", chapter)
 
 
 def write_menus(root: Path):

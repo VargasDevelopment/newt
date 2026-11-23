@@ -280,9 +280,6 @@ impl Handler for Package<'_, '_> {
         } else if local_is(name, b"spine") {
             self.spine_depth = self.spine_depth.saturating_sub(1);
         } else if self.capture.active && self.mode == Mode::Count {
-            // A full capture may have dropped the rest of a language tag.
-            let truncated_language = matches!(self.field, Field::Language)
-                && self.capture.len == crate::xml_input::MAX_TEXT_CAPTURE;
             let text = self.capture.trimmed();
             let slot = match self.field {
                 Field::Title => Some(&mut self.metadata.title),
@@ -291,7 +288,7 @@ impl Handler for Package<'_, '_> {
                 Field::Identifier => Some(&mut self.metadata.identifier),
                 Field::None => None,
             };
-            if !truncated_language && !text.is_empty() {
+            if !text.is_empty() {
                 if let Some(slot) = slot {
                     if bytes(self.arena, *slot).is_empty() {
                         if let Some(value) = self.arena.copy_nul_ref(Some(text)) {
