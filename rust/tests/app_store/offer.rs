@@ -184,7 +184,7 @@ fn the_offer_settles_only_when_its_page_says_so() {
     // Refusals whose page asks for another try leave the next entry free.
     for (problem, retry) in [(Problem::Refused(Refusal::Changed), true), (Problem::Refused(Refusal::HashFailed), true),
                              (Problem::NoRoom, true), (Problem::Refused(Refusal::Damaged), false),
-                             (Problem::Refused(Refusal::Many), false)] {
+                             (Problem::Refused(Refusal::Many), true)] {
         let mut prompt = Prompt::Refused(problem);
         assert_eq!(prompt.choose(Action::Activate), Some(Choice::Stay));
         assert_eq!(prompt.choose(Action::Back), Some(Choice::Leave));
@@ -235,6 +235,8 @@ fn the_running_app_or_a_refused_folder_is_no_offer() {
     let mut two = Card::new().file("a.newt", &titled(b"A")).file("b.newt", &titled(b"B"));
     assert!(boot.enter(&mut two));
     assert_eq!(boot.page(), Some(Page::Refused(Problem::Refused(Refusal::Many))));
+    assert_eq!(boot.press(Action::Back), Some(Choice::Leave));
+    assert!(boot.enter(&mut card(&titled(b"A"))), "leaving just one file brings its offer");
 }
 
 #[test]

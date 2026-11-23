@@ -22,10 +22,10 @@ pub enum Problem {
 }
 
 impl Problem {
-    /// Its copy asks the reader to try again, so leaving must not settle the
-    /// offer until the next restart.
+    /// Its copy asks the reader to try again or to fix the folder, so leaving
+    /// must not settle the offer until the next restart.
     pub fn retry(self) -> bool {
-        matches!(self, Self::NoRoom | Self::Refused(Refusal::Changed | Refusal::HashFailed))
+        matches!(self, Self::NoRoom | Self::Refused(Refusal::Changed | Refusal::HashFailed | Refusal::Many))
     }
 
     fn reason(self) -> &'static [u8] {
@@ -115,7 +115,7 @@ pub fn render(page: &Page<'_>, running: Option<&Definition>, bar: &SystemBar, fr
             let line = Text::new().push(b"Newt could not confirm the install. After a restart, Apps shows ");
             let line = match current {
                 Some(name) => line.push(b"either ").push(name).push(b" or ").push(cstr(offered)).push(b"."),
-                None => line.push(cstr(offered)).push(b" or the message it shows now."),
+                None => line.push(cstr(offered)).push(b", an app saved earlier, or the message it shows now."),
             };
             body(c, BODY_TOP, &line);
         }
