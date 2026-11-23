@@ -8,36 +8,40 @@
 //!    first image is the cover;
 //! 3-5. when a cover meta names no image item, an image item that is plainly
 //!    the cover: its href is the meta's content, its id is "cover" (any case),
-//!    or its file name is "cover" with any extension.
+//!    or its file name is "cover" with any extension;
+//! 6. a first spine page that is only a cover: its body holds exactly one image
+//!    and no text. This is never "the first image anywhere".
 //! A cover page is parsed only when it outranks every image; when it gives no
 //! image, the best image is the fallback.
 use super::{MetadataStatus as S, discovery::{path, cbytes}};
 use crate::xml_session::{Attributes, Handler};
 #[derive(Clone, Copy)]
 #[repr(u8)]
-enum Role { Other, Container, Rootfiles, Package, Metadata, Manifest, Guide, Html, Body }
+enum Role { Other, Container, Rootfiles, Package, Metadata, Manifest, Guide, Spine, Html, Body }
 /// The document one parse reads.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Kind { Container, Package, Page }
 /// What the package offers. A container parse leaves the package path in
-/// `image`. Every byte zero is a valid empty value.
+/// `image`. A strict page must be only a cover. Every byte zero is a valid
+/// empty value.
 #[derive(Clone, Copy)]
-pub struct Found { pub image: [u8; 512], pub page: [u8; 512] }
+pub struct Found { pub image: [u8; 512], pub page: [u8; 512], pub strict: bool }
 /// Bytes of the per-parse scratch block the caller lends to `State::new`.
-pub const SCRATCH: usize = 3 * 512;
+pub const SCRATCH: usize = 4 * 512;
 const NONE: u8 = u8::MAX;
 const META_ID: u8 = 1;
 const GUIDE: u8 = 2;
 const META_HREF: u8 = 3;
 const COVER_ID: u8 = 4;
 const COVER_STEM: u8 = 5;
+const SPINE: u8 = 6;
 pub struct State<'a> {
     pub status: S,
     roles: [Role; 32], depth: usize,
     kind: Kind, pub resolve: bool, pub saw_root: bool,
     opf: &'a [u8], found: &'a mut Found,
-    meta: &'a mut [u8; 512], guide: &'a mut [u8; 512], item: &'a mut [u8; 512],
-    image_rank: u8, page_rank: u8, images: u8,
+    meta: &'a mut [u8; 512], guide: &'a mut [u8; 512], spine: &'a mut [u8; 512], item: &'a mut [u8; 512],
+    image_rank: u8, page_rank: u8, images: u8, text: bool,
 }
 fn carve<'a>(bytes: &mut &'a mut [u8]) -> Option<&'a mut [u8; 512]> {
     let (head, tail) = core::mem::take(bytes).split_first_chunk_mut::<512>()?;
@@ -48,26 +52,30 @@ impl<'a> State<'a> {
     /// A page parse keeps `found`; the others start it empty. None when
     /// `scratch` is shorter than `SCRATCH`.
     pub fn new(kind: Kind, opf: &'a [u8], found: &'a mut Found, mut scratch: &'a mut [u8]) -> Option<Self> {
-        let (meta, guide, item) = (carve(&mut scratch)?, carve(&mut scratch)?, carve(&mut scratch)?);
-        (meta[0], guide[0], item[0]) = (0, 0, 0);
-        if kind != Kind::Page { found.image[0] = 0; found.page[0] = 0; }
-        Some(Self { status: S::Ok, roles: [Role::Other; 32], depth: 0, kind, resolve: false,
-            saw_root: false, opf, found, meta, guide, item, image_rank: NONE, page_rank: NONE, images: 0 })
+        let (meta, guide) = (carve(&mut scratch)?, carve(&mut scratch)?);
+        let (spine, item) = (carve(&mut scratch)?, carve(&mut scratch)?);
+        (meta[0], guide[0], spine[0], item[0]) = (0, 0, 0, 0);
+        if kind != Kind::Page { found.image[0] = 0; found.page[0] = 0; found.strict = false; }
+        Some(Self { status: S::Ok, roles: [Role::Other; 32], depth: 0, kind, resolve: false, saw_root: false,
+            opf, found, meta, guide, spine, item, image_rank: NONE, page_rank: NONE, images: 0, text: false })
     }
     pub fn complete(&self) -> S {
         if self.status != S::Ok { self.status }
         else if self.saw_root && self.depth == 0 { S::Ok } else { S::Malformed }
     }
     /// After pass 1: whether a lower-ranked candidate needs the manifest again.
-    pub fn second_pass(&self) -> bool { self.image_rank != 0 && (self.meta[0] != 0 || self.guide[0] != 0) }
+    pub fn second_pass(&self) -> bool {
+        self.image_rank != 0 && (self.meta[0] != 0 || self.guide[0] != 0 || self.spine[0] != 0)
+    }
     /// After the package: keep the page only when it outranks every image.
     pub fn settle(&mut self) -> S {
         if self.page_rank >= self.image_rank { self.found.page[0] = 0; }
         if self.found.image[0] == 0 && self.found.page[0] == 0 { S::NotFound } else { S::Ok }
     }
-    /// After a page: its first image becomes the cover.
+    /// After a page: its first image becomes the cover. A strict page gives
+    /// it only when that image is its body's one image and the body has no text.
     pub fn take_page_image(&mut self) -> S {
-        if self.item[0] == 0 { return S::NotFound; }
+        if self.item[0] == 0 || (self.found.strict && (self.images != 1 || self.text)) { return S::NotFound; }
         self.found.image = *self.item;
         S::Ok
     }
@@ -96,8 +104,10 @@ impl<'a> State<'a> {
         let Some(href) = attrs.exact(b"href") else { return };
         if !path(self.opf, href, self.item) { return; }
         let (id, meta) = (attrs.exact(b"id"), cbytes(self.meta));
+        let page = media == Some(b"application/xhtml+xml");
         let rank = if image && !meta.is_empty() && id == Some(meta) { META_ID }
             else if self.guide[0] != 0 && cbytes(self.item) == cbytes(self.guide) { GUIDE }
+            else if page && self.spine[0] != 0 && id == Some(cbytes(self.spine)) { SPINE }
             // Only a book with a cover meta gets the broken-meta fallbacks.
             else if !image || meta.is_empty() { NONE }
             else if href == meta { META_HREF }
@@ -105,8 +115,8 @@ impl<'a> State<'a> {
             else if stem(cbytes(self.item)) == b"cover" { COVER_STEM }
             else { NONE };
         if image && rank < self.image_rank { self.found.image = *self.item; self.image_rank = rank; }
-        else if media == Some(b"application/xhtml+xml") && rank < self.page_rank {
-            self.found.page = *self.item; self.page_rank = rank;
+        else if page && rank < self.page_rank {
+            self.found.page = *self.item; self.page_rank = rank; self.found.strict = rank == SPINE;
         }
     }
     fn page_image(&mut self, name: &[u8], attrs: &mut dyn Attributes) {
@@ -154,8 +164,9 @@ impl Handler for State<'_> {
         else if matches!(parent, Role::Package) && tag(name, b"metadata", OPF) { Role::Metadata }
         else if matches!(parent, Role::Package) && tag(name, b"manifest", OPF) { Role::Manifest }
         else if matches!(parent, Role::Package) && tag(name, b"guide", OPF) { Role::Guide }
+        else if matches!(parent, Role::Package) && tag(name, b"spine", OPF) { Role::Spine }
         else if matches!(parent, Role::Html) && tag(name, b"body", XHTML) { Role::Body }
-        // Everything under body counts as body, so nested images count.
+        // Everything under body counts as body, so nested images and text count.
         else if matches!(parent, Role::Body) { Role::Body }
         else { Role::Other };
         self.roles[self.depth] = role; self.depth += 1;
@@ -176,6 +187,11 @@ impl Handler for State<'_> {
                 let file = &href[..href.iter().position(|&c| c == b'#').unwrap_or(href.len())];
                 if !path(self.opf, file, self.guide) { self.guide[0] = 0; }
             }
+        } else if !self.resolve && matches!(parent, Role::Spine) && tag(name, b"itemref", OPF) {
+            // Only the first itemref, linear or not, can be a cover page.
+            if self.spine[0] == 0 && let Some(id) = attrs.exact(b"idref") && id.len() < 512 {
+                self.spine[..id.len()].copy_from_slice(id); self.spine[id.len()] = 0;
+            }
         } else if matches!(parent, Role::Manifest) && tag(name, b"item", OPF) {
             self.package_item(attrs);
         } else if matches!(parent, Role::Body) {
@@ -183,5 +199,9 @@ impl Handler for State<'_> {
         }
     }
     fn end_element(&mut self, _name: &[u8]) { self.depth = self.depth.saturating_sub(1); }
+    fn text(&mut self, text: &[u8]) {
+        if self.depth != 0 && matches!(self.roles[self.depth - 1], Role::Body)
+            && text.iter().any(|c| !b" \t\r\n".contains(c)) { self.text = true; }
+    }
     fn stop_parse(&self) -> bool { self.status != S::Ok }
 }

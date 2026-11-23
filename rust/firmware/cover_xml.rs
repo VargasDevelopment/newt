@@ -32,6 +32,9 @@ unsafe extern "C" {
     fn XML_SetStartDoctypeDeclHandler(parser:*mut c_void,
         // SAFETY: synchronous callback only rejects this live parser's DTD.
         handler:unsafe extern "C" fn(*mut c_void,*const c_char,*const c_char,*const c_char,c_int));
+    fn XML_SetCharacterDataHandler(parser:*mut c_void,
+        // SAFETY: callback bytes and exclusive context live until return.
+        handler:unsafe extern "C" fn(*mut c_void,*const c_char,c_int));
     fn XML_SetExternalEntityRefHandler(parser:*mut c_void,
         // SAFETY: synchronous callback only rejects this live parser's entity.
         handler:unsafe extern "C" fn(*mut c_void,*const c_char,*const c_char,*const c_char,*const c_char)->c_int);
@@ -96,6 +99,14 @@ unsafe extern "C" fn end(user:*mut c_void,name:*const c_char) {
     // SAFETY: same live parser-local context and terminated name.
     unsafe { (&mut *user.cast::<Context<'_,'_>>()).state.end_element(CStr::from_ptr(name).to_bytes()); }
 }
+// SAFETY: Expat supplies its live exclusive Context and a byte extent it owns.
+unsafe extern "C" fn text(user:*mut c_void,bytes:*const c_char,length:c_int) {
+    // SAFETY: same live parser-local context; Expat's extent lives until return.
+    unsafe {
+        let c=&mut *user.cast::<Context<'_,'_>>();
+        c.state.text(core::slice::from_raw_parts(bytes.cast(),usize::try_from(length).unwrap_or(0)));
+    }
+}
 // SAFETY: user is this parser's live exclusive Context; only a policy check occurs.
 unsafe extern "C" fn doctype(user:*mut c_void,_a:*const c_char,_b:*const c_char,_c:*const c_char,subset:c_int) {
     // SAFETY: synchronous parser context; a refused DOCTYPE stops before its
@@ -135,7 +146,8 @@ fn parse(raw:&mut dyn BookSource,memory:&Memory<'_>,state:&mut State<'_>)->S {
     // SAFETY: exclusive parser and stack context survive every synchronous feed.
     unsafe {
         XML_SetUserData(pointer,(&mut context as *mut Context<'_,'_>).cast());
-        XML_SetElementHandler(pointer,start,end); XML_SetStartDoctypeDeclHandler(pointer,doctype);
+        XML_SetElementHandler(pointer,start,end); XML_SetCharacterDataHandler(pointer,text);
+        XML_SetStartDoctypeDeclHandler(pointer,doctype);
         XML_SetExternalEntityRefHandler(pointer,external); XML_SetParamEntityParsing(pointer,0);
     }
     let mut chunk=[0;1024]; let mut at=0;

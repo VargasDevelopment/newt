@@ -7,11 +7,13 @@ synthetic books whose covers are made here: baseline grayscale JPEGs declared
 the EPUB3 way (cover-image), the EPUB2 way (<meta name="cover">), by the
 guide (straight to the image, or to an XHTML cover page) and by a broken
 cover meta that names no item (the image item is then found by the meta's
-text as its href, by the id "cover" or by the file name "cover"), stored and
+text as its href, by the id "cover" or by the file name "cover") or by a
+first spine page that holds only the cover image, stored and
 deflated, one with the common "image/jpg" media type, a progressive JPEG (the
 firmware draws its first scan, at 1/8 scale), and books that must get no
 cover: one whose cover form the firmware does not decode, the known gap, and
-one whose cover page carries an internal DTD subset. Cover work starts after
+one whose cover page carries an internal DTD subset, and one whose first
+spine page holds text beside its image. Cover work starts after
 2 s without input; the preview presses
 only after 4 s without a refresh, press or card access, so staying on a
 screen lets that work finish. Each control is the same build with one
@@ -64,9 +66,12 @@ SUPPORTED = {
     'Ironwood': {'form': 'meta-href'},
     'Juniper': {'form': 'meta-cover-id'},
     'Kapok': {'form': 'meta-cover-file', 'deflated': True},
+    'Larch': {'form': 'spine-page'},
 }
 # Books that get a bare record: (form, the attempt's result).
 NO_COVER = {
+    # Text beside the image: a first page, not a cover page.
+    'Sumac': ({'form': 'spine-text-page'}, MISSING),
     'Willow': ({'form': 'subset-page'}, UNSUPPORTED),
     # Arithmetic coding (SOF9): the decoders take Huffman frames only.
     'Yew': ({'form': 'epub3', 'frame': 0xc9}, UNSUPPORTED),
@@ -135,11 +140,15 @@ def art(seed, frame=0xc0):
     return jpeg(288, 376, lambda x, y: (grey(seed, x, y) - 128) * 8, frame)
 
 
-def page(doctype, source):
-    """An XHTML cover page whose body holds one image."""
+def page(doctype, body):
+    """An XHTML page with `body` in its body."""
     return ('<?xml version="1.0" encoding="UTF-8"?>' + doctype
             + '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Cover</title></head>'
-            + f'<body><div class="cover"><img src="{source}" alt=""/></div></body></html>')
+            + f'<body><div class="cover">{body}</div></body></html>')
+
+
+def img(source):
+    return f'<img src="{source}" alt=""/>'
 
 
 def epub(path, title, image, form='epub3', deflated=False, media='image/jpeg'):
@@ -149,7 +158,8 @@ def epub(path, title, image, form='epub3', deflated=False, media='image/jpeg'):
     (that page's internal DTD subset spells the image's path), or a cover
     meta that names no item id, with the image's href as its text
     (meta-href), the image's id "cover" (meta-cover-id) or the image's file
-    named "cover" (meta-cover-file)."""
+    named "cover" (meta-cover-file), or the first spine page holding only the
+    image, in SVG (spine-page) or with text beside it (spine-text-page)."""
     with zipfile.ZipFile(SAMPLE) as source:
         opf = source.read('OEBPS/content.opf').decode()
         opf = opf.replace('The Small Lantern', title).replace('small-lantern:1', title)
@@ -168,16 +178,23 @@ def epub(path, title, image, form='epub3', deflated=False, media='image/jpeg'):
                 # though as an image it would outrank the file name. Its own
                 # image is one the firmware cannot decode.
                 items = '<item id="cover" href="text/title.xhtml" media-type="application/xhtml+xml"/>' + items
-                pages['OEBPS/text/title.xhtml'] = page('', '../images/title.jpg')
+                pages['OEBPS/text/title.xhtml'] = page('', img('../images/title.jpg'))
                 pages['OEBPS/images/title.jpg'] = jpeg(8, 8, lambda x, y: 0, frame=0xc9)
+        elif form.startswith('spine-'):
+            opf = opf.replace('<spine>', '<spine><itemref idref="cover-page" linear="no"/>')
+            items += '<item id="cover-page" href="text/cover.xhtml" media-type="application/xhtml+xml"/>'
+            pages['OEBPS/text/cover.xhtml'] = page('', (
+                '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
+                'viewBox="0 0 288 376">\n  <image width="288" height="376" xlink:href="../images/art.jpg"/>\n</svg>'
+                if form == 'spine-page' else img('../images/art.jpg') + '<p>Chapter One</p>'))
         elif form == 'guide-image':
             opf = opf.replace('</spine>', '</spine><guide><reference type="cover" href="images/art.jpg"/></guide>')
         else:
             # The page sits in its own folder, so its image path is relative to it.
             opf = opf.replace('</spine>', '</spine><guide><reference type="cover" href="text/cover.xhtml#top"/></guide>')
             items += '<item id="cover-page" href="text/cover.xhtml" media-type="application/xhtml+xml"/>'
-            pages['OEBPS/text/cover.xhtml'] = (page('<!DOCTYPE html>', '../images/art.jpg') if form == 'guide-page'
-                else page('<!DOCTYPE html [<!ENTITY art "../images/art.jpg">]>', '&art;'))
+            pages['OEBPS/text/cover.xhtml'] = (page('<!DOCTYPE html>', img('../images/art.jpg')) if form == 'guide-page'
+                else page('<!DOCTYPE html [<!ENTITY art "../images/art.jpg">]>', img('&art;')))
         opf = opf.replace('</manifest>', items + '</manifest>')
         compression = zipfile.ZIP_DEFLATED if deflated else zipfile.ZIP_STORED
         with zipfile.ZipFile(path, 'w', zipfile.ZIP_STORED) as archive:
