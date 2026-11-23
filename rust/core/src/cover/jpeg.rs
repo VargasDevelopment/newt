@@ -74,7 +74,7 @@ pub fn validate(source: &mut dyn BookSource, layout: &mut Layout) -> Status {
         if sof[4] != 8 { return Invalid; }
         if components != 1 && components != 3 { return Unsupported; }
         if bytes != 8 + 3 * components { return Invalid; }
-        if if components == 1 { sof[11] != 0x11 } else { !matches!(sof[11],0x11|0x21|0x22) } { return Unsupported; }
+        if if components == 1 { sof[11] != 0x11 } else { !matches!(sof[11],0x11|0x12|0x21|0x22|0x41) } { return Unsupported; }
         for i in 0..components {
             if sof[12+3*i] > 3 { return Invalid; }
             if i != 0 && sof[11+3*i] != 0x11 { return Unsupported; }

@@ -10,6 +10,7 @@ use newt_core::zip_window::source::BookSource;
 /// Authored grayscale baseline JPEG: quantizers 1, DC category k coded as 4-bit k,
 /// AC holds only EOB (`00`). Each 8x8 block is flat at its DC value. A
 /// progressive one (SOF2) holds only its DC first scan, at point transform `al`.
+/// With a Y `sampling`, it is YCbCr with flat chroma, interleaved in MCUs.
 #[derive(Clone)]
 struct Jpeg {
     width: u16,
@@ -19,13 +20,15 @@ struct Jpeg {
     dc_symbols: Vec<u8>,
     sos_tail: Vec<u8>,
     progressive: Option<u8>,
+    sampling: Option<u8>,
 }
 impl Default for Jpeg {
     fn default() -> Self {
         let mut dc_counts = [0; 16];
         dc_counts[3] = 12;
         Self { width: 64, height: 48, dc: vec![0, 64, 128, -64, 192, -128, 256, -192, 512],
-               dc_counts, dc_symbols: (0..12).collect(), sos_tail: vec![0, 63, 0], progressive: None }
+               dc_counts, dc_symbols: (0..12).collect(), sos_tail: vec![0, 63, 0], progressive: None,
+               sampling: None }
     }
 }
 fn segment(out: &mut Vec<u8>, marker: u8, body: &[u8]) {
@@ -39,20 +42,42 @@ impl Jpeg {
         segment(&mut out, 0xdb, &[[0].as_slice(), &[1; 64]].concat());
         let [h0, h1] = self.height.to_be_bytes();
         let [w0, w1] = self.width.to_be_bytes();
-        segment(&mut out, if self.progressive.is_some() { 0xc2 } else { 0xc0 }, &[8, h0, h1, w0, w1, 1, 1, 0x11, 0]);
+        let (frame, scan) = match self.sampling {
+            None => (vec![1, 1, 0x11, 0], vec![1, 1, 0x00]),
+            Some(y) => (vec![3, 1, y, 0, 2, 0x11, 0, 3, 0x11, 0], vec![3, 1, 0x00, 2, 0x11, 3, 0x11]),
+        };
+        segment(&mut out, if self.progressive.is_some() { 0xc2 } else { 0xc0 }, &[[8, h0, h1, w0, w1].as_slice(), &frame].concat());
         let mut ac_counts = [0; 16];
         ac_counts[1] = 1;
-        segment(&mut out, 0xc4, &[[0x00].as_slice(), &self.dc_counts, &self.dc_symbols, &[0x10], &ac_counts, &[0]].concat());
+        // Chroma (tables 1) codes the same way as Y (tables 0).
+        for id in if self.sampling.is_some() { 0..2 } else { 0..1 } {
+            segment(&mut out, 0xc4, &[[id].as_slice(), &self.dc_counts, &self.dc_symbols, &[0x10 | id], &ac_counts, &[0]].concat());
+        }
         let tail = self.progressive.map_or(self.sos_tail.clone(), |al| vec![0, 0, al]);
-        segment(&mut out, 0xda, &[[1, 1, 0x00].as_slice(), &tail].concat());
+        segment(&mut out, 0xda, &[scan, tail].concat());
         let mut bits: Vec<bool> = Vec::new();
         let mut put = |value: u32, length: u32| bits.extend((0..length).rev().map(|i| value >> i & 1 != 0));
-        let blocks = usize::from(self.width.div_ceil(8)) * usize::from(self.height.div_ceil(8));
-        let mut previous = 0;
-        for block in 0..blocks {
-            let target = self.dc[block % self.dc.len()] >> self.progressive.unwrap_or(0);
-            let diff = target - previous;
-            previous = target;
+        let (bw, bh) = (usize::from(self.width.div_ceil(8)), usize::from(self.height.div_ceil(8)));
+        // Each coded block as (component, DC), in scan order; MCU padding past the image is 0.
+        let y = |x: usize, y: usize| if x < bw && y < bh { self.dc[(y * bw + x) % self.dc.len()] } else { 0 };
+        let mut units = Vec::new();
+        match self.sampling {
+            None => units.extend((0..bw * bh).map(|b| (0, y(b % bw, b / bw)))),
+            Some(sampling) => {
+                let (h, v) = (usize::from(sampling >> 4), usize::from(sampling & 15));
+                for row in 0..bh.div_ceil(v) {
+                    for column in 0..bw.div_ceil(h) {
+                        units.extend((0..h * v).map(|b| (0, y(column * h + b % h, row * v + b / h))));
+                        units.extend([(1, 0), (2, 0)]);
+                    }
+                }
+            }
+        }
+        let mut previous = [0; 3];
+        for (component, dc) in units {
+            let target = dc >> self.progressive.unwrap_or(0);
+            let diff = target - previous[component];
+            previous[component] = target;
             let category = 32 - diff.unsigned_abs().leading_zeros();
             put(category, 4);
             put((if diff < 0 { diff + (1 << category) - 1 } else { diff }) as u32, category);
@@ -268,6 +293,26 @@ fn a_progressive_file_without_a_dc_first_scan_is_unsupported() {
     let sos = image.windows(2).position(|w| w == [0xff, 0xda]).unwrap();
     image[sos + 7..sos + 9].copy_from_slice(&[1, 63]);
     assert_eq!(render_progressive(&image).err(), Some(BookStatus::Unsupported));
+}
+
+#[test]
+fn y_sampling_12_and_41_draw_the_grey_frame() {
+    // Chroma never reaches the greys, so a YCbCr frame draws its Y blocks as a
+    // grayscale one does. These sizes pad MCUs and take baseline scales 0, 1 and 3.
+    let dc: Vec<i32> = (0..23).map(|i| (i * 11 - 128) * 8).collect();
+    let baseline = |image: &Jpeg| { let mut grey = Grey::default(); render_cover(&image.bytes(), &mut grey).unwrap(); grey.0 };
+    for (width, height) in [(72, 40), (320, 72), (1200, 200)] {
+        let grey = Jpeg { width, height, dc: dc.clone(), ..Jpeg::default() };
+        for sampling in [0x12, 0x41] {
+            let image = Jpeg { sampling: Some(sampling), ..grey.clone() };
+            assert_eq!(baseline(&image), baseline(&grey), "{sampling:#x} at {width}x{height}");
+            if width == 72 {
+                let (image, grey) = (Jpeg { progressive: Some(1), ..image }, Jpeg { progressive: Some(1), ..grey.clone() });
+                assert_eq!(render_progressive(&image.bytes()).unwrap().0, render_progressive(&grey.bytes()).unwrap().0,
+                           "progressive {sampling:#x}");
+            }
+        }
+    }
 }
 
 #[test]

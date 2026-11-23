@@ -73,6 +73,9 @@ SUPPORTED = {
     'Magnolia': {'form': 'epub3', 'image': 'png-grey'},
     'Nutmeg': {'form': 'epub2', 'image': 'png-rgb', 'deflated': True},
     'Rowan': {'form': 'epub3', 'image': 'png-wide'},
+    # YCbCr with Y sampled 1x2 and 4x1, past the decoder's native 11, 21 and 22.
+    'Oak': {'form': 'epub2', 'sampling': 0x12},
+    'Spruce': {'form': 'epub3', 'deflated': True, 'frame': 0xc2, 'sampling': 0x41},
 }
 # The PNG whose decode block is the largest a cover takes, larger than the
 # planned peak that admits cover work.
@@ -109,24 +112,38 @@ def entropy(bits):
     return bytes(data)
 
 
-def jpeg(width, height, dc, frame=0xc0):
+def jpeg(width, height, dc, frame=0xc0, sampling=None):
     """A grayscale JPEG of flat 8x8 blocks: quantizers 1, DC category k coded
     as the 4-bit k, every AC an end of block (rust/core/tests/cover_tolerance.rs
     builds the same). `dc(x, y)` is block (x, y)'s DC value; `frame` is its
     SOF marker (0xc0 baseline). A progressive frame (0xc2) holds the DC first
-    scan at point transform 1, as encoders write it, then one AC scan."""
+    scan at point transform 1, as encoders write it, then one AC scan. With a
+    Y `sampling` it is YCbCr, its chroma flat; the AC scan is Y's alone."""
     progressive = frame == 0xc2
+    h, v = (sampling >> 4, sampling & 15) if sampling else (1, 1)
+    components = [(1, sampling or 0x11)] + ([(2, 0x11), (3, 0x11)] if sampling else [])
     out = b'\xff\xd8' + segment(0xdb, bytes(1) + bytes([1] * 64))
-    out += segment(frame, bytes([8]) + struct.pack('>HH', height, width) + bytes([1, 1, 0x11, 0]))
+    out += segment(frame, bytes([8]) + struct.pack('>HHB', height, width, len(components))
+                   + b''.join(bytes([id, factors, 0]) for id, factors in components))
     dc_counts, ac_counts = [0] * 16, [0] * 16
     dc_counts[3], ac_counts[1] = 12, 1
-    out += segment(0xc4, bytes([0x00, *dc_counts, *range(12), 0x10, *ac_counts, 0]))
-    out += segment(0xda, bytes([1, 1, 0x00, 0, 0, 1] if progressive else [1, 1, 0x00, 0, 63, 0]))
-    bits, previous = [], 0
-    blocks = [(x, y) for y in range(-(-height // 8)) for x in range(-(-width // 8))]
-    for x, y in blocks:
-        value = dc(x, y) >> progressive
-        diff, previous = value - previous, value
+    # Chroma (tables 1) codes the same way as Y (tables 0).
+    for table in range(len(components) // 2 + 1):
+        out += segment(0xc4, bytes([table, *dc_counts, *range(12), 0x10 | table, *ac_counts, 0]))
+    scan = bytes([len(components)]) + b''.join(bytes([id, 0x00 if id == 1 else 0x11]) for id, _ in components)
+    out += segment(0xda, scan + bytes([0, 0, 1] if progressive else [0, 63, 0]))
+    columns, rows = -(-width // 8), -(-height // 8)
+    # Each coded block as (component, DC) in scan order; MCU padding past the image is 0.
+    units = []
+    for row in range(-(-rows // v)):
+        for column in range(-(-columns // h)):
+            units += [(0, dc(x, y) if x < columns and y < rows else 0)
+                      for y in range(row * v, row * v + v) for x in range(column * h, column * h + h)]
+            units += [(1, 0), (2, 0)] if sampling else []
+    bits, previous = [], [0, 0, 0]
+    for component, value in units:
+        value >>= progressive
+        diff, previous[component] = value - previous[component], value
         category = abs(diff).bit_length()
         for value, length in ((category, 4), (diff + (1 << category) - 1 if diff < 0 else diff, category)):
             bits += [value >> i & 1 for i in reversed(range(length))]
@@ -135,7 +152,7 @@ def jpeg(width, height, dc, frame=0xc0):
     out += entropy(bits)
     if progressive:
         # Every block's AC band ends at once.
-        out += segment(0xda, bytes([1, 1, 0x00, 1, 63, 0])) + entropy([0, 0] * len(blocks))
+        out += segment(0xda, bytes([1, 1, 0x00, 1, 63, 0])) + entropy([0, 0] * (columns * rows))
     return out + b'\xff\xd9'
 
 
@@ -146,9 +163,9 @@ def grey(seed, x, y):
     return min(step, 511 - step)
 
 
-def art(seed, frame=0xc0):
+def art(seed, frame=0xc0, sampling=None):
     """A 288x376 cover (twice the slot) of diagonal bands; `seed` shifts them."""
-    return jpeg(288, 376, lambda x, y: (grey(seed, x, y) - 128) * 8, frame)
+    return jpeg(288, 376, lambda x, y: (grey(seed, x, y) - 128) * 8, frame, sampling)
 
 
 def png(width, height, row, colour=0, interlace=0):
@@ -168,11 +185,11 @@ def png(width, height, row, colour=0, interlace=0):
 CAP_WIDTH = (10 * 1024 - 2) // 2
 
 
-def picture(kind, seed, frame=0xc0):
+def picture(kind, seed, frame=0xc0, sampling=None):
     """The cover image of `kind`: art(seed) as a JPEG or PNG, or a flat grey
     PNG at (png-wide) or past (png-too-wide) the row cap."""
     bands = lambda y: bytes(grey(seed, x // 8, y // 8) for x in range(288))
-    return {'jpeg': lambda: art(seed, frame),
+    return {'jpeg': lambda: art(seed, frame, sampling),
             'png-grey': lambda: png(288, 376, bands),
             'png-rgb': lambda: png(288, 376, bands, colour=2),
             'png-interlaced': lambda: png(288, 376, bands, interlace=1),
@@ -258,7 +275,7 @@ def books():
         kind = form.pop('image', 'jpeg')
         if kind != 'jpeg':
             form['media'] = 'image/png'
-        epub(folder / f'{name}.epub', name, picture(kind, seed, form.pop('frame', 0xc0)), **form)
+        epub(folder / f'{name}.epub', name, picture(kind, seed, form.pop('frame', 0xc0), form.pop('sampling', None)), **form)
     return folder
 
 
@@ -464,7 +481,7 @@ def low_heap(binary):
         if DECLINED not in results or world.cover(WIDE) is not None or world.temporaries():
             left = world.cover(WIDE)
             return f'a low heap ended {results}, left {left and len(left)} record bytes and {world.temporaries()}'
-        if problem := art_problem(world, shelf[0]):
+        if problem := art_problem(world, next(book for book in shelf if book in SUPPORTED and book != WIDE)):
             return f'a low heap stopped other covers: {problem}'
         preview_driver.write_conf(world.directory, {'cover.heap.free': ''})
         _, results, _ = world.run(to_book(shelf[0]))
