@@ -1,7 +1,7 @@
 //! #316: the cover decoder accepts what the frozen C++ (TJpgDec) drew, and old
 //! Rust no-art records are read once more. Payload CRCs below are the frozen
 //! C++ cover session's rasters for these exact bytes (stored in an EPUB).
-use newt_core::cover::{self, Record, jpeg::{Layout, Status, validate, dither_row, placement}};
+use newt_core::cover::{self, Record, png, jpeg::{Layout, Status, validate, dither_row, placement}};
 use newt_core::jpeg::{Error, Input, Workspace, progressive, renderer::{RenderError, Rows, render}};
 use newt_core::page_renderer::BookStatus;
 use newt_core::page_renderer::{ImageRows, SafetyError};
@@ -204,9 +204,31 @@ fn formats_both_builds_reject_stay_unsupported() {
     arithmetic[sof + 1] = 0xc9;
     let mut cmyk = base.clone();
     cmyk[sof + 9] = 4;
-    let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".as_slice();
-    for image in [arithmetic.as_slice(), &cmyk, png] {
+    for image in [arithmetic.as_slice(), &cmyk] {
         assert!(validate(&mut Bytes(image), &mut Layout::default()) == Status::Unsupported);
+    }
+}
+
+/// A grayscale 8-bit PNG's signature, IHDR and IEND: all `png::validate` reads.
+fn png_header(width: u32, interlace: u8) -> Vec<u8> {
+    let mut out = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+    out.extend(width.to_be_bytes());
+    out.extend(8u32.to_be_bytes());
+    // Depth, color, compression, filter, interlace, then an unchecked CRC.
+    out.extend([8, 0, 0, 0, interlace, 0, 0, 0, 0]);
+    out.extend([0, 0, 0, 0, b'I', b'E', b'N', b'D', 0xae, 0x42, 0x60, 0x82]);
+    out
+}
+
+#[test]
+fn a_png_row_past_the_cap_or_interlaced_is_unsupported() {
+    // Grey 8-bit: the row is the width, and the ring the width plus two.
+    let fits = (png::ROW_BYTES - 2) / 2;
+    let mut layout = Layout::default();
+    assert!(png::validate(&mut Bytes(&png_header(fits as u32, 0)), &mut layout) == Status::Ready);
+    assert_eq!((usize::from(layout.width), usize::from(layout.ring)), (fits, fits + 2));
+    for image in [png_header(fits as u32 + 1, 0), png_header(64, 1)] {
+        assert!(png::validate(&mut Bytes(&image), &mut Layout::default()) == Status::Unsupported);
     }
 }
 

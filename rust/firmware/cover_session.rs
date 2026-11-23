@@ -246,4 +246,4 @@ impl Drop for Session<'_>{
         if self.temporaries&PENDING!=0{if let Ok(path)=CStr::from_bytes_until_nul(&self.pending){io::remove_temporary(self.files,path,None);}}
     }
 }
-pub fn bytes()->usize{size_of::<Session<'_>>()}
+pub const fn bytes()->usize{size_of::<Session<'_>>()}

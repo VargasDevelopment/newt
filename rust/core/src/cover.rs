@@ -4,6 +4,7 @@
 pub mod discovery;
 pub mod xml;
 pub mod jpeg;
+pub mod png;
 use crate::zip_window::source::BookSource;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

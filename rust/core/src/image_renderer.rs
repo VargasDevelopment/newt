@@ -119,13 +119,14 @@ impl<S: crate::zip_window::source::BookSource + ?Sized> EntryInput
         self.read(dst)
     }
 }
-struct PngState<'a, 'b> {
-    scaler: RowScaler<'a>,
-    src: &'a mut [u8],
-    current_y: u32,
-    unsupported: bool,
-    sink: &'b mut dyn ImageRows,
-    safety: Option<SafetyError>,
+/// Also drives the cover's PNG rows (cover::png).
+pub(crate) struct PngState<'a, 'b> {
+    pub(crate) scaler: RowScaler<'a>,
+    pub(crate) src: &'a mut [u8],
+    pub(crate) current_y: u32,
+    pub(crate) unsupported: bool,
+    pub(crate) sink: &'b mut dyn ImageRows,
+    pub(crate) safety: Option<SafetyError>,
 }
 impl Callbacks for PngState<'_, '_> {
     fn init(&mut self, h: Header) -> Result<(), CallbackError> {

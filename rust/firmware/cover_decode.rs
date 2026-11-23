@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: MIT
-//! Core cover JPEG decoders (baseline, or a progressive file's first scan)
-//! with frozen arena/CRC/layout/row policy.
-use super::{memory::Memory,io::Control,CoverResult as R,member::INFLATE_BYTES};
+//! Core cover decoders (a baseline JPEG, a progressive JPEG's first scan, or
+//! a PNG) with frozen arena/CRC/layout/row policy.
+use super::{memory::{Memory,LIMIT},io::Control,CoverResult as R,member::INFLATE_BYTES};
 use core::mem::{size_of,align_of};
-use newt_core::{cover::{self,jpeg::{self,Layout}},jpeg::{Input,Error,Workspace,
+use newt_core::{cover::{self,png,jpeg::{self,Layout}},inflate::{self,BitBuffer},jpeg::{Input,Error,Workspace,
     progressive::{self,Huffman},renderer::{self,Rows,RenderError}},page_renderer::{ImageRows,SafetyError,BookStatus},
     zip_window::source::BookSource};
 #[derive(Default)]
 pub struct Drift {pub layout:bool,pub crc:bool}
+// A PNG at the row cap fits cover Memory beside the Session and raster, so
+// only a low heap (Declined, retried later) refuses one, never the accounting.
+const _:()=assert!(super::job::reservation()+Memory::charge(super::session::bytes())+Memory::charge(size_of::<Layout>())
+    +Memory::charge(cover::PIXELS)+Memory::charge(png::MAX_ARENA_BYTES)<=LIMIT);
 struct Ahead<'a>{source:&'a mut dyn BookSource,window:&'a mut[u8],held:usize,start:u64}
 impl BookSource for Ahead<'_>{
     fn size(&self)->u64{self.source.size()}
@@ -72,6 +76,14 @@ impl<'a> Parts<'a>{
         // disjoint prefix, exact element count.
         Some(unsafe{core::slice::from_raw_parts_mut(bytes.as_mut_ptr().cast(),n)})
     }
+    fn inflater(&mut self)->Option<&'a mut inflate::State>{
+        let pad=self.0.as_ptr().align_offset(align_of::<inflate::State>());self.bytes(pad)?;
+        let bytes=self.bytes(size_of::<inflate::State>())?;
+        if !inflate::State::initialize_storage(bytes,BitBuffer::Bits32){return None;}
+        // SAFETY: an aligned exclusive arena prefix that initialize_storage
+        // has just filled with a valid State; it lives as long as the arena.
+        Some(unsafe{&mut*bytes.as_mut_ptr().cast::<inflate::State>()})
+    }
 }
 pub fn decode(source:&mut dyn BookSource,expected:u32,memory:&Memory<'_>,control:&dyn Control,pixels:&mut[u8],drift:&mut Drift)->R{
     if !control.poll(){return R::Cancelled;}
@@ -79,19 +91,24 @@ pub fn decode(source:&mut dyn BookSource,expected:u32,memory:&Memory<'_>,control
     // SAFETY: actual max-aligned Layout-sized exclusive allocation, initialized
     // before reference formation; scalar/array-only Layout has no destructor.
     let layout=unsafe{let p=layout_block.pointer().cast::<Layout>();p.write(Layout::default());&mut*p};
-    let baseline=jpeg::validate(source,layout);
-    if baseline!=jpeg::Status::Ready && control.stopped(){return R::Cancelled;}
-    match baseline{
+    let mut magic=[0;8];
+    // A failed read here falls to the JPEG check, which reads again.
+    let is_png=source.size()>=8&&cover::read(source,0,&mut magic)&&magic==png::SIGNATURE;
+    let valid=if is_png{png::validate(source,layout)}else{jpeg::validate(source,layout)};
+    if valid!=jpeg::Status::Ready && control.stopped(){return R::Cancelled;}
+    match valid{
         jpeg::Status::Ready=>{},jpeg::Status::Unsupported=>return R::Unsupported,
         jpeg::Status::Incomplete=>return R::Incomplete,jpeg::Status::Invalid=>return R::Invalid,
         jpeg::Status::IoError=>return R::IoError,
     }
     let mut end=[0;2];
     let bytes=source.size();
-    if !cover::read(source,bytes-2,&mut end){return if control.stopped(){R::Cancelled}else{R::IoError};}
-    if end!=[255,217]{return R::Incomplete;}
+    if !is_png{
+        if !cover::read(source,bytes-2,&mut end){return if control.stopped(){R::Cancelled}else{R::IoError};}
+        if end!=[255,217]{return R::Incomplete;}
+    }
     let target=jpeg::placement(layout.width,layout.height);
-    let arena_bytes=jpeg::arena_bytes(layout,target);
+    let arena_bytes=if is_png{png::arena_bytes(layout,target)}else{jpeg::arena_bytes(layout,target)};
     let object=(size_of::<Ahead<'_>>()+15)&!15;
     let ahead=if Memory::charge(size_of::<Layout>())+Memory::charge(cover::PIXELS)+Memory::charge(object+4096+arena_bytes)
         <=Memory::charge(INFLATE_BYTES){object+4096}else{0};
@@ -103,13 +120,23 @@ pub fn decode(source:&mut dyn BookSource,expected:u32,memory:&Memory<'_>,control
         // disjoint initialized window. Its borrowed source never escapes decode.
         unsafe{let p=place.as_mut_ptr().cast::<Ahead<'_>>();p.write(Ahead{source,window,held:0,start:0});&mut*p}
     };
-    let progressive=layout.progressive;
+    let (progressive,size)=(layout.progressive,(layout.width,layout.height));
     let mut parts=Parts(arena);let Some(skip)=parts.bytes(1024)else{return R::Declined;};
     pixels.fill(0);
     let mut raster=Raster{control,pixels,width:target.0,height:target.1,left:usize::from(144-target.0)/2,
         top:usize::from(188-target.1)/2,rows:0,cancelled:false,invalid:false};
     let mut checked=Checked{source:input,layout,at:0,crc:u32::MAX,changed:false,io_error:false};
-    let result=if progressive{
+    let result=if is_png{
+        let (tw,ring)=(usize::from(target.0),usize::from(checked.layout.ring));
+        // SAFETY: zero-valid initialized u32/u16 rows withdrawn disjointly from
+        // this arena, sized by arena_bytes. No decoder allocation occurs outside it.
+        let Some(buffers)=(unsafe{(|read|Some(png::Buffers{read,inflate:parts.inflater()?,
+            dictionary:parts.bytes(inflate::DICTIONARY_SIZE)?,palette:parts.bytes(png::PALETTE)?,
+            transparency:parts.bytes(png::TRANSPARENCY)?,ring:parts.bytes(ring)?,
+            src:parts.bytes(usize::from(size.0))?,dst:parts.bytes(tw)?,sums:parts.numeric::<u32>(tw)?,
+            counts:parts.numeric::<u16>(tw)?}))(&mut *skip)})else{return R::Declined;};
+        png::render(&mut checked,buffers,size,target,&mut raster)
+    }else if progressive{
         let width=usize::from(target.0);
         // SAFETY: zero-valid initialized Huffman tables withdrawn disjointly
         // from this arena, sized by arena_bytes. No decoder allocation occurs outside it.

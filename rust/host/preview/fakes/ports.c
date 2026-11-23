@@ -572,7 +572,12 @@ uint32_t newt_cover_stack_min_free(void) { return 4096; }
 /* The cover producer's heap, as native/cover.cpp over heap_caps: blocks up
  * to 64 KiB, charged their usable size plus the 16-byte block header. */
 _Bool newt_cover_heap_supported(void) { return 1; }
-size_t newt_cover_heap_free_bytes(void) { return 172032; }
+/* "cover.heap.free=BYTES": the free heap cover work sees, so a test can make
+ * Memory's live check refuse a large block. */
+size_t newt_cover_heap_free_bytes(void) {
+    const char *free_bytes = preview_conf("cover.heap.free");
+    return free_bytes && *free_bytes ? (size_t)strtoul(free_bytes, NULL, 10) : 172032;
+}
 size_t newt_cover_heap_largest(void) { return 110592; }
 size_t newt_cover_heap_charged(void *block) { return block ? malloc_usable_size(block) + 16 : SIZE_MAX; }
 void newt_cover_heap_release(void *block) { free(block); }

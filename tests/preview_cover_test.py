@@ -10,10 +10,11 @@ cover meta that names no item (the image item is then found by the meta's
 text as its href, by the id "cover" or by the file name "cover") or by a
 first spine page that holds only the cover image, stored and
 deflated, one with the common "image/jpg" media type, a progressive JPEG (the
-firmware draws its first scan, at 1/8 scale), and books that must get no
-cover: one whose cover form the firmware does not decode, the known gap, and
-one whose cover page carries an internal DTD subset, and one whose first
-spine page holds text beside its image. Cover work starts after
+firmware draws its first scan, at 1/8 scale), grey and RGB PNGs and a wide
+PNG at the row cap; and books that must get no cover: one whose cover form
+the firmware does not decode (the known gap), PNGs interlaced or past the
+row cap, one whose cover page carries an internal DTD subset, and one whose
+first spine page holds text beside its image. Cover work starts after
 2 s without input; the preview presses
 only after 4 s without a refresh, press or card access, so staying on a
 screen lets that work finish. Each control is the same build with one
@@ -32,6 +33,7 @@ import struct
 import sys
 import tempfile
 import zipfile
+import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / 'tools'), str(ROOT / 'rust/host/preview')]
@@ -42,7 +44,7 @@ from gate_tier import negative_controls  # noqa: E402
 BACK, CONFIRM, RIGHT = 0, 1, 3
 SHELF = (CONFIRM,)
 # rust/firmware/reader_cover_idle.rs CoverResult.
-PRODUCED, CANCELLED, MISSING, UNSUPPORTED, IO_ERROR = 2, 3, 5, 6, 9
+PRODUCED, CANCELLED, DECLINED, MISSING, UNSUPPORTED, IO_ERROR = 2, 3, 4, 5, 6, 9
 ROWS = re.compile(r'COVER work=attempt result=(\d+)')
 HOME_READY = 'HOME_COVER eligible=1 attempted=1 step=7 ready=1 painted=1'
 # A cover record: NLC2 header (signature, book size, even mtime, route) and,
@@ -53,7 +55,8 @@ ART, NO_ART = 28 + ROW_BYTES * HEIGHT, 28
 # Routes as the card holds them (little-endian rust/core/src/cover.rs NO_ART words).
 CJB6, CJB5 = b'CJB6', b'CJB5'
 MTIME = 1790812800
-# Book name: how its cover is declared and stored (epub() forms).
+# Book name: how its cover is declared and stored (epub() forms), and its
+# image (picture() kinds, a JPEG by default).
 SUPPORTED = {
     'Alder': {'form': 'epub3'},
     'Birch': {'form': 'epub3', 'deflated': True},
@@ -67,12 +70,20 @@ SUPPORTED = {
     'Juniper': {'form': 'meta-cover-id'},
     'Kapok': {'form': 'meta-cover-file', 'deflated': True},
     'Larch': {'form': 'spine-page'},
+    'Magnolia': {'form': 'epub3', 'image': 'png-grey'},
+    'Nutmeg': {'form': 'epub2', 'image': 'png-rgb', 'deflated': True},
+    'Rowan': {'form': 'epub3', 'image': 'png-wide'},
 }
+# The PNG whose decode block is the largest a cover takes, larger than the
+# planned peak that admits cover work.
+WIDE = 'Rowan'
 # Books that get a bare record: (form, the attempt's result).
 NO_COVER = {
     # Text beside the image: a first page, not a cover page.
     'Sumac': ({'form': 'spine-text-page'}, MISSING),
     'Willow': ({'form': 'subset-page'}, UNSUPPORTED),
+    'Teak': ({'form': 'epub3', 'image': 'png-too-wide'}, UNSUPPORTED),
+    'Tupelo': ({'form': 'epub3', 'image': 'png-interlaced'}, UNSUPPORTED),
     # Arithmetic coding (SOF9): the decoders take Huffman frames only.
     'Yew': ({'form': 'epub3', 'frame': 0xc9}, UNSUPPORTED),
 }
@@ -140,6 +151,36 @@ def art(seed, frame=0xc0):
     return jpeg(288, 376, lambda x, y: (grey(seed, x, y) - 128) * 8, frame)
 
 
+def png(width, height, row, colour=0, interlace=0):
+    """An 8-bit PNG whose row `y` holds the greys `row(y)`, grey (colour 0) or
+    RGB (2). An interlaced one keeps these rows: the firmware refuses it by
+    its header."""
+    def chunk(kind, data):
+        return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+    rows = b''.join(b'\0' + (bytes(v for g in row(y) for v in (g, g, g)) if colour == 2 else row(y))
+                    for y in range(height))
+    return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, colour, 0, 0, interlace))
+            + chunk(b'IDAT', zlib.compress(rows, 9)) + chunk(b'IEND', b''))
+
+
+# Grey 8-bit: the row is the width and the ring two bytes more, so this width
+# puts row and ring at the 10 KiB cap (rust/core/src/cover/png.rs ROW_BYTES).
+CAP_WIDTH = (10 * 1024 - 2) // 2
+
+
+def picture(kind, seed, frame=0xc0):
+    """The cover image of `kind`: art(seed) as a JPEG or PNG, or a flat grey
+    PNG at (png-wide) or past (png-too-wide) the row cap."""
+    bands = lambda y: bytes(grey(seed, x // 8, y // 8) for x in range(288))
+    return {'jpeg': lambda: art(seed, frame),
+            'png-grey': lambda: png(288, 376, bands),
+            'png-rgb': lambda: png(288, 376, bands, colour=2),
+            'png-interlaced': lambda: png(288, 376, bands, interlace=1),
+            # 996 rows put it at 144x28 in the slot, rows 80 to 107.
+            'png-wide': lambda: png(CAP_WIDTH, 996, lambda y: bytes([128]) * CAP_WIDTH),
+            'png-too-wide': lambda: png(CAP_WIDTH + 1, 8, lambda y: bytes([128]) * (CAP_WIDTH + 1))}[kind]()
+
+
 def page(doctype, body):
     """An XHTML page with `body` in its body."""
     return ('<?xml version="1.0" encoding="UTF-8"?>' + doctype
@@ -163,7 +204,8 @@ def epub(path, title, image, form='epub3', deflated=False, media='image/jpeg'):
     with zipfile.ZipFile(SAMPLE) as source:
         opf = source.read('OEBPS/content.opf').decode()
         opf = opf.replace('The Small Lantern', title).replace('small-lantern:1', title)
-        file = 'images/cover.jpg' if form == 'meta-cover-file' else 'images/art.jpg'
+        file = ('images/cover.jpg' if form == 'meta-cover-file'
+                else 'images/art.png' if media == 'image/png' else 'images/art.jpg')
         items = f'<item id="{"cover" if form == "meta-cover-id" else "art"}" href="{file}" media-type="{media}"/>'
         pages = {}
         if form == 'epub3':
@@ -210,12 +252,13 @@ def epub(path, title, image, form='epub3', deflated=False, media='image/jpeg'):
 def books():
     """Newt/Books for every world, made once per run."""
     folder = Path(tempfile.mkdtemp(prefix='newt-cover-books-'))
-    for seed, (name, form) in enumerate(SUPPORTED.items()):
+    forms = [(name, seed, form) for seed, (name, form) in enumerate(SUPPORTED.items())]
+    for name, seed, form in forms + [(name, 0, form) for name, (form, _) in NO_COVER.items()]:
         form = dict(form)
-        epub(folder / f'{name}.epub', name, art(seed, form.pop('frame', 0xc0)), **form)
-    for name, (form, _) in NO_COVER.items():
-        form = dict(form)
-        epub(folder / f'{name}.epub', name, art(0, form.pop('frame', 0xc0)), **form)
+        kind = form.pop('image', 'jpeg')
+        if kind != 'jpeg':
+            form['media'] = 'image/png'
+        epub(folder / f'{name}.epub', name, picture(kind, seed, form.pop('frame', 0xc0)), **form)
     return folder
 
 
@@ -280,15 +323,24 @@ def slot(frame, index):
     return region(frame, 74 + index % 2 * 236, 138 + index // 2 * 232)
 
 
-def ink_problem(raster, seed):
-    """Whether `raster` shows art(seed). The cover is the art at half size, so
-    each source block is a 4x4 cell; a cell's black share follows its grey
+def shade(book):
+    """The grey of each 4x4 cell of `book`'s cover. Art is drawn at half size,
+    so each of its 8x8 blocks is one cell; the wide PNG is a mid-grey band on
+    white."""
+    if book == WIDE:
+        return lambda cx, cy: 128 if 20 <= cy < 27 else 255
+    seed = list(SUPPORTED).index(book)
+    return lambda cx, cy: grey(seed, cx, cy)
+
+
+def ink_problem(raster, shade):
+    """Whether `raster` shows `shade`: a cell's black share follows its grey
     within any 4x4 ordered dither."""
     for cy in range(HEIGHT // 4):
         for cx in range(WIDTH // 4):
             black = sum(raster[(cy * 4 + y) * ROW_BYTES + cx // 2] >> (7 - (cx % 2 * 4 + x)) & 1
                         for y in range(4) for x in range(4))
-            expected = 16 * (255 - grey(seed, cx, cy)) / 255
+            expected = 16 * (255 - shade(cx, cy)) / 255
             if abs(black - expected) > 2:
                 return f'cell ({cx}, {cy}) has {black} of 16 black, not about {expected:.0f}'
 
@@ -298,7 +350,7 @@ def art_problem(world, book):
     data = world.cover(book)
     if data is None or len(data) != ART or data[:8] != SIGNATURE:
         return f'{book} has no {ART}-byte cover record ({None if data is None else len(data)})'
-    if problem := ink_problem(data[28:], list(SUPPORTED).index(book)):
+    if problem := ink_problem(data[28:], shade(book)):
         return f'{book}\'s cover does not show its art: {problem}'
 
 
@@ -396,6 +448,30 @@ def transient(binary):
             return f'the next visit ended {results}: {art_problem(world, book)}'
 
 
+def low_heap(binary):
+    """With too little free heap for the wide PNG's decode block, Memory's live
+    check refuses it: no record and no temporary, so a later visit with the
+    heap back makes its cover."""
+    shelf = next(names for names in shelves() if WIDE in names)
+    # Only the wide PNG's shelf has cover work; the walk passes current books.
+    records = {book: CJB6 for book in BOOKS if book not in shelf}
+    # Room for 64 KiB kept free and 51 KiB more: enough to admit cover work
+    # and for every other book's blocks, too little for the wide PNG's 53 KiB.
+    low = {'cover.heap.free': str((64 + 51) * 1024)}
+    with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
+        world = World(binary, scratch, records, **low)
+        _, results, _ = world.run(to_book(shelf[0]))
+        if DECLINED not in results or world.cover(WIDE) is not None or world.temporaries():
+            left = world.cover(WIDE)
+            return f'a low heap ended {results}, left {left and len(left)} record bytes and {world.temporaries()}'
+        if problem := art_problem(world, shelf[0]):
+            return f'a low heap stopped other covers: {problem}'
+        preview_driver.write_conf(world.directory, {'cover.heap.free': ''})
+        _, results, _ = world.run(to_book(shelf[0]))
+        if problem := art_problem(world, WIDE):
+            return f'the next visit ended {results}: {problem}'
+
+
 # (case, its controls: [(generated firmware file, exact text, replacement)]).
 CASES = [
     (books_shelf, [
@@ -427,6 +503,9 @@ CASES = [
         # A retry records its verdict on the old route, so it retries again.
         [('cover_session.rs', 'self.commit(&self.header(cover::NO_ART),&[])',
           'self.commit(&self.header(cover::RETRIED_NO_ART[1]),&[])')]]),
+    (low_heap, [
+        # Memory admits a block however little heap would stay free.
+        [('cover_memory.rs', ' || self.heap.free_bytes() < charge + RESERVE', '')]]),
     (transient, [
         # An I/O fault records the book as having no cover.
         [('cover_session.rs', 'if !verdict(result)||!self.unfaulted(){self.no_art=false;return(result,false);}',

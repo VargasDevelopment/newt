@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //! Cover JPEG validation pins (baseline, or progressive for its first scan)
-//! and ordered cover placement.
+//! and ordered cover placement. A cover PNG pins its header here too.
 use super::read;
 use crate::zip_window::source::BookSource;
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -13,13 +13,15 @@ pub struct Layout {
     pub progressive: bool,
     /// The first component's sampling factors (high nibble horizontal).
     pub sampling: u8,
+    /// A PNG's ring bytes (a filtered row and two pixels); zero for a JPEG.
+    pub ring: u16,
 }
 impl Default for Layout {
     fn default() -> Self { Self { at: [0;18], length: [0;18], bytes: [0;85], pins: 0,
-        used: 0, width: 0, height: 0, progressive: false, sampling: 0x11 } }
+        used: 0, width: 0, height: 0, progressive: false, sampling: 0x11, ring: 0 } }
 }
 impl Layout {
-    fn pin(&mut self, at: u64, data: &[u8]) {
+    pub(super) fn pin(&mut self, at: u64, data: &[u8]) {
         self.at[self.pins as usize] = at as u32;
         self.length[self.pins as usize] = data.len() as u8;
         self.pins += 1;
