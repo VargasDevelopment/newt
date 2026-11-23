@@ -27,7 +27,21 @@ import large_epub_corpus as corpus
 ADMISSION = "core/src/admission.rs"
 ZIP_RULES = "core/src/zip_record_rules.rs"
 ZIP_CONTAINER = "core/src/zip_container.rs"
+PAGE_CACHE = "core/src/page_cache.rs"
+PHASE_STORAGE = "phased-reader/src/phase_storage.rs"
 PHASED = "phased-reader/src/reader_phased.rs"
+READER = "phased-reader/src/reader.rs"
+
+SYNC_SIX_CHUNKS = (
+    "let mut text_parts = Parts(&mut text[..TEXT_BYTES]);\n"
+    "        let chunk_bytes = text_parts.bytes(6 * size_of::<IndexChunk>(), 16)?;\n"
+    "        let chunks = Parts(chunk_bytes).array::<IndexChunk>(6)?;"
+)
+SYNC_SEVEN_CHUNKS = (
+    "let mut text_parts = Parts(text);\n"
+    "        let chunk_bytes = text_parts.bytes(7 * size_of::<IndexChunk>(), 16)?;\n"
+    "        let chunks = Parts(chunk_bytes).array::<IndexChunk>(7)?;"
+)
 
 # (what breaks, file under rust/, exact text, broken text, failing case name)
 CONTROLS = (
@@ -37,8 +51,10 @@ CONTROLS = (
     ("the 64 MiB expanded-total cap is removed", ADMISSION, "if expanded > EPUB_MAX_EXPANDED_BYTES {", "if false {", "expanded-total-over"),
     ("the 511 B member-name cap is removed", ZIP_RULES, "usize::from(name_bytes) > EPUB_MAX_MEMBER_NAME_BYTES", "false", "name-len-512"),
     ("ZIP64 EOCD sentinels are not refused", ZIP_CONTAINER, "d.entries == u16::MAX || d.size == u32::MAX || d.offset == u32::MAX", "false", "zip64-sentinel"),
-)
-FULL_CONTROLS = (
+    ("the 192-anchor policy cap is removed", PAGE_CACHE, "if self.anchors < self.profile.max_anchors() {", "if true {", "chapter-anchors-over"),
+    ("the 4,096-page policy cap is removed", PAGE_CACHE, "if self.count >= self.profile.max_pages() {", "if false {", "chapter-pages-over-4096"),
+    ("the 6-chunk sync writer index cap is raised", PHASE_STORAGE, SYNC_SIX_CHUNKS, SYNC_SEVEN_CHUNKS, "chapter-pages-over-768"),
+    ("generic Contents fallback returns invalid/empty menu", READER, "Err(status) => (project(arena, &[]), status),", "Err(status) => (false, status),", "toc-nav-over-arena"),
     ("the 64 MiB source-file cap is removed", PHASED, "if bytes > admission::EXTERNAL_MAX_BYTES {", "if false {", "file-size-over"),
 )
 
@@ -103,14 +119,20 @@ def _opt_bool(value):
     return "-" if value is None else ("1" if value else "0")
 
 
+def _opt_int(value):
+    return "-" if value is None else str(value)
+
+
 def write_manifest(path: Path, records: list[dict]) -> None:
     lines = []
     for r in records:
         pr = r.get("expected_pages_range")
         lines.append("\t".join((
             r["name"], r["path"], r["expected_admit"], r["expected_open"], r["check_mode"],
+            _opt_bool(r.get("expected_menu_valid")),
             _opt_bool(r.get("expected_authored")),
-            "-" if r.get("expected_anchors") is None else str(r["expected_anchors"]),
+            _opt_int(r.get("expected_menu_count")),
+            _opt_int(r.get("expected_anchors")),
             _opt_bool(r.get("expected_sync6")),
             _opt_bool(r.get("expected_small32")),
             "-" if pr is None else f"{pr[0]}..{pr[1]}",
@@ -186,6 +208,10 @@ def _bsearch_max(lo, hi, predicate):
     return lo
 
 
+def _is_authored(row):
+    return row["menu_valid"] == "1" and row["authored"] == "1"
+
+
 def run_sweep(binary, run, workspace, out_dir):
     """Binary-search exact thresholds where 48 KiB PhaseStorage banks bind."""
     print("\n=== SWEEP: exact 48 KiB PhaseStorage limits vs 1,024 ZIP entries ===", flush=True)
@@ -195,8 +221,8 @@ def run_sweep(binary, run, workspace, out_dir):
     over_ch = _probe(binary, run, workspace, out_dir, f"ch-open-over-{max_ch_open + 1}", corpus.BookSpec(chapters=max_ch_open + 1), "admit")
     print(f"standard chapters (OEBPS/c0000.xhtml + nav): max open_phased Ok = {max_ch_open} (at: {at_ch}; +1: {over_ch})", flush=True)
 
-    max_ch_authored = _bsearch_max(1, max_ch_open, lambda n: _probe(
-        binary, run, workspace, out_dir, f"ch-toc-{n}", corpus.BookSpec(chapters=n), "menu")["authored"] == "1")
+    max_ch_authored = _bsearch_max(1, max_ch_open, lambda n: _is_authored(
+        _probe(binary, run, workspace, out_dir, f"ch-toc-{n}", corpus.BookSpec(chapters=n), "menu")))
     print(f"standard chapters: max authored TOC = {max_ch_authored} (open_phased max = {max_ch_open})", flush=True)
 
     max_manifest = _bsearch_max(1, 1018, lambda n: _probe(
@@ -205,8 +231,8 @@ def run_sweep(binary, run, workspace, out_dir):
     over_mf = _probe(binary, run, workspace, out_dir, f"mf-over-{max_manifest + 1}", corpus.BookSpec(chapters=2, extra_manifest_items=max_manifest + 1, toc_entries=2), "admit")
     print(f"extra manifest items (spine=2, isolating shared 48 KiB arena): max = {max_manifest} (total entries={max_manifest + 6}; at: {at_mf}; +1: {over_mf})", flush=True)
 
-    max_toc = _bsearch_max(1, 1024, lambda n: _probe(
-        binary, run, workspace, out_dir, f"toc-{n}", corpus.BookSpec(chapters=2, toc_entries=n), "menu")["authored"] == "1")
+    max_toc = _bsearch_max(1, 1024, lambda n: _is_authored(
+        _probe(binary, run, workspace, out_dir, f"toc-{n}", corpus.BookSpec(chapters=2, toc_entries=n), "menu")))
     at_toc = _probe(binary, run, workspace, out_dir, f"toc-at-{max_toc}", corpus.BookSpec(chapters=2, toc_entries=max_toc), "menu")
     over_toc = _probe(binary, run, workspace, out_dir, f"toc-over-{max_toc + 1}", corpus.BookSpec(chapters=2, toc_entries=max_toc + 1), "menu")
     print(f"nav TOC entries (chapters=2): max authored TOC = {max_toc} (at: {at_toc}; +1: {over_toc})", flush=True)
@@ -266,11 +292,13 @@ def main(argv=None):
                 run_sweep(binary, run, workspace, output / "sweep")
             if not args.no_controls and negative_controls(__file__):
                 run.env["RUSTFLAGS"] = rustflags(objects, warnings=False)
-                active_controls = CONTROLS + (FULL_CONTROLS if args.full else ())
                 by_name = {r["name"]: r for r in records}
-                for row in active_controls:
-                    case_manifest = output / f"ctrl-{row[4]}.tsv"
-                    write_manifest(case_manifest, [by_name[row[4]]])
+                for row in CONTROLS:
+                    case_name = row[4]
+                    if case_name not in by_name:
+                        by_name[case_name] = corpus.write_corpus(epubs_dir, [corpus.CASES_BY_NAME[case_name]])[0]
+                    case_manifest = output / f"ctrl-{case_name}.tsv"
+                    write_manifest(case_manifest, [by_name[case_name]])
                     run_control(run, workspace, target, support, case_manifest, *row)
         except RuntimeError:
             for log in sorted((output / "logs").glob("*.std*"))[-2:]:

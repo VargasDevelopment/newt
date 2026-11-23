@@ -97,7 +97,9 @@ class Case:
     check_mode: str
     description: str
     spec: BookSpec
+    expected_menu_valid: bool | None = None
     expected_authored: bool | None = None
+    expected_menu_count: int | None = None
     expected_anchors: int | None = None
     expected_sync6: bool | None = None
     expected_small32: bool | None = None
@@ -164,6 +166,8 @@ def _item_id(spec: BookSpec, prefix: str, index: int) -> str:
 
 def _toc_bytes(kind: str, hrefs: list[str], count: int, depth: int) -> bytes:
     depth = max(1, min(depth, max(1, count)))
+    def href_for(i: int) -> str:
+        return hrefs[i * len(hrefs) // max(1, count)]
     if kind == "ncx":
         lines = [
             '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -172,9 +176,9 @@ def _toc_bytes(kind: str, hrefs: list[str], count: int, depth: int) -> bytes:
             "<docTitle><text>Synthetic Corpus Book</text></docTitle>\n<navMap>\n"
         ]
         for i in range(depth):
-            lines.append(f'<navPoint id="n{i}" playOrder="{i + 1}"><navLabel><text>Part {i + 1}</text></navLabel><content src="{hrefs[i % len(hrefs)]}"/>\n')
+            lines.append(f'<navPoint id="n{i}" playOrder="{i + 1}"><navLabel><text>Part {i + 1}</text></navLabel><content src="{href_for(i)}"/>\n')
         for i in range(depth, count):
-            lines.append(f'<navPoint id="n{i}" playOrder="{i + 1}"><navLabel><text>Part {i + 1}</text></navLabel><content src="{hrefs[i % len(hrefs)]}"/></navPoint>\n')
+            lines.append(f'<navPoint id="n{i}" playOrder="{i + 1}"><navLabel><text>Part {i + 1}</text></navLabel><content src="{href_for(i)}"/></navPoint>\n')
         lines.append("</navPoint>\n" * depth + "</navMap></ncx>\n")
         return "".join(lines).encode("utf-8")
 
@@ -185,9 +189,9 @@ def _toc_bytes(kind: str, hrefs: list[str], count: int, depth: int) -> bytes:
         '<nav epub:type="toc"><h1>Contents</h1>\n'
     ]
     for i in range(depth):
-        lines.append(f'<ol><li><a href="{hrefs[i % len(hrefs)]}">Part {i + 1}</a>\n')
+        lines.append(f'<ol><li><a href="{href_for(i)}">Part {i + 1}</a>\n')
     for i in range(depth, count):
-        lines.append(f'</li><li><a href="{hrefs[i % len(hrefs)]}">Part {i + 1}</a>\n')
+        lines.append(f'</li><li><a href="{href_for(i)}">Part {i + 1}</a>\n')
     lines.append("</li></ol>\n" * depth + "</nav></body></html>\n")
     return "".join(lines).encode("utf-8")
 
@@ -326,13 +330,13 @@ def build_epub(spec: BookSpec) -> bytes:
 
 CASES: tuple[Case, ...] = (
     Case("baseline", "baseline", "fast", "Ok", "Ok", "menu", "2-chapter text-only baseline EPUB",
-         BookSpec(chapters=2), expected_authored=True),
+         BookSpec(chapters=2), expected_menu_valid=True, expected_authored=True, expected_menu_count=2),
     Case("zip-entries-at", "zip-entries", "fast", "Ok", "Ok", "admit", "Exactly 1,024 ZIP entries (4 core + 2 chapters + 1,018 short extra entries)",
          BookSpec(chapters=2, extra_entries=MAX_ENTRIES - 6)),
     Case("zip-entries-over", "zip-entries", "fast", "Unsupported", "Unsupported", "admit", "1,025 ZIP entries: one over admission.rs 1,024-entry cap",
          BookSpec(chapters=2, extra_entries=MAX_ENTRIES - 5)),
     Case("parse-spine-fit", "metadata-arena", "fast", "Ok", "Ok", "menu", "240 chapters (244 entries): fits both 48 KiB banks with authored TOC",
-         BookSpec(chapters=240), expected_authored=True),
+         BookSpec(chapters=240), expected_menu_valid=True, expected_authored=True, expected_menu_count=240),
     Case("parse-spine-over", "metadata-arena", "fast", "Ok", "OutOfMemory", "admit", "300 chapters (304 entries < 1,024): admission accepts, 48 KiB parse bank spine_hashes OOMs",
          BookSpec(chapters=300)),
     Case("shared-arena-fit", "metadata-arena", "fast", "Ok", "Ok", "admit", "350 extra manifest items (spine=2): fits inside 48 KiB shared metadata arena",
@@ -368,13 +372,17 @@ CASES: tuple[Case, ...] = (
     Case("long-ids-over", "long-ids", "full", "Ok", "OutOfMemory", "admit", "160 chapters with 200-byte manifest IDs: exhausts 48 KiB shared metadata arena",
          BookSpec(chapters=160, id_len=200)),
     Case("toc-nav-small", "toc-size", "fast", "Ok", "Ok", "menu", "EPUB 3 nav TOC with 32 entries (authored Contents)",
-         BookSpec(chapters=32, toc_kind="nav", toc_entries=32), expected_authored=True),
-    Case("toc-nav-over-arena", "toc-size", "full", "Ok", "Ok", "menu", "EPUB 3 nav TOC with 700 entries on 2 chapters: overflows 48 KiB, degrades to generic",
-         BookSpec(chapters=2, toc_kind="nav", toc_entries=700), expected_authored=False),
+         BookSpec(chapters=32, toc_kind="nav", toc_entries=32), expected_menu_valid=True, expected_authored=True, expected_menu_count=32),
+    Case("toc-mapping-at", "toc-size", "fast", "Ok", "Ok", "menu", "EPUB 3 nav TOC with 276 entries on 2 chapters: fits with_menu_mapping 1,104 B parse tail (276 authored + 1 fallback row)",
+         BookSpec(chapters=2, toc_kind="nav", toc_entries=276), expected_menu_valid=True, expected_authored=True, expected_menu_count=277),
+    Case("toc-mapping-over", "toc-size", "fast", "Ok", "Ok", "menu", "EPUB 3 nav TOC with 277 entries on 2 chapters: overflows with_menu_mapping, menu invalid/empty",
+         BookSpec(chapters=2, toc_kind="nav", toc_entries=277), expected_menu_valid=False, expected_authored=False, expected_menu_count=0),
+    Case("toc-nav-over-arena", "toc-size", "fast", "Ok", "Ok", "menu", "EPUB 3 nav TOC with 700 entries on 2 chapters: overflows 48 KiB shared arena, valid generic fallback",
+         BookSpec(chapters=2, toc_kind="nav", toc_entries=700), expected_menu_valid=True, expected_authored=False, expected_menu_count=2),
     Case("toc-ncx-nested", "toc-depth", "fast", "Ok", "Ok", "menu", "EPUB 2 NCX TOC nested 16 levels deep",
-         BookSpec(chapters=4, toc_kind="ncx", toc_entries=20, toc_depth=16), expected_authored=True),
+         BookSpec(chapters=4, toc_kind="ncx", toc_entries=20, toc_depth=16), expected_menu_valid=True, expected_authored=True, expected_menu_count=20),
     Case("toc-nav-nested", "toc-depth", "full", "Ok", "Ok", "menu", "EPUB 3 nav TOC nested 16 levels deep",
-         BookSpec(chapters=4, toc_kind="nav", toc_entries=20, toc_depth=16), expected_authored=True),
+         BookSpec(chapters=4, toc_kind="nav", toc_entries=20, toc_depth=16), expected_menu_valid=True, expected_authored=True, expected_menu_count=20),
     Case("chapter-anchors-at", "chapter-anchors", "fast", "Ok", "Ok", "anchors", "192 anchors in chapter 0: at Profile::Small anchor cap",
          BookSpec(chapters=2, chapter_anchors=MAX_ANCHORS_SMALL), expected_anchors=MAX_ANCHORS_SMALL),
     Case("chapter-anchors-over", "chapter-anchors", "fast", "Ok", "Ok", "anchors", "210 anchors in chapter 0: excess past 192 silently dropped by PageCacheWriter",
@@ -388,7 +396,7 @@ CASES: tuple[Case, ...] = (
     Case("chapter-pages-over-4096", "chapter-pages", "full", "Ok", "Ok", "pages", "Single chapter ~4,250 pages (<4 MiB uncompressed): exceeds Profile::Small 4,096-page cap",
          BookSpec(chapters=1, chapter_paragraphs=25500), expected_sync6=False, expected_small32=False),
     Case("web-novel-envelope", "long-web-novel", "full", "Ok", "Ok", "menu", "Long text-only web novel inside current limits (240 chapters x 40 KiB = ~9.6 MiB)",
-         BookSpec(chapters=240, chapter_bytes=40 * KIB, toc_kind="nav"), expected_authored=True),
+         BookSpec(chapters=240, chapter_bytes=40 * KIB, toc_kind="nav"), expected_menu_valid=True, expected_authored=True, expected_menu_count=240),
     Case("web-novel-2000ch", "long-web-novel", "full", "Unsupported", "Unsupported", "admit", "2,000-chapter plain-text web novel (~20 MiB text, 2,004 entries): refused at 1,024",
          BookSpec(chapters=2000, chapter_bytes=10 * KIB, toc_kind="nav")),
 )
@@ -419,7 +427,8 @@ def write_corpus(out_dir: Path, cases: list[Case]) -> list[dict]:
             "name": c.name, "axis": c.axis, "subset": c.subset, "path": str(path),
             "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(),
             "expected_admit": c.expected_admit, "expected_open": c.expected_open, "check_mode": c.check_mode,
-            "expected_authored": c.expected_authored, "expected_anchors": c.expected_anchors,
+            "expected_menu_valid": c.expected_menu_valid, "expected_authored": c.expected_authored,
+            "expected_menu_count": c.expected_menu_count, "expected_anchors": c.expected_anchors,
             "expected_sync6": c.expected_sync6, "expected_small32": c.expected_small32,
             "expected_pages_range": c.expected_pages_range,
         })
