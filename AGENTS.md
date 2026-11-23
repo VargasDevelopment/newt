@@ -50,7 +50,7 @@ To open a pull request, focused checks for the area you changed are enough:
 | Screens | `python3 tools/check.py --suite ui` |
 | One test family | that family's tests, such as `python3 tests/<name>_test.py` |
 | Firmware sources | also `python3 tools/firmware-build.py`, a quick compile |
-| Only `README.md`, or Markdown and images directly in `docs/` (not `docs/toolchain-*`) | nothing more; CI's [docs lane](docs/CI.md#docs-lane) checks it |
+| Only docs: `README.md`, `AGENTS.md`, `CONTRIBUTING.md`, the pull request template, or Markdown and images directly in `docs/` (not `docs/toolchain-*`) | nothing more; CI's [docs lane](docs/CI.md#docs-lane) checks it |
 
 On Linux, add `--profile linux` to `check.py`.
 
@@ -96,8 +96,11 @@ Working notes, logs, measurements, evidence, review rounds and plans never
 go in the repository. Put them in the pull request, its issue, or your own
 notes outside the checkout. Docs describe the current system only: when the
 system changes, change the doc, and don't add a dated record of the change.
-`tests/repo_docs_allowlist_test.py` holds `docs/` and `artifacts/` to a
-fixed list; a new file there needs a reviewed entry in that list.
+`tests/repo_files_test.py` fails a file whose name reads as a working note,
+such as a log, a numbered or dated note, or a review round. A new doc
+(Markdown or an image directly in `docs/`) needs no entry. Any other new file
+in `docs/` or `artifacts/` is an input the code reads, and needs a reviewed
+entry in that test.
 
 ## Rules that keep Newt correct
 

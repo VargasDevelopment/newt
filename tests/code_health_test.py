@@ -1,11 +1,14 @@
-"""Regression fixtures for the read-only tool/test line ratchet."""
+"""Regression fixtures for code_health: advisory line counts and the baseline schema."""
+import contextlib
 import copy
+import io
 import json
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
@@ -37,21 +40,39 @@ class RatchetTests(unittest.TestCase):
         return destination
 
     def check(self):
-        return health.check_structure(self.root, health.read_baseline(self.root))
+        """The paths that warn."""
+        return [path for path, _ in health.length_warnings(self.root, health.read_baseline(self.root))]
 
-    def test_growth_and_new_untracked_oversized_file_fail_without_baseline_writes(self):
+    def test_growth_and_new_untracked_oversized_file_warn_without_baseline_writes(self):
         self.base["large_files"] = {"tools/large.py": 510}
         self.write(health.BASELINE, json.dumps(self.base))
         original = (self.root / health.BASELINE).read_bytes()
         self.write("tools/large.py", "x=1\n" * 510)
-        self.assertEqual(self.check()[1], [])
+        self.assertEqual(self.check(), [])
         self.write("tools/large.py", "x=1\n" * 511)
-        self.assertIn("exceeds reviewed ceiling 510", self.check()[1][0])
+        warnings = health.length_warnings(self.root, health.read_baseline(self.root))
+        self.assertEqual(warnings, [("tools/large.py", "511 lines, over the 500-line guide, reviewed size 510; "
+                                     "split it where a cohesive boundary makes the design simpler")])
         self.write("tools/large.py", "x=1\n" * 499)
-        self.assertEqual(self.check()[1], [])
+        self.assertEqual(self.check(), [])
         self.write("tools/replacement.py", "x=1\n" * 501)
-        self.assertIn("tools/replacement.py", self.check()[1][0])
+        self.assertEqual(self.check(), ["tools/replacement.py"])
         self.assertEqual((self.root / health.BASELINE).read_bytes(), original)
+
+    def test_an_oversized_file_warns_and_never_fails_the_check(self):
+        """Length is advisory: main passes and prints the warning, as a GitHub
+        annotation on Actions. Fails if length becomes a failure again."""
+        self.write("tools/large.py", "x=1\n" * 501)
+        for actions, prefix in (("", "WARN tools/large.py: 501 lines"),
+                                ("true", "::warning file=tools/large.py::tools/large.py: 501 lines")):
+            output = io.StringIO()
+            with (patch.object(health, "ROOT", self.root), patch.object(health, "verify_existing_inputs"),
+                  patch.object(health, "base_failures", return_value=[]),
+                  patch.object(sys, "argv", ["code_health.py"]), patch.dict("os.environ", GITHUB_ACTIONS=actions),
+                  contextlib.redirect_stdout(output)):
+                health.main()
+            self.assertTrue(output.getvalue().startswith(prefix), output.getvalue())
+            self.assertIn("PASS: code-health limits", output.getvalue())
 
     def test_repeated_baseline_key_fails_instead_of_keeping_the_last_value(self):
         text = json.dumps(self.base)
@@ -74,24 +95,24 @@ class RatchetTests(unittest.TestCase):
         self.write(health.BASELINE, json.dumps(self.base))
         subprocess.run(["git", "-C", str(self.root), "add", "."], check=True)
         path.unlink()
-        self.assertEqual(self.check()[1], [])
+        self.assertEqual(self.check(), [])
         self.write("tools/other.py", "x=1\n" * 501)
-        self.assertTrue(self.check()[1])
+        self.assertEqual(self.check(), ["tools/other.py"])
 
     def test_vendor_and_build_exclusions_do_not_hide_new_authored_code(self):
         self.write("vendor/sdk/main.py", "x=1\n" * 1000)
         self.write(".build/main.py", "x=1\n" * 1000)
-        self.assertEqual(self.check()[1], [])
+        self.assertEqual(self.check(), [])
         self.write("tools/generated/main.py", "x=1\n" * 501)
-        self.assertIn("tools/generated/main.py", self.check()[1][0])
+        self.assertEqual(self.check(), ["tools/generated/main.py"])
 
     def test_categories_use_distinct_ceilings(self):
         self.write("tests/test.cpp", "int x;\n" * 700)
         self.write("tools/probe.py", "x=1\n" * 500)
-        self.assertEqual(self.check()[1], [])
+        self.assertEqual(self.check(), [])
         self.write("tests/test.cpp", "int x;\n" * 701)
         self.write("tools/probe.py", "x=1\n" * 501)
-        self.assertEqual(len(self.check()[1]), 2)
+        self.assertEqual(self.check(), ["tests/test.cpp", "tools/probe.py"])
 
     def test_symlink_cannot_hide_authored_code(self):
         self.write("tests/helper.py", "x=1\n")
@@ -124,15 +145,15 @@ class RatchetTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 health.read_baseline(self.root)
 
-    def test_deliberate_tightening_prevents_debt_reintroduction(self):
+    def test_a_tightened_reviewed_size_warns_on_regrowth(self):
         self.base["large_files"] = {"tools/large.py": 520}
         self.write(health.BASELINE, json.dumps(self.base))
         self.write("tools/large.py", "x=1\n" * 510)
-        self.assertEqual(self.check()[1], [])
+        self.assertEqual(self.check(), [])
         self.base["large_files"]["tools/large.py"] = 510
         self.write(health.BASELINE, json.dumps(self.base))
         self.write("tools/large.py", "x=1\n" * 511)
-        self.assertTrue(self.check()[1])
+        self.assertEqual(self.check(), ["tools/large.py"])
 
 
 class SharedDataInputTests(ResourceFixture):

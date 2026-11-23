@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""Focused fixtures for rust_health: one clean tree, one failing tree per check.
+"""Focused fixtures for rust_health: one clean tree, one failing tree per check,
+and the advisory size warning.
 
 The negative control removes each fixture's check and requires the fixture to
 pass; that proves each fixture fails because of its own check alone.
@@ -16,11 +17,13 @@ import unittest
 from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
+from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from gate_tier import negative_controls
-from rust_health import CHECKS, Baseline, baseline_from, main, measure, run_checks, write_baseline  # noqa: E402
+from rust_health import (CHECKS, Baseline, baseline_from, main, measure, run_checks, size_warnings,  # noqa: E402
+                         write_baseline)
 
 Mutation = Callable[[Path], None]
 
@@ -107,7 +110,6 @@ NEGATIVE: dict[str, tuple[str, Mutation]] = {
     'new allow': ('suppressions', append('rust/core/src/lib.rs', '#[allow(dead_code)]\nfn unused() {}\n')),
     'new unwrap': ('panic_surface', NEW_UNWRAP),
     'todo!': ('banned', append('rust/ui/src/lib.rs', 'pub fn later() { todo!() }\n')),
-    'oversized new file': ('size', write('rust/ui/src/big.rs', '// line\n' * 501)),
     'new external crate': ('externals', append(
         'rust/Cargo.lock', '\n[[package]]\nname = "serde"\nversion = "1.0.0"\n'
                            'source = "registry+https://github.com/rust-lang/crates.io-index"\n')),
@@ -182,6 +184,42 @@ class RustHealthTest(unittest.TestCase):
             with self.subTest(name):
                 remaining = {key: value for key, value in CHECKS.items() if key != check}
                 self.assertEqual(run_checks(measure(self.fixture(mutate)), self.baseline, remaining), {})
+
+    def test_an_oversized_file_warns_and_never_fails(self) -> None:
+        """Size is advisory: main passes and prints the warning. Fails if size
+        becomes a failing check again."""
+        root = self.fixture(write('rust/ui/src/big.rs', '// line\n' * 501))
+        tree = measure(root)
+        self.assertEqual(run_checks(tree, self.baseline), {})
+        self.assertEqual([path for path, _ in size_warnings(tree, self.baseline)], ['rust/ui/src/big.rs'])
+        path = root / 'baseline.json'
+        write_baseline(path, self.baseline)
+        for actions, prefix in (('', 'WARN '), ('true', '::warning file=rust/ui/src/big.rs::')):
+            with self.subTest(actions=actions):
+                output = io.StringIO()
+                with patch.dict('os.environ', GITHUB_ACTIONS=actions), contextlib.redirect_stdout(output):
+                    self.assertEqual(main(['--root', str(root), '--baseline', str(path)]), 0)
+                self.assertIn(f'{prefix}rust/ui/src/big.rs: 501 lines, over the 500-line guide', output.getvalue())
+
+    def test_a_stale_generated_exclusion_fails_and_blocks_update(self) -> None:
+        root = self.fixture(lambda root: (root / 'rust/ui/src/data.rs').unlink())
+        self.assertEqual(list(run_checks(measure(root), self.baseline)), ['generated'])
+        path = root / 'baseline.json'
+        write_baseline(path, self.baseline)
+        before = path.read_bytes()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(main(['--root', str(root), '--baseline', str(path), '--update']), 1)
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_update_only_lowers_a_recorded_size(self) -> None:
+        recorded = {**self.baseline, 'files': {**self.baseline['files'], 'rust/ui/src/big.rs': {'lines': 520}}}
+        for lines, expected in ((510, 510), (530, 520), (400, None)):
+            with self.subTest(lines=lines):
+                tree = measure(self.fixture(write('rust/ui/src/big.rs', '// line\n' * lines)))
+                self.assertEqual(baseline_from(tree, recorded)['files']['rust/ui/src/big.rs'].get('lines'), expected)
+        # A new oversized file gets no recorded size, so it keeps warning.
+        tree = measure(self.fixture(write('rust/ui/src/big.rs', '// line\n' * 530)))
+        self.assertNotIn('lines', baseline_from(tree, self.baseline)['files']['rust/ui/src/big.rs'])
 
     def test_update_tightens_a_passing_tree_and_refuses_a_failing_one(self) -> None:
         documented = replace('rust/ffi/src/lib.rs', 'unsafe extern', '// SAFETY: C declares this signature.\nunsafe extern')

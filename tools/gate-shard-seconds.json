@@ -50,7 +50,7 @@
  "reading_acceptance_test.py": 2.0,
  "reading_latency_ready_test.py": 1.0,
  "reading_latency_test.py": 1.5,
- "repo_docs_allowlist_test.py": 0.1,
+ "repo_files_test.py": 0.1,
  "sd-shared-bus-tests": 0.1,
  "software_gate_shadow_test.py": 1.8,
  "source_fixture_test.py": 0.1,

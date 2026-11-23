@@ -40,15 +40,21 @@ There is no new CI service or tool dependency.
 ## Authored code and boundaries
 
 Git discovers tracked and nonignored untracked C/C++ sources/headers, Python and
-Swift under `tools` and `tests`. Tracked deletions pass. Authored symlinks are
-rejected so moving source behind an alias cannot remove it from the policy. The
-versioned policy uses 500 lines for tools and 700 for tests. Existing oversized
-files have individual path ceilings; a new offender cannot replace a removed
-file or spend another file's reduction. Line count is a review signal, not a
-request to squeeze formatting or scatter helpers. Extract a cohesive owner only
-when it makes the design simpler.
+Swift under `tools` and `tests`; tracked deletions are skipped. An authored
+symlink fails, so moving source behind an alias cannot hide it from the line
+count. The versioned policy sets a line guide: 500 for tools, 700 for tests.
+
+File length is advisory. A file over its guide, and over its reviewed size in
+`large_files` if it has one, prints a `WARN` line in the gate output (on GitHub
+Actions, a warning annotation on the pull request). It never fails the gate.
+Reviewers judge the growth. Line count is a review signal, not a request to
+squeeze formatting or scatter helpers. Extract a cohesive owner only when it
+makes the design simpler.
 
 The Rust firmware's own structure is checked by `rust-health/rust_health.py`.
+Its 500-line size check is advisory in the same way; `--update` only lowers a
+recorded size. Its unsafe, `SAFETY:`, suppression, panic, crate-edge, external
+package and native checks fail the gate.
 Natives (`extern` ABIs, `#[link]`, exports) belong in Salamander
 (`rust/salamander`); files outside it keep counted exceptions that only shrink.
 The gate also runs the firmware config check and each tracked generator

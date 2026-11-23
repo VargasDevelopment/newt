@@ -168,8 +168,9 @@ request that changes a test also runs that test's negative controls (the
 and the gate's parts. The first job, `classify` (`tools/docs_lane.py`,
 standard library only), lists every path the pull request changes since its
 merge base with `main`, a rename as both its old and its new path. The lane is
-`docs` only when every path is `README.md` or a `.md`, `.png` or `.jpg` file
-directly in `docs/`, as a regular file or deleted. This is an allowlist:
+`docs` only when every path is `README.md`, `AGENTS.md`, `CONTRIBUTING.md`,
+`.github/pull_request_template.md` or a `.md`, `.png` or `.jpg` file directly
+in `docs/`, as a regular file or deleted. This is an allowlist:
 `CHANGELOG.md` (release-managed), `docs/toolchain-*` (they choose the
 toolchain) and every other path take `full`, and so does a change set it
 cannot list. A pull request runs its base's copy of the classifier, never its

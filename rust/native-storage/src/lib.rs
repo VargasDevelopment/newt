@@ -1,4 +1,4 @@
-//! Safe policy for the pinned native FilePort. See HANDOFF.md for caller domain.
+//! Safe policy for the pinned native FilePort. See CONTRACT.md for caller domain.
 #![no_std]
 #![forbid(unsafe_code)]
 extern crate alloc;
@@ -56,7 +56,7 @@ pub enum Open {
 /// One syscall per method, no hidden retries. Preserve returned success even
 /// when cancellation arrives during it. A failed rename may have taken effect.
 /// Paths are UTF-8, NUL-free, without a terminator. Adapters supply native flags.
-/// Implementations cannot reenter the currently borrowed port; see HANDOFF.md.
+/// Implementations cannot reenter the currently borrowed port; see CONTRACT.md.
 pub trait Native {
     fn open(&mut self, path: &str, mode: Open) -> Result<i32>;
     fn close(&mut self, fd: i32) -> Result<()>;

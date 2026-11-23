@@ -50,7 +50,9 @@ class Repository:
 
 MAIN = {'README.md': 'See [install](docs/INSTALL.md).\n', 'docs/INSTALL.md': 'Install.\n',
         'docs/CI.md': '![photo](photo.jpg)\n', 'docs/photo.jpg': 'jpg', 'CHANGELOG.md': '# Changelog\n',
-        'docs/toolchain-linux-lock.json': '{}\n', 'tools/run.py': 'print()\n', 'CONTEXT.md': 'Words.\n'}
+        'docs/toolchain-linux-lock.json': '{}\n', 'tools/run.py': 'print()\n', 'CONTEXT.md': 'Words.\n',
+        'AGENTS.md': 'Rules.\n', 'CONTRIBUTING.md': 'Rules.\n', '.github/pull_request_template.md': 'Template.\n',
+        '.github/workflows/ci.yml': 'on: push\n'}
 
 
 class Lane(unittest.TestCase):
@@ -59,7 +61,8 @@ class Lane(unittest.TestCase):
         self.addCleanup(self.repo.scratch.cleanup)
 
     def test_only_docs_changes_take_the_docs_lane(self):
-        docs = {'README.md': 'New.\n', 'docs/CI.md': 'New.\n', 'docs/new.png': 'png'}
+        docs = {'README.md': 'New.\n', 'docs/CI.md': 'New.\n', 'docs/new.png': 'png', 'AGENTS.md': 'New.\n',
+                'CONTRIBUTING.md': 'New.\n', '.github/pull_request_template.md': 'New.\n'}
         self.assertEqual(self.repo.lane(self.repo.commit(docs)), 'docs')
         # A deletion and a rename within the lane stay in it.
         git(self.repo.root, 'mv', 'docs/INSTALL.md', 'docs/SETUP.md')
@@ -69,7 +72,9 @@ class Lane(unittest.TestCase):
         """Negative control: each of these beside a docs change gets the full gate."""
         cases = [{'tools/run.py': 'print(1)\n'}, {'CHANGELOG.md': '# Changelog\n\nNew.\n'},
                  {'docs/toolchain-linux-lock.json': '{"x": 1}\n'}, {'docs/toolchain-proposal.md': 'New.\n'},
-                 {'docs/plans/next.md': 'New.\n'}, {'CONTEXT.md': 'New.\n'}, {'docs/notes.txt': 'New.\n'}]
+                 {'docs/plans/next.md': 'New.\n'}, {'CONTEXT.md': 'New.\n'}, {'docs/notes.txt': 'New.\n'},
+                 {'.github/workflows/ci.yml': 'on: pull_request\n'}, {'.github/ISSUE_TEMPLATE.md': 'New.\n'},
+                 {'tools/AGENTS.md': 'New.\n'}]
         for extra in cases:
             with self.subTest(extra=next(iter(extra))):
                 git(self.repo.root, 'checkout', '-q', '--detach', self.repo.base)

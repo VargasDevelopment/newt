@@ -145,7 +145,7 @@ class CapacityTests(ResourceFixture):
         """Run the real entry point with --adopt against the committed BASE."""
         committed = health.read_baseline  # BASE from git; the fixture candidate has no structural schema.
         with (patch.object(health, "ROOT", self.root), patch.object(health, "verify_existing_inputs"),
-              patch.object(health, "check_structure", return_value=({}, [])),
+              patch.object(health, "length_warnings", return_value=[]),
               patch.object(health, "base_failures", return_value=[]),
               patch.object(health, "read_baseline", lambda root, revision=None:
                             committed(root, revision) if revision else self.budget),
