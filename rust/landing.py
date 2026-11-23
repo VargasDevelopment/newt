@@ -159,7 +159,7 @@ def check(checker, before, snapshot, identity):
         portable = runner.cargo(ws, checker.BUILD/'landing-host-target', 'test', '--workspace',
                                 '--exclude', 'newt-app-image', '--exclude', 'newt-native-input-owner',
                                 '--target', HOST)
-        require_tests(support, portable, 410)
+        require_tests(support, portable, 411)
         with foundation_commands(checker, runner):
             cases, expected, binary = checker.foundation(snapshot, checker.BUILD/'target', portable_done=True)
         support.require(len(cases) == 60368, 'complete foundation corpus')
@@ -201,7 +201,7 @@ def check(checker, before, snapshot, identity):
             'omitted': ['mutation controls', '20-family gate', 'SDK image/link', 'hardware',
                         'landing contract test (own gate phase)'],
             'source_sha256': before, 'toolchain': identity, 'sdk_pin': SDK_PIN,
-            'portable': {'passed_tests': 410, 'excluded': ['newt-app-image', 'newt-native-input-owner']},
+            'portable': {'passed_tests': 411, 'excluded': ['newt-app-image', 'newt-native-input-owner']},
             'foundation': {'comparisons': len(cases), 'independent_checks': True,
                            'host_binary_sha256': checker.digest(binary)},
             'native_forwarding': forwarding,
