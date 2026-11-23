@@ -591,6 +591,47 @@ class GateControls(unittest.TestCase):
             self.run_mocked([0] * 3, tier='push', started=gate.time.time() - budget - 1)
         self.assertFalse((self.root / '.build/ci-gate/report.json').exists())
 
+    def test_reviewed_ui_receipt_matches_the_host_runner_for_weighted_full_shards(self):
+        reviewed = gate.gate_plan.REVIEWED_UI_TEST
+        weights = self.root / gate.gate_tier.SHARD_SECONDS
+        weights.parent.mkdir()
+        weights.write_text(json.dumps({'unrelated': 1, reviewed: 9}))
+        ran = []
+
+        def plan(profile, fresh_objects, controls):
+            if profile == 'linux' and fresh_objects and controls is None:
+                return [host_check.gate_runner.Phase('unrelated'), host_check.gate_runner.Phase(reviewed)]
+            return [host_check.gate_runner.Phase('unrelated'), host_check.gate_runner.Phase('cached')]
+
+        def run_host(phases, *args, **kwargs):
+            ran.append([phase.name for phase in phases])
+            return {}
+
+        def execute(command, **kwargs):
+            self.assertEqual(Path(command[2]).name, 'check.py')
+            with patch.object(sys, 'argv', command[2:]):
+                host_check.configured_main()
+            return subprocess.CompletedProcess(command, 0)
+
+        with patch.object(sys, 'platform', 'linux'), patch.dict(os.environ), \
+             patch.object(gate.gate_tier, 'ci_tier', return_value='full'), \
+             patch.object(gate, 'committed_source', return_value=self.identity), \
+             patch.object(gate, 'committed_ui_authority', return_value=b'{"frames":{"library":"fixture"}}'), \
+             patch.object(gate.gate_plan, 'plan', side_effect=plan), \
+             patch.object(host_check, 'ROOT', self.root), patch.object(host_check, 'verify_source_pin'), \
+             patch.object(host_check.gate_runner, 'cpu_budgets', return_value={}), \
+             patch.object(host_check, 'phase_run'), patch.object(host_check.gate_runner, 'run', side_effect=run_host), \
+             patch.object(host_check.gate_tier, 'save_phase_seconds'), \
+             patch.object(gate.subprocess, 'run', side_effect=execute), redirect_stdout(io.StringIO()):
+            report = self.root / '.build/ci-gate/report.json'
+            for part in ('0/2', '1/2'):
+                with self.subTest(part=part):
+                    gate.run_gate(self.root, self.expected, part=part)
+                    coverage = json.loads(report.read_text())['coverage']
+                    self.assertEqual(coverage.get('reviewed_ui_frames'), 1 if reviewed in ran[-1] else None)
+                    self.assertNotIn('required_mac_imageio_gate', coverage)
+        self.assertEqual(ran, [[reviewed], ['unrelated']])
+
     def test_release_merges_nightly_and_manual_runs_take_the_full_tier(self):
         """The tier comes from the committed version and the event; nothing lowers it."""
         with tempfile.TemporaryDirectory() as directory:
@@ -670,21 +711,12 @@ class GateControls(unittest.TestCase):
             self.assertEqual(identity['reviewed_ui_manifest_sha256'], hashlib.sha256(original).hexdigest())
             self.assertNotIn('reviewed_ui_frames', identity)
             with patch.object(sys, 'platform', 'linux'):
-                complete = gate.coverage(self.root, 'push', 'all')
+                complete = gate.coverage(self.root, 'push', 'all', '')
                 self.assertEqual(complete['reviewed_ui_frames'], 1)
                 self.assertNotIn('required_mac_imageio_gate', complete)
-                native = gate.coverage(self.root, 'push', 'native')
+                native = gate.coverage(self.root, 'push', 'native', '')
                 self.assertNotIn('reviewed_ui_frames', native)
                 self.assertNotIn('required_mac_imageio_gate', native)
-                plan = gate.gate_plan.tier_plan('linux', False, '')
-                for index in range(7):
-                    shard = gate.gate_tier.shard(plan, index, 7, {})
-                    coverage = gate.coverage(self.root, 'push', f'{index}/7')
-                    if any(phase.name == gate.gate_plan.REVIEWED_UI_TEST for phase in shard):
-                        self.assertEqual(coverage['reviewed_ui_frames'], 1)
-                    else:
-                        self.assertNotIn('reviewed_ui_frames', coverage)
-                    self.assertNotIn('required_mac_imageio_gate', coverage)
             # Generated output remains outside source identity and cannot confer proof.
             (self.root / 'artifacts/generated-receipt.json').write_text('{"passed":true}')
             self.assertEqual(gate.committed_source(self.root, expected), identity)

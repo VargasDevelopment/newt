@@ -297,8 +297,8 @@ committed, SHA-locked authored PNGs and returns their matching packed ImageIO ou
 Unknown fixture bytes fail closed.
 
 **Mac.** Run the host-only Swift ImageIO cover gate on the exact commit for
-release acceptance and for any change to the ImageIO path. The path includes
-these inputs.
+release acceptance and for any change to the ImageIO path.
+The ImageIO path is these files:
 
 - `tools/prepare-library-covers.py`
 - `tools/library-cover-image.swift`

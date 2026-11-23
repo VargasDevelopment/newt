@@ -159,12 +159,10 @@ def gate(args) -> None:
         return
     print(f"PASS: official FreeInk source {FREEINK_COMMIT}, checkout inputs clean", flush=True)
     print(f"TIER {args.tier}: negative controls of {included or 'no test'}", flush=True)
-    phases = gate_plan.tier_plan(args.profile, args.fresh_objects, included)
-    seconds = gate_tier.phase_seconds(ROOT)
+    phases, complete, weights = gate_plan.host_phases(ROOT, args.profile, args.fresh_objects, included, args.shard)
+    # A fresh CI runner has no last run to order its starts.
+    seconds = weights | gate_tier.phase_seconds(ROOT)
     if args.shard:
-        weights = gate_tier.phase_seconds(ROOT, gate_tier.SHARD_SECONDS)
-        complete, phases = len(phases), gate_tier.shard(phases, *args.shard, weights)
-        seconds = weights | seconds  # A fresh CI runner has no last run to order its starts.
         print(f"SHARD {args.shard[0]}/{args.shard[1]}: {len(phases)} of the tier's {complete} phases", flush=True)
     timings = gate_runner.run(phases, ROOT, args.jobs, args.keep_going, cpu_budgets=gate_runner.cpu_budgets(),
                               seconds=seconds)

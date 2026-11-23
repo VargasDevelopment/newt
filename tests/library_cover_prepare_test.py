@@ -35,7 +35,7 @@ PORTABLE_CASES = (
     'test_corrupt_deflate_is_one_fallback_and_later_book_still_prepares',
     'test_helper_failures_and_wrong_payload_remove_old_cache',
     'test_authored_png_corpus_has_locked_payloads_and_rejects_unknown_bytes',
-    'test_authored_fixture_routing_prepares_all_four_or_fails',
+    'test_authored_fixtures_prepare_all_four_or_fail',
     'test_general_decoder_explicitly_rejects_linux',
     'test_required_mac_gate_checks_only_imageio_for_exact_source',
 )
@@ -312,7 +312,7 @@ precondition(CGImageDestinationFinalize(output))
                 with self.assertRaisesRegex(ValueError, 'four exact authored'):
                     fixture.bitmap(unknown)
 
-    def test_authored_fixture_routing_prepares_all_four_or_fails(self):
+    def test_authored_fixtures_prepare_all_four_or_fail(self):
         _, art = fixture_tools()
         art.authored_books(self.books)
         art.prepare_authored_covers(self.books, self.output)
@@ -339,7 +339,7 @@ precondition(CGImageDestinationFinalize(output))
             self.assertEqual(bitmap.read_bytes(), fixture.bitmap(image.read_bytes()))
 
     @patch('sys.stdout', new_callable=io.StringIO)
-    def test_required_mac_gate_checks_only_imageio_for_exact_source(self, _stdout):
+    def test_required_mac_gate_checks_only_imageio_for_exact_source(self, stdout):
         sys.path.insert(0, str(ROOT / 'tools'))
         spec = importlib.util.spec_from_file_location('mac_cover_gate', ROOT / 'tools/check-mac-covers.py')
         gate = importlib.util.module_from_spec(spec)
@@ -349,9 +349,12 @@ precondition(CGImageDestinationFinalize(output))
         report.write_text('{"passed":true}')
         expected = 'a' * 40
         with patch.object(gate.platform, 'system', return_value='Linux'), \
+             patch.object(gate, 'ROOT', self.root.resolve()), \
+             patch.object(sys, 'argv', ['check-mac-covers.py', '--expected-commit', expected]), \
              patch.object(gate.subprocess, 'run') as run:
-            with self.assertRaisesRegex(RuntimeError, 'needs macOS ImageIO'):
-                gate.run_gate(self.root.resolve(), expected)
+            with self.assertRaises(SystemExit) as error:
+                gate.main()
+            self.assertEqual(str(error.exception), 'The host cover helper gate needs macOS ImageIO')
             run.assert_not_called()
         self.assertFalse(report.exists())
         with patch.object(gate.platform, 'system', return_value='Darwin'), \
@@ -373,6 +376,7 @@ precondition(CGImageDestinationFinalize(output))
         receipt = json.loads(report.read_text())
         self.assertEqual(receipt['phases'], ['mac-imageio-cover-tests'])
         self.assertEqual(receipt['source'], source)
+        self.assertIn(f'PASS Mac ImageIO cover helper gate for {expected}\n', stdout.getvalue())
         failure = subprocess.CalledProcessError(1, 'library_cover_prepare_test.py')
         with patch.object(gate.platform, 'system', return_value='Darwin'), \
              patch.object(gate, 'committed_source', return_value=source), \

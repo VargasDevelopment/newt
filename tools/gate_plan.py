@@ -9,6 +9,7 @@ from pathlib import Path
 import sys
 
 from gate_runner import Phase, label
+import gate_tier
 from host_common import ROOT
 
 from rust_gate_families import (ADAPTER_FAMILIES, FOUNDATION_CAMPAIGNS, FULL_POSITIVE_SOURCES,
@@ -167,10 +168,16 @@ def plan(profile: str, fresh_objects: bool, controls=None) -> list[Phase]:
     return phases
 
 
-def tier_plan(profile: str, fresh_objects: bool, included: str) -> list[Phase]:
-    """Build the host plan from the tier's control selection."""
+def host_phases(root, profile: str, fresh_objects: bool, included: str, shard=None):
+    """Return the selected host phases, total phase count and shard weights."""
     selected = set(included.split(','))
-    return plan(profile, fresh_objects, None if included == 'all' else selected.__contains__)
+    phases = plan(profile, fresh_objects, None if included == 'all' else selected.__contains__)
+    total = len(phases)
+    weights = {}
+    if shard is not None:
+        weights = gate_tier.phase_seconds(root, gate_tier.SHARD_SECONDS)
+        phases = gate_tier.shard(phases, *shard, weights)
+    return phases, total, weights
 
 
 def quick(profile: str, fresh_objects: bool) -> list[Phase]:

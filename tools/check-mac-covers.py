@@ -42,7 +42,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--expected-commit', required=True)
     args = parser.parse_args()
-    run_gate(ROOT, args.expected_commit)
+    try:
+        run_gate(ROOT, args.expected_commit)
+    except RuntimeError as error:
+        raise SystemExit(str(error)) from None
 
 
 if __name__ == '__main__':

@@ -77,26 +77,37 @@ def committed_source(root, expected):
             'reviewed_ui_manifest_sha256': hashlib.sha256(committed_ui_authority(root)).hexdigest()}
 
 
+def host_options(tier, part):
+    """Use the same host options for execution and coverage."""
+    profile = 'linux' if sys.platform == 'linux' else 'canonical'
+    shard = None
+    if part not in ('all', 'native'):
+        index, count = part.split('/')
+        shard = int(index), int(count)
+    return profile, tier == 'full', shard
+
+
 def commands(root, python, tier, part='all'):
     """part: 'all', the self-hosted job's whole sequence; 'native', the firmware
     builds alone; or 'I/N', shard I of N of the host gate (tools/gate_tier.py),
     one of the public workflow's parallel jobs."""
+    profile, fresh_objects, shard = host_options(tier, part)
     prefix = [str(python), '-B']
     # The job's own budget covers the host gate; check.py's is for an idle 16-thread host.
     # CI always checks the release tags, so nothing merges onto an untagged release.
     result = [('host', [*prefix, str(root / 'tools/check.py'), '--tier', tier, '--release-tags', '--no-time-budget',
-                        *(['--fresh-objects'] if tier == 'full' else []),
+                        *(['--fresh-objects'] if fresh_objects else []),
                         '-j', str(host_jobs.available_cpus()[0])]),
               # A plain compile makes the platform's first-use package edits
               # before any resource identity is captured. No resource proof.
               ('native-preparation', [*prefix, str(root / 'tools/firmware-build.py'), '--clean'])]
-    if sys.platform == 'linux':
-        result[0][1].extend(['--profile', 'linux'])
+    if profile == 'linux':
+        result[0][1].extend(['--profile', profile])
     result.append(('native-' + FIRMWARE_BUILD,
                    [*prefix, str(root / 'tools/firmware-build.py'), '--clean', '--health-report']))
     if part == 'native':
         return result[1:]
-    if part != 'all':
+    if shard is not None:
         result[0][1].extend(['--shard', part])
         return result[:1]
     return result
@@ -120,19 +131,16 @@ def validate_native(root, expected):
         raise RuntimeError('CI native release identity differs from exact committed source')
 
 
-def coverage(root, tier, part):
+def coverage(root, tier, part, included):
     """Report the UI contract only for the job that runs its host phase."""
-    linux = sys.platform == 'linux'
-    profile = 'linux' if linux else 'canonical'
+    profile, fresh_objects, shard = host_options(tier, part)
+    linux = profile == 'linux'
     result = {'profile': profile, 'complete_software_coverage': not linux,
               'fixture_decoder_scope': 'four SHA-locked authored PNGs; no arbitrary image decode equivalence'}
     if not linux:
         result['required_mac_imageio_gate'] = 'included'
     if part != 'native':
-        phases = gate_plan.tier_plan(profile, tier == 'full', gate_tier.controls(tier, root))
-        if part != 'all':
-            index, count = map(int, part.split('/'))
-            phases = gate_tier.shard(phases, index, count, gate_tier.phase_seconds(root, gate_tier.SHARD_SECONDS))
+        phases, _, _ = gate_plan.host_phases(root, profile, fresh_objects, included, shard)
         if any(phase.name == gate_plan.REVIEWED_UI_TEST for phase in phases):
             result['reviewed_ui_frames'] = len(json.loads(committed_ui_authority(root))['frames'])
     return result
@@ -146,6 +154,8 @@ def run_gate(root, expected, store=None, started=None, part='all'):
     report = owned_file(root, directory / 'report.json')
     report.unlink(missing_ok=True)
     before = committed_source(root, expected)
+    # The host subprocess announces and enforces its own control selection.
+    included = gate_tier.controls(tier, root, announce=False) if part != 'native' else ''
     if store is not None:
         ci_persist.restore_objects(root, store, tier)
     try:
@@ -164,7 +174,7 @@ def run_gate(root, expected, store=None, started=None, part='all'):
         raise RuntimeError('Committed source changed during CI gates')
     write_text(root, report, json.dumps({'purpose': 'Fresh software diagnostics; no reusable/device proof',
                'source': after, 'tier': tier, 'part': part, 'phases': phases, 'reusable_proof': False,
-               'coverage': coverage(root, tier, part),
+               'coverage': coverage(root, tier, part, included),
                'hardware': 'not-tested', 'ui_approval': 'separate', 'owner': 'pending'}, indent=2) + '\n')
     if part != 'all':
         print(f'PASS {tier} tier part {part} for {expected}; the run passes only when every part does', flush=True)
