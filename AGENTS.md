@@ -25,36 +25,68 @@ them.
   - `tools/check.py`: the gate. `installer/`: the web install page.
 - Apps: the built-in apps, with Pocket Pause as the working prototype, lead
   toward apps anyone can make and share. The owner designs that model: its
-  package format, runtime, permissions and sharing. Don't build or propose
-  your own. Fixes and polish to the existing apps are welcome.
+  package format, runtime, permissions and sharing, because early choices
+  there are hard to undo. Don't build your own. Ideas are welcome as issues.
+  Fixes and polish to the existing apps are welcome.
 - Larger changes: open an issue first. Say the problem, why it matters and
-  your evidence. A new screen, setting, network feature or dependency needs
-  the owner's agreement before any code.
+  your evidence. A task the owner already agreed to can stand in for a new
+  issue. Proposals are welcome. A lasting product or architecture
+  commitment, such as a new screen, setting, network feature or dependency,
+  needs the owner's agreement before any code.
 
 ## Check your work
 
+The GitHub gate (the `gate` check) must pass before merge. On a pull request
+it runs the host gate, the negative controls of the tests you changed and the
+clean firmware build with its resource gate
+([docs/CI.md](docs/CI.md#public-ci)). Its host and firmware health results
+are the evidence, so don't repeat them locally.
+
+To open a pull request, focused checks for the area you changed are enough:
+
 | What you changed | Run |
 |---|---|
-| Anything, while you work | `python3 tools/check.py --suite quick` (or `--suite ui` for screens) |
-| Anything, before a pull request | `python3 tools/check.py --profile linux` on Linux, or `python3 tools/check.py` on a Mac |
-| Firmware sources | also `python3 tools/firmware-build.py --clean --health-report` |
+| Most changes | `python3 tools/check.py --suite quick` |
+| Screens | `python3 tools/check.py --suite ui` |
+| One test family | that family's tests, such as `python3 tests/<name>_test.py` |
+| Firmware sources | also `python3 tools/firmware-build.py`, a quick compile |
+| Only `README.md`, or Markdown and images directly in `docs/` (not `docs/toolchain-*`) | nothing more; CI's [docs lane](docs/CI.md#docs-lane) checks it |
 
-- The gate prints `PASS` or names what failed. Fix the cause. Never edit an
+On Linux, add `--profile linux` to `check.py`.
+
+Some evidence CI cannot give. Add it where it applies:
+
+- Cover extraction or reviewed UI frames: the Mac ImageIO cover gate on the
+  exact commit ([docs/CI.md](docs/CI.md#explicit-cover-coverage-boundary)).
+- Device behaviour: a check on a real X3 ([Evidence](#evidence)).
+- A release: release acceptance ([docs/RELEASING.md](docs/RELEASING.md)).
+- A merge: the checks of the planned merge itself
+  ([docs/RELEASING.md](docs/RELEASING.md)). Only the owner merges.
+
+For every change:
+
+- A check prints `PASS` or names what failed. Fix the cause. Never edit an
   expected output, a golden hash, a reviewed frame or a resource ceiling just
-  to make it pass. If an expected output is truly wrong, change it in its own
-  commit and say why in the pull request.
+  to make it pass. If you change a golden or reviewed frame on purpose, give
+  the reason and the evidence in the pull request. A separate commit is
+  optional.
 - Use only the pinned toolchain ([README](README.md#build-from-source)). Don't
   install, upgrade or add dependencies. All Cargo dependencies are local paths.
   Keep tools and caches inside the checkout.
-- Tests are focused: one behaviour, its failure cases, and a negative control
-  that breaks the code on purpose and proves the test notices
-  ([docs/CI.md](docs/CI.md#tiers)). Don't add broad smoke tests.
+- Tests are focused: one behaviour and its failure cases. Don't add broad
+  smoke tests.
+- Tests of these safeguards also need a negative control: persistence and
+  cold-boot restore, memory limits, recoverable flash writes, security
+  bounds and release integrity. A negative control breaks the code on
+  purpose and proves the test notices ([docs/CI.md](docs/CI.md#tiers)).
+  Other tests don't need one.
 
 ## Evidence
 
 Host tests, the host preview, a firmware compile and a check on a real X3 are
-four separate facts. A passing host test says nothing about the device. In
-your pull request, say which of these you have. If you tested on an X3, name
+four separate facts. A passing host test says nothing about the device. The
+gate runs the host tests, the preview checks and the firmware compile. In
+your pull request, say what else you have. If you tested on an X3, name
 its screen controller (UC8253 or UC8279d) and its power (USB or battery). On
 battery, sleep is a full power-off, so it behaves differently from USB.
 
@@ -116,8 +148,8 @@ fixed list; a new file there needs a reviewed entry in that list.
 - Commits are [Conventional Commits](https://www.conventionalcommits.org/)
   (`fix(reader): keep the chapter after a wake`). The type sets the version
   bump, and the gate rejects other subjects.
-- The body says what changed, why, the gate result, and your evidence (above).
-  Write `Closes #N` for the issue it fixes.
+- The body says what changed, why, the focused checks you ran, and your
+  evidence (above). Write `Closes #N` for the issue it fixes.
 - Comments explain why, briefly. Keep them true when the code changes.
 - Don't change release tooling, workflow permissions, tags or the version.
   Only the owner merges and releases.

@@ -35,7 +35,8 @@ Generally welcome:
   behavior.
 
 If you're unsure whether something is appropriate, open an issue before
-starting work.
+starting work. If the work is already agreed, for example in an existing
+issue, you don't need a new one.
 
 ## Changes that require prior discussion
 
@@ -54,7 +55,8 @@ well-intentioned changes can introduce constraints that are difficult to
 unwind later.
 
 Ideas and proposals are welcome as GitHub issues. Implementation should wait
-until we've agreed that the change fits the project's direction.
+until we've agreed that the change fits the project's direction. Lasting
+product and architecture commitments need the owner's agreement.
 
 ## Pull request expectations
 
@@ -71,24 +73,40 @@ If you'd like to submit a fix:
 5. **Use [Conventional Commits](https://www.conventionalcommits.org/).** For
    example, `fix(reader): restore chapter after wake`.
 
-Run the local verification gate:
+### Checks
 
-```sh
-# macOS
-python3 tools/check.py
+The GitHub gate must pass before merge. It runs the host gate and the
+clean firmware build with its resource checks on every pull request, so you
+don't need to repeat them locally.
 
-# Linux
-python3 tools/check.py --profile linux
-```
+To open a pull request, run focused checks for the area you changed:
 
-For firmware source changes, also run:
+- Most changes: `python3 tools/check.py --suite quick`.
+- Screens: `python3 tools/check.py --suite ui`.
+- One test family: that family's tests.
+- Firmware sources: also `python3 tools/firmware-build.py`, a quick compile.
 
-```sh
-python3 tools/firmware-build.py --clean --health-report
-```
+On Linux, add `--profile linux` to `check.py`. These checks need the pinned
+project toolchain described in the [README](README.md#build-from-source).
+A change to only `README.md`, or to Markdown and images directly in `docs/`
+(not `docs/toolchain-*`), needs no local check: CI's
+[docs lane](docs/CI.md#docs-lane) checks it.
 
-These checks require the pinned project toolchain described in the
-[README](README.md#build-from-source).
+Some evidence CI can't give. Add it where it applies:
+
+- Cover extraction or reviewed UI frames: the Mac ImageIO cover gate on the
+  exact commit ([docs/CI.md](docs/CI.md#explicit-cover-coverage-boundary)).
+- Device behavior: testing on a real X3 (below).
+- Releases and merges: the owner's release acceptance and merge checks
+  ([docs/RELEASING.md](docs/RELEASING.md)).
+
+Tests of persistence and cold-boot restore, memory limits, recoverable flash
+writes, security bounds and release integrity also need a negative control:
+a change that breaks the code on purpose and proves the test notices. Other
+tests don't need one.
+
+If you change a golden output or reviewed frame on purpose, give the reason
+and the evidence in the pull request. A separate commit is optional.
 
 Clearly distinguish host tests, firmware builds, host previews, and testing on
 physical hardware. None of these proves that the others succeeded.
