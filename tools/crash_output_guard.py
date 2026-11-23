@@ -152,7 +152,8 @@ CONSOLE_REGISTER_DATA = {
     "s_context": "/dev/uart's context; update mode unregisters the path",
     "newt::kHomeKerns": _GLYPHS, "newt::kHomeRuns": _GLYPHS, "newt::(anonymous namespace)::kReaderItalicBitmap": _GLYPHS,
     **{f"{o}::kReader{n}Bitmap": _GLYPHS for o in ("newt::(anonymous namespace)", "newt_reader_atlas::data") for n in ("Added", "BoldExtra")},
-    **{f"newt::(anonymous namespace)::k{n}Runs": _GLYPHS for n in ("Mug", "Sun", "Sunset", "Moon", "ChristmasHat")},
+    **{f"{o}::k{n}Runs": _GLYPHS for o in ("newt::(anonymous namespace)", "newt_device_ui::assets")
+       for n in ("Mug", "Sun", "Sunset", "Moon", "ChristmasHat")},
     # Unnamed, so named by its input section in firmware.map.
     ".gcc_except_table": "C++ exception tables: the unwinder's call-site bytes, never loaded as a pointer",
 }
