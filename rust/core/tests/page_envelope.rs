@@ -19,6 +19,12 @@ fn invalid_inspection_does_not_publish_a_payload() {
     manifest(&mut header, 1, &[0; 32], 0, 0);
     assert!(!inspect(&header, 69, &[1; 32], &mut out));
     assert_eq!(out, 765);
+    let mut old = header;
+    old[4..8].copy_from_slice(&1u32.to_le_bytes());
+    let checksum = crc(u32::MAX, &old[..60]) ^ u32::MAX;
+    old[60..].copy_from_slice(&checksum.to_le_bytes());
+    assert!(!inspect(&old, 69, &[0; 32], &mut out));
+    assert_eq!(out, 765);
     assert!(inspect(&header, 69, &[0; 32], &mut out));
     assert_eq!(out, 1);
 }

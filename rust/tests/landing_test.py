@@ -346,7 +346,7 @@ class LandingTest(unittest.TestCase):
                 if command[:2] == ['git', 'rev-parse']: return 'a'*12+'\n'
                 if command[:2] == ['git', 'status']: return ''
                 if command[:2] == ['git', 'show']: return '2026-11-16\n'
-                return passed(418 if fail == 'portable' else 419)
+                return passed(420 if fail == 'portable' else 421)
             def cargo(self, ws, target, *args):
                 result = self.run(['cargo', *args], ws)
                 if 'build' in args:
@@ -380,7 +380,7 @@ class LandingTest(unittest.TestCase):
                 landing.check(checker, {}, snapshot, {'verified': True})
                 evidence = json.loads(receipt.read_text())
                 self.assertFalse(evidence['complete_rust_gate'])
-                self.assertEqual(evidence['portable']['passed_tests'], 419)
+                self.assertEqual(evidence['portable']['passed_tests'], 421)
                 self.assertEqual(evidence['foundation']['comparisons'], 60368)
                 self.assertEqual(evidence['archive']['features'], landing.FEATURES)
                 self.assertTrue(evidence['archive']['default_features'])
@@ -449,7 +449,7 @@ class LandingTest(unittest.TestCase):
                 fixture.parent.mkdir(parents=True); fixture.write_bytes(b'fixture')
                 native = SimpleNamespace(assemble=Mock(return_value=ws),
                     verify_native_inputs=Mock(), native=Mock(return_value=(None, root/"phased-reader-host")),
-                    book_language=Mock())
+                    reader_layout=Mock())
                 sha = SimpleNamespace(verify=Mock())
                 recipe = SimpleNamespace(MATRIX=list(range(55)))
                 seals = [SimpleNamespace(hashes={'input': 'sha'}), SimpleNamespace(hashes={'crypto': 'sha'})]
@@ -470,7 +470,7 @@ class LandingTest(unittest.TestCase):
                 self.assertEqual(native.root_ws, root/'rust')
                 native.verify_native_inputs.assert_called_once_with(mocked_support, root/'vendor/freeink-sdk')
                 native.native.assert_called_once_with(runner, mocked_support, ws, root, root/'vendor/freeink-sdk')
-                native.book_language.assert_called_once_with(runner, ws, root/"phased-reader-host")
+                native.reader_layout.assert_called_once_with(runner, ws, root/"phased-reader-host")
                 command = runner.run.call_args.args[0]
                 self.assertIn(root/'rust/tests/include', command)
                 self.assertIn(root/'rust/tests/producer_forwarding/native_sha.cpp', command)

@@ -2,13 +2,19 @@
 //! manifest or dependency acquisition is supplied by this packet.
 mod entry;
 mod language;
+mod physical;
+mod run_budget;
 fn main() -> std::io::Result<()> {
     use entry::Case::*;
     let args: Vec<_> = std::env::args_os().collect();
-    if let [_, flag, root, ..] = args.as_slice()
-        && flag == "--language"
-    {
-        return language::run(std::path::Path::new(root));
+    if let [_, flag, input, ..] = args.as_slice() {
+        let path = std::path::Path::new(input);
+        if flag == "--language" {
+            return language::run(path);
+        }
+        if flag == "--run-budget" {
+            return run_budget::run(path);
+        }
     }
     if args
         .get(1)

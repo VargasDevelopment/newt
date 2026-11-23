@@ -170,7 +170,44 @@ fn arena_failure_is_not_a_partial_run() {
         assert!(!e.finish());
         assert!(e.failed)
     });
-    assert_eq!(sink.pages, vec![(0, 0, vec![])])
+    assert!(sink.pages.is_empty());
+}
+
+#[test]
+fn run_limit_moves_the_whole_line_and_its_start() {
+    let mut sink = Capture::default();
+    fixture(&mut sink, 128, |e| {
+        e.storage.runs = &mut core::mem::take(&mut e.storage.runs)[..2];
+        e.start(b"body", None, None, None, None, None);
+        e.text(b"a");
+        e.flush();
+        e.text(b"b");
+        e.start(b"b", None, None, None, None, None);
+        e.text(b"c");
+        e.end(b"b");
+        assert!(e.finish());
+    });
+    assert_eq!(sink.pages, vec![
+        (0, 0, vec![(b"a".to_vec(), 0, 8, 8, 0)]),
+        (1, 1, vec![(b"b".to_vec(), 0, 8, 8, 0), (b"c".to_vec(), 4, 8, 8, BOLD)]),
+    ]);
+}
+
+#[test]
+fn a_line_larger_than_an_empty_run_budget_fails_without_a_page() {
+    let mut sink = Capture::default();
+    fixture(&mut sink, 128, |e| {
+        e.storage.runs = &mut core::mem::take(&mut e.storage.runs)[..2];
+        e.start(b"body", None, None, None, None, None);
+        e.text(b"a");
+        e.start(b"b", None, None, None, None, None);
+        e.text(b"b");
+        e.end(b"b");
+        e.text(b"c");
+        assert!(!e.finish());
+        assert!(e.failed);
+    });
+    assert!(sink.pages.is_empty());
 }
 #[test]
 fn private_decoder_and_visual_reverse() {

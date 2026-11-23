@@ -96,6 +96,23 @@ def write_producer_language(path: Path):
         z.writestr("OPS/b.xhtml", chapter)
 
 
+def write_run_budget(path: Path):
+    short_words = (
+        "It is a day to go out, and so we go. I am on the way to it as he is. "
+        "We do not go far, but we go as one. If it is so, we may be in by six. "
+        "He has a cup of tea and I eat an egg. Do we go up or do we go on? "
+    )
+    paragraphs = ("<p>" + short_words * 3 + "</p>") * 8
+    with ZipFile(path, "w") as z:
+        z.writestr("mimetype", "application/epub+zip")
+        z.writestr("META-INF/container.xml", CONTAINER)
+        z.writestr("OPS/book.opf", '<package><manifest><item id="c" href="chapter.xhtml" '
+                   'media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c"/>'
+                   '</spine></package>')
+        z.writestr("OPS/chapter.xhtml", "<html><head><style>p { font-size: 74%; }</style>"
+                   "</head><body>" + paragraphs + "</body></html>")
+
+
 def write_menus(root: Path):
     root.mkdir(parents=True, exist_ok=True)
     for name, order, kind, compression in (

@@ -409,7 +409,7 @@ impl<'a> EngineState<'a> {
             return false;
         }
         self.flush(backend);
-        if self.run_count > 0 || self.image_count > 0 {
+        if !self.failed && (self.run_count > 0 || self.image_count > 0) {
             self.emit_page(backend)
         }
         !self.failed
@@ -775,14 +775,11 @@ impl<'a> EngineState<'a> {
                 self.emit_page(backend);
                 continue;
             }
-            for l in 0..take {
-                if self.failed || self.stopped {
-                    break;
-                }
-                self.place_line(backend, self.storage.lines[idx + l], size, lh, idx + l == 0)
+            let end = idx + take;
+            while idx < end && self.place_line(backend, self.storage.lines[idx], size, lh, idx == 0) {
+                idx += 1;
             }
-            idx += take;
-            if idx < self.line_count && !self.stopped {
+            if idx < self.line_count && !self.failed {
                 self.emit_page(backend)
             }
         }
@@ -798,15 +795,10 @@ impl<'a> EngineState<'a> {
         self.reset_par();
         self.continued = false
     }
-    fn place_line(&mut self, backend: &mut dyn Backend, r: Line, size: u16, lh: i16, first: bool) {
+    fn place_line(&mut self, backend: &mut dyn Backend, r: Line, size: u16, lh: i16, first: bool) -> bool {
         if r.end == r.start {
             self.y = self.y.wrapping_add(lh);
-            return;
-        }
-        if self.run_count == 0 {
-            self.page_chars = self
-                .chars
-                .wrapping_add(count(&self.storage.text[..r.start]))
+            return true;
         }
         let indent = if first && !self.continued && self.paragraph.text_indent > 0 {
             i32::from(size) * i32::from(self.paragraph.text_indent) / 100
@@ -842,7 +834,7 @@ impl<'a> EngineState<'a> {
         }
         let per = if justify { left / gaps as i32 } else { 0 };
         let mut remainder = if justify { left % gaps as i32 } else { 0 };
-        let mut baseline = self.y.wrapping_add(backend.ascent(size));
+        let baseline = self.y.wrapping_add(backend.ascent(size));
         let mut segs = [Segment::default(); 64];
         let mut n = 0;
         let mut seg = Segment {
@@ -901,7 +893,11 @@ impl<'a> EngineState<'a> {
         close_segment(&mut segs, &mut n, seg, r.end);
         if n == 0 {
             self.y = self.y.wrapping_add(lh);
-            return;
+            return true;
+        }
+        if n > segs.len() || n > self.storage.runs.len() - self.run_count {
+            self.failed = n > segs.len() || n > self.storage.runs.len();
+            return false;
         }
         // Match frozen placeLine's byte indices for at most 64 segments.
         let mut order = [0u8; 64];
@@ -933,6 +929,7 @@ impl<'a> EngineState<'a> {
         if self.rtl {
             order[..n].reverse()
         }
+        let before = (self.run_count, self.link_count, self.pool_len);
         for v in 0..n {
             let sg = segs[usize::from(order[v])];
             let span = self.storage.spans[sg.span];
@@ -958,11 +955,19 @@ impl<'a> EngineState<'a> {
                 x += self.margin(span)
             }
             let hy = sg.end == r.end && r.flags & 2 != 0 && !self.rtl;
-            if !self.emit_segment(backend, sg, hy, &mut baseline, &mut x, size) {
-                return;
+            if !self.emit_segment(backend, sg, hy, baseline, &mut x) {
+                // Unpublished runs, links and bytes are discarded together.
+                // The caller retries this whole line at the top of the next page.
+                (self.run_count, self.link_count, self.pool_len) = before;
+                self.failed = self.run_count == 0 && self.image_count == 0;
+                return false;
             }
         }
-        self.y = self.y.wrapping_add(lh)
+        if before.0 == 0 {
+            self.page_chars = self.chars.wrapping_add(count(&self.storage.text[..r.start]));
+        }
+        self.y = self.y.wrapping_add(lh);
+        true
     }
     fn reserve(&mut self, n: usize) -> Option<usize> {
         if n > self.storage.page.len().saturating_sub(self.pool_len) {
@@ -986,9 +991,8 @@ impl<'a> EngineState<'a> {
         &mut self, backend: &mut dyn Backend,
         sg: Segment,
         hy: bool,
-        baseline: &mut i16,
+        baseline: i16,
         x: &mut i32,
-        size: u16,
     ) -> bool {
         let span = self.storage.spans[sg.span];
         let (mut width, mut prev, mut i) = (0, 0, sg.start);
@@ -1000,26 +1004,8 @@ impl<'a> EngineState<'a> {
         let flags = span.flags | sg.extra;
         let n = sg.end - sg.start;
         let need = n + n / 2 + usize::from(hy) + 4;
-        if self.run_count >= self.storage.runs.len() {
-            self.emit_page(backend);
-            if self.stopped {
-                return false;
-            }
-            *baseline = self.y.wrapping_add(backend.ascent(size))
-        }
-        let at = if let Some(at) = self.reserve(need) {
-            at
-        } else {
-            self.emit_page(backend);
-            if self.stopped {
-                return false;
-            }
-            *baseline = self.y.wrapping_add(backend.ascent(size));
-            let Some(at) = self.reserve(need) else {
-                self.failed = true;
-                return false;
-            };
-            at
+        let Some(at) = self.reserve(need) else {
+            return false;
         };
         let (mut len, mut i) = (0, sg.start);
         while i < sg.end {
@@ -1041,7 +1027,7 @@ impl<'a> EngineState<'a> {
             len += 1;
             width += i32::from(backend.advance(45, sz, flags))
         }
-        let mut rb = *baseline;
+        let mut rb = baseline;
         if span.flags & SUP != 0 {
             rb = rb.wrapping_sub((u32::from(sz) * 33 / 100) as i16)
         } else if span.flags & SUB != 0 {
@@ -1170,9 +1156,11 @@ struct Segment {
     extra: u8,
 }
 fn close_segment(segs: &mut [Segment; 64], n: &mut usize, mut seg: Segment, end: usize) {
-    if end > seg.start && *n < 64 {
-        seg.end = end;
-        segs[*n] = seg;
-        *n += 1
+    if end > seg.start {
+        if let Some(slot) = segs.get_mut(*n) {
+            seg.end = end;
+            *slot = seg;
+        }
+        *n += 1;
     }
 }
