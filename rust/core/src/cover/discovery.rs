@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-//! Bounded no-catalog cover ZIP walk, including the CJB3 migration witness.
+//! Bounded no-catalog cover ZIP walk.
 use super::{Member, MetadataStatus as S, read};
 use crate::{zip_container::{Entry, hash_path}, zip_record_rules::*, zip_window::source::BookSource};
 pub fn le16(p: &[u8]) -> u16 { u16::from_le_bytes([p[0], p[1]]) }
@@ -31,8 +31,8 @@ pub fn path(base: &[u8], href: &[u8], out: &mut [u8; 512]) -> bool {
     length != 0
 }
 #[derive(Clone, Copy)]
-pub struct Directory { pub offset: u32, pub bytes: u32, pub count: u16, pub eocd: u64 }
-pub fn directory(source: &mut dyn BookSource) -> Result<Directory, S> {
+struct Directory { pub offset: u32, pub bytes: u32, pub count: u16, pub eocd: u64 }
+fn directory(source: &mut dyn BookSource) -> Result<Directory, S> {
     let mut tail = [0; 512];
     let lower = source.size().saturating_sub(65557);
     let mut end = source.size();
@@ -55,7 +55,7 @@ pub fn directory(source: &mut dyn BookSource) -> Result<Directory, S> {
     }
     Err(S::Malformed)
 }
-pub fn directory_member(source: &mut dyn BookSource, at: u64, end: u64, directory: u32,
+fn directory_member(source: &mut dyn BookSource, at: u64, end: u64, directory: u32,
     expanded: &mut u64, header: &mut [u8; 46], name: &mut [u8; 512]) -> Result<(u64, u64), S> {
     if at > end || end - at < 46 { return Err(S::Malformed); }
     if !read(source, at, header) { return Err(S::IoError); }

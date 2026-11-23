@@ -408,9 +408,9 @@ fn y_sampling_12_and_41_draw_the_grey_frame() {
 
 #[test]
 fn old_no_art_records_retry_once() {
-    // Older decoders wrote CJB4 (before #316) and CJB5 (before #46): generate
-    // once more, show no cover meanwhile.
-    for route in [*b"CJB4", *b"CJB5"].map(u32::from_le_bytes) {
+    // Older decoders wrote CJB3, CJB4 (before #316) and CJB5 (before #46):
+    // generate once more, show no cover meanwhile.
+    for route in [*b"CJB3", *b"CJB4", *b"CJB5"].map(u32::from_le_bytes) {
         assert_eq!(cover::record(None, route), Record::Generate);
         assert!(cover::no_art(route));
     }
@@ -420,9 +420,12 @@ fn old_no_art_records_retry_once() {
     let written = u32::from_le_bytes(header[24..].try_into().unwrap());
     assert_eq!(cover::record(None, written), Record::Current);
     assert!(cover::no_art(written));
-    assert_eq!(cover::record(None, cover::LEGACY_NO_ART), Record::Migrate);
     // A route value is never a picture, and art stays valid across routes.
     assert_eq!(cover::record(Some(BASE), cover::NO_ART), Record::Generate);
     assert_eq!(cover::record(Some(BASE), BASE), Record::Current);
+    // Art whose CRC happens to equal a route word is still current art.
+    for route in [*b"CJB3", *b"CJB4", *b"CJB5", *b"CJB6"].map(u32::from_le_bytes) {
+        assert_eq!(cover::record(Some(route), route), Record::Current);
+    }
     assert_eq!(cover::record(None, BASE), Record::Generate);
 }

@@ -1,28 +1,10 @@
 // SPDX-License-Identifier: MIT
-//! Checked NLC2 probe (cover::record) and complete CJB3 legacy-flag migration walk.
+//! Checked NLC2 probe (cover::record).
 use core::ffi::CStr;
 use super::io::{Files,Source,Control};
-use newt_core::{cover::{self,discovery::{self,le16,le32},MetadataStatus as S},zip_window::source::BookSource};
+use newt_core::{cover::{self,discovery::le32},zip_window::source::BookSource};
 #[derive(Clone,Copy,PartialEq,Eq)]
 pub enum Probe{Generate,Current,IoError,Stopped,RetainedStop}
-enum Migration{Qualifying,Unchanged,Inconclusive}
-fn migration(files:&Files<'_>,control:&dyn Control,path:&CStr)->Migration{
-    let mut source=Source::new(files,control);
-    if !source.open(path,64*1024*1024){return Migration::Inconclusive;}
-    if source.size()<22{return Migration::Unchanged;}
-    let d=match discovery::directory(&mut source){Ok(d)=>d,Err(S::IoError)=>return Migration::Inconclusive,_=>return Migration::Unchanged};
-    if d.count==0||d.count>1024||d.bytes>1024*1024{return Migration::Unchanged;}
-    let(mut at,mut expanded,mut qualifying)=(u64::from(d.offset),0,false);let end=at+u64::from(d.bytes);
-    for _ in 0..d.count{
-        let mut header=[0;46];let mut name=[0;512];
-        let next=match discovery::directory_member(&mut source,at,end,d.offset,&mut expanded,&mut header,&mut name){
-            Ok((next,_))=>next,Err(S::IoError)=>return Migration::Inconclusive,_=>return Migration::Unchanged};
-        qualifying|=le16(&header[8..])&!0x080e!=0;at=next;
-    }
-    if at!=end{return Migration::Unchanged;}
-    if !source.still_bound(path)||!source.close(){return Migration::Inconclusive;}
-    if qualifying{Migration::Qualifying}else{Migration::Unchanged}
-}
 pub fn probe(files:&Files<'_>,control:&dyn Control,book:&CStr,thumbnail:&CStr)->Probe{
     let mut retained=false;
     let inspected=(||{
@@ -43,11 +25,6 @@ pub fn probe(files:&Files<'_>,control:&dyn Control,book:&CStr,thumbnail:&CStr)->
             if !cover::read(&mut file,28+at as u64,&mut bytes[..take]){return Probe::IoError;}
             crc=cover::crc(crc,&bytes[..take]);}
         match cover::record((payload!=0).then_some(crc^u32::MAX),le32(&header[24..])){
-            cover::Record::Migrate=>{
-                retained=true;if !file.close(){return Probe::IoError;}
-                match migration(files,control,book){Migration::Qualifying=>{retained=false;Probe::Generate},
-                    Migration::Unchanged=>Probe::Current,Migration::Inconclusive=>Probe::IoError}
-            }
             cover::Record::Current=>{retained=true;Probe::Current}
             cover::Record::Generate=>Probe::Generate,
         }

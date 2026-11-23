@@ -46,24 +46,22 @@ pub const PIXELS: usize = 3384;
 /// A bare record's route ("CJB6"). Change it whenever a verdict can change, so
 /// every older negative is read once more. #46 added cover forms.
 pub const NO_ART: u32 = 0x3642_4a43;
-/// Negatives from older decoders: "CJB4" (before #316) and "CJB5" (before #46).
-/// Each is generated once more; Home shows no cover until then.
-pub const RETRIED_NO_ART: [u32; 2] = [0x3442_4a43, 0x3542_4a43];
-pub const LEGACY_NO_ART: u32 = 0x3342_4a43;
+/// Negatives from older decoders: "CJB3", "CJB4" (before #316) and "CJB5"
+/// (before #46). Each is generated once more; Home shows no cover until then.
+pub const RETRIED_NO_ART: [u32; 3] = [0x3342_4a43, 0x3442_4a43, 0x3542_4a43];
 /// What a cover record bound to its book's size and mtime means.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Record { Current, Migrate, Generate }
+pub enum Record { Current, Generate }
 /// `pixels` is the payload CRC, or None for a bare record. Art stays valid across routes.
 pub fn record(pixels: Option<u32>, recorded: u32) -> Record {
     match pixels {
-        None if recorded == LEGACY_NO_ART => Record::Migrate,
         None if recorded == NO_ART => Record::Current,
         Some(crc) if crc == recorded => Record::Current,
         _ => Record::Generate,
     }
 }
 /// A bare record Home shows as "no cover", including routes awaiting their retry.
-pub fn no_art(recorded: u32) -> bool { matches!(recorded, NO_ART | LEGACY_NO_ART) || RETRIED_NO_ART.contains(&recorded) }
+pub fn no_art(recorded: u32) -> bool { recorded == NO_ART || RETRIED_NO_ART.contains(&recorded) }
 pub fn header(size: u64, mtime: u64, check: u32) -> [u8; 28] {
     let mut out = [0; 28];
     out[..8].copy_from_slice(&SIGNATURE);
