@@ -753,7 +753,6 @@
   "native_exceptions": {
     "rust/firmware/app_power.rs": 1,
     "rust/firmware/app_startup.rs": 1,
-    "rust/firmware/cover_xml.rs": 15,
     "rust/firmware/fonts/native.rs": 7,
     "rust/firmware/lib.rs": 5,
     "rust/firmware/nvs/sdk/leaf.rs": 3,

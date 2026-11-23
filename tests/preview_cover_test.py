@@ -532,7 +532,7 @@ CASES = [
           'for x in 0..usize::from(width){if bits[x/8]&(0x80>>(x%8))!=0{let target=x+self.left;out[target/8]|=0x80>>(target%8);}}',
           'let _=(bits,out);')],
         # A cover page's internal DTD subset is read, so its entities expand.
-        [('cover_xml.rs', 'c.state.doctype(subset!=0);', 'c.state.doctype(false);')]]),
+        [('cover_xml.rs', 'self.0.doctype(subset)', 'self.0.doctype(false)')]]),
     (home, [
         # A produced cover does not advance the publication counter.
         [('cover_idle_step.rs', '    if outcome.result==R::Produced{published();}\n', '')],
