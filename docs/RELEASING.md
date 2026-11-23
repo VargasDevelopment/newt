@@ -136,8 +136,7 @@ release merge itself. It refuses a shallow clone, where bump would classify
 only part of the history since the tag and pick a wrong version; fetch
 complete history (`git fetch --unshallow origin`). It refuses a release branch
 that merged `main` after it branched, since the changelog would leave out
-main's changes; start a fresh branch
-from `main` instead.
+main's changes; start a fresh branch from `main` instead.
 
 The release merge's CI runs the full tier ([CI.md](CI.md#tiers)), and a
 failure there blocks every merge after it, so run the full tier on the release
