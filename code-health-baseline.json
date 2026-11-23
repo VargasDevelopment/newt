@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "a02c2d17589e7bf13fa9f02782f1c5056810eed7",
+      "source_revision": "335824c1dd382b35d8cbcae820fe3de0c7cc0993",
       "before": 3639408,
       "after": 3654704,
-      "reason": "#26: the development bridge's card write (PUT lease in newt_core::dev_put with its marked commit and recovery, the firmware's card_write lease, the FATFS free-space leaf and the SHA-256 scope). Clean regional DEV USB builds of origin/main 254ae47 and a02c2d1 measured 3,639,168 to 3,654,704 B (+15,536 B; +15,296 B over main's 3,639,408 B ceiling), below the 7,798,784 B app slot. RTC 300 to 300 B, RAM 124,096 to 124,096 B; the lease's 447 B is heap only while it runs. New unselected stack entry newt_download_free 32 B. Floors, lend and exclusions unchanged.",
-      "reviewer": "Lead (pending)"
+      "reason": "#26: the development bridge's card write (PUT lease in newt_core::dev_put with its marked commit and recovery, the firmware's card_write lease, the FATFS free-space leaf and the SHA-256 scope). Clean regional DEV USB builds of origin/main 254ae47 and a02c2d1 measured 3,639,168 to 3,654,704 B, and the same tree rebased onto 246fd8c as 335824c (no firmware source changed between those bases) is re-measured on the bench candidate build (+15,536 B; +15,296 B over main's 3,639,408 B ceiling), below the 7,798,784 B app slot. RTC 300 to 300 B, RAM 124,096 to 124,096 B; the lease's 447 B is heap only while it runs. New unselected stack entry newt_download_free 32 B. Floors, lend and exclusions unchanged.",
+      "reviewer": "Lead, 2026-11-23, after four independent review rounds of the card write (final round: no P0/P1) and the round-4 fixes in 5fb5ae5"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
