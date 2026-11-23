@@ -201,7 +201,7 @@ impl<B: ParserBackend + ?Sized, C: CacheStorage + CachePresence>
         if !reader_settings_match(r.reader, self.settings) {
             return session::Build::Failed(Status::Unsupported);
         }
-        let (name, generation) = match identity(self.settings, digest, spine, self.hash) {
+        let (name, generation) = match identity(self.settings, digest, spine, self.hash, r.reader.selection().language) {
             Ok(v) => v,
             Err(e) => return session::Build::Failed(e),
         };
@@ -247,7 +247,7 @@ impl<B: ParserBackend + ?Sized, C: CacheStorage + CachePresence>
             return false;
         }
         let opening = !r.reader.has_page();
-        cached(self.settings, digest, spine, self.hash, |name| {
+        cached_for_language(self.settings, digest, spine, self.hash, r.reader.selection().language, |name| {
             self.store.present(name, opening)
         })
     }
@@ -260,24 +260,13 @@ pub(super) fn identity(
     digest: &Digest,
     spine: u32,
     hash: &mut dyn crate::hash_provider::CacheHash,
+    language: BookLanguage,
 ) -> Result<([u8; 69], u32), Status> {
-    let generation = identity_generation(settings);
+    let generation = identity_generation(settings, language);
     identity_at_generation(settings, digest, spine, hash, generation).map(|name| (name, generation))
 }
-fn identity_generation(settings: ViewSettings) -> u32 {
-    let g = Geometry::reader(settings.orientation == Orientation::LandscapeCcw);
-    let params = Params {
-        width: g.width as i16,
-        height: g.height as i16,
-        left: g.margin as i16,
-        right: g.margin as i16,
-        top: g.margin as i16,
-        bottom: (g.height - g.content_bottom) as i16,
-        base_size: PROFILE_SIZE,
-        align: TextAlign::Justify,
-        embedded_styles: false,
-        ..Params::default()
-    };
+fn identity_generation(settings: ViewSettings, language: BookLanguage) -> u32 {
+    let params = reader_parameters(settings.orientation == Orientation::LandscapeCcw, None, language);
     let mix = |h: u32, v: u32| (h ^ v).wrapping_mul(16777619);
     let engine = CACHE_ENGINE_REVISION;
     let mut generation = layout_generation_hash(&params, newt_reader_atlas::IDENTITY, false);
@@ -336,7 +325,8 @@ pub(super) fn reader_settings_match(reader: &PhasedReader<'_, '_>, settings: Vie
         && settings.refresh_pages == defaults.refresh_pages
 }
 
-/// Exact cached() ordering: do not even hash the map after a base hit.
+/// Resume-picture presence hint before OPF selection. The picture itself is
+/// already bound to the running image and immutable book digest.
 pub fn cached(
     settings: ViewSettings,
     digest: &Digest,
@@ -344,7 +334,20 @@ pub fn cached(
     hash: &mut dyn crate::hash_provider::CacheHash,
     mut present: impl FnMut(&[u8]) -> bool,
 ) -> bool {
-    let Ok((name, _)) = identity(settings, digest, spine, hash) else {
+    [BookLanguage::Default, BookLanguage::Chinese, BookLanguage::Japanese, BookLanguage::Korean]
+        .into_iter().any(|language| cached_for_language(settings, digest, spine, hash, language, &mut present))
+}
+
+/// Probe the map only after a base miss.
+pub(super) fn cached_for_language(
+    settings: ViewSettings,
+    digest: &Digest,
+    spine: u32,
+    hash: &mut dyn crate::hash_provider::CacheHash,
+    language: BookLanguage,
+    mut present: impl FnMut(&[u8]) -> bool,
+) -> bool {
+    let Ok((name, _)) = identity(settings, digest, spine, hash, language) else {
         return false;
     };
     if present(&name) {

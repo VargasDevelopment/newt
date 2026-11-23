@@ -498,7 +498,7 @@ fn independent_identity_presence_and_failures() {
             fail: 0,
         };
         assert_eq!(
-            identity(v.settings, &v.digest, v.spine, &mut h),
+            identity(v.settings, &v.digest, v.spine, &mut h, BookLanguage::default()),
             Ok((v.base, v.generation))
         );
         // Existing base covers empty/invalid files: contents are never consulted.
@@ -512,7 +512,7 @@ fn independent_identity_presence_and_failures() {
         ] {
             let mut h = Hash { v, calls: 0, fail };
             let mut calls = 0;
-            let result = cached(v.settings, &v.digest, v.spine, &mut h, |name| {
+            let result = cached_for_language(v.settings, &v.digest, v.spine, &mut h, BookLanguage::default(), |name| {
                 calls += 1;
                 if calls == 1 {
                     assert_eq!(name, v.base);
@@ -651,11 +651,11 @@ pub fn actual_reader_cases<B: ParserBackend + ?Sized>(
 pub fn actual_sha_cases(hash: &mut dyn crate::hash_provider::CacheHash) {
     for v in VECTORS {
         assert_eq!(
-            identity(v.settings, &v.digest, v.spine, hash),
+            identity(v.settings, &v.digest, v.spine, hash, BookLanguage::default()),
             Ok((v.base, v.generation))
         );
         let mut calls = 0;
-        assert!(cached(v.settings, &v.digest, v.spine, hash, |name| {
+        assert!(cached_for_language(v.settings, &v.digest, v.spine, hash, BookLanguage::default(), |name| {
             calls += 1;
             if calls == 1 {
                 assert_eq!(name, v.base);

@@ -1,9 +1,14 @@
 //! Parent maps this existing source entry to its approved host package; no new
 //! manifest or dependency acquisition is supplied by this packet.
 mod entry;
+mod language;
 fn main() {
     use entry::Case::*;
     let args: Vec<_> = std::env::args_os().collect();
+    if args.get(1).is_some_and(|arg| arg == "--language") {
+        language::run(std::path::Path::new(args.get(2).expect("fixture directory")));
+        return;
+    }
     if args
         .get(1)
         .is_some_and(|a| a == "--oracle" || a == "--menu-oracle")

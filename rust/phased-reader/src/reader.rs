@@ -39,9 +39,52 @@ pub struct Selection {
     pub entry: Entry,
     href: [u8; 512],
     title: [u8; 256],
+    pub language: BookLanguage,
     pub spines: u32,
     pub navigation: Navigation,
 }
+/// Language tailoring supported by the line breaker.
+#[derive(Clone, Copy, Default)]
+pub enum BookLanguage {
+    #[default]
+    Default,
+    Chinese,
+    Japanese,
+    Korean,
+}
+
+impl BookLanguage {
+    fn from_opf(tag: &[u8]) -> Self {
+        // Retain only the primary language. A bad suffix invalidates the tag.
+        if tag.len() > 63 {
+            return Self::Default;
+        }
+        let mut parts = tag.split(|&byte| byte == b'-' || byte == b'_');
+        let primary = parts.next().unwrap_or_default();
+        if !parts.all(|part| (1..=8).contains(&part.len()) && part.iter().all(u8::is_ascii_alphanumeric)) {
+            return Self::Default;
+        }
+        if primary.eq_ignore_ascii_case(b"zh") {
+            Self::Chinese
+        } else if primary.eq_ignore_ascii_case(b"ja") {
+            Self::Japanese
+        } else if primary.eq_ignore_ascii_case(b"ko") {
+            Self::Korean
+        } else {
+            Self::Default
+        }
+    }
+
+    fn tag(self) -> &'static core::ffi::CStr {
+        match self {
+            Self::Default => c"en",
+            Self::Chinese => c"zh",
+            Self::Japanese => c"ja",
+            Self::Korean => c"ko",
+        }
+    }
+}
+
 #[path = "reader/selection_initialization.rs"]
 pub mod selection_initialization;
 #[path = "reader/scoped_yield.rs"]
@@ -64,6 +107,7 @@ impl Selection {
         self.href.copy_from_slice(&other.href);
         self.title.copy_from_slice(&other.title);
         self.spines = other.spines;
+        self.language = other.language;
         self.navigation.clone_from(&other.navigation);
     }
     fn clear(&mut self) {
@@ -71,6 +115,7 @@ impl Selection {
         self.href.fill(0);
         self.title.fill(0);
         self.spines = 0;
+        self.language = BookLanguage::default();
         self.navigation.reset();
     }
 }
@@ -1022,7 +1067,7 @@ fn pass_stream<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
         Some(&mut selected.navigation),
     )
     .map_err(|_| Status::Unsupported)?;
-    let params = reader_parameters(landscape, slot);
+    let params = reader_parameters(landscape, Some(slot), selected.language);
     let (status, pages, chars, complete) = {
         let reached = core::cell::Cell::new(false);
         let settled = core::cell::Cell::new(watch.settled());
@@ -1466,7 +1511,7 @@ impl PhasedReader<'_, '_> {
 
 include!("reader_semantic.rs");
 
-fn reader_parameters<'s>(landscape: bool, slot: &'s Slot<'_>) -> Params<'s> {
+fn reader_parameters<'s>(landscape: bool, slot: Option<&'s Slot<'_>>, language: BookLanguage) -> Params<'s> {
     let g = Geometry::reader(landscape);
     Params {
         width: g.width as i16,
@@ -1478,7 +1523,8 @@ fn reader_parameters<'s>(landscape: bool, slot: &'s Slot<'_>) -> Params<'s> {
         base_size: PROFILE_SIZE,
         align: TextAlign::Justify,
         embedded_styles: false,
-        stylesheet: (slot.count != 0).then(|| slot.sheet()),
+        language: Some(language.tag()),
+        stylesheet: slot.filter(|slot| slot.count != 0).map(Slot::sheet),
         ..Params::default()
     }
 }

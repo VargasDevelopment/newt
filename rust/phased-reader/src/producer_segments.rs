@@ -1,7 +1,7 @@
 //! Chapter cache producer segment boundaries and map writes; no parser or bank owner.
 #![forbid(unsafe_code)]
 use super::{identity_at_generation, identity_generation};
-use crate::{PageInfo, imported_revision::{Digest}, producer_store::ProducerStore, producer_writer::CappedWriter};
+use crate::{BookLanguage, PageInfo, imported_revision::{Digest}, producer_store::ProducerStore, producer_writer::CappedWriter};
 use newt_core::{cache_names::segment::{self, ChapterSegment, PAGES}, page_cache::{CacheStorage, WriterMemory}, preferences::ViewSettings, zip_container::Status};
 
 /// Certified published metadata and real route provider, lent for one call.
@@ -19,15 +19,17 @@ pub struct Segments {
     pub count: u32,
     pub skipped: u32,
     pub(crate) staged: bool,
+    pub(crate) language: BookLanguage,
 }
 impl Segments {
     pub fn new(certified_pages: u32) -> Self {
         Self { name: [0; 128], generation: 0, next: 0,
-            count: ChapterSegment::count(certified_pages), skipped: u32::MAX, staged: false }
+            count: ChapterSegment::count(certified_pages), skipped: u32::MAX, staged: false,
+            language: BookLanguage::default() }
     }
     fn identify(&mut self, route: &mut Route<'_>, spine: u32) -> bool {
         // Frozen identity publishes the generation before the fallible hash.
-        self.generation = identity_generation(route.settings);
+        self.generation = identity_generation(route.settings, self.language);
         let Ok(name) = identity_at_generation(route.settings, route.digest, spine, route.hash, self.generation) else {
             return false;
         };

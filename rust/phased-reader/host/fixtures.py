@@ -57,6 +57,26 @@ def write(root: Path):
                 z.writestr('OPS/theme.css', css)
 
 
+def write_languages(root: Path):
+    root.mkdir(parents=True, exist_ok=True)
+    for name, tag in (
+        ("en", "en"), ("ja", " JA_jp "), ("zh", "zh-Hant-TW"), ("ko", "KO"),
+        ("missing", None), ("invalid", "ja--JP"), ("empty", ""),
+        ("unknown", "jargon"), ("overlong", "ja" + " " * 260 + "junk"),
+    ):
+        language = f"<dc:language>{tag}</dc:language>" if tag is not None else ""
+        opf = ('<package xmlns:dc="http://purl.org/dc/elements/1.1/"><metadata>'
+               + language + '</metadata><manifest><item id="c" href="chapter.xhtml" '
+               'media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c"/>'
+               '</spine></package>')
+        with ZipFile(root / f"language-{name}.epub", "w") as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("META-INF/container.xml", CONTAINER)
+            z.writestr("OPS/book.opf", opf)
+            # U+00A7 has UAX #14 class AI, resolved differently for CJK.
+            z.writestr("OPS/chapter.xhtml", "<html><body><p>" + "§" * 80 + "</p></body></html>")
+
+
 def write_menus(root: Path):
     root.mkdir(parents=True, exist_ok=True)
     for name, order, kind, compression in (

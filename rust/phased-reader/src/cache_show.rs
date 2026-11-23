@@ -171,8 +171,9 @@ pub(super) fn restore_identity(
     hash: &mut dyn crate::hash_provider::CacheHash,
     name: &mut [u8; 69],
     generation: &mut u32,
+    language: BookLanguage,
 ) -> bool {
-    match session_adapter::identity(settings, digest, spine, hash) {
+    match session_adapter::identity(settings, digest, spine, hash, language) {
         Ok((n, g)) => {
             *name = n;
             *generation = g;

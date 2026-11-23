@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Field-wise construction directly in the existing selection allocation.
 use core::{mem::{MaybeUninit, size_of}, ptr::{addr_of_mut, write_bytes}};
-use newt_phased_reader::{Selection, selection_initialization::{
+use newt_phased_reader::{BookLanguage, Selection, selection_initialization::{
     HREF, TITLE, MAX_TARGETS, STRING_BYTES, Navigation, navigation as nav,
 }, zip_container::Entry};
 
@@ -19,6 +19,7 @@ pub fn initialize(output: &mut MaybeUninit<Selection>) {
         write_bytes(slot.cast::<u8>().add(HREF.0), 0, HREF.1);
         write_bytes(slot.cast::<u8>().add(TITLE.0), 0, TITLE.1);
         addr_of_mut!((*slot).spines).write(0);
+        addr_of_mut!((*slot).language).write(BookLanguage::default());
         initialize_navigation(&mut *addr_of_mut!((*slot).navigation).cast::<MaybeUninit<Navigation>>());
     }
 }
