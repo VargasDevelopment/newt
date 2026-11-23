@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3680624,
+      "flash_bytes": 3680944,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "bcc83f958d57de9e3f818bbdc767364b1ac8294c",
+      "source_revision": "53b2630118c9a2a9d9a480ad37dd1273f366b52b",
       "before": 3661552,
-      "after": 3680624,
-      "reason": "#46 part 2: cover forms (retry older no-cover records once, image/jpg, progressive JPEG first scan, guide and cover-page fallbacks, broken cover meta fallbacks, a strict first spine cover page, PNG covers, Y sampling 12 and 41). Clean regional DEV USB builds measure main b8d0d3bc at 3,661,552 B, 4d2897e4 (before PNG) at 3,670,208 B (+8,656 B) and bcc83f95 at 3,680,624 B (+19,072 B in all; PNG and sampling +10,416 B), below the 7,016,448 B usable app slot. RAM 124,096 to 124,096 B, lent Wi-Fi 22,528 to 22,528 B, RTC 300 to 300 B; every selected stack ceiling unchanged.",
-      "reviewer": "pending Lead"
+      "after": 3680944,
+      "reason": "#46 part 2: cover forms (retry older no-cover records once, image/jpg, progressive JPEG first scan, guide and cover-page fallbacks, broken cover meta fallbacks, a strict first spine cover page, PNG covers, Y sampling 12 and 41). Clean regional DEV USB builds measure main b8d0d3bc at 3,661,552 B, 4d2897e4 (before PNG) at 3,670,208 B (+8,656 B) and bcc83f95 at 3,680,624 B (PNG and sampling +10,416 B) and 53b26301 at 3,680,944 B (+19,392 B in all; review fixes for complete PNG data, the PNG scaler bound and a progressive first scan without Y +320 B), below the 7,016,448 B usable app slot. RAM 124,096 to 124,096 B, lent Wi-Fi 22,528 to 22,528 B, RTC 300 to 300 B; every selected stack ceiling unchanged.",
+      "reviewer": "Lead, after independent review (gpt-6-astra xhigh, 2 rounds)"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
