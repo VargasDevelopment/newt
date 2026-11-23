@@ -42,8 +42,8 @@ impl Runtime {
         logical: &mut Frame, events: &mut Events<'_, '_>, session_checkpoint: bool,
     ) -> bool {
         let policy = self.restore_policy_image();
-        if policy != RestorePolicy::ExactPage && !session_checkpoint { self.load_sample_home(home); }
-        if self.recovery.is_none() && policy != RestorePolicy::ExactPage
+        if policy.reloads_saved_progress() && !session_checkpoint { self.load_sample_home(home); }
+        if self.recovery.is_none() && policy.reloads_saved_progress()
             && !session_checkpoint && !self.progress_ready {
             self.publish_notice_image(ui);
             return true;

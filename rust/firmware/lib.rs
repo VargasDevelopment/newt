@@ -27,6 +27,7 @@ pub mod device_lifecycle;
 pub mod app_runtime;
 pub mod reader_book;
 pub mod reader_image;
+mod reader_restore_policy;
 pub mod reader_exit_metadata;
 pub mod reader_metadata;
 pub mod reader_duty;

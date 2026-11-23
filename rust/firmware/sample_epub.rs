@@ -49,8 +49,8 @@ pub fn open<B: newt_core::xml_session::ParserBackend + ?Sized>(saved: Progress,
     breaker: &mut dyn newt_core::chapter_layout::types::LineBreak,
 ) -> Result<newt_c3_board::sample_memory::SampleMemory, OpenFailure> {
     use newt_core::zip_container::Status;
-    use newt_reader_ui::{ReaderOwnerState, RestoreFailure, RestorePolicy, SampleOperation};
-    if policy != RestorePolicy::AllowInitialFallback && !valid_progress(&saved) {
+    use newt_reader_ui::{ReaderOwnerState, RestoreFailure, SampleOperation};
+    if !policy.allows_initial_fallback() && !valid_progress(&saved) {
         return Err(OpenFailure { status: Status::NotFound, restore: RestoreFailure::InvalidCheckpoint });
     }
     let Some(mut memory) = newt_c3_board::sample_memory::SampleMemory::try_new(saved, settings, IDENTITY) else {

@@ -227,7 +227,8 @@ impl ExternalOwner {
     ) -> bool {
         self.close(reader);
         self.restore_failure = RestoreFailure::Unavailable;
-        if policy != RestorePolicy::AllowInitialFallback && saved.book != identity {
+        let fallback = policy.allows_initial_fallback();
+        if !fallback && saved.book != identity {
             self.restore_failure = RestoreFailure::InvalidCheckpoint;
             return false;
         }
@@ -245,14 +246,14 @@ impl ExternalOwner {
         self.state = ReaderOwnerState::from_open(true, Status::Ok, self.state.readable_spines());
         let mut locator = initial.locator;
         if locator.spine >= reader.selection().spines {
-            if policy != RestorePolicy::AllowInitialFallback {
+            if !fallback {
                 self.restore_failure = RestoreFailure::InvalidCheckpoint;
                 self.reject_open(reader, Status::NotFound);
                 return false;
             }
             locator = Locator::default();
         }
-        let (result, _, _) = if policy == RestorePolicy::AllowInitialFallback {
+        let (result, _, _) = if fallback {
             self.locate(
                 reader,
                 source,
@@ -278,12 +279,10 @@ impl ExternalOwner {
             return false;
         }
         let p = reader.info();
-        // A cold checkpoint uses the exact page if it still exists. Otherwise
-        // the same verified anchor may fall within the newly laid out page.
-        if policy != RestorePolicy::AllowInitialFallback
+        if !fallback
             && (p.spine != locator.spine
                 || locator.character >= p.total_chars
-                || (policy == RestorePolicy::ExactPage && p.char_start != locator.character))
+                || (policy.requires_exact_page() && p.char_start != locator.character))
         {
             self.restore_failure = RestoreFailure::InvalidCheckpoint;
             self.reject_open(reader, Status::NotFound);

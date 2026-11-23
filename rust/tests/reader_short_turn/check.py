@@ -42,7 +42,7 @@ def main():
     commands = []
     def run(command, *, succeeds=True):
         result = subprocess.run(list(map(str, command)), cwd=ROOT, env=environment,
-                                capture_output=True, text=True)
+                                capture_output=True, text=True, timeout=120)
         index = len(commands)
         (out / f'{index:02d}.stdout').write_text(result.stdout)
         (out / f'{index:02d}.stderr').write_text(result.stderr)
@@ -99,6 +99,8 @@ def main():
     run([*command, HERE / 'host.rs', '-o', out / 'positive'])
     result = run([out / 'positive', epub])
     assert result.stdout.startswith('PASS actual short open/action/finished')
+    result = run([out / 'positive', '--restore-policy'])
+    assert 'PASS firmware boot and pending checkpoint policies' in result.stdout
     layout_fixtures = native_pins.load('short_turn_layout_fixtures', ROOT/'rust/phased-reader/host/fixtures.py')
     dense = out/'fixtures/dense.epub'
     layout_fixtures.write_run_budget(dense)
@@ -136,6 +138,28 @@ def main():
         assert result.returncode == 101 and ('short open leaves composition' in result.stderr
                 or 'short action must not compose' in result.stderr), result.stderr
     print('PASS real firmware short-driver composition; 3 compiled duplicate-composition controls rejected')
+
+    policy = ROOT / 'rust/firmware/reader_restore_policy.rs'
+    source = policy.read_text()
+    for name, original, mutation, witness in (
+        ('cold-exact', '(true, false, _) => RestorePolicy::ColdCheckpoint,',
+         '(true, false, _) => RestorePolicy::ExactPage,', 'startup restore policy'),
+        ('pending-exact', 'RestorePolicy::Validated | RestorePolicy::ColdCheckpoint => Recovery::PendingAnchor,',
+         'RestorePolicy::Validated => Recovery::PendingAnchor,\n'
+         '        RestorePolicy::ColdCheckpoint => Recovery::PendingExact,', 'interrupted ColdCheckpoint open'),
+    ):
+        changed = source.replace(original, mutation, 1)
+        assert changed != source
+        child = out / name
+        child.mkdir()
+        replacement = child / 'policy.rs'
+        replacement.write_text(changed)
+        host = child / 'host.rs'
+        host.write_text(paths((HERE / 'host.rs').read_text(), HERE, {policy: replacement}))
+        run([*command, host, '-o', child / 'program'])
+        result = run([child / 'program', '--restore-policy'], succeeds=False)
+        assert result.returncode == 101 and witness in result.stderr, result.stderr
+    print('PASS 2 compiled restore policy controls rejected')
 
 
 if __name__ == '__main__':

@@ -181,7 +181,7 @@ fn protocol_rows() {
     PendingRecovery::complete_checkpoint(&mut pending, &state, candidate, settings(), &DIGEST);
     println!("R pending {} {} {}", u8::from(pending.is_some()),
         pending.map_or(0, |p| p.progress().locator.character),
-        u8::from(pending.is_some_and(|p| p.policy() == RestorePolicy::ExactPage)));
+        u8::from(pending.is_some_and(|p| p.policy().requires_exact_page())));
 
     state.observe(CheckpointResult { progress: Outcome::Verified, destination: Outcome::Verified });
     state.begin_operation();

@@ -80,13 +80,13 @@ fn with_backend(backend: &mut dyn Backend, page_cap: usize, f: impl FnOnce(&mut 
 }
 fn with_text_capacity(backend: &mut dyn Backend, page_cap: usize, text_cap: usize,
     f: impl FnOnce(&mut Engine<'_>)) {
-    let mut text = [0; 128];
-    let mut breaks = [0; 128];
-    let mut levels = [0; 128];
+    let mut text = [0; 256];
+    let mut breaks = [0; 256];
+    let mut levels = [0; 256];
     let mut spans = [Span::default(); 16];
     let mut lines = [Line::default(); 16];
     let mut elements = [Element::default(); 16];
-    let mut runs = [Run::default(); 16];
+    let mut runs = [Run::default(); 128];
     let mut images = [Image::default(); 2];
     let mut links = [Link::default(); 4];
     let mut page = vec![0; page_cap];
@@ -163,7 +163,7 @@ fn collapse_styles_offsets() {
 }
 #[test]
 fn arena_failure_is_not_a_partial_run() {
-    let mut sink = Capture::default();
+    let mut sink = Capture { stop: true, ..Capture::default() };
     fixture(&mut sink, 1, |e| {
         e.start(b"body", None, None, None, None, None);
         e.text(b"x");
@@ -175,9 +175,19 @@ fn arena_failure_is_not_a_partial_run() {
 
 #[test]
 fn run_limit_moves_the_whole_line_and_its_start() {
+    two_lines_on_separate_pages(128, 2);
+}
+
+#[test]
+fn pool_limit_rolls_back_the_whole_line() {
+    // Each run reserves five bytes. Line two starts then runs out of bytes.
+    two_lines_on_separate_pages(11, 16);
+}
+
+fn two_lines_on_separate_pages(page_cap: usize, run_cap: usize) {
     let mut sink = Capture::default();
-    fixture(&mut sink, 128, |e| {
-        e.storage.runs = &mut core::mem::take(&mut e.storage.runs)[..2];
+    fixture(&mut sink, page_cap, |e| {
+        e.storage.runs = &mut core::mem::take(&mut e.storage.runs)[..run_cap];
         e.start(b"body", None, None, None, None, None);
         e.text(b"a");
         e.flush();
@@ -195,7 +205,7 @@ fn run_limit_moves_the_whole_line_and_its_start() {
 
 #[test]
 fn a_line_larger_than_an_empty_run_budget_fails_without_a_page() {
-    let mut sink = Capture::default();
+    let mut sink = Capture { stop: true, ..Capture::default() };
     fixture(&mut sink, 128, |e| {
         e.storage.runs = &mut core::mem::take(&mut e.storage.runs)[..2];
         e.start(b"body", None, None, None, None, None);
@@ -208,6 +218,32 @@ fn a_line_larger_than_an_empty_run_budget_fails_without_a_page() {
         assert!(e.failed);
     });
     assert!(sink.pages.is_empty());
+}
+
+#[test]
+fn justified_cjk_forces_a_line_break_after_64_segments() {
+    let text = "文字".repeat(33);
+    for (height, expected) in [(8, &[(0, 64), (64, 1), (65, 1)][..]), (24, &[(0, 66)][..])] {
+        let mut sink = Capture::default();
+        let mut font = Fixed;
+        let mut backend = SplitBackend { font: &mut font, sink: &mut sink };
+        with_text_capacity(&mut backend, 1024, 256, |e| {
+            // Exactly 65 glyphs fit by width, but each justified glyph needs a run.
+            e.params.width = 65 * 4 + 1;
+            e.params.height = height;
+            e.start(b"body", None, None, None, None, None);
+            e.start(b"p", None, Some(b"text-align:justify"), None, None, None);
+            e.text(text.as_bytes());
+            e.end(b"p");
+            assert!(e.finish());
+        });
+        let pages: Vec<_> = sink.pages.iter().map(|(_, start, runs)| (*start, runs.len())).collect();
+        assert_eq!(pages, expected);
+        let laid_out: Vec<_> = sink.pages.iter()
+            .flat_map(|(_, _, runs)| runs.iter().flat_map(|(bytes, ..)| bytes.iter().copied()))
+            .collect();
+        assert_eq!(laid_out, text.as_bytes());
+    }
 }
 #[test]
 fn private_decoder_and_visual_reverse() {

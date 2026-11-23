@@ -4,7 +4,8 @@ use super::*;
 use core::fmt::Write;
 use crate::{app_image::{Application, Home},
     reader_book::checkpoint::{CheckpointResult, Outcome}, reader_exit_metadata::ExitMetadata,
-    reader_pages::ReaderPages, retained_runtime::record::{self, Recovery, SleepRecord, Status}};
+    reader_pages::ReaderPages, reader_restore_policy::pending_recovery,
+    retained_runtime::record::{self, Recovery, SleepRecord, Status}};
 use newt_core::{app::Screen, durable::Backend, save_notice::SaveOutcome,
     sleep_intent::{SleepResumeIntent, progress_checkpoint}};
 use newt_native_io::UiIo;
@@ -49,9 +50,7 @@ impl Runtime {
         if !book_open { ui.app.selected = 0; }
         let (progress, settings, saved, recovery) = if let Some(pending) = pending {
             (Some(pending.progress()), pending.settings(), self.saves.checkpoint_saved(),
-                if pending.policy() == newt_reader_ui::RestorePolicy::Validated {
-                    Recovery::PendingAnchor
-                } else { Recovery::PendingExact })
+                pending_recovery(pending.policy()))
         } else {
             (book_open.then_some(&self.saved), self.settings, checkpoint_saved, Recovery::Ordinary)
         };

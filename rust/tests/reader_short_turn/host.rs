@@ -8,6 +8,9 @@ pub use newt_native_storage::{Directory, Error, Kind, Native, Open, Result, Stat
 #[path = "../../firmware/reader_book.rs"] pub mod reader_book;
 #[path = "../../firmware/reader_metadata.rs"] pub mod reader_metadata;
 #[path = "../../firmware/reader_pages.rs"] pub mod reader_pages;
+#[path = "../../firmware/reader_restore_policy.rs"] mod reader_restore_policy;
+#[path = "../../firmware/retained_runtime/record.rs"] pub mod retained_record;
+mod retained_runtime { pub use crate::retained_record as record; }
 #[path = "../../firmware/reading_state_medium.rs"] pub mod reading_state_medium;
 #[path = "../../firmware/sd_revision.rs"] pub mod sd_revision;
 #[path = "../../firmware/stats_clock.rs"] pub mod stats_clock;
@@ -17,6 +20,7 @@ mod reader_action { pub use newt_core::reader_action_profile::ActionStage; }
 #[path = "../sd_reading_state/model.rs"] mod model;
 #[path = "../phased_reader/physical/linebreak.rs"] mod linebreak;
 #[path = "upgrade.rs"] mod upgrade;
+#[path = "boot_policy.rs"] mod boot_policy;
 
 use core::ffi::CStr;
 use newt_core::{progress::Progress, producer_policy::Stop, zip_window::source::BookSource};
@@ -132,6 +136,10 @@ fn scenario(bytes: Vec<u8>, finished: bool) {
 use home_startup::CardPort;
 fn main() {
     let path = std::env::args().nth(1).expect("generated public fixture");
+    if path == "--restore-policy" {
+        boot_policy::check();
+        return;
+    }
     let bytes = std::fs::read(path).unwrap();
     if std::env::args().any(|arg| arg == "--cache-upgrade") {
         upgrade::resume(bytes);
