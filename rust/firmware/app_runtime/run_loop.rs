@@ -299,7 +299,7 @@ pub fn poll(home: &mut Home<'_>, ui: &mut Application<'_>, reader: &impl Reader,
 ) -> Result<(), ImageError> {
     let facts = super::publication::Facts::current(ui);
     super::publication::Published { facts, displayed: &ui.displayed, hardware: &mut ui.hardware,
-        bridge: &mut ui.bridge, panels: &ui.panels }.poll(home, reader, logical, events).map_err(ImageError::from)
+        bridge: &mut ui.bridge, panels: &ui.panels, writes: true }.poll(home, reader, logical, events).map_err(ImageError::from)
 }
 
 #[cfg(feature = "dev-usb")]

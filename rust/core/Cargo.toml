@@ -18,3 +18,10 @@ salamander-device = { path = "../salamander/device" }
 name = "slot_vectors"
 path = "../tests/slot_vectors/vectors.rs"
 test = false
+
+# The bridge's card write over a fake card; tests/dev_put_test.py runs it
+# with its negative controls.
+[[test]]
+name = "dev_put"
+path = "../tests/dev_put/lease.rs"
+test = false

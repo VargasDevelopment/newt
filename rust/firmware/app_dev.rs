@@ -3,7 +3,12 @@
 #![forbid(unsafe_code)]
 use crate::dev_usb::{self, Bridge, ButtonEvent, Channel, Device, Diagnostics, PanelRing, Status};
 use newt_c3_board::image::running_image_version;
+use newt_core::dev_put::{self, Busy, Session};
 use newt_input_policy::native::UiQueue;
+
+/// Whether this view may grant a card-write lease, and the one it granted.
+#[derive(Clone, Copy)]
+pub enum Put { Unavailable, Admits(dev_put::Facts), Granted(Session) }
 
 /// All facts belong to the caller's current completed publication. The view
 /// ends before dispatch, paint, parser work or a physical-input takeover.
@@ -13,6 +18,7 @@ pub struct Publication<'a, 'queue> {
     pub queue: &'a mut UiQueue<'queue>,
     pub panels: &'a PanelRing,
     pub diagnostics: Diagnostics,
+    pub put: Put,
 }
 impl Device for Publication<'_, '_> {
     fn status(&mut self) -> Status { self.status }
@@ -22,6 +28,12 @@ impl Device for Publication<'_, '_> {
     }
     fn panel_ring(&mut self) -> Option<&PanelRing> { Some(self.panels) }
     fn diagnostics(&mut self) -> Diagnostics { self.diagnostics }
+    fn put(&mut self, session: Session) -> Result<(), Busy> {
+        let Put::Admits(facts) = self.put else { return Err(Busy::NotHome) };
+        dev_put::admit(facts)?;
+        self.put = Put::Granted(session);
+        Ok(())
+    }
 }
 pub fn poll(bridge: &mut Bridge, channel: &mut dyn Channel,
             publication: &mut Publication<'_, '_>, build: &str, answer: bool) {

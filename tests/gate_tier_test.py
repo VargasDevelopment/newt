@@ -82,6 +82,7 @@ class ControlSelectionTests(unittest.TestCase):
             ('rust/phased-reader/host/fixtures.py', ()),
             ('rust/tests/slot_vectors/vectors.rs', ('slot_vectors_test.py',)),
             ('rust/tests/app_store/record.rs', ('app_store_test.py',)),
+            ('rust/tests/dev_put/lease.rs', ('dev_put_test.py',)),
             ('rust/tests/family_dispatch_test.py', tuple(sorted({
                 'family_dispatch_test.py', 'rust:foundation',
                 *('rust:' + family for family in gate_plan.ADAPTER_FAMILIES)}))),

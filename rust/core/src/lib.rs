@@ -122,6 +122,7 @@ pub mod update_manifest;
 pub mod update_release;
 
 pub mod update_online;
+pub mod dev_put;
 
 pub mod update_card;
 

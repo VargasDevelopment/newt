@@ -79,4 +79,7 @@ pub trait Device {
     fn enqueue(&mut self, event: ButtonEvent) -> bool;
     fn panel_ring(&mut self) -> Option<&PanelRing>;
     fn diagnostics(&mut self) -> Diagnostics;
+    /// Grants one card-write lease to this PUT, or says why not. The lease
+    /// itself runs after the poll, outside every observation.
+    fn put(&mut self, session: newt_core::dev_put::Session) -> Result<(), newt_core::dev_put::Busy>;
 }

@@ -47,6 +47,13 @@ impl Board<'_> {
         if result == 0 { Ok(()) } else { Err(Error::Native(result)) }
     }
 
+    /// One SHA-256 over caller bytes; the mbedTLS context exists only for
+    /// this call, as in `ImagePartitions::with_hash`.
+    pub fn with_sha256<R>(&mut self, work: impl FnOnce(&mut dyn newt_core::update_online::Hash) -> R)
+        -> Result<R, Error> {
+        hash::with(work)
+    }
+
     /// One short physical partition lookup. `ota_first` preserves select's
     /// frozen lookup order; found/verify do not acquire an otadata descriptor.
     pub fn with_image_partitions<R>(&mut self, ota_first: bool,

@@ -26,7 +26,7 @@ impl<R: Reader> Exit<'_, '_, '_, '_, R> {
         {
             let started = self.home.bus.board.millis();
             let mut published = Published { facts: self.facts, displayed: self.displayed,
-                hardware: self.hardware, bridge: self.bridge, panels: self.panels };
+                hardware: self.hardware, bridge: self.bridge, panels: self.panels, writes: false };
             while (published.bridge.output_pending() || published.bridge.request_pending())
                 && self.home.bus.board.millis().wrapping_sub(started) < 250 {
                 if published.poll(self.home, self.reader, self.logical, self.events).is_err() { crate::app_power::stop(); }
