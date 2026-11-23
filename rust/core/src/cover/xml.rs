@@ -5,7 +5,10 @@
 //! 0. the `cover-image` item (EPUB 3);
 //! 1. the image item `<meta name="cover">` names (EPUB 2);
 //! 2. the guide's cover reference: an image item, or an XHTML cover page whose
-//!    first image is the cover.
+//!    first image is the cover;
+//! 3-5. when a cover meta names no image item, an image item that is plainly
+//!    the cover: its href is the meta's content, its id is "cover" (any case),
+//!    or its file name is "cover" with any extension.
 //! A cover page is parsed only when it outranks every image; when it gives no
 //! image, the best image is the fallback.
 use super::{MetadataStatus as S, discovery::{path, cbytes}};
@@ -25,6 +28,9 @@ pub const SCRATCH: usize = 3 * 512;
 const NONE: u8 = u8::MAX;
 const META_ID: u8 = 1;
 const GUIDE: u8 = 2;
+const META_HREF: u8 = 3;
+const COVER_ID: u8 = 4;
+const COVER_STEM: u8 = 5;
 pub struct State<'a> {
     pub status: S,
     roles: [Role; 32], depth: usize,
@@ -87,9 +93,16 @@ impl<'a> State<'a> {
             return;
         }
         // An item whose href cannot be a book path names nothing.
-        if !attrs.exact(b"href").is_some_and(|href| path(self.opf, href, self.item)) { return; }
-        let rank = if image && self.meta[0] != 0 && attrs.exact(b"id") == Some(cbytes(self.meta)) { META_ID }
+        let Some(href) = attrs.exact(b"href") else { return };
+        if !path(self.opf, href, self.item) { return; }
+        let (id, meta) = (attrs.exact(b"id"), cbytes(self.meta));
+        let rank = if image && !meta.is_empty() && id == Some(meta) { META_ID }
             else if self.guide[0] != 0 && cbytes(self.item) == cbytes(self.guide) { GUIDE }
+            // Only a book with a cover meta gets the broken-meta fallbacks.
+            else if !image || meta.is_empty() { NONE }
+            else if href == meta { META_HREF }
+            else if id.is_some_and(|id| id.eq_ignore_ascii_case(b"cover")) { COVER_ID }
+            else if stem(cbytes(self.item)) == b"cover" { COVER_STEM }
             else { NONE };
         if image && rank < self.image_rank { self.found.image = *self.item; self.image_rank = rank; }
         else if media == Some(b"application/xhtml+xml") && rank < self.page_rank {
@@ -105,6 +118,11 @@ impl<'a> State<'a> {
             self.item[0] = 0;
         }
     }
+}
+/// A path's file name without its last extension.
+fn stem(path: &[u8]) -> &[u8] {
+    let file = path.rsplit(|&c| c == b'/').next().unwrap_or(path);
+    file.iter().rposition(|&c| c == b'.').map_or(file, |dot| &file[..dot])
 }
 fn tag(name: &[u8], plain: &[u8], namespace: &[u8]) -> bool {
     name == plain || (name.len() == namespace.len() + 1 + plain.len()

@@ -4,8 +4,10 @@
 The preview is the real firmware built for the host over C fakes
 (rust/host/preview/fakes). Each world is a card with no Newt/Covers and
 synthetic books whose covers are made here: baseline grayscale JPEGs declared
-the EPUB3 way (cover-image), the EPUB2 way (<meta name="cover">) and by the
-guide (straight to the image, or to an XHTML cover page), stored and
+the EPUB3 way (cover-image), the EPUB2 way (<meta name="cover">), by the
+guide (straight to the image, or to an XHTML cover page) and by a broken
+cover meta that names no item (the image item is then found by the meta's
+text as its href, by the id "cover" or by the file name "cover"), stored and
 deflated, one with the common "image/jpg" media type, a progressive JPEG (the
 firmware draws its first scan, at 1/8 scale), and books that must get no
 cover: one whose cover form the firmware does not decode, the known gap, and
@@ -59,6 +61,9 @@ SUPPORTED = {
     'Fir': {'form': 'epub3', 'deflated': True, 'frame': 0xc2},
     'Ginkgo': {'form': 'guide-image'},
     'Hazel': {'form': 'guide-page', 'deflated': True},
+    'Ironwood': {'form': 'meta-href'},
+    'Juniper': {'form': 'meta-cover-id'},
+    'Kapok': {'form': 'meta-cover-file', 'deflated': True},
 }
 # Books that get a bare record: (form, the attempt's result).
 NO_COVER = {
@@ -140,17 +145,31 @@ def page(doctype, source):
 def epub(path, title, image, form='epub3', deflated=False, media='image/jpeg'):
     """The sample under `title`, with `image` as its cover declared by `form`:
     epub3 (cover-image), epub2 (<meta name="cover">), guide-image (the guide
-    names the image), guide-page (the guide names a cover page) or
-    subset-page (that page's internal DTD subset spells the image's path)."""
+    names the image), guide-page (the guide names a cover page), subset-page
+    (that page's internal DTD subset spells the image's path), or a cover
+    meta that names no item id, with the image's href as its text
+    (meta-href), the image's id "cover" (meta-cover-id) or the image's file
+    named "cover" (meta-cover-file)."""
     with zipfile.ZipFile(SAMPLE) as source:
         opf = source.read('OEBPS/content.opf').decode()
         opf = opf.replace('The Small Lantern', title).replace('small-lantern:1', title)
-        items = f'<item id="art" href="images/art.jpg" media-type="{media}"/>'
+        file = 'images/cover.jpg' if form == 'meta-cover-file' else 'images/art.jpg'
+        items = f'<item id="{"cover" if form == "meta-cover-id" else "art"}" href="{file}" media-type="{media}"/>'
         pages = {}
         if form == 'epub3':
             items = items.replace('/>', ' properties="cover-image"/>')
         elif form == 'epub2':
             opf = opf.replace('</metadata>', '<meta name="cover" content="art"/></metadata>')
+        elif form.startswith('meta-'):
+            content = 'images/art.jpg' if form == 'meta-href' else 'missing-id'
+            opf = opf.replace('</metadata>', f'<meta name="cover" content="{content}"/></metadata>')
+            if form == 'meta-cover-file':
+                # Only images count: a page with the id "cover" is passed over,
+                # though as an image it would outrank the file name. Its own
+                # image is one the firmware cannot decode.
+                items = '<item id="cover" href="text/title.xhtml" media-type="application/xhtml+xml"/>' + items
+                pages['OEBPS/text/title.xhtml'] = page('', '../images/title.jpg')
+                pages['OEBPS/images/title.jpg'] = jpeg(8, 8, lambda x, y: 0, frame=0xc9)
         elif form == 'guide-image':
             opf = opf.replace('</spine>', '</spine><guide><reference type="cover" href="images/art.jpg"/></guide>')
         else:
@@ -166,7 +185,7 @@ def epub(path, title, image, form='epub3', deflated=False, media='image/jpeg'):
                 archive.writestr(entry, opf if entry.filename == 'OEBPS/content.opf' else source.read(entry))
             for name, text in pages.items():
                 archive.writestr(name, text, compression)
-            archive.writestr('OEBPS/images/art.jpg', image, compression)
+            archive.writestr(f'OEBPS/{file}', image, compression)
     os.utime(path, (MTIME, MTIME))
 
 
