@@ -33,8 +33,9 @@ from native_output import owned_directory
 ROOT = Path(__file__).resolve().parents[1]
 # Beside the workspace: the checkout cleans the workspace, not its parent.
 STORE = ROOT.parent / 'newt-ci-store'
+# .release-venv also holds Newt's Commitizen plugin, built from tools/cz_newt.
 LOCKS = ('docs/toolchain-linux-lock.json', '.github/ci-release-linux-lock.json', '.github/ci-tool-linux-lock.json',
-         'rust/toolchain.json', 'tools/rust-toolchain.py')
+         'rust/toolchain.json', 'tools/rust-toolchain.py', 'tools/cz_newt/cz_newt.py', 'tools/cz_newt/cz_newt_backend.py')
 RAW = ('.toolchain/downloads', '.build/ci-downloads', '.build/ci-rust-downloads')
 # What the prepare commands make, minus the raw archives (RAW) they read.
 TREES = ('.toolchain', '.release-venv')

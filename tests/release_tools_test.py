@@ -88,7 +88,8 @@ class ReleaseFixture(unittest.TestCase):
         self.root = Path(self.temp.name).resolve()
         self.environment = {**os.environ, "GIT_AUTHOR_DATE": "2026-01-01T00:00:00+00:00",
                             "GIT_COMMITTER_DATE": "2026-01-01T00:00:00+00:00"}
-        for name in (".cz.toml", "requirements-release.txt", "rust/firmware/native/firmware_version.h", "tools/changelog.md.j2"):
+        for name in (".cz.toml", "requirements-release.txt", "rust/firmware/native/firmware_version.h", "tools/changelog.md.j2",
+                     "tools/cz_newt/cz_newt.py"):
             target = self.root / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, target)
@@ -206,6 +207,10 @@ class ReleaseTests(ReleaseFixture):
             release.check_commits(self.root, [before + "..HEAD"])
 
     def test_missing_install_and_wrong_pin_fail_closed(self):
+        plugin = self.root / release.PLUGIN / "cz_newt.py"
+        plugin.write_text(plugin.read_text() + "# an edit the release venv has not installed\n")
+        with self.assertRaisesRegex(ValueError, "plugin is missing or differs.*" + re.escape(release.PLUGIN_INSTALL)):
+            release.release_python(self.root)
         lock = self.root / "requirements-release.txt"
         lock.write_text("commitizen==0.0.0\n")
         with self.assertRaisesRegex(ValueError, "differs"):
@@ -376,6 +381,31 @@ class ReleaseTests(ReleaseFixture):
             self.git("commit", "-qm", "chore(release): fixture candidate")
             self.git("tag", "v" + expected)
             self.commit("fix(reader): restore reading")
+
+    def test_the_changelog_lists_one_line_per_change_that_reached_main(self):
+        """The changelog lists main's first-parent subjects: a pull request's merge and a direct
+        commit, never a merge body, a branch's commits or a plain merge. Bump reads every commit."""
+        self.git("checkout", "-qB", "main")
+        self.baseline("0.1.0")
+        self.git("checkout", "-qb", "pr")
+        for message in ("feat(reader): add a shelf", "fix(reader): sort the shelf", "fix(reader): name the shelf"):
+            self.commit(message)
+        self.git("checkout", "-q", "main")
+        self.git("merge", "--no-ff", "-q", "-m", "fix(reader): keep the shelf in order (#5)",
+                 "-m", "fix(reader): a body paragraph", "pr")
+        self.commit("perf(reader): parse less")
+        self.git("checkout", "-qb", "side")
+        self.commit("fix(sync): a change through a plain merge")
+        self.git("checkout", "-q", "main")
+        self.git("merge", "--no-ff", "-q", "--no-edit", "side")
+        self.assertEqual(self.git("log", "-1", "--format=%s").stdout.strip(), "Merge branch 'side'")
+        # The plugin at --tool-root, ahead of the installed copy, so its control can remove the filter.
+        changelog = subprocess.run([str(PYTHON), "-s", "-B", "-m", "commitizen", "changelog", "--dry-run",
+                                    "--unreleased-version", "v0.2.0"], cwd=self.root, capture_output=True, text=True,
+                                   env={**self.environment, "PYTHONPATH": str(args.tool_root / "cz_newt")}, check=True)
+        self.assertEqual([line for line in changelog.stdout.splitlines() if line.startswith("- ")],
+                         ["- **reader**: keep the shelf in order (#5)", "- **reader**: parse less"])
+        self.assertEqual(self.cz("bump", "--get-next").stdout.strip(), "0.2.0")
 
     def test_changelog_is_deterministic_without_wall_clock_dates_or_old_history(self):
         self.baseline("0.1.0")
@@ -617,6 +647,8 @@ CONTROLS = (
      "test_the_gate_checks_the_commits_versioning_reads"),
     ("release_tools.py", "        if unmerged:", "        if False:", "test_a_merge_may_keep_its_default_subject_and_only_a_merge"),
     ("release_tools.py", "        if classified:", "        if False:", "test_a_merge_body_may_not_carry_a_classification"),
+    ("cz_newt/cz_newt.py", "        if (commit.rev not in self.mainline", "        if False and (commit.rev not in self.mainline",
+     "test_the_changelog_lists_one_line_per_change_that_reached_main"),
     ("release_tools.py", '"check", "--message", title]', '"version"]',
      "test_a_pull_request_title_must_be_a_conventional_merge_subject"),
     ("check.py", '*([] if args.release_tags else ["--no-tags"])', '"--no-tags"',
@@ -634,7 +666,8 @@ def negative_controls(controls=CONTROLS, script=__file__):
                 raise RuntimeError("Negative control anchor drift: " + test)
             # A copied release_tools.py finds the release venv beside its own tools folder.
             tools = Path(scratch) / "tools"
-            tools.mkdir()
+            (tools / "cz_newt").mkdir(parents=True)
+            shutil.copyfile(ROOT / release.PLUGIN / "cz_newt.py", tools / "cz_newt/cz_newt.py")
             (tools / tool).write_text(source.replace(old, new))
             (Path(scratch) / ".release-venv").symlink_to(PYTHON.parent.parent)
             shutil.copyfile(ROOT / "requirements-release.txt", Path(scratch) / "requirements-release.txt")

@@ -227,7 +227,7 @@ pinned, verified downloads, as the self-hosted job does (`ci_toolchain.py`,
 
 | Cache | Key | Reused when |
 |---|---|---|
-| toolchain trees | hash of the toolchain locks and scripts | not the full tier, and every entry matches the manifest recorded when a fresh run made them (else set aside and made fresh) |
+| toolchain trees | hash of the toolchain locks and scripts and the release venv's plugin (`tools/cz_newt`) | not the full tier, and every entry matches the manifest recorded when a fresh run made them (else set aside and made fresh) |
 | raw archives | hash of the toolchain locks | a fresh materialization rechecks each against its pinned size and SHA-256 |
 | host objects, per part | `host-objects-<part>-<sha>`, restoring main's latest | not the full tier; each object's key binds its exact inputs (`host_objects.py`) |
 

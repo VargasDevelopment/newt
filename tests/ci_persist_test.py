@@ -51,7 +51,7 @@ class PersistControls(unittest.TestCase):
         self.assertEqual(ci_persist.manifest(self.root), self.made)
 
     def test_changed_snapshot_bytes_mode_or_locks_are_never_reused(self):
-        for change in ('bytes', 'mode', 'lock', 'workspace'):
+        for change in ('bytes', 'mode', 'lock', 'plugin', 'workspace'):
             with self.subTest(change=change):
                 self.setUp()
                 self.clean_checkout()
@@ -62,6 +62,10 @@ class PersistControls(unittest.TestCase):
                     tool.chmod(0o644)
                 elif change == 'lock':
                     (self.root / ci_persist.LOCKS[0]).write_text('{"lock": 2}\n')
+                elif change == 'plugin':
+                    plugin = self.root / 'tools/cz_newt/cz_newt.py'
+                    plugin.parent.mkdir(parents=True, exist_ok=True)
+                    plugin.write_text('# a changed release plugin\n')
                 else:
                     self.root = self.root.rename(self.root.with_name('other'))
                 with redirect_stdout(io.StringIO()) as output:

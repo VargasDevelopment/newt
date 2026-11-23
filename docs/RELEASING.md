@@ -13,7 +13,8 @@ Commitizen classifies the commits since the release tag, so every commit there
 must be a Conventional Commit. A GitHub merge takes the pull request's title as
 its subject, so the title must be one too. A merge made with plain `git merge`
 may instead keep Git's `Merge ...` subject, because the commits it joins carry
-the classification. Its body stays empty or plain text: Commitizen's bump
+the classification for bump; the changelog then lists nothing for that change
+([Prepare a reviewed release](#prepare-a-reviewed-release)). Its body stays empty or plain text: Commitizen's bump
 classifies every line of every message, so the gate refuses a line there that
 its bump pattern matches. History before the release tag is not checked: no
 bump reads it again, because release preparation starts each bump at the
@@ -45,12 +46,18 @@ python3 -m venv .release-venv
 PIP_CONFIG_FILE=/dev/null PIP_CACHE_DIR="$PWD/.build/release-pip-cache" \
   .release-venv/bin/python -m pip install --index-url https://pypi.org/simple \
   -r requirements-release.txt
+.release-venv/bin/python -I -B -m pip --isolated install --no-index --no-deps --no-compile tools/cz_newt
 .release-venv/bin/python -I -B -m commitizen commit
 python3 -B tools/check.py
 ```
 
+`.cz.toml` names Newt's own Commitizen plugin, `tools/cz_newt`: Conventional
+Commits with Newt's changelog rule. Its offline install, above, fetches nothing,
+and CI's fresh release venv installs it the same way. Reinstall it after the
+plugin changes (add `--force-reinstall`); without it, `cz` fails and names it.
+
 `tools/check.py` remains the canonical host path. It fails on version
-drift, a missing/wrong Commitizen install, a malformed message on a commit this
+drift, a missing/wrong Commitizen or plugin install, a malformed message on a commit this
 work adds to origin/main, or release-tool regression tests. A routine run reads
 no tag, so a missing tag never fails it. CI runs `check.py --release-tags`,
 which also refuses work built on an untagged release
@@ -147,6 +154,14 @@ since the last tag (Commitizen's incremental changelog); earlier candidate
 history is never regenerated into releases, so `.cz.toml` names no start
 revision and a full `cz changelog` is never run. Keep generated entries plus
 the adoption note in `CHANGELOG.md`.
+
+The changelog lists one line per change that reached main: the subject of each
+commit on main's first-parent history, that is each pull request's merge (its
+title) and each commit made directly on main. A merge's body and the commits a
+pull request brought in list nothing, and a plain `git merge` with a
+`Merge ...` subject lists nothing either. Bump still reads every commit since
+the tag. Prepare a release on a fresh branch from `main`: a release branch that
+merges `main` later would hide main's merges behind its own second parent.
 
 ## Exact identity and acceptance
 

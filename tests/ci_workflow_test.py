@@ -375,6 +375,12 @@ with patch.object(venv, 'EnvBuilder', BrokenVenv):
                 setup.require_host(tools)
         command = setup.installation_command(Path('/fixture/python'), [Path('/fixture/wheel.whl')])
         self.assertTrue({'--isolated', '--no-index', '--no-deps', '--no-compile'}.issubset(command))
+        # The fresh release venv gets Newt's Commitizen plugin offline, in the same install.
+        with tempfile.TemporaryDirectory() as directory, patch.object(setup, 'acquire', return_value=Path('/w.whl')), \
+             patch.object(setup, 'owned_directory'), patch.object(setup.venv, 'EnvBuilder'), \
+             patch.object(setup.subprocess, 'run') as run:
+            setup.prepare_release(Path(directory), {'artifacts': [{}]}, Path(directory), True)
+        self.assertEqual(run.call_args_list[0].args[0][-2:], [str(Path('/w.whl')), str(Path(directory) / 'tools/cz_newt')])
         self.assertTrue(setup.llvm_member(PurePosixPath('bin/clang-tidy'), 'file'))
         self.assertTrue(setup.llvm_member(PurePosixPath('lib/libLLVM.dylib'), 'file'))
         self.assertFalse(setup.llvm_member(PurePosixPath('bin/clang'), 'file'))

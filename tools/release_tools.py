@@ -38,6 +38,10 @@ TAG_COMMAND = "python3 -B tools/release_tag.py"
 # The start of every merge subject Git and GitHub write ("Merge pull request #N
 # from ...", "Merge branch ...").
 MERGE_PREFIX = "Merge "
+# Newt's Commitizen plugin (.cz.toml `name`), installed into the release venv.
+PLUGIN = "tools/cz_newt"
+PLUGIN_INSTALL = (".release-venv/bin/python -I -B -m pip --isolated install --no-index --no-deps --no-compile "
+                  "--force-reinstall " + PLUGIN)
 # Runs in the release venv, so the gate applies the pinned Commitizen's own
 # rules, never a copy that can drift: the pattern bump classifies every message
 # line with, and the changelog heading its incremental changelog starts after.
@@ -286,12 +290,17 @@ def release_python(root=ROOT):
     interpreter = Path(root) / ".release-venv/bin/python"
     if not interpreter.is_file():
         raise ValueError("Missing project release venv; follow docs/RELEASING.md")
-    probe = "from importlib.metadata import version; print(version('commitizen'))"
-    actual = subprocess.run([str(interpreter), "-I", "-B", "-c", probe],
-                            check=True, capture_output=True, text=True).stdout.strip()
+    probe = ("import hashlib, importlib.util; from importlib.metadata import version; "
+             "plugin = importlib.util.find_spec('cz_newt'); "
+             "print(version('commitizen'), plugin and hashlib.sha256(open(plugin.origin, 'rb').read()).hexdigest())")
+    actual, plugin = subprocess.run([str(interpreter), "-I", "-B", "-c", probe],
+                                    check=True, capture_output=True, text=True).stdout.split()
     pin = re.findall(r"^commitizen==(.+)$", (Path(root) / "requirements-release.txt").read_text(), re.MULTILINE)
     if pin != [actual]:
         raise ValueError("Installed Commitizen differs from requirements-release.txt")
+    if plugin != hashlib.sha256((Path(root) / PLUGIN / "cz_newt.py").read_bytes()).hexdigest():
+        raise ValueError(f"The release venv's Commitizen plugin is missing or differs from {PLUGIN}; "
+                         f"install it: {PLUGIN_INSTALL}")
     return interpreter
 
 

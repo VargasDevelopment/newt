@@ -199,7 +199,7 @@ jobs:
             !.toolchain/downloads
             .release-venv
             .build/ci-toolchain.json
-          key: toolchains-${{ hashFiles('docs/toolchain-linux-lock.json', '.github/ci-release-linux-lock.json', '.github/ci-tool-linux-lock.json', 'rust/toolchain.json', 'tools/rust-toolchain.py', 'tools/ci_toolchain.py', 'tools/ci_environment.py', 'tools/ci_persist.py', 'tools/ci_hosted.py') }}
+          key: toolchains-${{ hashFiles('docs/toolchain-linux-lock.json', '.github/ci-release-linux-lock.json', '.github/ci-tool-linux-lock.json', 'rust/toolchain.json', 'tools/rust-toolchain.py', 'tools/ci_toolchain.py', 'tools/ci_environment.py', 'tools/ci_persist.py', 'tools/ci_hosted.py', 'tools/cz_newt/**') }}
       - name: Restore the raw locked archives
         id: raw
         if: steps.trees.outputs.cache-hit != 'true'
@@ -231,7 +231,7 @@ jobs:
             !.toolchain/downloads
             .release-venv
             .build/ci-toolchain.json
-          key: toolchains-${{ hashFiles('docs/toolchain-linux-lock.json', '.github/ci-release-linux-lock.json', '.github/ci-tool-linux-lock.json', 'rust/toolchain.json', 'tools/rust-toolchain.py', 'tools/ci_toolchain.py', 'tools/ci_environment.py', 'tools/ci_persist.py', 'tools/ci_hosted.py') }}
+          key: toolchains-${{ hashFiles('docs/toolchain-linux-lock.json', '.github/ci-release-linux-lock.json', '.github/ci-tool-linux-lock.json', 'rust/toolchain.json', 'tools/rust-toolchain.py', 'tools/ci_toolchain.py', 'tools/ci_environment.py', 'tools/ci_persist.py', 'tools/ci_hosted.py', 'tools/cz_newt/**') }}
       # Host objects carry their own complete keys and are rechecked on every hit
       # (tools/host_objects.py); the full tier starts from none. The last phase
       # seconds only order starts. tools/ci_gate.py moves both in and out of this store.
@@ -531,7 +531,7 @@ jobs:
             !.toolchain/downloads
             .release-venv
             .build/ci-toolchain.json
-          key: toolchains-${{ hashFiles('docs/toolchain-linux-lock.json', '.github/ci-release-linux-lock.json', '.github/ci-tool-linux-lock.json', 'rust/toolchain.json', 'tools/rust-toolchain.py', 'tools/ci_toolchain.py', 'tools/ci_environment.py', 'tools/ci_persist.py', 'tools/ci_hosted.py') }}
+          key: toolchains-${{ hashFiles('docs/toolchain-linux-lock.json', '.github/ci-release-linux-lock.json', '.github/ci-tool-linux-lock.json', 'rust/toolchain.json', 'tools/rust-toolchain.py', 'tools/ci_toolchain.py', 'tools/ci_environment.py', 'tools/ci_persist.py', 'tools/ci_hosted.py', 'tools/cz_newt/**') }}
       - name: Restore the raw locked archives
         id: raw
         if: steps.trees.outputs.cache-hit != 'true'

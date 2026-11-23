@@ -1,0 +1,7 @@
+# Newt's Commitizen plugin (cz_newt.py), installed offline into the release venv:
+#   .release-venv/bin/python -I -B -m pip --isolated install --no-index --no-deps --no-compile tools/cz_newt
+# Its in-tree backend uses the standard library alone, so nothing is fetched.
+[build-system]
+requires = []
+build-backend = "cz_newt_backend"
+backend-path = ["."]
