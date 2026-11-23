@@ -58,7 +58,7 @@ impl CacheStorage for PassStore<'_> {
         if ok{let(n,b)=card.pending.take().unwrap();card.files.insert(n,b);}ok
     }
 }
-struct PassHash<'a>(&'a Trace);
+pub(super) struct PassHash<'a>(pub(super) &'a Trace);
 impl RevisionHasher for PassHash<'_> {
     fn begin(&mut self) -> bool { false }
     fn update(&mut self, _: &[u8]) -> bool { false }
@@ -85,6 +85,7 @@ fn rust_case(id:u32,b:&[u8])->ResultData {
         calls+=1;let cancel=Cancellation::new(Hooks{context:&t,stop:Some(stop),yield_now:Some(yield_now),pause:Some(pause)});
         let status=storage.with_producer(&mut loan,&cancel,&mut base,&mut source,257,None,|owner| owner.with_buffered(|phase,mut attempt|{attempt.with_writer(|a|{
             phase.defer(0)?;a.writer.segmented=true;a.writer.mapping=id==1;
+            a.state.language = Some(crate::BookLanguage::default());
             let status=a.produce_segments(&reader,phase,&mut parser,&mut breaker,&mut route);cancel.result(status==Status::Ok);a.store.remove(&a.state.name[..69]);
             seen=a.writer.seen;next=a.state.next;skipped=a.state.skipped;used=a.store.buffered_bytes() as u32;starts.copy_from_slice(a.writer.starts);
             assert_eq!(t.out.borrow().live,0);assert!(card.borrow().pending.is_none());Ok(status)

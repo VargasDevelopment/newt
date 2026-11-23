@@ -269,7 +269,7 @@ fn cache_pass<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
         };
         let mut images = lr.images.for_chapter(&selected.href);
         let mut engine = Engine::new(
-            reader_parameters(landscape, slot),
+            reader_parameters(landscape, Some(slot), selected.language),
             resources::storage(&mut lr.storage),
             &mut backend,
             lr.breaker,
@@ -504,7 +504,7 @@ fn physical_cache_pass<S: BookSource + ?Sized, B: ParserBackend + ?Sized, C: Cac
     let raw = Entry::raw(selected.entry.uncompressed_size);
     let (mut status, pages, chars, complete) = {
         let mut images = lr.images.for_chapter(&selected.href);
-        let mut engine = EngineState::new(reader_parameters(landscape, slot),
+        let mut engine = EngineState::new(reader_parameters(landscape, Some(slot), selected.language),
             resources::storage(&mut lr.storage), lr.breaker, &mut images, None,
             CssStylesheetBuilder::default()).map_err(|_| Status::OutOfMemory)?;
         let stream = XmlStream::new(&mut watch, None, io.backend);

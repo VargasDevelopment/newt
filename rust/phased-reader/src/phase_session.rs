@@ -102,7 +102,7 @@ impl<B: ParserBackend + ?Sized, L: BuildLoan, C: ReadScope + CachePresence>
             return false;
         }
         let opening = !r.reader.has_page();
-        session_adapter::cached(self.settings, digest, spine, self.hash, |name| {
+        session_adapter::cached_for_reader(r.reader, self.settings, digest, spine, self.hash, &mut |name| {
             self.store.present(name, opening)
         })
     }
@@ -121,7 +121,10 @@ impl<B: ParserBackend + ?Sized, L: BuildLoan, C: ReadScope + CachePresence>
         if let Err(status) = CacheBuild::physical_ready(r.reader, spine) {
             return session::Build::Failed(status);
         }
-        let (name, generation) = match session_adapter::identity(self.settings, digest, spine, self.hash) {
+        let Some(language) = r.reader.book_language() else {
+            return session::Build::Failed(Status::NotFound);
+        };
+        let (name, generation) = match session_adapter::identity(self.settings, digest, spine, self.hash, language) {
             Ok(v) => v,
             Err(e) => return session::Build::Failed(e),
         };
@@ -158,17 +161,21 @@ impl<C: ReadScope + CachePresence> PhasedChapterCache<'_, C> {
             return CapturedPage::failed(Status::Unsupported);
         }
         let trace = r.reader.on_yield;
-        let ready = r.reader.opened
-            && r.reader.plan.is_some()
+        let ready = r.reader.plan.is_some()
             && (request.staged || request.spine == r.reader.info.spine)
             && session_adapter::reader_settings_match(r.reader, self.settings);
-        if ready {
+        if let Some(language) = r.reader.book_language().filter(|_| ready) {
             let guard = r.reader.validate(source);
             if guard != Status::Ok {
                 return CapturedPage::failed(guard);
             }
+            let language = if request.staged {
+                r.reader.staged_selection().language
+            } else {
+                language
+            };
             if let Ok((mut base, mut generation)) =
-                session_adapter::identity(self.settings, digest, request.spine, self.hash)
+                session_adapter::identity(self.settings, digest, request.spine, self.hash, language)
             {
                 let certified = cache_show::segment_of(r.reader, request.spine, request.target);
                 if !request.anchor {
@@ -193,6 +200,7 @@ impl<C: ReadScope + CachePresence> PhasedChapterCache<'_, C> {
                                 self.hash,
                                 &mut base,
                                 &mut generation,
+                                language,
                             );
                         }
                     }
@@ -223,6 +231,7 @@ impl<C: ReadScope + CachePresence> PhasedChapterCache<'_, C> {
                                 self.hash,
                                 &mut base,
                                 &mut generation,
+                                language,
                             );
                             name = cache_show::expanded(&base);
                             if identified

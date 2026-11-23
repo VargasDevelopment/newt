@@ -48,6 +48,12 @@ def native(run, support, ws, original, sdk):
     return None, run.output/'target'/HOST/'debug/phased-reader-host'
 
 
+def book_language(run, ws, executable):
+    fixture_dir = run.output/'language-fixtures'
+    load('phased_reader_fixtures', ws/'phased-reader/host/fixtures.py').write_languages(fixture_dir)
+    run.run([executable, '--language', fixture_dir], ROOT)
+
+
 def assemble(output, support):
     """Snapshot the adopted workspace; never inject or replace production bodies."""
     ws = output / 'source'
@@ -57,6 +63,9 @@ def assemble(output, support):
     (ws / resource).parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(root_ws / resource, ws / resource)
     load('producer_expected_recipe', ROOT/'rust/tests/producer_forwarding/recipe.py').stage(ws)
+    fixtures = load('phased_reader_fixtures', ws/'phased-reader/host/fixtures.py')
+    fixtures.write_producer_language(ws/'tests/producer_forwarding/ja.epub')
+    fixtures.write_language_fixture(ws/'tests/producer_forwarding/ja-short.epub', 'ja')
     return ws
 
 

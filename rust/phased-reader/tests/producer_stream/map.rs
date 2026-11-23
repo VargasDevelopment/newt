@@ -63,6 +63,7 @@ fn rust_map(id: u32, bytes: &[u8]) -> (ResultData, [u32; 2]) {
     let (mut seen, mut next, mut skipped, mut used, mut starts) = (0, 0, 0, 0, [0; 32]);
     let status = storage.with_producer(&mut loan, &cancel, &mut base, &mut source, 257,None, |owner| owner.with_buffered(|phase, mut a| {
         phase.defer(0)?; a.writer.segmented = true; a.writer.mapping = id != 1;
+        a.state.language = Some(crate::BookLanguage::default());
         let status = a.produce_segments_and_map(&reader, phase, &mut parser, &mut breaker, &mut route);
         cancel.result(status == Status::Ok); a.store.remove(&a.state.name[..69]);
         seen = a.writer.seen; next = a.state.next; skipped = a.state.skipped;

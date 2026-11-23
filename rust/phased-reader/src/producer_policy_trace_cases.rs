@@ -91,6 +91,8 @@ mod empty_styles;
 
 #[path = "../tests/producer_stream/passes.rs"]
 mod passes;
+#[path = "../tests/producer_stream/book_language.rs"]
+mod book_language;
 
 // This SDK-fake source has no native receipt; the capability is explicit.
 impl newt_core::producer_policy::ProducerReceipt for Input<'_> {

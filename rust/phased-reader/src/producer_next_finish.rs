@@ -12,7 +12,10 @@ impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::Pro
         breaker: &mut dyn LineBreak, route: &mut Route<'_>, prepared_pages: Option<&mut u32>,
     ) -> Status {
         let mut status = self.select_next(reader, spine, backend);
-        if status == Status::Ok && !self.state.identify(route, spine) { status = Status::IoError; }
+        if status == Status::Ok {
+            self.state.language = Some(reader.staged_selection().language);
+            if !self.state.identify(route, spine) { status = Status::IoError; }
+        }
         let mut pages = 0;
         let mut chars = 0;
         if status == Status::Ok {

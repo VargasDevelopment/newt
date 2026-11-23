@@ -17,6 +17,7 @@ use newt_core::{
     },
     css::{CssStylesheetBuilder, TextAlign},
 };
+pub use newt_core::phased_metadata::BookLanguage;
 use newt_phased_sink::{Frame, Output, Plan, SelectingSink, Target};
 use newt_reader_atlas::{Geometry, PROFILE_SIZE, ReaderAtlas};
 use newt_reader_navigation::{MenuInfo, MenuRow, NO_TOC, Navigation, Section, metadata::Metadata};
@@ -39,6 +40,7 @@ pub struct Selection {
     pub entry: Entry,
     href: [u8; 512],
     title: [u8; 256],
+    pub language: BookLanguage,
     pub spines: u32,
     pub navigation: Navigation,
 }
@@ -64,6 +66,7 @@ impl Selection {
         self.href.copy_from_slice(&other.href);
         self.title.copy_from_slice(&other.title);
         self.spines = other.spines;
+        self.language = other.language;
         self.navigation.clone_from(&other.navigation);
     }
     fn clear(&mut self) {
@@ -71,6 +74,7 @@ impl Selection {
         self.href.fill(0);
         self.title.fill(0);
         self.spines = 0;
+        self.language = BookLanguage::default();
         self.navigation.reset();
     }
 }
@@ -153,6 +157,9 @@ impl<'a, 'p> PhasedReader<'a, 'p> {
     }
     pub fn has_page(&self) -> bool {
         self.has_page
+    }
+    pub fn book_language(&self) -> Option<BookLanguage> {
+        self.opened.then(|| self.selection().language)
     }
     pub fn selection(&self) -> &Selection {
         &self.selections[self.active]
@@ -1022,7 +1029,7 @@ fn pass_stream<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
         Some(&mut selected.navigation),
     )
     .map_err(|_| Status::Unsupported)?;
-    let params = reader_parameters(landscape, slot);
+    let params = reader_parameters(landscape, Some(slot), selected.language);
     let (status, pages, chars, complete) = {
         let reached = core::cell::Cell::new(false);
         let settled = core::cell::Cell::new(watch.settled());
@@ -1466,7 +1473,7 @@ impl PhasedReader<'_, '_> {
 
 include!("reader_semantic.rs");
 
-fn reader_parameters<'s>(landscape: bool, slot: &'s Slot<'_>) -> Params<'s> {
+pub(crate) fn reader_parameters<'s>(landscape: bool, slot: Option<&'s Slot<'_>>, language: BookLanguage) -> Params<'s> {
     let g = Geometry::reader(landscape);
     Params {
         width: g.width as i16,
@@ -1478,7 +1485,8 @@ fn reader_parameters<'s>(landscape: bool, slot: &'s Slot<'_>) -> Params<'s> {
         base_size: PROFILE_SIZE,
         align: TextAlign::Justify,
         embedded_styles: false,
-        stylesheet: (slot.count != 0).then(|| slot.sheet()),
+        language: Some(language.tag()),
+        stylesheet: slot.filter(|slot| slot.count != 0).map(Slot::sheet),
         ..Params::default()
     }
 }

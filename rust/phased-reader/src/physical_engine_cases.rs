@@ -350,7 +350,7 @@ fn index_loan_uses_original_plan_and_restores_no_metadata(breaker: &mut dyn Line
             let mut font = ReaderAtlas;
             let mut backend = SplitBackend { font: &mut font, sink: &mut sink };
             let mut images = lr.images.for_chapter(b"chapter.xhtml");
-            let mut engine = Engine::new(reader_parameters(true, slot),
+            let mut engine = Engine::new(reader_parameters(true, Some(slot), BookLanguage::default()),
                 resources::storage(&mut lr.storage), &mut backend, lr.breaker,
                 &mut images, None, CssStylesheetBuilder::default()).ok().unwrap();
             engine.start(b"body", None, None, None, None, None);

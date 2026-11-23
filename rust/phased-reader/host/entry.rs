@@ -21,7 +21,7 @@ use std::{
     sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
 };
 #[path = "../../host/src/chapter_layout/linebreak.rs"]
-mod linebreak;
+pub(crate) mod linebreak;
 static LIVE: AtomicBool = AtomicBool::new(false);
 static HELD: AtomicBool = AtomicBool::new(false);
 static RETURNS: AtomicUsize = AtomicUsize::new(0);

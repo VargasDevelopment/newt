@@ -4,9 +4,9 @@ use crate::producer_probe::ProducerProbe;
 use newt_core::{cache_names::{namespace::{PageCacheNeed, PAGE_SEGMENT_BATCH}, segment::{self, ChapterSegment}}, producer_visit::MissingProbe};
 impl<C: ProducerProbe + CachePresence> PhasedChapterCache<'_, C> {
     fn producer_name(&mut self, digest: &Digest, spine: u32,
-        name: &mut [u8; 128], generation: &mut u32,
+        name: &mut [u8; 128], generation: &mut u32, language: BookLanguage,
     ) -> bool {
-        match session_adapter::identity(self.settings, digest, spine, self.hash) {
+        match session_adapter::identity(self.settings, digest, spine, self.hash, language) {
             Ok((base, value)) => {
                 name[..69].copy_from_slice(&base);
                 name[69] = 0;
@@ -24,9 +24,12 @@ impl<C: ProducerProbe + CachePresence> PhasedChapterCache<'_, C> {
     ) -> MissingProbe {
         let info = r.reader.info();
         let spine = if spine == u32::MAX { info.spine } else { spine };
+        let Some(language) = r.reader.book_language() else {
+            return MissingProbe::Denied;
+        };
         let mut name = [0; 128];
         let mut generation = 0;
-        if !self.producer_name(digest, spine, &mut name, &mut generation) {
+        if !self.producer_name(digest, spine, &mut name, &mut generation, language) {
             return MissingProbe::Denied;
         }
         let whole = self.store.producer_probe(&name[..69], cancelled);
@@ -56,7 +59,7 @@ impl<C: ProducerProbe + CachePresence> PhasedChapterCache<'_, C> {
             let Some(first) = self.locate(source, &name[..69], generation, 0, r) else {
                 return MissingProbe::Ready;
             };
-            if !self.producer_name(digest, spine, &mut name, &mut generation)
+            if !self.producer_name(digest, spine, &mut name, &mut generation, language)
                 || !segment::segment_name(first.segment, &mut name, &mut |b, d| self.hash.hash(b, d))
             { return MissingProbe::Denied; }
             if let Some(need) = need.as_deref_mut() { need.keep.add(&name[..69]); }
@@ -70,7 +73,7 @@ impl<C: ProducerProbe + CachePresence> PhasedChapterCache<'_, C> {
             if need.is_none() && work != MissingProbe::Complete { break; }
             let map = k == count;
             let current = ChapterSegment { index: k, pages: info.page_count, chars: info.total_chars };
-            if !self.producer_name(digest, spine, &mut name, &mut generation)
+            if !self.producer_name(digest, spine, &mut name, &mut generation, language)
                 || !(if map { segment::map_name(&mut name, &mut |b, d| self.hash.hash(b, d)) }
                     else { segment::segment_name(current, &mut name, &mut |b, d| self.hash.hash(b, d)) })
             { return MissingProbe::Denied; }
