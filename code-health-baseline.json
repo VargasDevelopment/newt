@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3639408,
+      "flash_bytes": 3652352,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "aefd6dc5106d60f889fe322ccbd166905ca3f409",
-      "before": 3639024,
-      "after": 3639408,
-      "reason": "NEWT-114: read the version from the fixed ESP-IDF app descriptor and compose screen labels at runtime. Clean regional DEV USB builds of 9ab8c5e and aefd6dc measured 3,639,024 to 3,639,408 B (+384 B). RTC 300 to 300 B, RAM 124,096 to 124,096 B.",
-      "reviewer": "Lead NEWT-114 resource ruling 2026-11-22"
+      "source_revision": "9c25fc3e5d10ae0f39085d7a844887f7ad2e5f57",
+      "before": 3639408,
+      "after": 3652352,
+      "reason": "#26: the development bridge's card write (PUT lease in newt_core::dev_put, the firmware's card_write lease, the FATFS free-space leaf and the SHA-256 scope). Clean regional DEV USB builds of origin/main 254ae47 and the committed branch (firmware sources as 9c25fc3) measured 3,639,168 to 3,652,352 B (+13,184 B; +12,944 B over main's 3,639,408 B ceiling), below the 7,798,784 B app slot. RTC 300 to 300 B, RAM 124,096 to 124,096 B; the lease's 4,352 B is heap only while it runs. New unselected stack entry newt_download_free 32 B. Floors, lend and exclusions unchanged.",
+      "reviewer": "Lead (pending)"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
