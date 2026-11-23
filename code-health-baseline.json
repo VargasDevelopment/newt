@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3682240,
+      "flash_bytes": 3682480,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "cac2f1b806bf431bacb1e1940fc82a7c27ec9997",
+      "source_revision": "d86a12b95737819c28e4f818f6e42adc8b027628",
       "before": 3680304,
-      "after": 3682240,
-      "reason": "#53 applies the declared book language to line breaking in all reader paths and isolates each layout's cached pages. Clean regional DEV USB builds measure 3,680,304 to 3,682,240 B (+1,936 B). RAM remains 124,096 B, lent Wi-Fi RAM 22,528 B, and RTC 300 B. All selected static frames fit their unchanged ceilings.",
-      "reviewer": "Lead, after independent review (Opus xhigh)"
+      "after": 3682480,
+      "reason": "#53 applies the declared book language to line breaking. The reviewed build includes the all-language warm-presence loop, language for the bounded reader, and language in the current and next chapter producer's segment names. Clean regional DEV USB builds measure 3,680,304 to 3,682,480 B (+2,176 B overall, +240 B since the first review fixes). RAM remains 124,096 B, lent Wi-Fi RAM 22,528 B, and RTC 300 B. All selected static frames fit their unchanged ceilings.",
+      "reviewer": "Lead, after independent review (Opus xhigh, round 3)"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
