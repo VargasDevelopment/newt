@@ -1,0 +1,381 @@
+//! Host runner for the synthetic large-EPUB boundary corpus (#61).
+//!
+//! Drives `newt_core::admission::admit`, `PhasedReader::open_phased` (over the
+//! real 48 KiB `PhaseStorage` banks), `capture_phased`,
+//! `prepare_chapter_menu_phased`, and `CacheBuild::build` over EPUBs generated
+//! by `tools/large_epub_corpus.py`.
+//!
+//! Driven by `tests/large_epub_corpus_test.py` via `NEWT_LARGE_EPUB_MANIFEST`.
+use newt_core::{
+    admission,
+    chapter_layout::types as layout,
+    css::CssRule,
+    inflate::{BitBuffer, DICTIONARY_SIZE, State},
+    package_parsers::{ManifestItem, TocEntry},
+    page_cache::{Anchor, CacheStorage, IndexChunk, WriterMemory},
+    xml_input::EntityFilter,
+    xml_session::{Handler, ParserBackend},
+    zip_container::{Entry, InflateScratch, Status},
+    zip_window::{arena::Arena, source::BookSource},
+};
+use newt_phased_reader::{
+    phase_storage::{BANK_BYTES, BuildLoan, Storage as PhaseStorage},
+    styles::{Slot, Sources, State as StyleState},
+    *,
+};
+use newt_phased_sink::{FRAME_BYTES, Frame, Plan, RUNS, Run as PlanRun, TEXT, Target};
+use newt_target_expat::Expat;
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
+use std::mem::size_of;
+use std::path::Path;
+use std::time::Instant;
+
+#[path = "../../host/src/chapter_layout/linebreak.rs"]
+mod linebreak;
+
+#[repr(align(16))]
+struct Bank([u8; BANK_BYTES]);
+
+struct FileSource {
+    file: File,
+    len: u64,
+}
+impl FileSource {
+    fn open(path: &Path) -> Self {
+        let file = File::open(path).expect("open generated EPUB");
+        let len = file.metadata().expect("stat generated EPUB").len();
+        Self { file, len }
+    }
+}
+impl BookSource for FileSource {
+    fn size(&self) -> u64 {
+        self.len
+    }
+    fn read_at(&mut self, at: u64, out: &mut [u8]) -> i32 {
+        if out.is_empty() || at >= self.len {
+            return 0;
+        }
+        if self.file.seek(SeekFrom::Start(at)).is_err() {
+            return -1;
+        }
+        let want = out.len().min((self.len - at) as usize);
+        self.file.read(&mut out[..want]).map_or(-1, |n| n as i32)
+    }
+}
+
+struct HostLoan<'a>(&'a mut Bank);
+impl BuildLoan for HostLoan<'_> {
+    fn with_parse<R>(&mut self, op: impl for<'a> FnOnce(&'a mut [u8]) -> R) -> Result<R, Status> {
+        let out = op(&mut self.0.0);
+        self.0.0.fill(0xff);
+        Ok(out)
+    }
+}
+
+struct XmlBackend(Expat);
+impl ParserBackend for XmlBackend {
+    fn create(&mut self) -> bool { self.0.create() }
+    fn feed(&mut self, bytes: &[u8], last: bool, h: &mut dyn Handler) -> bool { self.0.feed(bytes, last, h) }
+    fn close(&mut self) { self.0.close() }
+}
+
+struct MemStore {
+    bytes: Vec<u8>,
+}
+impl CacheStorage for MemStore {
+    fn file_size(&mut self, _: &[u8]) -> i64 { self.bytes.len() as i64 }
+    fn read_at(&mut self, _: &[u8], at: u32, out: &mut [u8]) -> i32 {
+        let at = (at as usize).min(self.bytes.len());
+        let n = out.len().min(self.bytes.len() - at);
+        out[..n].copy_from_slice(&self.bytes[at..at + n]);
+        n as i32
+    }
+    fn begin_write(&mut self, _: &[u8]) -> bool { self.bytes.clear(); true }
+    fn write(&mut self, b: &[u8]) -> bool { self.bytes.extend_from_slice(b); true }
+    fn end_write(&mut self) -> bool { true }
+    fn remove(&mut self, _: &[u8]) -> bool { self.bytes.clear(); true }
+}
+
+struct HostScratch {
+    cat_buf: Vec<u8>,
+    parse_buf: Vec<u8>,
+    scan: [u8; 4099],
+    sequential: [u8; 1024],
+    entries: Vec<Entry>,
+    manifest: Vec<ManifestItem>,
+    hashes: Vec<u32>,
+    spines: Vec<u16>,
+    state: Box<State>,
+    dict: Vec<u8>,
+    input: [u8; 2048],
+    chunk: [u8; 2048],
+    xml: [u8; 2048],
+    filter: EntityFilter,
+    backend: XmlBackend,
+}
+impl HostScratch {
+    fn new() -> Self {
+        Self {
+            cat_buf: vec![0; 512 * 1024],
+            parse_buf: vec![0; 512 * 1024],
+            scan: [0; 4099],
+            sequential: [0; 1024],
+            entries: vec![Entry::default(); 1024],
+            manifest: vec![ManifestItem::default(); 1024],
+            hashes: vec![0; 1024],
+            spines: vec![0; 1024],
+            state: Box::new(State::new(BitBuffer::Bits64)),
+            dict: vec![0; DICTIONARY_SIZE],
+            input: [0; 2048],
+            chunk: [0; 2048],
+            xml: [0; 2048],
+            filter: EntityFilter::new(),
+            backend: XmlBackend(Expat::default()),
+        }
+    }
+    fn with_resources<R>(
+        &mut self,
+        f: impl FnOnce(&mut Arena<'_>, &mut Arena<'_>, &mut canonical::Resources<'_, XmlBackend>) -> R,
+    ) -> R {
+        let mut catalog = Arena::new(&mut self.cat_buf);
+        let mut parse = Arena::new(&mut self.parse_buf);
+        let mut r = canonical::Resources {
+            policy: None,
+            scan: &mut self.scan,
+            sequential: &mut self.sequential,
+            entries: &mut self.entries,
+            manifest: &mut self.manifest,
+            spine_hashes: &mut self.hashes,
+            spine: &mut self.spines,
+            backend: &mut self.backend,
+            decoder: Some(InflateScratch {
+                state: &mut self.state,
+                dictionary: self.dict.as_mut_slice().try_into().unwrap(),
+                input: &mut self.input,
+            }),
+            chunk: Some(&mut self.chunk),
+            xml_buffer: Some(&mut self.xml),
+            filter: Some(&mut self.filter),
+        };
+        f(&mut catalog, &mut parse, &mut r)
+    }
+}
+
+fn run_admit(path: &Path) -> (Status, usize, usize, f64) {
+    let mut source = FileSource::open(path);
+    let mut scratch = HostScratch::new();
+    scratch.with_resources(|catalog, parse, res| {
+        let t0 = Instant::now();
+        let status = admission::admit(&mut source, catalog, parse, res, None, None);
+        (status, catalog.high_water(), parse.high_water(), t0.elapsed().as_secs_f64() * 1000.0)
+    })
+}
+
+fn measure_cache(path: &Path, chunk_limit: usize) -> (bool, u32, u32, usize, f64) {
+    let mut source = FileSource::open(path);
+    let mut scratch = HostScratch::new();
+    let mut paths_b = vec![0u8; 1024];
+    let mut paths = Arena::new(&mut paths_b);
+    let mut toc = vec![TocEntry::default(); 1024];
+    let mut directory = [0u8; 512];
+    let mut rules = vec![CssRule::default(); 64];
+    let mut source_text = vec![0u8; styles::EMBEDDED];
+    let mut sources = Sources {
+        links: [styles::Member::default(); 4], start: [0; 8], length: [0; 8],
+        issues: 0, used: 0, events: 0, external_mask: 0, text: &mut source_text,
+    };
+    let mut slot = Slot {
+        rules: rules.as_mut_slice().try_into().unwrap(),
+        count: 0, hash: 0, spine: 0, issues: 0, state: StyleState::Empty,
+    };
+    let (mut l_text, mut breaks, mut levels) = (vec![0u8; 3072], vec![0u8; 3072], vec![0u8; 3072]);
+    let (mut spans, mut lines, mut elems) = (vec![layout::Span::default(); 96], vec![layout::Line::default(); 176], vec![layout::Element::default(); 16]);
+    let (mut l_runs, mut images, mut links) = (vec![layout::Run::default(); 304], vec![layout::Image::default(); 8], vec![layout::Link::default(); 16]);
+    let (mut page, mut style_text, mut parlinks) = (vec![0u8; 7 * 1024], vec![0u8; 3 * 1024], vec![layout::ParLink::default(); 6]);
+    let (mut rule_text, mut marks, mut batch) = (vec![0u8; styles::RULE_BYTES], vec![0u8; styles::RULE_BYTES / 4], vec![0u8; styles::RULE_BYTES]);
+    let (mut sdk, mut pending, mut css_chunk, mut img_path) = (vec![CssRule::default(); styles::SDK_BATCH], vec![CssRule::default(); styles::MAX_RULES], [0u8; 256], [0u8; 1024]);
+    let mut breaker = linebreak::NativeBreak;
+    let lease = Lease { acquire: || true, returned: || {} };
+    let mut selections = [Selection::default(), Selection::default()];
+    let (mut runs, mut text) = (vec![PlanRun::default(); RUNS], vec![0u8; TEXT]);
+    let mut plan = Plan::new(runs.as_mut_slice().try_into().unwrap(), text.as_mut_slice().try_into().unwrap());
+    let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), false);
+    let mut sr = StyleResources {
+        directory: &mut directory, paths: &mut paths,
+        build: Some(styles::BuildScratch {
+            text: rule_text.as_mut_slice().try_into().unwrap(),
+            marks: marks.as_mut_slice().try_into().unwrap(),
+            batch: batch.as_mut_slice().try_into().unwrap(),
+            sdk: sdk.as_mut_slice().try_into().unwrap(),
+            pending: pending.as_mut_slice().try_into().unwrap(),
+            chunk: &mut css_chunk,
+        }),
+    };
+    let mut lr = LayoutResources {
+        storage: layout::Storage {
+            text: &mut l_text, breaks: &mut breaks, levels: &mut levels, spans: &mut spans,
+            lines: &mut lines, elements: &mut elems, runs: &mut l_runs, images: &mut images,
+            links: &mut links, page: &mut page, style_text: &mut style_text, paragraph_links: &mut parlinks,
+        },
+        breaker: &mut breaker,
+        images: CataloglessImages { directory: b"OEBPS", path_scratch: &mut img_path },
+    };
+    let mut chunks = vec![IndexChunk::default(); chunk_limit];
+    let mut anchors = vec![Anchor::default(); 192];
+    let mut mem = WriterMemory { chunks: &mut chunks, anchors: &mut anchors };
+    let mut store = MemStore { bytes: Vec::new() };
+    scratch.with_resources(|metadata, parse, r| {
+        assert_eq!(reader.open(&mut source, metadata, parse, r, &mut toc, &mut sr, &mut sources, &mut slot, Some(&lease)), Status::Ok);
+        let build = CacheBuild { name: b"s0000-00000000.fibp", generation: 1 };
+        let t0 = Instant::now();
+        let res = build.build(&mut reader, &mut source, 0, &mut store, &mut mem, metadata, parse, r, &mut toc, &mut sr, &mut sources, &mut slot, &mut lr, &lease);
+        let ms = t0.elapsed().as_secs_f64() * 1000.0;
+        let ok = res.status == Status::Ok;
+        let (pages, anchors_stored) = if ok && store.bytes.len() >= 24 {
+            let f = store.bytes.len() - 24;
+            (u32::from_le_bytes(store.bytes[f + 4..f + 8].try_into().unwrap()),
+             u32::from_le_bytes(store.bytes[f + 12..f + 16].try_into().unwrap()))
+        } else {
+            (0, 0)
+        };
+        (ok, pages, anchors_stored, store.bytes.len(), ms)
+    })
+}
+
+#[derive(Default)]
+struct OpenMetrics {
+    open_status: Option<Status>,
+    open_ms: f64,
+    first_page_ms: f64,
+    page_turn_ms: f64,
+    menu_ms: f64,
+    menu_authored: Option<bool>,
+    menu_count: u32,
+    pages_seen: u32,
+    anchors_stored: u32,
+    sync_6chunk_ok: Option<bool>,
+    small_32chunk_ok: Option<bool>,
+    fibp_bytes: usize,
+    cache_ms: f64,
+}
+
+fn run_open_phased(path: &Path, mode: &str) -> OpenMetrics {
+    let mut m = OpenMetrics::default();
+    let mut source = FileSource::open(path);
+    let mut shared = Box::new(Bank([0u8; BANK_BYTES]));
+    let mut native = Box::new(Bank([0u8; BANK_BYTES]));
+    let mut storage = PhaseStorage::new(&mut shared.0);
+    let mut loan = HostLoan(&mut native);
+    let mut backend = XmlBackend(Expat::default());
+    let mut selections = [Selection::default(), Selection::default()];
+    let (mut runs, mut text) = (vec![PlanRun::default(); RUNS], vec![0u8; TEXT]);
+    let mut plan = Plan::new(runs.as_mut_slice().try_into().unwrap(), text.as_mut_slice().try_into().unwrap());
+    let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), false);
+    let t0 = Instant::now();
+    let status = reader.open_phased(&mut source, &mut storage, &mut loan, &mut backend);
+    m.open_ms = t0.elapsed().as_secs_f64() * 1000.0;
+    m.open_status = Some(status);
+    if status != Status::Ok || mode == "admit" {
+        return m;
+    }
+    if mode == "menu" {
+        let mut frame: Box<Frame> = vec![0u8; FRAME_BYTES].into_boxed_slice().try_into().unwrap();
+        let mut breaker = linebreak::NativeBreak;
+        let t1 = Instant::now();
+        assert_eq!(reader.capture_phased(&mut source, 0, 0, Target::Page, &mut storage, &mut loan, &mut backend, &mut breaker), Status::Ok);
+        assert_eq!(reader.publish(&mut source, &mut frame), Status::Ok);
+        m.first_page_ms = t1.elapsed().as_secs_f64() * 1000.0;
+        m.pages_seen = reader.info().page_count;
+        if m.pages_seen > 1 {
+            let t2 = Instant::now();
+            assert_eq!(reader.capture_phased(&mut source, 0, 1, Target::Page, &mut storage, &mut loan, &mut backend, &mut breaker), Status::Ok);
+            assert_eq!(reader.publish(&mut source, &mut frame), Status::Ok);
+            m.page_turn_ms = t2.elapsed().as_secs_f64() * 1000.0;
+        }
+        let t3 = Instant::now();
+        assert_eq!(reader.prepare_chapter_menu_phased(&mut source, u32::MAX, &mut storage, &mut loan, &mut backend), Status::Ok);
+        m.menu_ms = t3.elapsed().as_secs_f64() * 1000.0;
+        let menu = reader.chapter_menu().info();
+        m.menu_authored = Some(menu.valid && menu.authored);
+        m.menu_count = menu.count;
+    } else if mode == "anchors" || mode == "pages" {
+        let (ok6, p6, stored6, bytes6, ms6) = measure_cache(path, 6);
+        (m.sync_6chunk_ok, m.pages_seen, m.anchors_stored, m.fibp_bytes, m.cache_ms) = (Some(ok6), p6, stored6, bytes6, ms6);
+        if mode == "pages" {
+            let (ok32, p32, _, bytes32, ms32) = measure_cache(path, 32);
+            m.small_32chunk_ok = Some(ok32);
+            m.cache_ms += ms32;
+            if ok32 {
+                (m.pages_seen, m.fibp_bytes) = (p32, bytes32);
+            }
+        }
+    }
+    m
+}
+
+fn parse_opt_bool(s: &str) -> Option<bool> {
+    match s {
+        "1" => Some(true),
+        "0" => Some(false),
+        "-" => None,
+        other => panic!("invalid optional bool in manifest: {other}"),
+    }
+}
+
+#[test]
+fn large_epub_corpus_boundaries() {
+    println!(
+        "SIZES ptr_bits={} bank={} Entry={} ManifestItem={} TocEntry={} CssRule={} State={} EntityFilter={}",
+        usize::BITS, BANK_BYTES, size_of::<Entry>(), size_of::<ManifestItem>(),
+        size_of::<TocEntry>(), size_of::<CssRule>(), size_of::<State>(), size_of::<EntityFilter>(),
+    );
+    let manifest = std::fs::read_to_string(
+        std::env::var("NEWT_LARGE_EPUB_MANIFEST").expect("NEWT_LARGE_EPUB_MANIFEST"),
+    ).expect("read manifest");
+    let mut failures = Vec::new();
+    for line in manifest.lines().filter(|l| !l.trim().is_empty()) {
+        let cols: Vec<&str> = line.split('\t').collect();
+        assert_eq!(cols.len(), 10, "manifest row needs 10 tab-separated columns: {line}");
+        let (name, path_str, want_admit, want_open, mode) = (cols[0], cols[1], cols[2], cols[3], cols[4]);
+        let (want_authored, want_sync6, want_small32) = (parse_opt_bool(cols[5]), parse_opt_bool(cols[7]), parse_opt_bool(cols[8]));
+        let want_anchors: Option<u32> = (cols[6] != "-").then(|| cols[6].parse().expect("anchors"));
+        let want_pages: Option<(u32, u32)> = (cols[9] != "-").then(|| {
+            let (lo, hi) = cols[9].split_once("..").expect("pages range");
+            (lo.parse().expect("pages lo"), hi.parse().expect("pages hi"))
+        });
+        let path = Path::new(path_str);
+        let (admit_status, cat_hw, parse_hw, admit_ms) = run_admit(path);
+        let open = run_open_phased(path, mode);
+        let open_status = open.open_status.unwrap();
+        let flag = |opt: Option<bool>| opt.map_or("-", |v| if v { "1" } else { "0" });
+        println!(
+            "CASE {name} admit={} open={} cat_hw={cat_hw} parse_hw={parse_hw} admit_ms={admit_ms:.2} open_ms={:.2} first_ms={:.2} turn_ms={:.2} menu_ms={:.2} authored={} menu_count={} pages={} anchors_stored={} sync6={} small32={} fibp_bytes={} cache_ms={:.2}",
+            admit_status.name(), open_status.name(), open.open_ms, open.first_page_ms, open.page_turn_ms,
+            open.menu_ms, flag(open.menu_authored), open.menu_count, open.pages_seen, open.anchors_stored,
+            flag(open.sync_6chunk_ok), flag(open.small_32chunk_ok), open.fibp_bytes, open.cache_ms,
+        );
+        if want_admit != "*" && admit_status.name() != want_admit {
+            failures.push(format!("{name}: admit got {}, expected {want_admit}", admit_status.name()));
+        }
+        if want_open != "*" && open_status.name() != want_open {
+            failures.push(format!("{name}: open_phased got {}, expected {want_open}", open_status.name()));
+        }
+        if let Some(expected) = want_authored && open.menu_authored != Some(expected) {
+            failures.push(format!("{name}: menu authored got {:?}, expected {expected}", open.menu_authored));
+        }
+        if let Some(expected) = want_anchors && open.anchors_stored != expected {
+            failures.push(format!("{name}: anchors_stored got {}, expected {expected}", open.anchors_stored));
+        }
+        if let Some(expected) = want_sync6 && open.sync_6chunk_ok != Some(expected) {
+            failures.push(format!("{name}: sync6 got {:?}, expected {expected}", open.sync_6chunk_ok));
+        }
+        if let Some(expected) = want_small32 && open.small_32chunk_ok != Some(expected) {
+            failures.push(format!("{name}: small32 got {:?}, expected {expected}", open.small_32chunk_ok));
+        }
+        if let Some((lo, hi)) = want_pages && !(lo..=hi).contains(&open.pages_seen) {
+            failures.push(format!("{name}: pages {} outside {lo}..={hi}", open.pages_seen));
+        }
+    }
+    assert!(failures.is_empty(), "corpus mismatches:\n{}", failures.join("\n"));
+}

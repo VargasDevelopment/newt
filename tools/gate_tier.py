@@ -39,7 +39,8 @@ SHARD_SECONDS = 'tools/gate-shard-seconds.json'
 # Rust test packets a tests/ script runs, by that script (#360).
 RUST_PACKETS = {'slot_vectors_test.py': 'rust/tests/slot_vectors/',
                 'app_store_test.py': 'rust/tests/app_store/',
-                'dev_put_test.py': 'rust/tests/dev_put/'}
+                'dev_put_test.py': 'rust/tests/dev_put/',
+                'large_epub_corpus_test.py': 'rust/tests/large_epub_corpus/'}
 # tests/ files whose text can name another tests/ file
 TEXT = frozenset(('.py', '.h', '.hpp', '.inc', '.cpp', '.c', '.json', '.txt', '.md'))
 # Product owners select moved positives only; test/harness changes select

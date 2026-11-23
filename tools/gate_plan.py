@@ -86,6 +86,7 @@ def plan(profile: str, fresh_objects: bool, controls=None) -> list[Phase]:
     test("slot_vectors_test.py")
     test("app_store_test.py")
     test("dev_put_test.py")
+    test("large_epub_corpus_test.py")
     test("update_publish_test.py")
     test("release_publish_test.py", "--negative-controls")
     test("nightly_test.py", "--negative-controls")
