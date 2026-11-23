@@ -48,12 +48,17 @@ CODE = re.compile(r'^(```|~~~).*?^\1|`[^`\n]*`', re.MULTILINE | re.DOTALL)
 SCHEME = re.compile(r'[a-z][a-z0-9+.-]*:', re.IGNORECASE)
 
 
+# The README and the contributor rules: people read them, the build never does.
+# A check that reads one runs in the lane too (DOCS_CHECKS).
+LANE_FILES = frozenset(('README.md', 'AGENTS.md', 'CONTRIBUTING.md', '.github/pull_request_template.md'))
+
+
 def in_lane(path):
-    """README.md, or a Markdown file or image directly in docs/. CHANGELOG.md
-    is release-managed and docs/toolchain-* choose the firmware toolchain, so
-    neither is in it."""
+    """A LANE_FILES path, or a Markdown file or image directly in docs/.
+    CHANGELOG.md is release-managed and docs/toolchain-* choose the firmware
+    toolchain, so neither is in it."""
     parts = PurePosixPath(path).parts
-    return path == 'README.md' or (
+    return path in LANE_FILES or (
         len(parts) == 2 and parts[0] == 'docs' and PurePosixPath(path).suffix in ('.md', '.png', '.jpg')
         and not parts[1].startswith('toolchain-'))
 

@@ -50,7 +50,7 @@ To open a pull request, focused checks for the area you changed are enough:
 | Screens | `python3 tools/check.py --suite ui` |
 | One test family | that family's tests, such as `python3 tests/<name>_test.py` |
 | Firmware sources | also `python3 tools/firmware-build.py`, a quick compile |
-| Only `README.md`, or Markdown and images directly in `docs/` (not `docs/toolchain-*`) | nothing more; CI's [docs lane](docs/CI.md#docs-lane) checks it |
+| Only docs: `README.md`, `AGENTS.md`, `CONTRIBUTING.md`, the pull request template, or Markdown and images directly in `docs/` (not `docs/toolchain-*`) | nothing more; CI's [docs lane](docs/CI.md#docs-lane) checks it |
 
 On Linux, add `--profile linux` to `check.py`.
 

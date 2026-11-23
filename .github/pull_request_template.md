@@ -6,7 +6,7 @@ Closes #
 
 ## Checks
 
-<!-- The GitHub gate is the required check: it runs the host gate and the clean firmware build, so don't repeat them locally. List the focused checks you ran (`check.py --suite quick`, `--suite ui`, a family's tests, or `firmware-build.py` for firmware). A change to only README.md, or to Markdown and images directly in docs/ (not docs/toolchain-*), takes the docs lane and needs none. -->
+<!-- The GitHub gate is the required check: it runs the host gate and the clean firmware build, so don't repeat them locally. List the focused checks you ran (`check.py --suite quick`, `--suite ui`, a family's tests, or `firmware-build.py` for firmware). A change to only README.md, AGENTS.md, CONTRIBUTING.md, this template, or Markdown and images directly in docs/ (not docs/toolchain-*), takes the docs lane and needs none. -->
 
 - Focused checks:
 - [ ] Cover extraction or reviewed UI frames changed: the Mac cover gate (`tools/check-mac-covers.py`) passed on this commit
