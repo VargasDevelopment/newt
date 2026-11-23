@@ -5,6 +5,7 @@ actual gate source, compiled, and IDF's panic path, ROM print channels and
 Arduino's channel installs as small assembly objects, laid out like the
 firmware (IRAM, DRAM, flash, the sorted startup steps) and linked with the
 firmware's --wrap options. Each control breaks one rule."""
+import hashlib
 from pathlib import Path
 import re
 import subprocess
@@ -198,6 +199,16 @@ class Fixture:
 
 class DecimalPowerImageMode(unittest.TestCase):
     """Image-mode controls use linked-data fixtures without invoking a compiler."""
+
+    def test_pinned_glyphs_must_hold_their_reviewed_bytes(self):
+        runs = bytes(range(16))
+        loaded = [(".rodata", 0x3c000000, bytes(8) + runs, {"READONLY", "CONTENTS", "ALLOC"})]
+        with mock.patch.object(guard, "PINNED_GLYPHS", {"kRuns": (16, hashlib.sha256(runs).hexdigest())}):
+            guard.pinned_glyphs("kRuns", 0x3c000008, 16, loaded)
+            guard.pinned_glyphs("kOther", 0x3c000000, 4, loaded)
+            for address, size in ((0x3c000007, 16), (0x3c000008, 15), (0x3c000010, 16)):
+                with self.assertRaisesRegex(RuntimeError, "Reviewed glyph data changed: kRuns"):
+                    guard.pinned_glyphs("kRuns", address, size, loaded)
 
     def check(self, contents, *, rust_app=False, protected=None):
         table = [(0x3fc80000, "g     O", ".dram0.bss", 4, guard.CRASH_WORD),

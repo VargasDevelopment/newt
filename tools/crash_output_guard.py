@@ -2,6 +2,7 @@
 docs/UPDATES.md "Secrets in RAM"); verify-nvs-guard.py
 runs it on every firmware build."""
 from bisect import bisect_right
+import hashlib
 import re
 import struct
 
@@ -146,14 +147,20 @@ CONSOLE_REGISTER_CODE = {
 UNWIND_SECTIONS = {".eh_frame"}
 # Files the linker embeds (EMBED_FILES, _binary_<name>_start to _end): bytes parsed in place.
 EMBEDDED_DATA = {"x509_crt_bundle": "mbedTLS's DER certificate bundle; its text can spell a code address"}
+# Rust glyph data seen to spell a protected address, each pinned to its
+# reviewed size and SHA-256: changed bytes fail until reviewed again. The Rust
+# Sunset icon's runs spelled esp_vfs_dev_uart_register+0x2c (#26).
+PINNED_GLYPHS = {
+    "newt_device_ui::assets::kSunsetRuns": (368, "5e708a9c9c2bdcc26e4c472acb387ad8c5c8242478b4fae2253341216f3dae56"),
+}
 CONSOLE_REGISTER_DATA = {
     "s_panic_uart": "the panic printer's UART",
     "uart_context": "the UART driver's context; its install is not linked",
     "s_context": "/dev/uart's context; update mode unregisters the path",
     "newt::kHomeKerns": _GLYPHS, "newt::kHomeRuns": _GLYPHS, "newt::(anonymous namespace)::kReaderItalicBitmap": _GLYPHS,
     **{f"{o}::kReader{n}Bitmap": _GLYPHS for o in ("newt::(anonymous namespace)", "newt_reader_atlas::data") for n in ("Added", "BoldExtra")},
-    **{f"{o}::k{n}Runs": _GLYPHS for o in ("newt::(anonymous namespace)", "newt_device_ui::assets")
-       for n in ("Mug", "Sun", "Sunset", "Moon", "ChristmasHat")},
+    **{f"newt::(anonymous namespace)::k{n}Runs": _GLYPHS for n in ("Mug", "Sun", "Sunset", "Moon", "ChristmasHat")},
+    **dict.fromkeys(PINNED_GLYPHS, _GLYPHS),
     # Unnamed, so named by its input section in firmware.map.
     ".gcc_except_table": "C++ exception tables: the unwinder's call-site bytes, never loaded as a pointer",
 }
@@ -378,6 +385,16 @@ def validate_console_registers(linked, table, loaded, link_map, code=CONSOLE_REG
                                        literals=literals, numbers=numbers)
 
 
+def pinned_glyphs(name, address, size, loaded):
+    """A pinned object must still hold exactly its reviewed bytes."""
+    if name not in PINNED_GLYPHS:
+        return
+    data = next((contents[address - start:address - start + size] for _, start, contents, _ in loaded
+                 if start <= address and address + size <= start + len(contents)), b"")
+    if (len(data), hashlib.sha256(data).hexdigest()) != PINNED_GLYPHS[name]:
+        raise RuntimeError(f"Reviewed glyph data changed: {name}; review its bytes and pin them again")
+
+
 def validate_crash_output(functions, symbols, sections, elf, link_map, reviewed=CRASH_REFERENCES,
                           registers=(CONSOLE_REGISTER_CODE, CONSOLE_REGISTER_DATA),
                           update_entry=(UPDATE_MODE, WITHHOLD), literals=(), rust_app=False):
@@ -436,8 +453,11 @@ def validate_crash_output(functions, symbols, sections, elf, link_map, reviewed=
     headers = section_headers(sections)
     loaded = loaded_sections(sections, elf)
     numbers = decimal_power_ranges(table, loaded) if rust_app else []
-    glyphs = [(address, address + size) for address, flags, _, size, name in table
-              if size and "O" in flags and registers[1].get(name) == _GLYPHS]
+    glyphs = []
+    for address, flags, _, size, name in table:
+        if size and "O" in flags and registers[1].get(name) == _GLYPHS:
+            pinned_glyphs(name, address, size, loaded)
+            glyphs.append((address, address + size))
     at = {name: address for address, _, _, _, name in table}
     glyphs += [(at[f"_binary_{n}_start"], at[f"_binary_{n}_end"]) for n in EMBEDDED_DATA if f"_binary_{n}_end" in at]
     glyphs += [(int(m[1], 16), int(m[1], 16) + int(m[2], 16)) for m in
