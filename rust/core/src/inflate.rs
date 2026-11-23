@@ -238,6 +238,10 @@ impl State {
     pub fn adler32(&self) -> u32 {
         self.adler
     }
+    /// Whether the stream reached its end, including the zlib checksum.
+    pub fn finished(&self) -> bool {
+        matches!(self.phase, Phase::Done)
+    }
     fn append(&mut self, byte: u8) {
         self.bits |= (byte as u64) << self.num_bits;
         if self.mode == BitBuffer::Bits32 {

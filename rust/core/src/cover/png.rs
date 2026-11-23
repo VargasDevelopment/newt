@@ -3,7 +3,8 @@
 //! stream, keeping each feed's unconsumed tail for the next.
 use super::{read, jpeg::{Layout, Status}};
 use crate::{image_renderer::{PngState, RowScaler}, inflate, jpeg::{Input, renderer::RenderError},
-    page_renderer::{BookStatus, ImageRows}, pngle::{self, Decoder, Math}, zip_window::source::BookSource};
+    page_renderer::{BookStatus, ImageRows}, pngle::{self, CallbackError, Callbacks, Decoder, Header, Math},
+    zip_window::source::BookSource};
 pub const SIGNATURE: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
 /// The image row and pngle's ring together stay within this, so the decode
 /// block fits cover Memory beside the Session and the raster.
@@ -67,6 +68,17 @@ pub struct Buffers<'a> {
 /// Covers ignore gAMA (display gamma stays 0), so pngle never asks for a power.
 struct NoGamma;
 impl Math for NoGamma { fn pow(&self, base: f64, _exponent: f64) -> f64 { base } }
+/// The reader's rows, noting the last pixel drawn: unlike the reader, a cover
+/// is kept only when its stream gave every pixel.
+struct Rows<'a, 'b> { state: PngState<'a, 'b>, last: Option<(u32, u32)> }
+impl Callbacks for Rows<'_, '_> {
+    fn init(&mut self, header: Header) -> Result<(), CallbackError> { self.state.init(header) }
+    fn draw(&mut self, x: u32, y: u32, w: u32, h: u32, p: [u8; 4]) -> Result<(), CallbackError> {
+        self.last = Some((x, y));
+        self.state.draw(x, y, w, h, p)
+    }
+    fn done(&mut self) -> Result<(), CallbackError> { self.state.done() }
+}
 /// Draws a validated PNG's rows, scaled to `target`, to `sink`.
 pub fn render(input: &mut dyn Input, b: Buffers<'_>, size: (u16, u16), target: (u16, u16),
     sink: &mut dyn ImageRows) -> Result<(), RenderError> {
@@ -79,21 +91,27 @@ pub fn render(input: &mut dyn Input, b: Buffers<'_>, size: (u16, u16), target: (
     let mut decoder = Decoder::new();
     decoder.reset(b.inflate);
     b.src[..width].fill(255);
-    let mut state = PngState { scaler, src: &mut b.src[..width], current_y: 0, unsupported: false, sink, safety: None };
+    let state = PngState { scaler, src: &mut b.src[..width], current_y: 0, unsupported: false, sink, safety: None };
+    let mut rows = Rows { state, last: None };
     let mut held = 0;
     loop {
         let got = input.read(&mut b.read[held..READ]).map_err(|_| status(BookStatus::IoError))?;
         let fed = held + got;
-        let used = decoder.feed(&b.read[..fed], &mut png, b.inflate, &NoGamma, &mut state)
-            .map_err(|_| state.safety.map_or(status(BookStatus::ParseError), RenderError::Safety))?;
-        if state.unsupported { return Err(status(BookStatus::Unsupported)); }
-        if state.scaler.stopped { return Ok(()); }
+        let used = decoder.feed(&b.read[..fed], &mut png, b.inflate, &NoGamma, &mut rows)
+            .map_err(|_| rows.state.safety.map_or(status(BookStatus::ParseError), RenderError::Safety))?;
+        if rows.state.unsupported { return Err(status(BookStatus::Unsupported)); }
+        if rows.state.scaler.stopped { return Ok(()); }
         b.read.copy_within(used..fed, 0);
         held = fed - used;
         if got == 0 { break; }
         if held == READ { return Err(status(BookStatus::ParseError)); }
     }
     if !decoder.eof() { return Err(status(BookStatus::Truncated)); }
+    // IEND came, yet the image data ended before its last pixel or its zlib
+    // end: a broken stream, as a JPEG scan that ends before its pixels do.
+    let corner = (u32::from(size.0) - 1, u32::from(size.1) - 1);
+    if rows.last != Some(corner) || !b.inflate.finished() { return Err(status(BookStatus::ParseError)); }
+    let mut state = rows.state;
     state.scaler.feed(state.current_y, state.src, state.sink).map_err(RenderError::Safety)?;
     Ok(())
 }

@@ -257,6 +257,77 @@ fn a_png_row_past_the_cap_or_interlaced_is_unsupported() {
     }
 }
 
+/// `body` as a PNG chunk, with its CRC.
+fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], body: &[u8]) {
+    out.extend((body.len() as u32).to_be_bytes());
+    let start = out.len();
+    out.extend(kind);
+    out.extend(body);
+    let crc = cover::crc(u32::MAX, &out[start..]) ^ u32::MAX;
+    out.extend(crc.to_be_bytes());
+}
+/// `raw` as a zlib stream of stored blocks; `end` false leaves the last block
+/// open and the checksum out.
+fn zlib(raw: &[u8], end: bool) -> Vec<u8> {
+    let mut out = vec![0x78, 0x01];
+    let blocks: Vec<&[u8]> = if raw.is_empty() { vec![&[]] } else { raw.chunks(0xffff).collect() };
+    for (i, block) in blocks.iter().enumerate() {
+        out.push(u8::from(end && i + 1 == blocks.len()));
+        let len = block.len() as u16;
+        out.extend(len.to_le_bytes());
+        out.extend((!len).to_le_bytes());
+        out.extend(*block);
+    }
+    let (mut a, mut b) = (1u32, 0u32);
+    for &byte in raw { a = (a + u32::from(byte)) % 65_521; b = (b + a) % 65_521; }
+    if end { out.extend((b << 16 | a).to_be_bytes()); }
+    out
+}
+/// A grey 8-bit PNG of `width` x `height` whose one IDAT is `idat`.
+fn png_image(width: u32, height: u32, idat: &[u8]) -> Vec<u8> {
+    let mut out = png::SIGNATURE.to_vec();
+    chunk(&mut out, b"IHDR", &[width.to_be_bytes().as_slice(), &height.to_be_bytes(), &[8, 0, 0, 0, 0]].concat());
+    chunk(&mut out, b"IDAT", idat);
+    chunk(&mut out, b"IEND", &[]);
+    out
+}
+/// A PNG at its cover placement, as grey rows, as firmware cover_decode.rs draws it.
+fn render_png(image: &[u8]) -> Result<Grey, BookStatus> {
+    let mut layout = Layout::default();
+    assert!(png::validate(&mut Bytes(image), &mut layout) == Status::Ready);
+    let (w, h) = placement(layout.width, layout.height);
+    let mut inflate = Box::new(newt_core::inflate::State::new(newt_core::inflate::BitBuffer::Bits32));
+    let (mut read, mut dictionary) = (vec![0; png::READ], vec![0; newt_core::inflate::DICTIONARY_SIZE]);
+    let (mut palette, mut transparency) = (vec![0; png::PALETTE], vec![0; png::TRANSPARENCY]);
+    let (mut ring, mut src) = (vec![0; usize::from(layout.ring)], vec![0; usize::from(layout.width)]);
+    let (mut dst, mut sums, mut counts) = (vec![0; usize::from(w)], vec![0; usize::from(w)], vec![0; usize::from(w)]);
+    let buffers = png::Buffers { read: &mut read, inflate: &mut inflate, dictionary: &mut dictionary, palette: &mut palette,
+                                 transparency: &mut transparency, ring: &mut ring, src: &mut src, dst: &mut dst,
+                                 sums: &mut sums, counts: &mut counts };
+    let mut grey = Grey::default();
+    match png::render(&mut Bytes(image), buffers, (layout.width, layout.height), (w, h), &mut grey) {
+        Ok(()) => Ok(grey),
+        Err(RenderError::Status(status)) => Err(status),
+        Err(RenderError::Safety(error)) => panic!("{error:?}"),
+    }
+}
+
+#[test]
+fn a_png_is_drawn_only_when_every_pixel_arrives() {
+    // Rows of grey 128, each led by filter 0. IEND follows in every case.
+    let rows = |width: usize, height: usize| [[0].as_slice(), &vec![128; width]].concat().repeat(height);
+    let whole = render_png(&png_image(16, 4, &zlib(&rows(16, 4), true))).unwrap();
+    assert_eq!(whole.0, vec![vec![128; 16]; 4]);
+    let short = [rows(16, 3), rows(10, 1)].concat();
+    // 255x128 fills pngle's 32 KiB window exactly, so every pixel is drawn
+    // though the stream never ends.
+    for (name, image) in [("no pixels", png_image(288, 1, &zlib(&[], true))),
+                          ("last row short", png_image(16, 4, &zlib(&short, true))),
+                          ("zlib unfinished", png_image(255, 128, &zlib(&rows(255, 128), false)))] {
+        assert_eq!(render_png(&image).err(), Some(BookStatus::ParseError), "{name}");
+    }
+}
+
 /// A progressive file's first scan at its cover placement, as grey rows.
 fn render_progressive(image: &[u8]) -> Result<Grey, BookStatus> {
     let mut layout = Layout::default();
