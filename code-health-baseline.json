@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3681168,
+      "flash_bytes": 3680304,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "d02783c76d2e3a7a7b3e6e472fa0ac938ee88233",
-      "before": 3661552,
-      "after": 3681168,
-      "reason": "#46 part 2: cover forms (retry older no-cover records once, image/jpg, progressive JPEG first scan, guide and cover-page fallbacks, broken cover meta fallbacks, a strict first spine cover page, PNG covers, Y sampling 12 and 41). Clean regional DEV USB builds measure main b8d0d3bc at 3,661,552 B, 4d2897e4 (before PNG) at 3,670,208 B (+8,656 B), bcc83f95 at 3,680,624 B (PNG and sampling +10,416 B), 53b26301 at 3,680,944 B (review fixes for complete PNG data, the PNG scaler bound and a progressive first scan without Y +320 B) and d02783c7 at 3,681,168 B (+19,616 B in all; the cover Expat binding moved into Salamander behind an Events trait +224 B), below the 7,016,448 B usable app slot. RAM 124,096 to 124,096 B, lent Wi-Fi 22,528 to 22,528 B, RTC 300 to 300 B; every selected stack ceiling unchanged.",
-      "reviewer": "Lead, after independent review (gpt-6-astra xhigh, 2 rounds)"
+      "source_revision": "291f11bf29b6c2b797fb9f32ca5521b91686569c",
+      "before": 3681168,
+      "after": 3680304,
+      "reason": "#62: CJB3 no-cover records are retried once like CJB4 and CJB5, so the cover probe's CJB3 ZIP flag walk is removed (-864 B). Clean regional DEV USB builds measure main 672a312e at 3,681,168 B and 291f11bf at 3,680,304 B. RAM 124,096 to 124,096 B, lent Wi-Fi 22,528 to 22,528 B, RTC 300 to 300 B; every selected stack ceiling unchanged.",
+      "reviewer": "Lead, after independent review (gpt-6-astra xhigh)"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
