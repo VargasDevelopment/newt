@@ -1,4 +1,5 @@
-//! Built-in app codec, routing and rendering (Pocket Pause and Quick Start). MIT; Inter OFL-1.1.
+//! Built-in app codec, routing and rendering (Pocket Pause, Quick Start and
+//! the card app offer). MIT; Inter OFL-1.1.
 #![no_std]
 #![forbid(unsafe_code)]
 use newt_core::app::{self, Action, AppState, Screen};
@@ -81,7 +82,7 @@ fn field(bytes: &[u8], required: bool) -> bool {
         && bytes[..end].iter().all(|&b| (32..=126).contains(&b))
         && bytes[end..].iter().all(|&b| b == 0)
 }
-fn cstr(bytes: &[u8]) -> &[u8] {
+pub(crate) fn cstr(bytes: &[u8]) -> &[u8] {
     &bytes[..bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len())]
 }
 fn slug(value: &[u8]) -> bool {
@@ -213,7 +214,7 @@ pub fn apply_intent(state: &mut AppState, intent: Intent) -> bool {
     }
     state.screen != before
 }
-const BOTTOM: i32 = SYSTEM_CARD.y + SYSTEM_CARD.height - 18;
+pub(crate) const BOTTOM: i32 = SYSTEM_CARD.y + SYSTEM_CARD.height - 18;
 pub fn draw_note(canvas: &mut UiCanvas<'_>, app: &Definition, selected: u32, mut top: i32) -> i32 {
     let index = if selected < u32::from(app.card_count) {
         selected as usize
@@ -373,6 +374,8 @@ pub fn render(app: &Definition, state: &State, bar: &SystemBar, frame: Option<&m
     }
 }
 
+// The card app offer and its outcome pages (firmware app_runtime/card_app.rs).
+pub mod install;
 pub mod pause;
 
 // #272 renderer; caller lends the existing logical/native scratch frames.

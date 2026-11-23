@@ -142,12 +142,13 @@ impl AppRuntime<'_, '_> {
                     stats, build, sleep, test_builds,
                 );
             }
-            Screen::TinyApp => match self.rest.definition {
-                Some(definition) if newt_tiny_app::pause::is_pocket_pause(definition) => {
+            Screen::TinyApp => match (self.rest.prompt.page(), self.rest.definition) {
+                (Some(page), running) => newt_tiny_app::install::render(&page, running, &bar, frame),
+                (None, Some(definition)) if newt_tiny_app::pause::is_pocket_pause(definition) => {
                     self.rest.pause.render(definition, &bar, frame);
                 }
-                Some(definition) => newt_tiny_app::render(definition, self.rest.tiny, &bar, frame),
-                None => newt_tiny_app::render_unavailable(app_unavailable, &bar, frame),
+                (None, Some(definition)) => newt_tiny_app::render(definition, self.rest.tiny, &bar, frame),
+                (None, None) => newt_tiny_app::render_unavailable(app_unavailable, &bar, frame),
             },
             Screen::QuickStart => {
                 let facts = Facts {

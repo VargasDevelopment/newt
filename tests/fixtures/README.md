@@ -18,3 +18,8 @@ private development history, which a fresh repository does not carry.
 `history/manifest.tsv` maps each commit and path to `history/blobs/<sha256>`,
 and `tests/history_fixtures.py` is the only reader. `history_fixtures_test.py`
 checks the bytes and, where those commits exist, the history itself.
+
+`apps/` holds original, invented card app definitions for the Apps offer
+previews and tests: Quiet Hour uses every card action, and long-text fills
+each text field to its limit. `tools/preview_driver.py --app-package` encodes
+them with `tools/newt_package.py`; they are not shipped apps.

@@ -158,6 +158,7 @@ def plan(profile: str, fresh_objects: bool, controls=None) -> list[Phase]:
     test("preview_owners_test.py", preview, after=("compile newt-preview",))
     test("preview_update_test.py", preview, after=("compile newt-preview",))
     test("preview_reader_wake_test.py", preview, after=("compile newt-preview",))
+    test("preview_card_app_test.py", preview, after=("compile newt-preview",))
     for source, name in UNIT_TESTS:
         unit(source, name)
     run(ROOT / "tools/gate_previews.py", preview, after=("compile newt-preview",))

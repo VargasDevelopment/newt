@@ -415,7 +415,7 @@ class PlanTests(unittest.TestCase):
                 pairs = [('compile newt-preview', name) for name in
                           ('library_preview_test.py', 'system_ui_contract_test.py', 'system_ui_rule_test.py',
                            'preview_owners_test.py', 'preview_update_test.py', 'preview_reader_wake_test.py',
-                           'gate_previews.py')]
+                           'preview_card_app_test.py', 'gate_previews.py')]
                 pairs += [(f'compile {name}', name) for _, name in gate_plan.UNIT_TESTS]
                 for first, second in pairs:
                     self.assertIn(first, before(second), (first, second))
