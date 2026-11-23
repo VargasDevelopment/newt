@@ -109,9 +109,9 @@ class NightlyTests(unittest.TestCase):
         self.git('commit', '-qm', message)
         return self.push()
 
-    def stamp(self, force=False):
+    def stamp(self, force=False, drafts=()):
         with redirect_stderr(io.StringIO()):
-            return nightly.stamp(self.published, self.root, DAY, force)
+            return nightly.stamp(self.published, self.root, DAY, force, drafts)
 
     def test_the_version_is_the_next_patch_numbered_per_day(self):
         self.assertEqual(nightly.nightly_version('0.2.0', '20261122', []), '0.2.1-dev.20261122.1')
@@ -169,6 +169,27 @@ class NightlyTests(unittest.TestCase):
         self.assertEqual(run(), '0.2.1-dev.20261122.3')
         self.release('0.2.1-dev.20261122.3')
         self.assertIsNone(run())
+
+    def test_a_declined_draft_keeps_its_number_taken(self):
+        # A run that declined to publish keeps its draft, which has no git tag. The next run (a newer
+        # main) must not take that number again, or its own publish meets the old draft and refuses.
+        self.change('rust/a.rs', 'fix(core): one')
+        self.assertEqual(self.stamp(drafts=['v0.2.1-dev.20261122.1']), '0.2.1-dev.20261122.2')
+
+    def test_draft_tags_are_read_and_a_failed_read_raises(self):
+        seen = []
+        def read(returncode, stdout=b''):
+            def answer(command):
+                seen.append(command)
+                return subprocess.CompletedProcess(command, returncode, stdout, b'gh: Error (HTTP 502)')
+            return nightly.draft_tags(REPOSITORY, answer)
+        self.assertEqual(read(0, b'v0.2.1-dev.20261122.3\nv0.2.1-dev.20261122.5\n'),
+                         ['v0.2.1-dev.20261122.3', 'v0.2.1-dev.20261122.5'])
+        self.assertEqual(seen[0], ['gh', 'api', '--paginate', f'repos/{REPOSITORY}/releases', '--jq',
+                                   '.[] | select(.draft) | .tag_name'])
+        self.assertEqual(read(0), [])
+        with self.assertRaisesRegex(ValueError, 'failed'):
+            read(1)
 
     def test_no_nightly_once_main_has_moved_on(self):
         self.change('rust/a.rs', 'fix(core): one')
@@ -264,6 +285,9 @@ CONTROLS = (
      'test_only_a_change_the_image_is_built_from_gets_a_nightly'),
     ('nightly.py', '        if published(tag) is not None:', '        if True:',
      'test_only_a_published_nightly_counts_as_the_last_one'),
+    ('nightly.py', ', [*tags, *drafts])', ', tags)', 'test_a_declined_draft_keeps_its_number_taken'),
+    ('nightly.py', "    require(reply.returncode == 0, f'{shlex.join(command)} failed: ",
+     "    require(True, f'{shlex.join(command)} failed: ", 'test_draft_tags_are_read_and_a_failed_read_raises'),
     ('nightly.py', '    if live != head:', '    if False:', 'test_no_nightly_once_main_has_moved_on'),
     ('nightly.py', "    if git_output(root, 'ls-remote', 'origin', 'refs/heads/main').split('\\t')[0] != source:",
      '    if False:', 'test_no_nightly_once_main_has_moved_on'),

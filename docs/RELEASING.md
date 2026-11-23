@@ -487,7 +487,11 @@ and publishes nothing; the newer commit's own run does.
 **Version.** `<next>-dev.YYYYMMDD.N`. `<next>` is the patch after the core
 of the version `main` declares (`0.2.0` gives `0.2.1`, and `0.2.1-rc.1` gives
 `0.2.2`). `YYYYMMDD` is the UTC day, and `N` follows every nightly tag of
-`<next>` that day, published or not, from 1: `0.2.1-dev.20261122.1`.
+`<next>` that day, published or not, from 1: `0.2.1-dev.20261122.1`. A draft
+release's tag counts too. A run that stops because `main` moved on keeps its
+draft but never pushes its tag, so the next run skips that number instead of
+meeting the old draft. The Lead may delete such a draft by hand; it is never
+public.
 Devices hold at most 23 characters of a version (the image's identity block,
 the manifest and the seen-build record), so the stamp and the publish refuse a
 longer one; the job fails rather than cut it.
