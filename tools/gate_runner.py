@@ -478,7 +478,7 @@ def cpu_budgets(path=None, *, fresh_objects=None):
     # Prerequisites/focused commands run outside that plan but share this policy.
     import gate_plan
     names = {phase.name for profile in ('canonical', 'linux') for phase in gate_plan.plan(profile, False)}
-    names.update(('release_tools.py', 'release_tools_test.py'))
+    names.update(('release_tools.py', 'release_tools.py --no-tags', 'release_tools_test.py'))
     unknown = set(policy['phases']) - names
     if unknown:
         raise ValueError(f'Unknown gate CPU phase names: {sorted(unknown)}')
