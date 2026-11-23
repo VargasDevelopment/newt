@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3680304,
+      "flash_bytes": 3681792,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "291f11bf29b6c2b797fb9f32ca5521b91686569c",
-      "before": 3681168,
-      "after": 3680304,
-      "reason": "#62: CJB3 no-cover records are retried once like CJB4 and CJB5, so the cover probe's CJB3 ZIP flag walk is removed (-864 B). Clean regional DEV USB builds measure main 672a312e at 3,681,168 B and 291f11bf at 3,680,304 B. RAM 124,096 to 124,096 B, lent Wi-Fi 22,528 to 22,528 B, RTC 300 to 300 B; every selected stack ceiling unchanged.",
-      "reviewer": "Lead, after independent review (gpt-6-astra xhigh)"
+      "source_revision": "121a4df1ccbff2eefe1c563c6175af58d384710a",
+      "before": 3680304,
+      "after": 3681792,
+      "reason": "#53 applies the declared book language to line breaking and isolates each layout's cached pages. Clean regional DEV USB builds measure 3,680,304 to 3,681,792 B (+1,488 B). RAM remains 124,096 B, lent Wi-Fi RAM 22,528 B, and RTC 300 B. All selected static frames fit their unchanged ceilings.",
+      "reviewer": "Lead, after independent review (Opus xhigh)"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
