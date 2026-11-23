@@ -378,6 +378,15 @@ fn a_progressive_file_without_a_dc_first_scan_is_unsupported() {
 }
 
 #[test]
+fn a_progressive_first_scan_without_luminance_is_unsupported() {
+    // A YCbCr file whose first scan is Cb and Cr DC only: no Y greys to draw.
+    let mut image = Jpeg { progressive: Some(0), sampling: Some(0x11), ..Jpeg::default() }.bytes();
+    let sos = image.windows(2).position(|w| w == [0xff, 0xda]).unwrap();
+    image.splice(sos + 2..sos + 7, [0, 10, 2]);
+    assert_eq!(render_progressive(&image).err(), Some(BookStatus::Unsupported));
+}
+
+#[test]
 fn y_sampling_12_and_41_draw_the_grey_frame() {
     // Chroma never reaches the greys, so a YCbCr frame draws its Y blocks as a
     // grayscale one does. These sizes pad MCUs and take baseline scales 0, 1 and 3.
