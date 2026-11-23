@@ -3,8 +3,10 @@
 use super::{io::{self,Files,Source,Control},memory::{Memory,Block},member::{self,Stored},
     decode::{self,Drift},xml,CoverResult as R,CoverResume,Step};
 use core::{ffi::CStr,mem::size_of,ptr};
-use newt_core::{cover::{self,Member,MetadataStatus as M,discovery},zip_window::source::BookSource};
+use newt_core::{cover::{self,Member,MetadataStatus as M,discovery,xml::Found},zip_window::source::BookSource};
 const STAGE:u8=1;const PENDING:u8=2;const EARLY:u8=4;
+#[derive(Clone,Copy)]
+enum Document{Container,Package,Page}
 pub fn verdict(result:R)->bool{matches!(result,R::Missing|R::Unsupported|R::Incomplete|R::Invalid)}
 pub fn metadata(result:M)->R{match result{M::Ok=>R::Ready,M::NotFound=>R::Missing,M::Unsupported=>R::Unsupported,
     M::IoError=>R::IoError,M::OutOfMemory=>R::Declined,_=>R::Invalid}}
@@ -16,7 +18,7 @@ macro_rules! path {
 pub struct Session<'a>{
     files:&'a Files<'a>,control:&'a dyn Control,memory:&'a Memory<'a>,resume:&'a mut CoverResume,
     source:Source<'a>,book:[u8;192],stage:[u8;192],pending:[u8;192],final_path:[u8;192],
-    opf:[u8;512],image:[u8;512],member:Member,source_crc:u32,
+    opf:[u8;512],found:Found,member:Member,source_crc:u32,
     faulted:bool,publishing:bool,no_art:bool,temporaries:u8,
 }
 impl<'a> Session<'a>{
@@ -37,7 +39,8 @@ impl<'a> Session<'a>{
             ptr::addr_of_mut!((*p).pending).cast::<u8>().write_bytes(0,192);
             ptr::addr_of_mut!((*p).final_path).cast::<u8>().write_bytes(0,192);
             ptr::addr_of_mut!((*p).opf).cast::<u8>().write_bytes(0,512);
-            ptr::addr_of_mut!((*p).image).cast::<u8>().write_bytes(0,512);
+            // All-zero Found is empty: no image and no page.
+            ptr::addr_of_mut!((*p).found).write_bytes(0,1);
             ptr::addr_of_mut!((*p).member).write(Member::default());ptr::addr_of_mut!((*p).source_crc).write(0);
             ptr::addr_of_mut!((*p).faulted).write(false);ptr::addr_of_mut!((*p).publishing).write(false);
             ptr::addr_of_mut!((*p).no_art).write(false);ptr::addr_of_mut!((*p).temporaries).write(0);
@@ -114,8 +117,9 @@ impl<'a> Session<'a>{
         if !self.source.valid(){return self.cancelled(R::Invalid);}self.publishing=true;
         self.publish(raster.as_mut())
     }
-    fn xml(&mut self,container:bool)->R{
-        let name=if container{b"META-INF/container.xml".as_slice()}else{discovery::cbytes(&self.opf)};
+    fn xml(&mut self,document:Document)->R{
+        let name=match document{Document::Container=>b"META-INF/container.xml".as_slice(),
+            Document::Package=>discovery::cbytes(&self.opf),Document::Page=>discovery::cbytes(&self.found.page)};
         let status=discovery::locate(&mut self.source,name,&mut self.member);
         if status!=M::Ok{return metadata(status);}
         if self.member.entry.uncompressed_size>256*1024{return R::Unsupported;}
@@ -123,16 +127,23 @@ impl<'a> Session<'a>{
         if result!=R::Ready{return result;}self.temporaries|=STAGE;
         let status={let mut raw=Source::new(self.files,self.control);
             if !raw.open(path!(&self.stage,R::IoError),256*1024){return R::IoError;}
-            let status=if container{xml::container(&mut raw,self.memory,&mut self.opf)}
-                else{xml::opf(&mut raw,self.memory,&self.opf,&mut self.image)};
+            let status=match document{Document::Container=>xml::container(&mut raw,self.memory,&mut self.found),
+                Document::Package=>xml::package(&mut raw,self.memory,&self.opf,&mut self.found),
+                Document::Page=>xml::page(&mut raw,self.memory,&mut self.found)};
             self.faulted|=raw.faulted();status};
         if !io::remove_temporary(self.files,path!(&self.stage,R::IoError),Some(self.control)){return self.cancelled(R::IoError);}
         self.temporaries&=!STAGE;metadata(status)
     }
     fn locate(&mut self,remember:bool)->R{
-        let result=self.xml(true);if result!=R::Ready{return result;}
-        let result=self.xml(false);if result!=R::Ready{return result;}
-        let result=metadata(discovery::locate(&mut self.source,&self.image,&mut self.member));
+        let result=self.xml(Document::Container);if result!=R::Ready{return result;}
+        self.opf=self.found.image;
+        let result=self.xml(Document::Package);if result!=R::Ready{return result;}
+        if self.found.page[0]!=0{
+            // A cover page that gives no image falls back to the best image.
+            let result=self.xml(Document::Page);
+            if result!=R::Ready&&(!verdict(result)||self.found.image[0]==0){return result;}
+        }
+        let result=metadata(discovery::locate(&mut self.source,&self.found.image,&mut self.member));
         if remember&&result==R::Ready&&self.unfaulted(){
             self.resume.local=self.member.entry.local_header_offset;self.resume.compressed=self.member.entry.compressed_size;
             self.resume.uncompressed=self.member.entry.uncompressed_size;self.resume.crc32=self.member.crc32;

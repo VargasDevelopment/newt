@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Cover-only actual Expat allocator lease and callbacks, frozen discovery.h.
 use core::{ffi::{CStr,c_char,c_int,c_void}, ptr};
-use newt_core::{cover::{MetadataStatus as S, read, xml::State}, xml_session::{Handler,Attributes}};
+use newt_core::{cover::{MetadataStatus as S, read, xml::{self,Found,Kind,State}}, xml_session::{Handler,Attributes}};
 use newt_core::zip_window::source::BookSource;
 use super::memory::Memory;
 #[repr(C)]
@@ -96,15 +96,19 @@ unsafe extern "C" fn end(user:*mut c_void,name:*const c_char) {
     // SAFETY: same live parser-local context and terminated name.
     unsafe { (&mut *user.cast::<Context<'_,'_>>()).state.end_element(CStr::from_ptr(name).to_bytes()); }
 }
-// SAFETY: user is this parser's live exclusive Context; only rejection occurs.
-unsafe extern "C" fn doctype(user:*mut c_void,_a:*const c_char,_b:*const c_char,_c:*const c_char,_d:c_int) {
-    // SAFETY: synchronous parser context; reject instead of loading any DTD.
-    unsafe { let c=&mut *user.cast::<Context<'_,'_>>(); c.state.reject_doctype(); XML_StopParser(c.parser,0); }
+// SAFETY: user is this parser's live exclusive Context; only a policy check occurs.
+unsafe extern "C" fn doctype(user:*mut c_void,_a:*const c_char,_b:*const c_char,_c:*const c_char,subset:c_int) {
+    // SAFETY: synchronous parser context; a refused DOCTYPE stops before its
+    // internal subset is read. Parameter entities are off, so no DTD loads.
+    unsafe {
+        let c=&mut *user.cast::<Context<'_,'_>>(); c.state.doctype(subset!=0);
+        if c.state.stop_parse() { XML_StopParser(c.parser,0); }
+    }
 }
 // SAFETY: parser is Expat's active parser with this operation's Context installed.
 unsafe extern "C" fn external(parser:*mut c_void,_a:*const c_char,_b:*const c_char,_c:*const c_char,_d:*const c_char)->c_int {
     // SAFETY: actual Expat parser carries the active Context installed below.
-    unsafe { let c=&mut *newt_cover_xml_user(parser).cast::<Context<'_,'_>>(); c.state.reject_doctype(); XML_StopParser(parser,0); }
+    unsafe { let c=&mut *newt_cover_xml_user(parser).cast::<Context<'_,'_>>(); c.state.reject(); XML_StopParser(parser,0); }
     0
 }
 struct Parser(*mut c_void);
@@ -150,22 +154,32 @@ fn parse(raw:&mut dyn BookSource,memory:&Memory<'_>,state:&mut State<'_>)->S {
     }
     drop(parser); context.state.complete()
 }
-pub fn container(raw:&mut dyn BookSource,memory:&Memory<'_>,out:&mut[u8;512])->S {
-    out[0]=0; let mut state=State::new(true,b""); let result=parse(raw,memory,&mut state);
-    if result!=S::Ok { return result; }
-    if state.path[0]==0 { return S::NotFound; }
-    *out=state.path; S::Ok
+/// Each parse borrows a scratch block from cover Memory, so no path array
+/// sits on the UI stack under Expat's callbacks.
+fn with_state(memory:&Memory<'_>,kind:Kind,opf:&[u8],found:&mut Found,run:impl FnOnce(&mut State<'_>)->S)->S{
+    let Some(mut block)=memory.block(xml::SCRATCH) else { return S::OutOfMemory; };
+    let Some(mut state)=State::new(kind,opf,found,block.as_mut()) else { return S::OutOfMemory; };
+    run(&mut state)
 }
-pub fn opf(raw:&mut dyn BookSource,memory:&Memory<'_>,opf:&[u8],out:&mut[u8;512])->S {
+/// The package path goes to `found.image`.
+pub fn container(raw:&mut dyn BookSource,memory:&Memory<'_>,found:&mut Found)->S {
+    let result=with_state(memory,Kind::Container,b"",found,|state| parse(raw,memory,state));
+    if result==S::Ok && found.image[0]==0 { S::NotFound } else { result }
+}
+pub fn package(raw:&mut dyn BookSource,memory:&Memory<'_>,opf:&[u8],found:&mut Found)->S {
     use newt_core::cover::discovery::{path,cbytes};
-    out[0]=0; let mut canonical=[0;512];
+    let mut canonical=[0;512];
     if !path(b"",opf,&mut canonical) || cbytes(opf)!=cbytes(&canonical) { return S::Unsupported; }
-    let mut state=State::new(false,opf); let mut result=parse(raw,memory,&mut state);
-    if result!=S::Ok { return result; }
-    if state.path[0]==0 && state.id[0]!=0 {
-        state.resolve_id=true; state.saw_root=false;
-        result=parse(raw,memory,&mut state); if result!=S::Ok { return result; }
-    }
-    if state.path[0]==0 { return S::NotFound; }
-    *out=state.path; S::Ok
+    with_state(memory,Kind::Package,opf,found,|state| {
+        let mut result=parse(raw,memory,state);
+        if result==S::Ok && state.second_pass() { state.resolve=true; state.saw_root=false; result=parse(raw,memory,state); }
+        if result==S::Ok { state.settle() } else { result }
+    })
+}
+/// Reads `found.page`; its cover image replaces `found.image`.
+pub fn page(raw:&mut dyn BookSource,memory:&Memory<'_>,found:&mut Found)->S {
+    with_state(memory,Kind::Page,b"",found,|state| {
+        let result=parse(raw,memory,state);
+        if result==S::Ok { state.take_page_image() } else { result }
+    })
 }

@@ -4,10 +4,13 @@
 The preview is the real firmware built for the host over C fakes
 (rust/host/preview/fakes). Each world is a card with no Newt/Covers and
 synthetic books whose covers are made here: baseline grayscale JPEGs declared
-the EPUB3 way (cover-image) and the EPUB2 way (<meta name="cover">), stored
-and deflated, one with the common "image/jpg" media type, a progressive
-JPEG (the firmware draws its first scan, at 1/8 scale), and one book whose cover form the firmware does not decode, the
-known gap. Cover work starts after 2 s without input; the preview presses
+the EPUB3 way (cover-image), the EPUB2 way (<meta name="cover">) and by the
+guide (straight to the image, or to an XHTML cover page), stored and
+deflated, one with the common "image/jpg" media type, a progressive JPEG (the
+firmware draws its first scan, at 1/8 scale), and books that must get no
+cover: one whose cover form the firmware does not decode, the known gap, and
+one whose cover page carries an internal DTD subset. Cover work starts after
+2 s without input; the preview presses
 only after 4 s without a refresh, press or card access, so staying on a
 screen lets that work finish. Each control is the same build with one
 firmware change in its generated copy (never in rust/firmware).
@@ -35,7 +38,7 @@ from gate_tier import negative_controls  # noqa: E402
 BACK, CONFIRM, RIGHT = 0, 1, 3
 SHELF = (CONFIRM,)
 # rust/firmware/reader_cover_idle.rs CoverResult.
-PRODUCED, CANCELLED, UNSUPPORTED, IO_ERROR = 2, 3, 6, 9
+PRODUCED, CANCELLED, MISSING, UNSUPPORTED, IO_ERROR = 2, 3, 5, 6, 9
 ROWS = re.compile(r'COVER work=attempt result=(\d+)')
 HOME_READY = 'HOME_COVER eligible=1 attempted=1 step=7 ready=1 painted=1'
 # A cover record: NLC2 header (signature, book size, even mtime, route) and,
@@ -46,18 +49,27 @@ ART, NO_ART = 28 + ROW_BYTES * HEIGHT, 28
 # Routes as the card holds them (little-endian rust/core/src/cover.rs NO_ART words).
 CJB6, CJB5 = b'CJB6', b'CJB5'
 MTIME = 1790812800
-# Book name: how its cover is declared and stored. Names sort into shelf order.
+# Book name: how its cover is declared and stored (epub() forms).
 SUPPORTED = {
-    'Alder': {'declaration': 'epub3'},
-    'Birch': {'declaration': 'epub3', 'deflated': True},
-    'Cedar': {'declaration': 'epub2'},
-    'Dogwood': {'declaration': 'epub2', 'deflated': True},
-    'Elm': {'declaration': 'epub3', 'media': 'image/jpg'},
-    'Fir': {'declaration': 'epub3', 'deflated': True, 'frame': 0xc2},
+    'Alder': {'form': 'epub3'},
+    'Birch': {'form': 'epub3', 'deflated': True},
+    'Cedar': {'form': 'epub2'},
+    'Dogwood': {'form': 'epub2', 'deflated': True},
+    'Elm': {'form': 'epub3', 'media': 'image/jpg'},
+    'Fir': {'form': 'epub3', 'deflated': True, 'frame': 0xc2},
+    'Ginkgo': {'form': 'guide-image'},
+    'Hazel': {'form': 'guide-page', 'deflated': True},
 }
-# A cover form the firmware does not decode, the known gap; last on the shelves.
+# Books that get a bare record: (form, the attempt's result).
+NO_COVER = {
+    'Willow': ({'form': 'subset-page'}, UNSUPPORTED),
+    # Arithmetic coding (SOF9): the decoders take Huffman frames only.
+    'Yew': ({'form': 'epub3', 'frame': 0xc9}, UNSUPPORTED),
+}
+# The known gap, last on the shelves.
 GAP = 'Yew'
-BOOKS = [*SUPPORTED, GAP]
+# Names sort into shelf order.
+BOOKS = sorted([*SUPPORTED, *NO_COVER])
 SAMPLE = ROOT / 'tests/fixtures/the-small-lantern.epub'
 
 
@@ -118,21 +130,43 @@ def art(seed, frame=0xc0):
     return jpeg(288, 376, lambda x, y: (grey(seed, x, y) - 128) * 8, frame)
 
 
-def epub(path, title, image, declaration='epub3', deflated=False, media='image/jpeg'):
-    """The sample under `title`, with `image` as its declared cover."""
+def page(doctype, source):
+    """An XHTML cover page whose body holds one image."""
+    return ('<?xml version="1.0" encoding="UTF-8"?>' + doctype
+            + '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Cover</title></head>'
+            + f'<body><div class="cover"><img src="{source}" alt=""/></div></body></html>')
+
+
+def epub(path, title, image, form='epub3', deflated=False, media='image/jpeg'):
+    """The sample under `title`, with `image` as its cover declared by `form`:
+    epub3 (cover-image), epub2 (<meta name="cover">), guide-image (the guide
+    names the image), guide-page (the guide names a cover page) or
+    subset-page (that page's internal DTD subset spells the image's path)."""
     with zipfile.ZipFile(SAMPLE) as source:
         opf = source.read('OEBPS/content.opf').decode()
         opf = opf.replace('The Small Lantern', title).replace('small-lantern:1', title)
-        if declaration == 'epub2':
+        items = f'<item id="art" href="images/art.jpg" media-type="{media}"/>'
+        pages = {}
+        if form == 'epub3':
+            items = items.replace('/>', ' properties="cover-image"/>')
+        elif form == 'epub2':
             opf = opf.replace('</metadata>', '<meta name="cover" content="art"/></metadata>')
-            item = f'<item id="art" href="art.jpg" media-type="{media}"/>'
+        elif form == 'guide-image':
+            opf = opf.replace('</spine>', '</spine><guide><reference type="cover" href="images/art.jpg"/></guide>')
         else:
-            item = f'<item id="art" href="art.jpg" media-type="{media}" properties="cover-image"/>'
-        opf = opf.replace('</manifest>', item + '</manifest>')
+            # The page sits in its own folder, so its image path is relative to it.
+            opf = opf.replace('</spine>', '</spine><guide><reference type="cover" href="text/cover.xhtml#top"/></guide>')
+            items += '<item id="cover-page" href="text/cover.xhtml" media-type="application/xhtml+xml"/>'
+            pages['OEBPS/text/cover.xhtml'] = (page('<!DOCTYPE html>', '../images/art.jpg') if form == 'guide-page'
+                else page('<!DOCTYPE html [<!ENTITY art "../images/art.jpg">]>', '&art;'))
+        opf = opf.replace('</manifest>', items + '</manifest>')
+        compression = zipfile.ZIP_DEFLATED if deflated else zipfile.ZIP_STORED
         with zipfile.ZipFile(path, 'w', zipfile.ZIP_STORED) as archive:
             for entry in source.infolist():
                 archive.writestr(entry, opf if entry.filename == 'OEBPS/content.opf' else source.read(entry))
-            archive.writestr('OEBPS/art.jpg', image, zipfile.ZIP_DEFLATED if deflated else zipfile.ZIP_STORED)
+            for name, text in pages.items():
+                archive.writestr(name, text, compression)
+            archive.writestr('OEBPS/images/art.jpg', image, compression)
     os.utime(path, (MTIME, MTIME))
 
 
@@ -143,8 +177,9 @@ def books():
     for seed, (name, form) in enumerate(SUPPORTED.items()):
         form = dict(form)
         epub(folder / f'{name}.epub', name, art(seed, form.pop('frame', 0xc0)), **form)
-    # Arithmetic coding (SOF9): the decoders take Huffman frames only.
-    epub(folder / f'{GAP}.epub', GAP, jpeg(288, 376, lambda x, y: 0, frame=0xc9))
+    for name, (form, _) in NO_COVER.items():
+        form = dict(form)
+        epub(folder / f'{name}.epub', name, art(0, form.pop('frame', 0xc0)), **form)
     return folder
 
 
@@ -233,21 +268,21 @@ def art_problem(world, book):
 
 # Each case returns None when the firmware behaved, else what went wrong.
 def books_shelf(binary):
-    """Books makes each visible shelf's covers and repaints with them; the
-    unsupported book gets a bare record with a "no cover" result."""
+    """Books makes each visible shelf's covers and repaints with them; each
+    book that must get no cover gets a bare record with its "no cover" result."""
     with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
         world = World(binary, scratch)
         shown = {}
         for names in shelves():
             frame, results, _ = world.run(to_book(names[0]))
-            expected = [UNSUPPORTED if book == GAP else PRODUCED for book in names]
+            expected = [NO_COVER[book][1] if book in NO_COVER else PRODUCED for book in names]
             if results != expected:
                 return f'the shelf of {names} ended {results}, not {expected}'
             for index, book in enumerate(names):
                 shown[book] = slot(frame, index)
-                if book == GAP:
-                    if world.cover(GAP) != record(GAP, CJB6):
-                        return f'the unsupported book has {world.cover(GAP)!r}'
+                if book in NO_COVER:
+                    if world.cover(book) != record(book, CJB6):
+                        return f'{book} has {world.cover(book)!r}, not a bare CJB6 record'
                 elif problem := art_problem(world, book):
                     return problem
                 elif shown[book] != world.cover(book)[28:]:
@@ -281,9 +316,10 @@ def home(binary):
 def old_records(binary):
     """A CJB5 bare record (from before #46, as v0.3.0 wrote it) is retried
     once and then never again; a current CJB6 one is used as it is."""
-    # The gap's shelf holds only its own retry: its other books are current.
+    # Past the first shelf only the gap is retried: the books the walk to it
+    # passes, and its shelf's other books, are current.
     gap_shelf = shelves()[-1]
-    records = {**{book: CJB6 for book in gap_shelf}, 'Alder': CJB5, 'Birch': CJB6, GAP: CJB5}
+    records = {**{book: CJB6 for book in BOOKS[4:]}, 'Alder': CJB5, 'Birch': CJB6, GAP: CJB5}
     with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
         world = World(binary, scratch, records)
         _, results, _ = world.run(SHELF)
@@ -338,7 +374,9 @@ CASES = [
         # The decode counts its rows but draws none, so every cover is blank.
         [('cover_decode.rs',
           'for x in 0..usize::from(width){if bits[x/8]&(0x80>>(x%8))!=0{let target=x+self.left;out[target/8]|=0x80>>(target%8);}}',
-          'let _=(bits,out);')]]),
+          'let _=(bits,out);')],
+        # A cover page's internal DTD subset is read, so its entities expand.
+        [('cover_xml.rs', 'c.state.doctype(subset!=0);', 'c.state.doctype(false);')]]),
     (home, [
         # A produced cover does not advance the publication counter.
         [('cover_idle_step.rs', '    if outcome.result==R::Produced{published();}\n', '')],
