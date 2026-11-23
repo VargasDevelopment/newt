@@ -150,7 +150,8 @@ entry in that test.
 - One change per pull request, with its tests.
 - Commits are [Conventional Commits](https://www.conventionalcommits.org/)
   (`fix(reader): keep the chapter after a wake`). The type sets the version
-  bump, and the gate rejects other subjects.
+  bump, and the gate rejects other subjects. A merge may keep GitHub's
+  default subject.
 - The body says what changed, why, the focused checks you ran, and your
   evidence (above). Write `Closes #N` for the issue it fixes.
 - Comments explain why, briefly. Keep them true when the code changes.

@@ -1,7 +1,9 @@
 """Small release gate and source identity helpers; never installs, tags or flashes.
 
 The gate also refuses anything built on an untagged release; tools/release_tag.py
-is the one tool that makes release tags."""
+is the one tool that makes release tags. --no-tags is the routine local check:
+it reads no tag and checks only the commits this work adds to origin/main. CI
+and release validation never pass it."""
 import argparse
 import hashlib
 import io
@@ -31,6 +33,9 @@ HISTORICAL_VERSION_HEADER = "include/newt/firmware_version.h"
 # Every release merges here. CI checks it out with full history and tags.
 DESTINATION = "refs/remotes/origin/main"
 TAG_COMMAND = "python3 -B tools/release_tag.py"
+# The start of every merge subject Git and GitHub write ("Merge pull request #N
+# from ...", "Merge branch ...").
+MERGE_PREFIX = "Merge "
 
 
 def header_version(text):
@@ -158,17 +163,6 @@ def snapshot_root(root):
     return roots[0]
 
 
-def adoption_base(root=ROOT):
-    """The commit after which every commit follows the release rules."""
-    if resolve_commit(root, ADOPTION_BASE):
-        return ADOPTION_BASE
-    snapshot = snapshot_root(root)
-    if snapshot is None:
-        raise ValueError(f"History lacks the adoption commit {ADOPTION_BASE[:12]} and has no "
-                         f"{SNAPSHOT_TRAILER} root: fetch the complete history")
-    return snapshot
-
-
 def destination_bases(root, head, planned_merge=False):
     """The origin/main commits head builds on.
 
@@ -178,7 +172,7 @@ def destination_bases(root, head, planned_merge=False):
     release merge needs no tag of its own. A planned merge's first parent is its
     destination, which a stale origin/main must not silently replace."""
     if resolve_commit(root, DESTINATION) is None:
-        raise ValueError("The release-tag guard needs origin/main and its tags: git fetch origin")
+        raise ValueError("The release gate needs origin/main: git fetch origin")
     parents = git_output(root, "rev-list", "--parents", "-n", "1", head).split()[1:]
     if not parents:
         # A clean export's root is where this history starts, not a release built on.
@@ -204,7 +198,7 @@ def check_release_tagged(root=ROOT, head="HEAD", planned_merge=False):
     version is not checked, so a release branch and its release merge pass before
     the tag can exist. The tag must name a commit with that version on
     origin/main's first-parent history: a reviewed merge, never a merged branch's
-    commit (where a bare `cz bump` would put it)."""
+    commit (where a bare `cz bump` would put it). Returns those tags' names."""
     bases = destination_bases(root, head, planned_merge)
     mainline = set(git_output(root, "rev-list", "--first-parent", DESTINATION).split())
     tags = set()
@@ -221,7 +215,7 @@ def check_release_tagged(root=ROOT, head="HEAD", planned_merge=False):
         if tagged not in mainline:
             raise ValueError(f"Tag {tag} names {tagged[:12]}, which is not on origin/main's first-parent history")
         tags.add(tag)
-    return ", ".join(sorted(tags))
+    return sorted(tags)
 
 
 def source_identity(root=ROOT):
@@ -244,35 +238,59 @@ def release_python(root=ROOT):
     return interpreter
 
 
-def check_commits(root=ROOT, rev_range=None):
-    # Validate new commits only. Legacy candidate history is deliberately exempt.
-    if rev_range is None:
-        base = adoption_base(root)
-        subprocess.run(["git", "merge-base", "--is-ancestor", base, "HEAD"], cwd=root, check=True)
-        rev_range = base + "..HEAD"
-    if not git_output(root, "rev-list", rev_range):
-        return
-    subprocess.run([str(release_python(root)), "-I", "-B", "-m", "commitizen", "check",
-                    "--rev-range", rev_range], cwd=root, check=True)
+def check_commits(root, ranges):
+    """Every commit in the ranges except a merge is a Conventional Commit.
+
+    Commitizen classifies each change by its own commit. A merge only joins
+    commits that are already classified, so it may keep Git's or GitHub's merge
+    subject; a commit with that subject that is not a merge would go unclassified."""
+    for rev_range in ranges:
+        if not git_output(root, "rev-list", rev_range):
+            continue
+        unmerged = [line for line in git_output(root, "log", "--no-merges", "--format=%h %s", rev_range).splitlines()
+                    if line.partition(" ")[2].startswith(MERGE_PREFIX)]
+        if unmerged:
+            raise ValueError("Only a merge may skip Conventional Commits with a merge subject: " + "; ".join(unmerged))
+        subprocess.run([str(release_python(root)), "-I", "-B", "-m", "commitizen", "check",
+                        "--rev-range", rev_range, "--allowed-prefixes", MERGE_PREFIX], cwd=root, check=True)
 
 
-def gate(root=ROOT, rev_range=None):
-    """The release gate. A review range's end is the work it guards; if that end
-    is a merge, it is a planned merge onto origin/main."""
+def gate(root=ROOT, rev_range=None, tags=True):
+    """The release gate; returns the release tags head builds on, or None without tags.
+
+    A review range's end is the work it guards; if that end is a merge, it is a
+    planned merge onto origin/main. Commit messages are checked where versioning
+    reads them: Commitizen classifies the commits since the release tag, so that
+    is the default range. Without tags, the range is what head adds to origin/main,
+    whose own commits CI checked when they landed."""
     if re.fullmatch(NIGHTLY, check_version(root)):
         raise ValueError("A nightly version is CI's stamp on its own commit; never commit it to a branch")
-    tag = check_release_tagged(root, (rev_range or "").rpartition("..")[2] or "HEAD", rev_range is not None)
+    head = (rev_range or "").rpartition("..")[2] or "HEAD"
+    built_on = check_release_tagged(root, head, rev_range is not None) if tags else None
+    if rev_range:
+        ranges = [rev_range]
+    elif tags:
+        ranges = [f"refs/tags/{tag}..{head}" for tag in built_on]
+    else:
+        ranges = [f"{base}..{head}" for base in destination_bases(root, head)]
     release_python(root)
-    check_commits(root, rev_range)
-    return tag
+    check_commits(root, ranges)
+    return built_on
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--rev-range", help="CI base..HEAD range; full adoption history by default")
+    parser.add_argument("--rev-range", help="an explicit review range; by default, since the release tag")
+    parser.add_argument("--no-tags", action="store_true",
+                        help="routine local check: no release tags; CI and release validation never pass it")
     args = parser.parse_args()
-    tag = gate(rev_range=args.rev_range)
-    built_on = f"built on tagged release {tag}" if tag else "the snapshot root builds on no earlier release"
+    tags = gate(rev_range=args.rev_range, tags=not args.no_tags)
+    if tags is None:
+        built_on = "release tags left to CI and release validation"
+    elif tags:
+        built_on = "built on tagged release " + ", ".join(tags)
+    else:
+        built_on = "the snapshot root builds on no earlier release"
     print(f"PASS: firmware SemVer consistency, {built_on}, pinned Commitizen and Conventional Commits")
 
 

@@ -101,6 +101,9 @@ def configured_main() -> None:
                         help="local: a candidate's gate, the push tier plus the negative controls of the tests "
                              'this branch changes; push: every positive test (CI per push); full: every '
                              'negative control too (CI on release merges and nightly). See tools/gate_tier.py')
+    parser.add_argument('--release-tags', action='store_true',
+                        help='Also check the release tags (tools/release_tools.py): CI and release validation. '
+                             'A routine run reads no tag, so a missing tag never fails it')
     parser.add_argument('--no-time-budget', action='store_true',
                         help="Skip the tier's wall-time budget: the caller budgets the whole run (tools/ci_gate.py)")
     parser.add_argument('--fresh-objects', action='store_true', help='Recompile reusable objects for cache comparison')
@@ -136,8 +139,12 @@ def configured_main() -> None:
 
 
 def gate(args) -> None:
-    phase_run([sys.executable, "-B", str(ROOT / "tools/release_tools.py")], check=True, cwd=ROOT,
-              cpu_budgets=gate_runner.cpu_budgets())
+    if args.suite == 'all':
+        # Before the release tests, which run their negative controls by this selection too.
+        included = gate_tier.controls(args.tier, ROOT)
+        os.environ[gate_tier.CONTROLS] = included
+    phase_run([sys.executable, "-B", str(ROOT / "tools/release_tools.py"), *([] if args.release_tags else ["--no-tags"])],
+              check=True, cwd=ROOT, cpu_budgets=gate_runner.cpu_budgets())
     phase_run([sys.executable, "-B", str(ROOT / "tests/release_tools_test.py")], check=True, cwd=ROOT,
               cpu_budgets=gate_runner.cpu_budgets())
     verify_source_pin()
@@ -151,8 +158,6 @@ def gate(args) -> None:
         focused(args.suite, args.profile)
         return
     print(f"PASS: official FreeInk source {FREEINK_COMMIT}, checkout inputs clean", flush=True)
-    included = gate_tier.controls(args.tier, ROOT)
-    os.environ[gate_tier.CONTROLS] = included
     print(f"TIER {args.tier}: negative controls of {included or 'no test'}", flush=True)
     chosen = set(included.split(','))
     controls = None if included == 'all' else lambda script: script in chosen

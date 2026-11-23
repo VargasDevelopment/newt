@@ -1,5 +1,7 @@
 """Exercise pinned official Commitizen, the release-tag guard and the tag command in
-disposable repos with a local bare origin and a stub gh; never tag or push the checkout."""
+disposable repos with a local bare origin and a stub gh; never tag or push the checkout.
+--negative-controls removes each guard in a copy of its tool and requires its test to fail."""
+import argparse
 import os
 import hashlib
 import importlib.util
@@ -17,7 +19,17 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+ROOT = Path(__file__).resolve().parents[1]
+parser = argparse.ArgumentParser()
+parser.add_argument("--tool-root", type=Path, default=ROOT / "tools")
+parser.add_argument("--single", help="run one test (a negative control)")
+parser.add_argument("--negative-controls", action="store_true")
+args, _ = parser.parse_known_args()
+sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(args.tool_root))
+import ci_gate
+import check as host_check
+import gate_tier
 import release_tag
 import release_tools as release
 import daily_firmware
@@ -50,7 +62,7 @@ class LocalLinksTests(unittest.TestCase):
                 elsewhere.mkdir()
                 for name in ('.gitignore', 'rust/firmware/native/firmware_version.h'):
                     (root / name).parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copyfile(release.ROOT / name, root / name)
+                    shutil.copyfile(ROOT / name, root / name)
                 (root / 'installer').mkdir()
 
                 def git(*args):
@@ -81,7 +93,7 @@ class ReleaseTests(unittest.TestCase):
         for name in (".cz.toml", "requirements-release.txt", "rust/firmware/native/firmware_version.h", "tools/changelog.md.j2"):
             target = self.root / name
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(release.ROOT / name, target)
+            shutil.copyfile(ROOT / name, target)
         fixture_version(self.root, "0.1.0-alpha.0")
         (self.root / ".release-venv").symlink_to(PYTHON.parent.parent, target_is_directory=True)
         (self.root / ".gitignore").write_text(".release-venv/\nartifacts/\n")
@@ -235,14 +247,12 @@ class ReleaseTests(unittest.TestCase):
         self.baseline("0.1.0")
         before = self.git("rev-parse", "HEAD").stdout.strip()
         self.commit("feat(reader): add offline reading")
-        release.check_commits(self.root, before + "..HEAD")
+        release.check_commits(self.root, [before + "..HEAD"])
         self.commit("malformed message")
         with self.assertRaises(subprocess.CalledProcessError):
-            release.check_commits(self.root, before + "..HEAD")
+            release.check_commits(self.root, [before + "..HEAD"])
 
-    def test_missing_history_missing_install_and_wrong_pin_fail_closed(self):
-        with self.assertRaisesRegex(ValueError, "lacks the adoption commit"):
-            release.check_commits(self.root)
+    def test_missing_install_and_wrong_pin_fail_closed(self):
         lock = self.root / "requirements-release.txt"
         lock.write_text("commitizen==0.0.0\n")
         with self.assertRaisesRegex(ValueError, "differs"):
@@ -251,7 +261,7 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Missing"):
             release.release_python(self.root)
 
-    def test_a_real_merge_requires_its_own_conventional_subject(self):
+    def test_a_merge_may_keep_its_default_subject_and_only_a_merge(self):
         self.baseline("0.1.0")
         first = self.git("rev-parse", "HEAD").stdout.strip()
         (self.root / "procedure.py").write_text("STEP = 1\n")
@@ -259,11 +269,13 @@ class ReleaseTests(unittest.TestCase):
         self.commit("fix(tests): bind ZIP codec before cover evidence starts")
         second = self.git("rev-parse", "HEAD").stdout.strip()
         tree = self.git("rev-parse", "HEAD^{tree}").stdout.strip()
-        release.check_commits(self.root, self.base + ".." + second)
+        release.check_commits(self.root, [self.base + ".." + second])
         for message, accepted in (
                 ("Merge pull request #43 from owner/fix\n\n"
-                 "fix(tests): bind ZIP codec before cover evidence starts", False),
-                ("fix(tests): bind ZIP codec before cover evidence starts (#43)", True)):
+                 "fix(tests): bind ZIP codec before cover evidence starts", True),
+                ("Merge branch 'main' into fix", True),
+                ("fix(tests): bind ZIP codec before cover evidence starts (#43)", True),
+                ("bind ZIP codec before cover evidence starts", False)):
             with self.subTest(message=message):
                 merge = self.git("commit-tree", tree, "-p", first, "-p", second,
                                  "-m", message).stdout.strip()
@@ -271,10 +283,65 @@ class ReleaseTests(unittest.TestCase):
                                  first + " " + second)
                 self.assertEqual(self.git("rev-parse", merge + "^{tree}").stdout.strip(), tree)
                 if accepted:
-                    release.check_commits(self.root, self.base + ".." + merge)
+                    release.check_commits(self.root, [self.base + ".." + merge])
                 else:
                     with self.assertRaises(subprocess.CalledProcessError):
-                        release.check_commits(self.root, self.base + ".." + merge)
+                        release.check_commits(self.root, [self.base + ".." + merge])
+        # The same subject on a commit that joins nothing would leave a change unclassified.
+        single = self.git("commit-tree", tree, "-p", second, "-m", "Merge pull request #44 from owner/fix").stdout.strip()
+        with self.assertRaisesRegex(ValueError, "Only a merge may skip"):
+            release.check_commits(self.root, [self.base + ".." + single])
+
+    def test_the_gate_checks_the_commits_versioning_reads(self):
+        """Commitizen reads the commits since the release tag; with tags, the gate checks
+        exactly those. Without tags, it checks what head adds to origin/main."""
+        self.git("checkout", "-qB", "main")
+        self.commit("unconventional history before the release")
+        self.git("tag", "-a", "v0.1.0-alpha.0", "-m", "Newt firmware 0.1.0-alpha.0")
+        self.commit("fix(reader): a change on main")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.branch("feature", "main")
+        self.assertEqual(release.gate(self.root), ["v0.1.0-alpha.0"])
+        self.assertIsNone(release.gate(self.root, tags=False))
+        # An unconventional commit on main after the tag: Commitizen reads it.
+        self.git("checkout", "-q", "main")
+        self.commit("unconventional change on main")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.branch("later", "main")
+        with self.assertRaises(subprocess.CalledProcessError):
+            release.gate(self.root)
+        # main's push CI checked that commit when it landed; a branch's routine run checks its own.
+        self.assertIsNone(release.gate(self.root, tags=False))
+        self.commit("unconventional change on the branch")
+        with self.assertRaises(subprocess.CalledProcessError):
+            release.gate(self.root, tags=False)
+
+    def test_a_routine_run_reads_no_tag(self):
+        history = self.release_history()
+        change = self.branch("feature", history.release)
+        self.assert_untagged(change)
+        self.assertIsNone(release.gate(self.root, tags=False))
+        for tag in self.git("tag", "--list").stdout.split():
+            self.git("tag", "-d", tag)
+        self.assertIsNone(release.gate(self.root, tags=False))
+        with self.assertRaisesRegex(ValueError, "no tag v0.1.0-alpha.1"):
+            release.gate(self.root)
+
+    def test_ci_and_only_an_explicit_request_check_the_release_tags(self):
+        class Stop(Exception):
+            pass
+        for flags, expected in (([], ["--no-tags"]), (["--release-tags"], [])):
+            with self.subTest(flags=flags), patch.object(host_check, "phase_run", side_effect=Stop) as run:
+                arguments = SimpleNamespace(suite="quick", tier="local", release_tags=bool(flags))
+                with self.assertRaises(Stop):
+                    host_check.gate(arguments)
+                command = run.call_args.args[0]
+                self.assertEqual((Path(command[2]).name, command[3:]), ("release_tools.py", expected))
+        for part in ("all", "0/7"):
+            with self.subTest(part=part):
+                host = ci_gate.commands(ROOT, sys.executable, "push", part)[0]
+                self.assertEqual(host[0], "host")
+                self.assertIn("--release-tags", host[1])
 
     def test_fixture_reset_survives_future_release_and_maturity_policy(self):
         for future in ("0.1.0-alpha.1", "0.2.0-rc.5", "1.2.3"):
@@ -361,10 +428,10 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(changed["firmware_version"], original["firmware_version"])
 
     def test_commit_during_native_clean_is_rejected_before_compilation(self):
-        spec = importlib.util.spec_from_file_location("release_native_driver", release.ROOT / "tools/firmware-build.py")
+        spec = importlib.util.spec_from_file_location("release_native_driver", ROOT / "tools/firmware-build.py")
         driver = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(driver)
-        shutil.copyfile(release.ROOT / 'platformio-rust-app.ini', self.root / 'platformio-rust-app.ini')
+        shutil.copyfile(ROOT / 'platformio-rust-app.ini', self.root / 'platformio-rust-app.ini')
         bundle = self.root / '.build/regional-dev-usb/crt/x509_crt_bundle'
         bundle.parent.mkdir(parents=True)
         bundle.write_bytes(b'release certificate fixture')
@@ -402,29 +469,29 @@ class ReleaseTests(unittest.TestCase):
     def test_a_planned_merge_onto_an_untagged_release_fails_until_it_is_tagged(self):
         history = self.release_history()
         change = self.branch("feature", history.tagged)
-        self.assertEqual(release.check_release_tagged(self.root, change), "v0.1.0-alpha.0")
+        self.assertEqual(release.check_release_tagged(self.root, change), ["v0.1.0-alpha.0"])
         planned = self.planned_merge(history.release, change)
         self.assert_untagged(planned)
         # The merge procedure names the planned merge by its review range, not HEAD.
         self.git("checkout", "-q", "feature")
-        self.assertEqual(release.gate(self.root, f"{self.base}..HEAD"), "v0.1.0-alpha.0")
+        self.assertEqual(release.gate(self.root, f"{self.base}..HEAD"), ["v0.1.0-alpha.0"])
         with self.assertRaisesRegex(ValueError, "no tag v0.1.0-alpha.1"):
             release.gate(self.root, f"{self.base}..{planned}")
         self.git("tag", "-a", "v0.1.0-alpha.1", "-m", "fixture release tag", history.release)
-        self.assertEqual(release.check_release_tagged(self.root, planned), "v0.1.0-alpha.1")
-        self.assertEqual(release.gate(self.root, f"{self.base}..{planned}"), "v0.1.0-alpha.1")
+        self.assertEqual(release.check_release_tagged(self.root, planned), ["v0.1.0-alpha.1"])
+        self.assertEqual(release.gate(self.root, f"{self.base}..{planned}"), ["v0.1.0-alpha.1"])
 
     def test_a_release_branch_and_its_release_merge_pass_before_their_tag_exists(self):
         history = self.release_history()
         # As the release branch sees it, before its merge: main ends at the tagged baseline.
         self.git("update-ref", "refs/remotes/origin/main", history.tagged)
         for head in (history.bump, history.record):
-            self.assertEqual(release.check_release_tagged(self.root, head), "v0.1.0-alpha.0")
+            self.assertEqual(release.check_release_tagged(self.root, head), ["v0.1.0-alpha.0"])
         planned = self.planned_merge(history.tagged, history.record)
-        self.assertEqual(release.gate(self.root, f"{self.base}..{planned}"), "v0.1.0-alpha.0")
+        self.assertEqual(release.gate(self.root, f"{self.base}..{planned}"), ["v0.1.0-alpha.0"])
         # As main's CI sees the release merge itself.
         self.git("update-ref", "refs/remotes/origin/main", history.release)
-        self.assertEqual(release.check_release_tagged(self.root, history.release), "v0.1.0-alpha.0")
+        self.assertEqual(release.check_release_tagged(self.root, history.release), ["v0.1.0-alpha.0"])
 
     def test_a_planned_merge_fails_while_origin_main_is_behind_its_destination(self):
         history = self.release_history()
@@ -435,7 +502,7 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "origin/main is behind the planned merge's destination"):
             release.gate(self.root, f"{self.base}..{planned}")
         # A plain branch commit's first parent is its own history, not a destination.
-        self.assertEqual(release.check_release_tagged(self.root, change, planned_merge=True), "v0.1.0-alpha.0")
+        self.assertEqual(release.check_release_tagged(self.root, change, planned_merge=True), ["v0.1.0-alpha.0"])
         self.git("update-ref", "refs/remotes/origin/main", history.release)
         with self.assertRaisesRegex(ValueError, "no tag v0.1.0-alpha.1"):
             release.gate(self.root, f"{self.base}..{planned}")
@@ -446,7 +513,7 @@ class ReleaseTests(unittest.TestCase):
         self.git("merge", "--no-ff", "-qm", "fix(reader): take the release", history.release)
         self.assert_untagged(self.head())
         self.git("tag", "-a", "v0.1.0-alpha.1", "-m", "fixture release tag", history.release)
-        self.assertEqual(release.check_release_tagged(self.root, self.head()), "v0.1.0-alpha.1")
+        self.assertEqual(release.check_release_tagged(self.root, self.head()), ["v0.1.0-alpha.1"])
 
     def test_a_branch_from_an_untagged_release_fails(self):
         history = self.release_history()
@@ -477,9 +544,9 @@ class ReleaseTests(unittest.TestCase):
         main = self.planned_merge("main", self.branch("feature", "main"))
         self.git("update-ref", "refs/remotes/origin/main", main)
         later = self.branch("later", main)
-        self.assertEqual(release.check_release_tagged(self.root, later), "v0.1.0-alpha.0")
+        self.assertEqual(release.check_release_tagged(self.root, later), ["v0.1.0-alpha.0"])
         self.assertEqual(release.check_release_tagged(self.root, self.planned_merge(main, later)),
-                         "v0.1.0-alpha.0")
+                         ["v0.1.0-alpha.0"])
 
     def export_shaped_main(self):
         """main with only files a clean export writes: the fixture's venv link leaves the index."""
@@ -494,10 +561,7 @@ class ReleaseTests(unittest.TestCase):
 
     def assert_no_snapshot_boundary(self, head="HEAD"):
         self.git("update-ref", "refs/remotes/origin/main", self.head())
-        with self.assertRaisesRegex(ValueError, "lacks the adoption commit"):
-            release.adoption_base(self.root)
-        with self.assertRaisesRegex(ValueError, "lacks the adoption commit"):
-            release.check_commits(self.root)
+        self.assertIsNone(release.snapshot_root(self.root))
         root = self.git("rev-list", "--max-parents=0", "HEAD").stdout.strip()
         with self.assertRaisesRegex(ValueError, "has no parent"):
             release.check_release_tagged(self.root, root)
@@ -507,23 +571,23 @@ class ReleaseTests(unittest.TestCase):
         self.git("commit", "--amend", "-qm", "chore: start from a clean export", "-m", self.snapshot_trailer())
         snapshot = self.head()
         self.git("update-ref", "refs/remotes/origin/main", snapshot)
-        self.assertEqual((release.adoption_base(self.root), release.check_release_tagged(self.root)), (snapshot, ""))
+        self.assertEqual((release.snapshot_root(self.root), release.gate(self.root)), (snapshot, []))
+        self.assertIsNone(release.gate(self.root, tags=False))
         # After the root, the release rules apply exactly as after ADOPTION_BASE.
         self.commit("fix(reader): change")
-        release.check_commits(self.root)
+        self.assertIsNone(release.gate(self.root, tags=False))
         with self.assertRaisesRegex(ValueError, "no tag v0.1.0-alpha.0"):
             release.check_release_tagged(self.root)
         self.git("tag", "-a", "v0.1.0-alpha.0", "-m", "Newt firmware 0.1.0-alpha.0", snapshot)
-        self.assertEqual(release.check_release_tagged(self.root), "v0.1.0-alpha.0")
+        self.assertEqual(release.gate(self.root), ["v0.1.0-alpha.0"])
         self.commit("malformed message")
         with self.assertRaises(subprocess.CalledProcessError):
-            release.check_commits(self.root)
+            release.gate(self.root)
         # A shallow clone cannot prove where its history starts.
         clone = self.root.parent / (self.root.name + "-shallow")
         self.addCleanup(shutil.rmtree, clone, True)
         subprocess.run(["git", "clone", "-q", "--depth", "1", "file://" + str(self.root), str(clone)], check=True)
-        with self.assertRaisesRegex(ValueError, "lacks the adoption commit"):
-            release.adoption_base(clone)
+        self.assertIsNone(release.snapshot_root(clone))
 
     def test_a_malformed_or_mismatched_snapshot_trailer_is_no_boundary(self):
         self.export_shaped_main()
@@ -690,5 +754,52 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(self.origin_listing(), before)
 
 
+# (tool, old, new, test): removing the guard must make its test fail.
+CONTROLS = (
+    ("release_tools.py", "            raise ValueError(f\"Release {version} ({base[:12]} on origin/main) has no tag",
+     "            continue\n            raise ValueError(f\"Release {version} ({base[:12]} on origin/main) has no tag",
+     "test_the_guard_fails_closed_without_origin_main_or_tags"),
+    ("release_tools.py", "        if committed_release(root, tagged)[0] != version:", "        if False:",
+     "test_a_tag_on_another_version_or_off_main_history_fails"),
+    ("release_tools.py", "        if tagged not in mainline:", "        if False:",
+     "test_a_tag_on_another_version_or_off_main_history_fails"),
+    ("release_tools.py", "    for rev_range in ranges:", "    for rev_range in ranges[:0]:",
+     "test_message_checks_and_range_reject_malformed_commits"),
+    ("release_tools.py", "        ranges = [f\"refs/tags/{tag}..{head}\" for tag in built_on]", "        ranges = []",
+     "test_the_gate_checks_the_commits_versioning_reads"),
+    ("release_tools.py", "        ranges = [f\"{base}..{head}\" for base in destination_bases(root, head)]", "        ranges = []",
+     "test_the_gate_checks_the_commits_versioning_reads"),
+    ("release_tools.py", "        if unmerged:", "        if False:", "test_a_merge_may_keep_its_default_subject_and_only_a_merge"),
+    ("check.py", '*([] if args.release_tags else ["--no-tags"])', '"--no-tags"',
+     "test_ci_and_only_an_explicit_request_check_the_release_tags"),
+    ("ci_gate.py", "'--release-tags', ", "", "test_ci_and_only_an_explicit_request_check_the_release_tags"),
+)
+
+
+def negative_controls():
+    for tool, old, new, test in CONTROLS:
+        with tempfile.TemporaryDirectory(prefix="release-control-") as scratch:
+            source = (args.tool_root / tool).read_text()
+            if source.count(old) != 1:
+                raise RuntimeError("Negative control anchor drift: " + test)
+            # A copied release_tools.py finds the release venv beside its own tools folder.
+            tools = Path(scratch) / "tools"
+            tools.mkdir()
+            (tools / tool).write_text(source.replace(old, new))
+            (Path(scratch) / ".release-venv").symlink_to(PYTHON.parent.parent)
+            shutil.copyfile(ROOT / "requirements-release.txt", Path(scratch) / "requirements-release.txt")
+            result = subprocess.run([sys.executable, "-B", __file__, "--tool-root", tools, "--single", test],
+                                    capture_output=True, text=True)
+            if result.returncode == 0 or "FAIL:" not in result.stderr:
+                raise RuntimeError("Guard removal was not caught: " + test + "\n" + result.stderr)
+            print("PASS guard-removal control: " + test, flush=True)
+
+
 if __name__ == "__main__":
-    unittest.main()
+    loader = unittest.defaultTestLoader
+    suite = (loader.loadTestsFromName(args.single, ReleaseTests) if args.single
+             else loader.loadTestsFromModule(sys.modules[__name__]))
+    if not unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful():
+        sys.exit(1)
+    if args.negative_controls or (not args.single and gate_tier.negative_controls(__file__)):
+        negative_controls()

@@ -229,7 +229,7 @@ class NightlyTests(unittest.TestCase):
         self.stamp()
         self.change('rust/feature.rs', 'feat(reader): a feature')
         # The release gate's tag lookup and the tag tool read main's versions, never nightly tags.
-        self.assertEqual(release.check_release_tagged(self.root), 'v0.2.0')
+        self.assertEqual(release.check_release_tagged(self.root), ['v0.2.0'])
         self.assertEqual(release_tag.release_commit(self.root), self.main)
         # Commitizen's next release and its changelog skip the nightly tag off main.
         cz = [str(release.release_python()), '-I', '-B', '-m', 'commitizen', 'bump']

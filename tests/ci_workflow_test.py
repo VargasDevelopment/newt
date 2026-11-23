@@ -49,7 +49,7 @@ class WorkflowControls(unittest.TestCase):
                 calls = []
                 def phase(command, **kwargs):
                     calls.append(command)
-                    if Path(command[-1]).name == 'release_tools_test.py':
+                    if Path(command[2]).name == 'release_tools_test.py':
                         raise PrerequisiteFailure('authored prerequisite failure')
                 arguments = ['check.py', '--suite', suite]
                 if sys.platform == 'linux':
@@ -61,7 +61,7 @@ class WorkflowControls(unittest.TestCase):
                     with self.assertRaises(PrerequisiteFailure):
                         host_check.main()
                     focused.assert_not_called()
-                self.assertEqual([Path(command[-1]).name for command in calls],
+                self.assertEqual([Path(command[2]).name for command in calls],
                                  ['release_tools.py', 'release_tools_test.py'])
 
     def test_workflow_scope_permissions_pins_cache_and_fresh_commands(self):

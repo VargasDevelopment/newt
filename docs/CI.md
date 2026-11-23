@@ -180,8 +180,9 @@ Pushes, nightly and manual runs always take `full`, so `release-tag` and
 
 In the docs lane the `check` job is skipped and the `docs` job runs instead:
 
-- the release gate as `check.py` runs it (Conventional Commits and the
-  release-tag guard), with the pinned Commitizen alone
+- the release gate as CI's `check.py --release-tags` runs it (Conventional
+  Commits since the release tag and the release-tag guard), with the pinned
+  Commitizen alone
   (`ci_environment.py --prepare-release`);
 - a links check: each relative link or image in a changed Markdown file, and
   each link from any tracked Markdown file to a changed path, must name a
@@ -241,8 +242,9 @@ without a separately reviewed authorization and validation procedure. These
 checks constrain events; they do not sandbox trusted code or isolate the host.
 
 Checkout uses exact source, complete history, the release tags and no persisted
-credentials. Full history preserves Commitizen’s adoption boundary; the tags let
-the release gate refuse work built on an untagged release
+credentials. Full history and the tags let the release gate read the commits
+since the release tag, as Commitizen does, and refuse work built on an untagged
+release
 ([RELEASING.md](RELEASING.md#tag-the-release)). Source bytes and modes
 are checked before acquisition and around gates. Generated receipts cannot
 grant admission. The tracked `artifacts/library-ui-review.json` is a separate

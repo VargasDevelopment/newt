@@ -8,10 +8,13 @@ header label and the matching `.cz.toml` version. It uses Commitizen's `semver2`
 (`apps/pocket-pause.json`), `.newt` format and USB/DIAG schema numbers are separate
 contracts; a firmware bump does not migrate them.
 
-The release gate exempts history before a pinned adoption boundary
-(`ADOPTION_BASE` in `tools/release_tools.py`), which only the private
-history carries; every later commit, including merges, must be a
-Conventional Commit.
+The release gate checks commit messages where versioning reads them.
+Commitizen classifies the commits since the release tag, so every commit there
+must be a Conventional Commit; a merge may instead keep Git's or GitHub's
+`Merge ...` subject, because the commits it joins carry the classification.
+History before the release tag is never read again, so it is not checked. The
+pinned adoption boundary (`ADOPTION_BASE` in `tools/release_tools.py`), which
+only the private history carries, marks where the release rules begin.
 
 A repository started from a clean export (`python3 -B tools/clean_export.py
 --rev REV --out DIR --commit 'NAME <EMAIL>'`) has no such commit. Its single
@@ -20,8 +23,8 @@ trailer the export prints, exactly once, and the gate recomputes that digest
 from the root's own tree. `--commit` makes that root itself after a clean scan:
 exactly the exported entries, including tracked files the `.gitignore` matches
 and the FreeInk pin, which plain `git add -A` would leave out. Only then is
-that root the boundary: every later commit must satisfy Conventional Commits,
-and the root builds on no earlier release until CI tags it with its version. A shallow clone, a malformed or repeated trailer, a trailer on
+that root the boundary: later commits follow the rules above, and the root
+builds on no earlier release until CI tags it with its version. A shallow clone, a malformed or repeated trailer, a trailer on
 a later commit, or a digest that the root's tree does not reproduce fails closed.
 
 ## Project-local setup and CI
@@ -42,20 +45,23 @@ python3 -B tools/check.py
 ```
 
 `tools/check.py` remains the canonical host path. It fails on version
-drift, work built on an untagged release ([Tag the release](#tag-the-release)),
-a missing/wrong Commitizen install, malformed new commit messages, or
-release-tool regression tests. The current reviewed Actions workflow runs fresh
+drift, a missing/wrong Commitizen install, a malformed message on a commit this
+work adds to origin/main, or release-tool regression tests. A routine run reads
+no tag, so a missing tag never fails it. CI runs `check.py --release-tags`,
+which also refuses work built on an untagged release
+([Tag the release](#tag-the-release)) and checks every message since the
+release tag. The current reviewed Actions workflow runs fresh
 host gate and the one firmware build's native resource gate; Linux coverage also
 requires the separate exact-source Mac ImageIO cover check. See [CI.md](CI.md)
 for pinned setup, platform coverage and evidence limits. Versioning adds no
 credentials. CI's two write permissions are the small job that tags a release
 ([Tag the release](#tag-the-release)) and the job that publishes nightly test
 builds ([Nightly test builds](#nightly-test-builds)).
-History through the adoption baseline is exempt. Subsequent commits are checked
-in full, including merge/fixup subjects; use Conventional Commits or squash/rebase
-them before integration. CI must fetch enough history to include the adoption
-baseline, and the release tags; a missing baseline or tag fails closed. For an
-explicit review range:
+Fixup and other non-merge subjects are checked like any other; use Conventional
+Commits or squash/rebase them before integration. A commit that is not a merge
+may not use a `Merge ...` subject: Commitizen would leave its change
+unclassified. CI must fetch complete history and the release tags; a missing
+tag fails closed. For an explicit review range:
 
 ```sh
 python3 -B tools/release_tools.py --rev-range BASE..HEAD
@@ -65,11 +71,11 @@ The release-tag guard checks the range's end, so name the planned merge there.
 A range that ends in a merge is a planned merge onto `origin/main`: its first
 parent must already be on your `origin/main`, so `git fetch origin` first.
 
-Set a merge's subject explicitly, for example
-`gh pr merge NUMBER --merge --subject 'fix(scope): describe the change'`.
-GitHub's default `Merge pull request ...` envelope fails the same history check,
-even if every parent commit passes. Before publishing, construct the planned
-two-parent merge locally and check its full adoption range with the pinned gate.
+Merge with GitHub's default subject (the merge button, or
+`gh pr merge NUMBER --merge`), keeping both parents. Before publishing,
+construct the planned two-parent merge locally and check it with the pinned
+gate: `git fetch origin`, then
+`python3 -B tools/release_tools.py --rev-range origin/main..MERGE`.
 If it changes `code-health-baseline.json`, also run `python3 tools/code_health.py
 --variant regional-dev-usb --adopt BASE` on that merge, on its clean build
 receipts, with `BASE` the destination branch tip, never an older merge base
@@ -164,8 +170,8 @@ A nightly test build is not a release
 
 ## Tag the release
 
-Merge the reviewed release branch like any other change: an explicit
-Conventional subject and both parents kept. That release merge is the release.
+Merge the reviewed release branch like any other change, with both parents
+kept. That release merge is the release.
 CI tags it. Once a `fresh-gates.yml` push run's gate job passes, the run's
 `release-tag` job runs `python3 -B tools/release_tag.py --ci-run RUN_ID COMMIT`
 with this run's id and the commit its gate checked. If that commit is not the
@@ -199,9 +205,12 @@ its failed jobs in Actions or run the manual command. If the gate job did not
 pass, re-run that push run in Actions; CI then tags it. Until the tag exists, the guard below blocks every
 merge.
 
-The release gate makes a skipped tag impossible to miss. `tools/check.py`, CI
-and the planned-merge check above refuse anything built or merged on top of an
-untagged release, and name the missing tag and this command. The release they
+The release gate makes a skipped tag impossible to miss. CI, release
+validation (`tools/release_tools.py`, as in [Prepare a reviewed
+release](#prepare-a-reviewed-release)) and the planned-merge check above refuse
+anything built or merged on top of an untagged release, and name the missing
+tag and this command. A routine `tools/check.py` run reads no tag, so it
+leaves this to them. The release they
 check is the version at the newest origin/main commit the work contains through
 any parent (each one, if git finds several): the destination tip for a planned
 merge, the fork point for a branch, or main itself once a branch merges it in.
@@ -506,9 +515,9 @@ locally, see `installer/README.md`, "Try the site locally".
   public CI ([CI.md](CI.md), "Public CI") with a read-only token and no
   secret: the same gate as the owner's own work, at the local tier (every
   positive test plus the negative controls of the tests it changes). Every
-  commit must be a Conventional Commit, which the gate checks, and firmware
-  changes follow the same memory policy and records. The owner merges with
-  an explicit Conventional subject and both parents.
+  commit but a merge must be a Conventional Commit, which the gate checks,
+  and firmware changes follow the same memory policy and records. The owner
+  merges with GitHub's default subject and both parents.
 - **Trust.** HTTPS to GitHub and the manifest's SHA-256. Releases are not
   signed or attested: a signing key would be one more credential to guard,
   and the notes, the manifest and the tag already name the exact source

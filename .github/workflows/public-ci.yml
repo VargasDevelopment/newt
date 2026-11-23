@@ -80,9 +80,9 @@ jobs:
       matrix:
         part: ['0/7', '1/7', '2/7', '3/7', '4/7', '5/7', '6/7', native]
     env:
-      # A pull request's github.sha is GitHub's own "Merge X into Y" commit, which
-      # the Conventional Commits check refuses; gate the PR's head instead. Main's
-      # push run then gates the real merge commit.
+      # A pull request's github.sha is GitHub's own trial "Merge X into Y" commit,
+      # which nothing merges; gate the PR's head instead. Main's push run then
+      # gates the real merge commit.
       EXPECTED_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
       PART: ${{ matrix.part }}
       # Set only after the owner approves the four rust/toolchain.json archives.
