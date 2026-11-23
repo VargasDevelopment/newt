@@ -441,10 +441,20 @@ static int open_fault(const char *path) {
     press(0);
     return 0;
 }
+/* "card.back=TEXT": the first card read of a path holding TEXT presses Back,
+ * as a hand would while that work still reads, on any boot. */
+static int card_back_used;
+static void card_back(const char *path) {
+    const char *text = preview_conf("card.back");
+    if (card_back_used || !text || !*text || !strstr(path, text) || !task_started || task_suspended) return;
+    card_back_used = 1;
+    press(0);
+}
 /* "card-write:PATH" or "card-sync:PATH": 0 go on, 1 refuse, 2 drop the sync. */
 int preview_io_fault(const char *operation, int32_t fd) {
     settled = 0;
     if (strcmp(operation, "card-read") == 0 && fd >= 0 && fd < 256 && open_fault(descriptors[fd])) return 1;
+    if (strcmp(operation, "card-read") == 0 && fd >= 0 && fd < 256) card_back(descriptors[fd]);
     char what[4200];
     snprintf(what, sizeof what, "%s:%s", operation, fd >= 0 && fd < 256 ? descriptors[fd] : "");
     return preview_store_fault(what);
