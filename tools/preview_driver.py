@@ -168,8 +168,9 @@ def epub(path, title, identifier, cover=None):
 
 
 def prepare_covers(books, covers):
-    """Offline-prepared covers, as tools/prepare-library-covers.py makes them:
-    the firmware's producer cannot decode these PNG covers itself."""
+    """Offline-prepared covers, as tools/prepare-library-covers.py makes them.
+    The firmware can redraw these PNG covers itself, but prepared ones keep
+    the reviewed frames' art."""
     import importlib.util
     spec = importlib.util.spec_from_file_location('prepare_library_covers', ROOT / 'tools/prepare-library-covers.py')
     tool = importlib.util.module_from_spec(spec)
@@ -203,6 +204,8 @@ def library(name, card):
             prepare_covers(books, scratch / 'Newt/Covers')
         if name == 'cover-fault':
             # A damaged prepared cover: each file ends a third of the way in.
+            # The firmware would redraw it from the book; this fixture's
+            # conf holds the producer back to show the fault.
             for cover in (scratch / 'Newt/Covers').iterdir():
                 stat = cover.stat()
                 cover.write_bytes(cover.read_bytes()[:stat.st_size // 3])
@@ -213,7 +216,9 @@ def library(name, card):
             shutil.rmtree(scratch)
     shutil.copytree(cached, card, dirs_exist_ok=True)
     return {'loading': {'freeze': 'library.scan'},
-            'unavailable': {'store.refuse': 'card-list:/newt-sd'}}.get(name, {})
+            'unavailable': {'store.refuse': 'card-list:/newt-sd'},
+            # Only the 64 KiB cover reserve free: no cover work is admitted.
+            'cover-fault': {'cover.heap.free': str(64 * 1024)}}.get(name, {})
 
 
 def app_package(name):

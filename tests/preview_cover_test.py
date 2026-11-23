@@ -489,6 +489,33 @@ def low_heap(binary):
             return f'the next visit ended {results}: {problem}'
 
 
+def damaged_records(binary):
+    """Library's cover-fault card holds prepared covers cut short. Its fixture
+    holds cover work back, so the reviewed frame shows the fault; let go,
+    Books redraws each cover from its book's PNG and shows the art."""
+    def visit(fixture, conf):
+        with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
+            directory = Path(scratch)
+            preview_driver.first_boots(binary, directory, [preview_driver.SKIP_QUICK_START])
+            preview_driver.library(fixture, directory / 'card')
+            preview_driver.write_conf(directory, conf)
+            covers = directory / 'card/Newt/Covers'
+            damaged = {path.name: path.read_bytes() for path in covers.glob('*.nlc')} if covers.exists() else {}
+            preview_driver.fresh(directory)
+            rust_preview.run(binary, directory, SHELF)
+            records = {name: (covers / name).read_bytes() for name in damaged}
+            return (directory / 'frame.pbm').read_bytes(), damaged, records
+    no_covers, _, _ = visit('no-covers', {})
+    shelf, damaged, records = visit('cover-fault', {})
+    if len(damaged) != 4:
+        return f'the cover-fault card holds {sorted(damaged)}, not four damaged records'
+    for name, data in records.items():
+        if data == damaged[name] or len(data) != ART or data[:8] != SIGNATURE or not any(data[28:]):
+            return f'{name} was not redrawn: {len(damaged[name])} damaged bytes became {len(data)}'
+    if shelf == no_covers:
+        return 'Books shows the no-cover card after redrawing every cover'
+
+
 # (case, its controls: [(generated firmware file, exact text, replacement)]).
 CASES = [
     (books_shelf, [
@@ -527,6 +554,10 @@ CASES = [
         # An I/O fault records the book as having no cover.
         [('cover_session.rs', 'if !verdict(result)||!self.unfaulted(){self.no_art=false;return(result,false);}',
           'if !verdict(result)&&result!=R::IoError{self.no_art=false;return(result,false);}')]]),
+    (damaged_records, [
+        # A record cut short counts as current, so its cover is never redrawn.
+        [('cover_probe.rs', 'if file.size()!=28&&file.size()!=(28+cover::PIXELS)as u64{return Probe::Generate;}',
+          'if file.size()!=28&&file.size()!=(28+cover::PIXELS)as u64{return Probe::Current;}')]]),
 ]
 
 
