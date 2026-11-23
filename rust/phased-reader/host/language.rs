@@ -32,7 +32,6 @@ impl BuildLoan for Bank {
 struct Store {
     name: Vec<u8>,
     file: Vec<u8>,
-    stale: Vec<u8>,
 }
 impl CacheStorage for Store {
     fn file_size(&mut self, name: &[u8]) -> i64 {
@@ -63,12 +62,14 @@ impl ReadScope for Store {
     }
 }
 impl CachePresence for Store {
-    fn present(&mut self, name: &[u8], _: bool) -> bool { (self.name == name && !self.file.is_empty()) || (!self.stale.is_empty() && self.stale == name) }
+    fn present(&mut self, name: &[u8], _: bool) -> bool { self.name == name && !self.file.is_empty() }
 }
 
 struct Key;
 impl CacheHash for Key {
     fn hash(&mut self, bytes: &[u8], key: &mut [u8; 32]) -> bool {
+        // Preserve the spine, generation, engine revision and view settings
+        // from the production key encoding. The fixture holds the digest fixed.
         let Some(layout) = bytes.get(84..99) else { return false; };
         key[..layout.len()].copy_from_slice(layout);
         true
@@ -127,16 +128,21 @@ pub fn run(root: &Path) -> std::io::Result<()> {
             }
             assert_eq!(cache.build(&mut source, &digest, 0, &mut operation), Build::Ready);
             if name == "ja" {
-                for stale in [&[][..], &previous_name] {
-                    operation.reader.close();
-                    cache.store.stale = stale.to_vec();
-                    assert!(cache.stored(&digest, 0, &mut operation), "warm Japanese cache presence");
-                    assert_eq!(operation.reader.open_phased(&mut source, operation.storage, operation.lender, operation.backend), Status::Ok);
-                    assert!(cache.capture(&mut source, &digest, request, &mut operation).hit,
-                        "verified selection opens the Japanese file even with a stale English hint");
-                }
-                cache.store.stale.clear();
+                operation.reader.close();
+                assert!(cache.stored(&digest, 0, &mut operation), "warm Japanese cache presence");
                 assert_eq!(operation.reader.open_phased(&mut source, operation.storage, operation.lender, operation.backend), Status::Ok);
+                assert!(cache.capture(&mut source, &digest, request, &mut operation).hit);
+
+                let japanese_name = cache.store.name.clone();
+                operation.reader.close();
+                cache.store.name = previous_name;
+                cache.store.file.clone_from(&english);
+                assert!(cache.stored(&digest, 0, &mut operation), "old English file is a warm hint");
+                assert_eq!(operation.reader.open_phased(&mut source, operation.storage, operation.lender, operation.backend), Status::Ok);
+                assert!(!cache.capture(&mut source, &digest, request, &mut operation).hit,
+                    "old English cache must miss after verified Japanese selection");
+                assert_eq!(cache.build(&mut source, &digest, 0, &mut operation), Build::Ready);
+                assert_eq!(cache.store.name, japanese_name);
             }
         }
         assert!(breaks.seen > 0, "{name}: cache build must break text");

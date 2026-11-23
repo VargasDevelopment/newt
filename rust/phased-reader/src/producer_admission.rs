@@ -24,7 +24,9 @@ impl<C: ProducerProbe + CachePresence> PhasedChapterCache<'_, C> {
     ) -> MissingProbe {
         let info = r.reader.info();
         let spine = if spine == u32::MAX { info.spine } else { spine };
-        let language = r.reader.selection().language;
+        let Some(language) = r.reader.book_language() else {
+            return MissingProbe::Denied;
+        };
         let mut name = [0; 128];
         let mut generation = 0;
         if !self.producer_name(digest, spine, &mut name, &mut generation, language) {

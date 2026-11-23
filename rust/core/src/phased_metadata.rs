@@ -72,9 +72,6 @@ impl BookLanguage {
     pub fn from_opf(tag: Option<&[u8]>) -> Self {
         let Some(tag) = tag else { return Self::Default; };
         // Retain only the primary language. A bad suffix invalidates the tag.
-        if tag.len() > 63 {
-            return Self::Default;
-        }
         let mut parts = tag.split(|&byte| byte == b'-' || byte == b'_');
         let primary = parts.next().unwrap_or_default();
         if !parts.all(|part| (1..=8).contains(&part.len()) && part.iter().all(u8::is_ascii_alphanumeric)) {
@@ -99,6 +96,31 @@ impl BookLanguage {
             Self::Chinese => c"zh",
             Self::Japanese => c"ja",
             Self::Korean => c"ko",
+        }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::BookLanguage;
+
+    #[test]
+    fn book_languages_normalize_or_fall_back() {
+        use BookLanguage::{Chinese, Default, Japanese, Korean};
+        for (input, expected) in [
+            (Some(b"zh-Hant-TW".as_slice()), Chinese),
+            (Some(b"JA_jp"), Japanese),
+            (Some(b"Ko"), Korean),
+            (Some(b"en-GB"), Default),
+            (Some(b"ja--JP"), Default),
+            (Some(b"ja-!"), Default),
+            (Some(b"ja-123456789"), Default),
+            (Some(b""), Default),
+            (Some(b"jargon"), Default),
+            (None, Default),
+        ] {
+            assert_eq!(BookLanguage::from_opf(input), expected);
         }
     }
 }

@@ -158,6 +158,9 @@ impl<'a, 'p> PhasedReader<'a, 'p> {
     pub fn has_page(&self) -> bool {
         self.has_page
     }
+    pub fn book_language(&self) -> Option<BookLanguage> {
+        self.opened.then(|| self.selection().language)
+    }
     pub fn selection(&self) -> &Selection {
         &self.selections[self.active]
     }

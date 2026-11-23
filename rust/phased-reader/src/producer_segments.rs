@@ -19,17 +19,18 @@ pub struct Segments {
     pub count: u32,
     pub skipped: u32,
     pub(crate) staged: bool,
-    pub(crate) language: BookLanguage,
+    pub(crate) language: Option<BookLanguage>,
 }
 impl Segments {
     pub fn new(certified_pages: u32) -> Self {
         Self { name: [0; 128], generation: 0, next: 0,
             count: ChapterSegment::count(certified_pages), skipped: u32::MAX, staged: false,
-            language: BookLanguage::default() }
+            language: None }
     }
     fn identify(&mut self, route: &mut Route<'_>, spine: u32) -> bool {
         // Frozen identity publishes the generation before the fallible hash.
-        self.generation = identity_generation(route.settings, self.language);
+        let Some(language) = self.language else { return false; };
+        self.generation = identity_generation(route.settings, language);
         let Ok(name) = identity_at_generation(route.settings, route.digest, spine, route.hash, self.generation) else {
             return false;
         };

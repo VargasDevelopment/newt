@@ -346,7 +346,7 @@ class LandingTest(unittest.TestCase):
                 if command[:2] == ['git', 'rev-parse']: return 'a'*12+'\n'
                 if command[:2] == ['git', 'status']: return ''
                 if command[:2] == ['git', 'show']: return '2026-11-16\n'
-                return passed(417 if fail == 'portable' else 418)
+                return passed(418 if fail == 'portable' else 419)
             def cargo(self, ws, target, *args):
                 result = self.run(['cargo', *args], ws)
                 if 'build' in args:
@@ -363,7 +363,7 @@ class LandingTest(unittest.TestCase):
             source_commands=lambda seals: nullcontext(), verify_source_inventory=Mock(), close_sources=Mock())
         binary = root/'parity'; binary.write_bytes(b'parity')
         foundation = Mock(return_value=([None]*(60367 if fail == 'foundation' else 60368), [], binary))
-        forwarding = Mock(return_value={'passed_tests': 14, 'forwarding_cases': 55})
+        forwarding = Mock(return_value={'passed_tests': 15, 'forwarding_cases': 55})
         if fail == 'native': forwarding.side_effect = RuntimeError('native failure')
         if fail == 'seal': fake_support.close_sources.side_effect = RuntimeError('seal failure')
         with patch.object(landing, 'load', return_value=fake_support), \
@@ -380,7 +380,7 @@ class LandingTest(unittest.TestCase):
                 landing.check(checker, {}, snapshot, {'verified': True})
                 evidence = json.loads(receipt.read_text())
                 self.assertFalse(evidence['complete_rust_gate'])
-                self.assertEqual(evidence['portable']['passed_tests'], 418)
+                self.assertEqual(evidence['portable']['passed_tests'], 419)
                 self.assertEqual(evidence['foundation']['comparisons'], 60368)
                 self.assertEqual(evidence['archive']['features'], landing.FEATURES)
                 self.assertTrue(evidence['archive']['default_features'])
@@ -442,7 +442,7 @@ class LandingTest(unittest.TestCase):
             self.assertFalse(receipt.exists())
 
     def test_native_recipe_uses_sealed_product_inputs_and_exact_trace_filter(self):
-        for count in (14, 13):
+        for count in (15, 14):
             with self.subTest(count=count), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory); ws = root/'source'; ws.mkdir()
                 fixture = ws/'tests/producer_forwarding/expected-outputs.bin.zlib'
@@ -459,7 +459,7 @@ class LandingTest(unittest.TestCase):
                 runner = SimpleNamespace(output=root, env={'RUSTFLAGS': '-Dwarnings native-objects'},
                     tools={'clang++': 'mock-clang'}, run=Mock(), cargo=Mock(return_value=passed(count, 17)))
                 with patch.object(landing, 'load', side_effect=[native, sha, recipe]):
-                    if count == 14:
+                    if count == 15:
                         result = landing.native_forwarding(checker, mocked_support, runner, root)
                         self.assertEqual(result['forwarding_cases'], 55)
                     else:

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 use super::*;
-use crate::BookLanguage;
+use crate::{BookLanguage, OperationPhased, PhasedChapterCache, phase_storage::ReadScope, producer_probe::ProducerProbe};
 use super::super::super::identity;
 use core::ffi::CStr;
-use newt_core::{cache_names::segment::{self, ChapterSegment, PAGES},
-    chapter_layout::types::LineBreak, preferences::{Orientation, ViewSettings}};
+use newt_core::{cache_names::{namespace::PageCacheNeed, segment::{self, ChapterSegment, PAGES}},
+    chapter_layout::types::LineBreak, preferences::{Orientation, ViewSettings}, producer_visit::MissingProbe};
 use newt_phased_sink::{FRAME_BYTES, Plan, RUNS, Run, TEXT, Target};
 use std::collections::BTreeMap;
 
@@ -43,9 +43,27 @@ impl CacheStorage for Files {
     }
 }
 
+impl CachePresence for Files {
+    fn present(&mut self, name: &[u8], _: bool) -> bool { self.files.contains_key(name) }
+}
+impl ProducerProbe for Files {
+    fn producer_probe(&mut self, name: &[u8], cancelled: &dyn Fn() -> bool) -> MissingProbe {
+        if cancelled() { MissingProbe::Stopped }
+        else if self.files.contains_key(name) { MissingProbe::Complete }
+        else { MissingProbe::Ready }
+    }
+    fn release_for_admission(&mut self) -> bool { true }
+}
+impl ReadScope for Files {
+    fn query<R>(&mut self, _: &[u8], _: bool, _: &mut [u8], _: &mut dyn FnMut() -> bool,
+        _: impl FnOnce(&mut dyn CacheStorage) -> R,
+    ) -> Result<(R, bool), Status> {
+        unreachable!("a current segmented chapter probes names without reading a map")
+    }
+}
+
 #[test]
 fn current_and_staged_segments_use_the_book_language() {
-    bounded_layout(include_bytes!("../../../tests/producer_forwarding/ja-short.epub"));
     let mut source = Source { bytes: include_bytes!("../../../tests/producer_forwarding/ja.epub").to_vec(), fail: false };
     let bytes = source.size();
     let mut selections = [Selection::default(), Selection::default()];
@@ -60,7 +78,9 @@ fn current_and_staged_segments_use_the_book_language() {
     let mut storage = Storage::new(&mut shared);
     let mut parser = Expat::default();
     let mut breaker = Japanese(0);
+    assert_eq!(reader.book_language(), None);
     assert_eq!(reader.open_phased(&mut source, &mut storage, &mut loan, &mut parser), Status::Ok);
+    assert_eq!(reader.book_language(), Some(BookLanguage::Japanese));
     assert_eq!(reader.capture_phased(&mut source, 0, u32::MAX, Target::Anchor, &mut storage,
         &mut loan, &mut parser, &mut breaker), Status::Ok);
     assert_eq!(reader.publish(&mut source, &mut [0; FRAME_BYTES]), Status::Ok);
@@ -96,10 +116,25 @@ fn current_and_staged_segments_use_the_book_language() {
         let file = &files.files[&name[..69]];
         assert_eq!(&file[8..12], &generation.to_le_bytes());
         assert_eq!(reader.info(), info, "staged producer leaves the visible page alone");
+        if spine == 0 {
+            let mut need = PageCacheNeed::default();
+            let mut parsed = false;
+            let mut operation = OperationPhased::new(&mut reader, &mut storage, &mut loan, &mut parser, &mut breaker);
+            let mut cache = PhasedChapterCache { store: &mut files, hash: route.hash, settings };
+            assert_eq!(cache.producer_stored(&mut source, &digest, spine, Some(&mut need), &|| false,
+                &mut parsed, &mut operation), MissingProbe::Complete, "Japanese producer admission");
+            assert_eq!(need.files, 0);
+            assert_eq!(cache.store.files.len(), ChapterSegment::count(info.page_count) as usize + 1);
+            for name in cache.store.files.keys() {
+                assert!(need.keep.may_contain(name), "protect the current Japanese segments and map");
+            }
+        }
     }
 }
 
-fn bounded_layout(epub: &[u8]) {
+#[test]
+fn bounded_layout_uses_the_book_language() {
+    let epub: &[u8] = include_bytes!("../../../tests/producer_forwarding/ja-short.epub");
     use crate::{bounded::{BOOK_BYTES, Chapters, LAYOUT_BYTES, PARSE_BYTES},
         phase_storage::{bounded::MetadataState, bounded_chapters::Work}};
     struct Discard;

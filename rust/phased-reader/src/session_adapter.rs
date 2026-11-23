@@ -201,7 +201,10 @@ impl<B: ParserBackend + ?Sized, C: CacheStorage + CachePresence>
         if !reader_settings_match(r.reader, self.settings) {
             return session::Build::Failed(Status::Unsupported);
         }
-        let (name, generation) = match identity(self.settings, digest, spine, self.hash, r.reader.selection().language) {
+        let Some(language) = r.reader.book_language() else {
+            return session::Build::Failed(Status::NotFound);
+        };
+        let (name, generation) = match identity(self.settings, digest, spine, self.hash, language) {
             Ok(v) => v,
             Err(e) => return session::Build::Failed(e),
         };
@@ -325,8 +328,8 @@ pub(super) fn reader_settings_match(reader: &PhasedReader<'_, '_>, settings: Vie
         && settings.refresh_pages == defaults.refresh_pages
 }
 
-/// Resume-picture presence hint before OPF selection. The picture itself is
-/// already bound to the running image and immutable book digest.
+/// Presence hint before OPF selection on warm open or resume-picture lookup.
+/// A positive hint still requires verified selection before a cache read.
 pub fn cached(
     settings: ViewSettings,
     digest: &Digest,
@@ -346,8 +349,8 @@ pub(super) fn cached_for_reader(
     hash: &mut dyn crate::hash_provider::CacheHash,
     present: &mut dyn FnMut(&[u8]) -> bool,
 ) -> bool {
-    if reader.opened {
-        cached_for_language(settings, digest, spine, hash, reader.selection().language, present)
+    if let Some(language) = reader.book_language() {
+        cached_for_language(settings, digest, spine, hash, language, present)
     } else {
         cached(settings, digest, spine, hash, present)
     }

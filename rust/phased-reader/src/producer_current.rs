@@ -40,7 +40,7 @@ impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::Pro
             .unwrap_or(false);
         let mut status = if settled { Status::Ok } else { self.settle_current(reader, backend, breaker) };
         if status == Status::Ok {
-            self.state.language = reader.selection().language;
+            self.state.language = reader.book_language();
             status = self.with_buffered(|phase, mut attempt| {
                 if attempt.state.count != 0 {
                     attempt.writer.segmented = true;

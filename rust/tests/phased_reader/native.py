@@ -45,15 +45,13 @@ def native(run, support, ws, original, sdk):
     run.env['RUSTFLAGS'] = shlex.join(host_flags)
     run.cargo(ws, run.output/'target', 'build', '-p', 'newt-phased-reader',
               '--bin', 'phased-reader-host', '--features', 'native-host', '--target', HOST)
-    executable = run.output/'target'/HOST/'debug/phased-reader-host'
-    return None, executable
+    return None, run.output/'target'/HOST/'debug/phased-reader-host'
 
 
 def book_language(run, ws, executable):
     fixture_dir = run.output/'language-fixtures'
     load('phased_reader_fixtures', ws/'phased-reader/host/fixtures.py').write_languages(fixture_dir)
     run.run([executable, '--language', fixture_dir], ROOT)
-
 
 
 def assemble(output, support):
