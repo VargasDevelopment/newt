@@ -179,6 +179,9 @@ the image hash comes from the verified clean resource report. Receipt generation
 does not alter the acceptance report schema. Old Arduino app descriptor metadata
 is left alone; use the Newt receipt for release identity.
 
+Run the [Mac ImageIO cover gate](CI.md#explicit-cover-coverage-boundary) on the
+exact release commit.
+
 Before each owner update, update What's new: edit
 `rust/device-ui/whats_new_notes.h` with the update's date and its changes in
 plain words, newest first, and commit it before the clean build, so the notes

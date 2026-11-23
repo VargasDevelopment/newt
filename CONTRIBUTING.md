@@ -96,7 +96,7 @@ request template, or Markdown and images directly in `docs/` (not
 
 Some evidence CI can't give. Add it where it applies:
 
-- Follow the [Mac ImageIO cover gate rules](docs/CI.md#explicit-cover-coverage-boundary).
+- When it applies, run the [Mac ImageIO cover gate](docs/CI.md#explicit-cover-coverage-boundary).
 - Device behavior: testing on a real X3 (below).
 - Releases and merges: the owner's release acceptance and merge checks
   ([docs/RELEASING.md](docs/RELEASING.md)).

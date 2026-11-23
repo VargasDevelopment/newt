@@ -159,9 +159,8 @@ def gate(args) -> None:
         return
     print(f"PASS: official FreeInk source {FREEINK_COMMIT}, checkout inputs clean", flush=True)
     print(f"TIER {args.tier}: negative controls of {included or 'no test'}", flush=True)
-    chosen = set(included.split(','))
-    controls = None if included == 'all' else lambda script: script in chosen
-    phases, seconds = gate_plan.plan(args.profile, args.fresh_objects, controls), gate_tier.phase_seconds(ROOT)
+    phases = gate_plan.tier_plan(args.profile, args.fresh_objects, included)
+    seconds = gate_tier.phase_seconds(ROOT)
     if args.shard:
         weights = gate_tier.phase_seconds(ROOT, gate_tier.SHARD_SECONDS)
         complete, phases = len(phases), gate_tier.shard(phases, *args.shard, weights)

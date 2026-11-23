@@ -56,7 +56,7 @@ On Linux, add `--profile linux` to `check.py`.
 
 Some evidence CI cannot give. Add it where it applies:
 
-- Follow the [Mac ImageIO cover gate rules](docs/CI.md#explicit-cover-coverage-boundary).
+- When it applies, run the [Mac ImageIO cover gate](docs/CI.md#explicit-cover-coverage-boundary).
 - Device behaviour: a check on a real X3 ([Evidence](#evidence)).
 - A release: release acceptance ([docs/RELEASING.md](docs/RELEASING.md)).
 - A merge: the checks of the planned merge itself

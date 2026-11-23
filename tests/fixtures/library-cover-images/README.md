@@ -1,4 +1,4 @@
-These four original CC0 UI cover PNGs come from `tools/library-redesign-preview.py`.
+These four original CC0 UI cover PNGs come from `tools/library-cover-fixture.py`.
 Their exact bytes are committed so Linux fixture preparation does not depend on
 the runtime zlib compressor. `tools/library-cover-fixture.py` locks their source
 and 3384-byte ImageIO payload hashes; the Mac cover suite checks the unchanged

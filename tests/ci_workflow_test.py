@@ -3,6 +3,7 @@ import json
 import ast
 import hashlib
 from contextlib import redirect_stdout
+import importlib.util
 import io
 import os
 from pathlib import Path, PurePosixPath
@@ -18,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 import ci_environment as setup
 import ci_gate as gate
 import check as host_check
+import freeink_source_pin
 import release_tag
 from release_tools import release_python
 from workflow_expression import PRIVATE, PUBLIC, trust_expression, where
@@ -476,7 +478,18 @@ class GateControls(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
         self.expected = 'a' * 40
-        self.identity = {'git_revision': self.expected, 'dirty': False, 'reviewed_ui_frames': 3}
+        self.identity = {'git_revision': self.expected, 'dirty': False}
+
+    def git(self, *args, root=None):
+        return subprocess.run(['git', *args], cwd=root or self.root, check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    def init_checkout(self, root):
+        self.git('init', '-q', root=root)
+        self.git('config', 'user.name', 'CI fixture', root=root)
+        self.git('config', 'user.email', 'fixture@example.invalid', root=root)
+        self.git('config', 'commit.gpgsign', 'false', root=root)
+        self.git('config', 'core.hooksPath', str(root / 'no-hooks'), root=root)
 
     def test_native_receipt_requires_the_full_shipping_rust_image(self):
         variant = gate.FIRMWARE_BUILD
@@ -511,6 +524,7 @@ class GateControls(unittest.TestCase):
             if validation_error:
                 raise RuntimeError(validation_error)
         with patch.object(gate, 'committed_source', side_effect=[self.identity, after or self.identity]), \
+             patch.object(gate, 'committed_ui_authority', return_value=b'{"frames": {}}'), \
              patch.object(gate, 'validate_native', side_effect=validate) as native, \
              patch.object(gate.gate_tier, 'ci_tier', return_value=tier), \
              patch.object(gate.subprocess, 'run', side_effect=execute), redirect_stdout(io.StringIO()):
@@ -549,7 +563,7 @@ class GateControls(unittest.TestCase):
             native.assert_called_once_with(self.root, self.expected)
             receipt = json.loads(report.read_text())
             self.assertFalse(receipt['reusable_proof'])
-            self.assertEqual(receipt['coverage']['reviewed_ui_frames'], self.identity['reviewed_ui_frames'])
+            self.assertEqual(receipt['coverage']['reviewed_ui_frames'], 0)
 
     def test_each_gate_failure_remains_failure_and_invalidates_old_record(self):
         report = self.root / '.build/ci-gate/report.json'
@@ -618,12 +632,8 @@ class GateControls(unittest.TestCase):
             destination = self.root / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, destination)
-        def git(*args):
-            return subprocess.run(['git', *args], cwd=self.root, check=True, capture_output=True, text=True).stdout.strip()
-        git('init', '-q')
-        git('config', 'user.name', 'CI fixture')
-        git('config', 'user.email', 'fixture@example.invalid')
-        git('config', 'core.hooksPath', str(self.root / 'no-hooks'))
+        self.init_checkout(self.root)
+        git = self.git
         git('add', '.')
         git('commit', '-qm', 'chore: authored CI fixture')
         expected = git('rev-parse', 'HEAD')
@@ -641,27 +651,40 @@ class GateControls(unittest.TestCase):
                 gate.committed_source(self.root, expected)
 
     def test_reviewed_ui_authority_cannot_be_modified_or_removed_as_generated_output(self):
-        for name in ('.cz.toml', 'rust/firmware/native/firmware_version.h', gate.UI_REVIEW_AUTHORITY):
+        for name in ('.cz.toml', 'rust/firmware/native/firmware_version.h'):
             destination = self.root / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, destination)
-        def git(*args):
-            return subprocess.run(['git', *args], cwd=self.root, check=True,
-                                  capture_output=True, text=True).stdout.strip()
-        git('init', '-q')
-        git('config', 'user.name', 'CI fixture')
-        git('config', 'user.email', 'fixture@example.invalid')
-        git('config', 'core.hooksPath', str(self.root / 'no-hooks'))
+        authority = self.root / gate.UI_REVIEW_AUTHORITY
+        authority.parent.mkdir()
+        manifest = {'schema': 1, 'review': 'authored CI test fixture', 'frames': {'library': 'a' * 64}}
+        original = json.dumps(manifest).encode()
+        authority.write_bytes(original)
+        self.init_checkout(self.root)
+        git = self.git
         git('add', '.')
         git('commit', '-qm', 'chore: commit reviewed UI authority')
         expected = git('rev-parse', 'HEAD')
-        authority = self.root / gate.UI_REVIEW_AUTHORITY
-        original = authority.read_bytes()
-        manifest = json.loads(original)
         with patch.object(gate, 'verify_source_pin'):
             identity = gate.committed_source(self.root, expected)
             self.assertEqual(identity['reviewed_ui_manifest_sha256'], hashlib.sha256(original).hexdigest())
-            self.assertEqual(identity['reviewed_ui_frames'], len(manifest['frames']))
+            self.assertNotIn('reviewed_ui_frames', identity)
+            with patch.object(sys, 'platform', 'linux'):
+                complete = gate.coverage(self.root, 'push', 'all')
+                self.assertEqual(complete['reviewed_ui_frames'], 1)
+                self.assertNotIn('required_mac_imageio_gate', complete)
+                native = gate.coverage(self.root, 'push', 'native')
+                self.assertNotIn('reviewed_ui_frames', native)
+                self.assertNotIn('required_mac_imageio_gate', native)
+                plan = gate.gate_plan.tier_plan('linux', False, '')
+                for index in range(7):
+                    shard = gate.gate_tier.shard(plan, index, 7, {})
+                    coverage = gate.coverage(self.root, 'push', f'{index}/7')
+                    if any(phase.name == gate.gate_plan.REVIEWED_UI_TEST for phase in shard):
+                        self.assertEqual(coverage['reviewed_ui_frames'], 1)
+                    else:
+                        self.assertNotIn('reviewed_ui_frames', coverage)
+                    self.assertNotIn('required_mac_imageio_gate', coverage)
             # Generated output remains outside source identity and cannot confer proof.
             (self.root / 'artifacts/generated-receipt.json').write_text('{"passed":true}')
             self.assertEqual(gate.committed_source(self.root, expected), identity)
@@ -683,6 +706,54 @@ class GateControls(unittest.TestCase):
         git('commit', '-qm', 'chore: remove reviewed UI authority')
         with patch.object(gate, 'verify_source_pin'), self.assertRaisesRegex(RuntimeError, 'Missing committed reviewed UI'):
             gate.committed_source(self.root, git('rev-parse', 'HEAD'))
+
+    def test_mac_gate_records_real_clean_commit_without_ui_coverage(self):
+        sdk = self.root / 'vendor/freeink-sdk'
+        sdk.mkdir(parents=True)
+        self.init_checkout(sdk)
+        self.git('remote', 'add', 'origin', freeink_source_pin.SDK_ORIGIN, root=sdk)
+        (sdk / 'source.txt').write_text('authored SDK fixture\n')
+        self.git('add', '.', root=sdk)
+        self.git('commit', '-qm', 'chore: add SDK fixture', root=sdk)
+        sdk_commit = self.git('rev-parse', 'HEAD', root=sdk)
+
+        self.init_checkout(self.root)
+        for name in ('rust/firmware/native/firmware_version.h', gate.UI_REVIEW_AUTHORITY):
+            destination = self.root / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / name, destination)
+        (self.root / '.gitignore').write_text('/.build/\n')
+        self.git('add', '.gitignore', 'rust', gate.UI_REVIEW_AUTHORITY)
+        self.git('update-index', '--add', '--cacheinfo', f'160000,{sdk_commit},vendor/freeink-sdk')
+        self.git('commit', '-qm', 'chore: add Mac cover gate checkout fixture')
+        expected = self.git('rev-parse', 'HEAD')
+
+        spec = importlib.util.spec_from_file_location('mac_cover_gate', ROOT / 'tools/check-mac-covers.py')
+        mac_gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mac_gate)
+        command = [sys.executable, '-B', str(self.root / 'tests/library_cover_prepare_test.py')]
+        run = subprocess.run
+        def run_suite_or_git(args, **kwargs):
+            if args == command:
+                return subprocess.CompletedProcess(args, 0)
+            return run(args, **kwargs)
+
+        with patch.object(mac_gate.platform, 'system', return_value='Darwin'), \
+             patch.object(mac_gate.platform, 'platform', return_value='Darwin test'), \
+             patch.object(gate, 'SDK_PIN', sdk_commit), \
+             patch.object(freeink_source_pin, 'SDK_PIN', sdk_commit), \
+             patch.object(mac_gate.subprocess, 'run', side_effect=run_suite_or_git) as execute, \
+             redirect_stdout(io.StringIO()) as output:
+            mac_gate.run_gate(self.root, expected)
+            execute.assert_any_call(command, cwd=self.root, check=True)
+        receipt = json.loads((self.root / '.build/mac-covers/report.json').read_text())
+        self.assertEqual(receipt['source']['git_revision'], expected)
+        self.assertNotIn('reviewed_ui_frames', receipt['source'])
+        self.assertEqual(receipt['phases'], ['mac-imageio-cover-tests'])
+        self.assertEqual(output.getvalue().splitlines(), [
+            'START Mac ImageIO cover helper tests',
+            f'PASS Mac ImageIO cover helper gate for {expected}',
+        ])
 
 
 if __name__ == '__main__':

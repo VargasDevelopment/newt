@@ -1,4 +1,4 @@
-"""Test-only decoder for four exact authored UI PNGs; never a general decoder.
+"""Generator and decoder for the four locked authored UI cover fixtures.
 
 These source/payload pairs were compared byte-for-byte with the unchanged Mac
 ImageIO helper. No JPEG, color, transform, resize or general PNG parity follows.
@@ -20,6 +20,38 @@ CORPUS = {
     '26bc40f3f346d0ca71c0ed81b5592ad56310a0b72e005af7f917c8aec52ddfe9':
         '0aef9897494a931ac46eb14173e0ca04e68de3c43455e429b7d9a67556e96a86',
 }
+
+
+def gray_png(width, height, pixels):
+    def chunk(kind, data):
+        return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+    rows = b''.join(b'\0' + pixels[y * width:(y + 1) * width] for y in range(height))
+    return (b'\x89PNG\r\n\x1a\n'
+            + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 0, 0, 0, 0))
+            + chunk(b'IDAT', zlib.compress(rows, 9)) + chunk(b'IEND', b''))
+
+
+def cover_art(style):
+    pixels = bytearray()
+    for y in range(188):
+        for x in range(144):
+            dx, dy = x - 72, y - 80
+            ink = (x in (8, 135) and 8 <= y <= 179) or (y in (8, 179) and 8 <= x <= 135)
+            if style == 0:
+                ink |= 54 <= x <= 90 and 48 <= y <= 113 and (x < 58 or x > 86 or y < 52 or y > 109)
+                ink |= 26 <= x <= 118 and 132 <= y <= 151 and y % 7 == 0
+            elif style == 1:
+                for center in (40, 104):
+                    ink |= (x - center) ** 2 + (y - 70) ** 2 < 380
+                    ink |= center - 2 <= x <= center + 2 and 70 <= y <= 143
+            elif style == 2:
+                ink |= 36 <= x <= 108 and 48 <= y <= 100 and (y in (48, 100) or x in (36, 108) or y - 48 == (x - 36) // 2)
+                ink |= 20 <= x <= 124 and 125 <= y <= 151 and (y + x // 10) % 9 == 0
+            else:
+                ink |= dx * dx + dy * dy < 700
+                ink |= 20 <= x <= 124 and 128 <= y <= 154 and (y == 128 + x // 8 or y == 154 - x // 9)
+            pixels.append(0 if ink else 245)
+    return gray_png(144, 188, pixels)
 
 
 def bitmap(image):

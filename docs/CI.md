@@ -292,18 +292,18 @@ decoders. The `jpeg_decoder` and `png_decoder` families, the core
 `cover_tolerance` tests and the preview's cover flows
 (`tests/preview_cover_test.py`) exercise those paths. The Linux gate also
 verifies all frames in `artifacts/library-ui-review.json` using the firmware
-host build. The prepared-cover cases use a test helper that accepts only four committed,
-SHA-locked authored PNGs and returns their matching packed ImageIO output.
+host build. The prepared-cover cases use a test helper that accepts only four
+committed, SHA-locked authored PNGs and returns their matching packed ImageIO output.
 Unknown fixture bytes fail closed.
 
 **Mac.** Run the host-only Swift ImageIO cover gate on the exact commit for
-release acceptance and for any change to the ImageIO path. That path includes:
+release acceptance and for any change to the ImageIO path. The path includes
+these inputs.
 
 - `tools/prepare-library-covers.py`
 - `tools/library-cover-image.swift`
 - `tools/library-cover-fixture.py`
 - `tests/fixtures/library-cover-images/`
-- `cover_art` in `tools/library-redesign-preview.py`
 - `tests/library_cover_prepare_test.py`
 - `tools/check-mac-covers.py`
 
@@ -312,7 +312,16 @@ and compares the four locked fixtures against actual ImageIO output.
 The Mac gate does not build the firmware or render frames; the firmware host
 build is Linux x86_64 only.
 
+From a fresh clone, replace `FULL_SHA` with the candidate's full commit SHA.
+For a pull request, replace `PR_NUMBER` with its number and fetch its head
+before checking out the commit.
+
 ```sh
+git clone https://github.com/VargasDevelopment/newt.git
+cd newt
+git fetch origin pull/PR_NUMBER/head  # For a pull request
+git checkout --detach FULL_SHA
+git submodule update --init vendor/freeink-sdk
 python3 -B tools/check-mac-covers.py --expected-commit FULL_SHA
 ```
 

@@ -54,6 +54,12 @@ class SourcePinTest(unittest.TestCase):
         self.assertEqual(effective, trust.SDK_ORIGIN.encode() + b'\n')
         self.assertEqual(trust.verify_source_pin(self.sdk), self.pin)
 
+    def test_uninitialized_submodule_reports_setup_command(self):
+        uninitialized = self.sdk.parent / 'vendor/freeink-sdk'
+        uninitialized.mkdir(parents=True)
+        with self.assertRaisesRegex(RuntimeError, 'git submodule update --init vendor/freeink-sdk'):
+            trust.verify_source_pin(uninitialized)
+
     def test_origin_control_characters_are_not_normalized(self):
         for suffix in ('\r', '\n', '\v', '\f', '\x85', '\u2028', '\u2029', ' '):
             with self.subTest(suffix=repr(suffix)):

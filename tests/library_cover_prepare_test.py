@@ -5,6 +5,7 @@ it provides no image decoding evidence. Default execution requires Mac ImageIO.
 """
 import hashlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -328,16 +329,17 @@ precondition(CGImageDestinationFinalize(output))
             compiler.assert_not_called()
 
     def test_four_authored_payloads_match_actual_imageio(self):
-        fixture, art = fixture_tools()
+        fixture, _ = fixture_tools()
         image, bitmap = self.work / 'authored.png', self.work / 'native-bitmap'
         for style in range(4):
             source = (ROOT / f'tests/fixtures/library-cover-images/style-{style}.png').read_bytes()
-            self.assertEqual(art.cover_art(style), source)
+            self.assertEqual(fixture.cover_art(style), source)
             image.write_bytes(source)
             subprocess.run([str(self.helper), str(image), str(bitmap)], check=True)
             self.assertEqual(bitmap.read_bytes(), fixture.bitmap(image.read_bytes()))
 
-    def test_required_mac_gate_checks_only_imageio_for_exact_source(self):
+    @patch('sys.stdout', new_callable=io.StringIO)
+    def test_required_mac_gate_checks_only_imageio_for_exact_source(self, _stdout):
         sys.path.insert(0, str(ROOT / 'tools'))
         spec = importlib.util.spec_from_file_location('mac_cover_gate', ROOT / 'tools/check-mac-covers.py')
         gate = importlib.util.module_from_spec(spec)

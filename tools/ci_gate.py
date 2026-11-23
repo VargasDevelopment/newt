@@ -15,6 +15,7 @@ from code_health import read_baseline
 from code_health_resources import check_resources
 from daily_firmware import require_daily_image
 from freeink_sdk_routes import FIRMWARE_BUILD
+import gate_plan
 import gate_tier
 import host_jobs
 from native_output import owned_directory, owned_file, write_text
@@ -41,10 +42,7 @@ def committed_ui_authority(root):
     actual = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
     if actual != blob.decode() or stat.S_IMODE(path.stat().st_mode) & 0o111:
         raise RuntimeError('Reviewed UI authority bytes/mode differ from requested commit')
-    return {
-        'reviewed_ui_manifest_sha256': hashlib.sha256(data).hexdigest(),
-        'reviewed_ui_frames': len(json.loads(data)['frames']),
-    }
+    return data
 
 
 def committed_source(root, expected):
@@ -76,7 +74,7 @@ def committed_source(root, expected):
         digest.update(relative + b'\0' + bytes.fromhex(actual))
     verify_source_pin(root / 'vendor/freeink-sdk')
     return {**identity, 'tracked_source_sha256': digest.hexdigest(), 'sdk_revision': SDK_PIN,
-            **committed_ui_authority(root)}
+            'reviewed_ui_manifest_sha256': hashlib.sha256(committed_ui_authority(root)).hexdigest()}
 
 
 def commands(root, python, tier, part='all'):
@@ -122,6 +120,24 @@ def validate_native(root, expected):
         raise RuntimeError('CI native release identity differs from exact committed source')
 
 
+def coverage(root, tier, part):
+    """Report the UI contract only for the job that runs its host phase."""
+    linux = sys.platform == 'linux'
+    profile = 'linux' if linux else 'canonical'
+    result = {'profile': profile, 'complete_software_coverage': not linux,
+              'fixture_decoder_scope': 'four SHA-locked authored PNGs; no arbitrary image decode equivalence'}
+    if not linux:
+        result['required_mac_imageio_gate'] = 'included'
+    if part != 'native':
+        phases = gate_plan.tier_plan(profile, tier == 'full', gate_tier.controls(tier, root))
+        if part != 'all':
+            index, count = map(int, part.split('/'))
+            phases = gate_tier.shard(phases, index, count, gate_tier.phase_seconds(root, gate_tier.SHARD_SECONDS))
+        if any(phase.name == gate_plan.REVIEWED_UI_TEST for phase in phases):
+            result['reviewed_ui_frames'] = len(json.loads(committed_ui_authority(root))['frames'])
+    return result
+
+
 def run_gate(root, expected, store=None, started=None, part='all'):
     started = time.time() if started is None else started
     tier = gate_tier.ci_tier(root, expected)
@@ -148,11 +164,7 @@ def run_gate(root, expected, store=None, started=None, part='all'):
         raise RuntimeError('Committed source changed during CI gates')
     write_text(root, report, json.dumps({'purpose': 'Fresh software diagnostics; no reusable/device proof',
                'source': after, 'tier': tier, 'part': part, 'phases': phases, 'reusable_proof': False,
-               'coverage': {'profile': 'linux' if sys.platform == 'linux' else 'canonical',
-                            'reviewed_ui_frames': after['reviewed_ui_frames'],
-                            'complete_software_coverage': sys.platform != 'linux',
-                            'required_mac_imageio_gate': 'pending separate exact-source run' if sys.platform == 'linux' else 'included',
-                            'fixture_decoder_scope': 'four SHA-locked authored PNGs; no arbitrary image decode equivalence'},
+               'coverage': coverage(root, tier, part),
                'hardware': 'not-tested', 'ui_approval': 'separate', 'owner': 'pending'}, indent=2) + '\n')
     if part != 'all':
         print(f'PASS {tier} tier part {part} for {expected}; the run passes only when every part does', flush=True)
