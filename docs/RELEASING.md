@@ -132,7 +132,12 @@ it, bump would read the whole history as an initial release. It requires
 incremental changelog starts after that heading. Just after a release merges,
 main's version has no tag until CI tags it; wait for that, then fetch the tag.
 A parent release's tag never stands in, as it does for CI's run on the
-release merge itself.
+release merge itself. It refuses a shallow clone, where bump would classify
+only part of the history since the tag and pick a wrong version; fetch
+complete history (`git fetch --unshallow origin`). It refuses a release branch
+that merged `main` after it branched, since the changelog would leave out
+main's changes; start a fresh branch
+from `main` instead.
 
 The release merge's CI runs the full tier ([CI.md](CI.md#tiers)), and a
 failure there blocks every merge after it, so run the full tier on the release
@@ -160,8 +165,9 @@ commit on main's first-parent history, that is each pull request's merge (its
 title) and each commit made directly on main. A merge's body and the commits a
 pull request brought in list nothing, and a plain `git merge` with a
 `Merge ...` subject lists nothing either. Bump still reads every commit since
-the tag. Prepare a release on a fresh branch from `main`: a release branch that
-merges `main` later would hide main's merges behind its own second parent.
+the tag. So prepare a release on a fresh branch from `main`: a release branch
+that merges `main` later would hide main's merges behind its own second
+parent, and `--prepare` refuses it.
 
 ## Exact identity and acceptance
 

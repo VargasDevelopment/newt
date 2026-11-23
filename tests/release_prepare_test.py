@@ -47,6 +47,42 @@ class ReleasePrepareTests(ReleaseFixture):
         with self.assertRaisesRegex(ValueError, "does not contain v0.1.0-alpha.1"):
             release.gate(self.root, prepare=True)
 
+    def test_preparation_refuses_a_branch_that_merged_main(self):
+        """The changelog lists head's first-parent history, where main's later merges are hidden."""
+        self.git("checkout", "-qB", "main")
+        self.baseline("0.1.0")
+        self.changelog("v0.1.0")
+        self.branch("release", "main")
+        self.git("checkout", "-q", "main")
+        self.commit("feat(reader): add a shelf")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.git("checkout", "-q", "release")
+        self.git("merge", "--no-ff", "-q", "--no-edit", "main")
+        with self.assertRaisesRegex(ValueError, "merged origin/main after it branched.*fresh branch from main"):
+            release.gate(self.root, prepare=True)
+        self.branch("fresh", "main")
+        self.assertEqual(release.gate(self.root, prepare=True), ["v0.1.0"])
+
+    def test_preparation_refuses_a_shallow_clone(self):
+        """A shallow clone can keep the release tag yet cut a merged branch's older commits."""
+        self.git("checkout", "-qB", "main")
+        self.baseline("0.1.0")
+        self.changelog("v0.1.0")
+        self.git("checkout", "-qb", "pr")
+        self.commit("feat(reader): add a shelf")
+        self.commit("fix(reader): sort the shelf")
+        cut = self.head()
+        self.commit("fix(reader): name the shelf")
+        self.git("checkout", "-q", "main")
+        self.git("merge", "--no-ff", "-qm", "fix(reader): keep the shelf in order (#5)", "pr")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.assertEqual(release.gate(self.root, prepare=True), ["v0.1.0"])
+        # What a depth-3 clone keeps: the tag, and the branch back to `cut`, whose feat parent is gone.
+        (self.root / ".git/shallow").write_text(cut + "\n")
+        self.assertEqual(self.cz("bump", "--get-next").stdout.strip(), "0.1.1")
+        with self.assertRaisesRegex(ValueError, "shallow.*git fetch --unshallow origin"):
+            release.gate(self.root, prepare=True)
+
 
 # (tool, old, new, test): removing the guard must make its test fail.
 CONTROLS = (
@@ -56,6 +92,9 @@ CONTROLS = (
      "test_preparation_starts_at_its_own_tag_never_its_parents"),
     ("release_tools.py", "    if not is_ancestor(root, tagged, head):", "    if False:",
      "test_preparation_starts_at_its_own_tag_never_its_parents"),
+    ("release_tools.py", "    if not own_history.issuperset(", "    if False and not own_history.issuperset(",
+     "test_preparation_refuses_a_branch_that_merged_main"),
+    ("release_tools.py", "    if not complete:", "    if False:", "test_preparation_refuses_a_shallow_clone"),
 )
 
 

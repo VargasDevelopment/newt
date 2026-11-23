@@ -262,7 +262,16 @@ def release_start(root=ROOT, head="HEAD"):
     changelog adds entries after its latest release heading. So before a bump,
     the tag must exist on origin/main, head must contain it, and the changelog's
     latest heading must name it. A parent release's tag never stands in: just
-    after a release merges, main's version is untagged until CI tags it."""
+    after a release merges, main's version is untagged until CI tags it.
+
+    Bump classifies every commit since the tag, so a shallow clone, which may
+    lack some of them, picks a wrong version. The changelog lists head's
+    first-parent history (tools/cz_newt), so head must branch from main and
+    never merge it later: main's merges would sit behind a second parent."""
+    complete = git_output(root, "rev-parse", "--is-shallow-repository") == "false"
+    if not complete:
+        raise ValueError("This clone is shallow, so cz bump would classify only part of the history since the "
+                         "release tag; fetch complete history first: git fetch --unshallow origin")
     version, tag = configured_release(root)
     tagged = resolve_commit(root, "refs/tags/" + tag)
     if tagged is None:
@@ -272,6 +281,11 @@ def release_start(root=ROOT, head="HEAD"):
     check_tag(root, tag, tagged, version, first_parents(root))
     if not is_ancestor(root, tagged, head):
         raise ValueError(f"{head} does not contain {tag}; prepare a release on a branch from main")
+    own_history = set(git_output(root, "rev-list", "--first-parent", head).split())
+    if not own_history.issuperset(git_output(root, "merge-base", "--all", DESTINATION, head).split()):
+        raise ValueError(f"{head} merged origin/main after it branched, so the changelog, which lists only {head}'s "
+                         "first-parent history, would leave out main's changes; prepare the release on a fresh "
+                         "branch from main")
     rules = commitizen_rules(root)
     if rules["changelog_tag"] != tag:
         raise ValueError(f"{rules['changelog']}'s latest release heading is {rules['changelog_tag'] or 'missing'}, "
