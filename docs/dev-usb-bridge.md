@@ -142,7 +142,9 @@ folder: a file there cannot change what the device does. The code is
   PUT answers `ERROR busy reason=reading|opening|not-home`. Update mode and a
   restart never write.
 - **Names:** 1 to 32 of `A-Z a-z 0-9 . _ -`, starting with a letter or digit,
-  with no `..`. So no separator, parent, absolute path, hidden name or link. An
+  with no `..` and no trailing dot. So no separator, parent, absolute path,
+  hidden name or link, and nothing FAT would strip to another name. FAT ignores
+  case, so the host refuses a batch where two names differ only in case. An
   existing file of that name is replaced; a folder never is.
 - **Size:** at most 7,798,784 bytes (one app slot, so a bench `newt.bin` fits).
   An empty file is allowed. The card must keep 1 MiB free after the write,
@@ -151,34 +153,48 @@ folder: a file there cannot change what the device does. The code is
 ### Lease
 
 `N1 BOOT SESSION ID PUT` grants a lease, answered
-`PUT line=4160 chunk=3072 cap=7798784`. Then, with increasing IDs in the same
+`PUT line=255 chunk=150 cap=7798784`. Then, with increasing IDs in the same
 session:
 
 1. `FILE FOLDER NAME SIZE SHA256` (64 lowercase hex), answered `FILE free=N`.
-2. `DATA OFFSET BASE64` for each 3,072-byte chunk in order (the last can be
+2. `DATA OFFSET BASE64` for each 150-byte chunk in order (the last can be
    shorter; an empty file has none), answered `DATA N` with the bytes written
    so far.
 3. `DONE`, answered `DONE size=N sha256=HEX` only after the device synced the
    temp, read it back from the card, checked its size and SHA-256 and renamed
    it into place.
 
-Only lease lines grow, to 4,160 bytes: a DATA line holds 4,096 base64
-characters, so one round trip moves six card sectors. The bridge's own command
-lines, its 80-byte RX buffer and the 512-byte reply bound do not change. The
-lease reads into one 4,352-byte heap block that exists only while it runs, so
-the bridge holds no new RAM while idle.
+Lease lines are at most 255 bytes, so a line and its LF fit the USB
+Serial/JTAG receive queue (256 bytes, HWCDC's default) whole. That queue's
+interrupt drops what a full queue cannot take, and the host sends the next line
+only after the answer, so the queue never holds more than one line, however
+slowly the device reads. The bridge's own command lines, its 80-byte RX buffer
+and the 512-byte reply bound do not change. The lease reads into one 447-byte
+heap block that exists only while it runs, so the bridge holds no new RAM while
+idle.
 
-- Bytes go to the folder's hidden `.newt-put`, never to the final name. A
-  replaced file moves to `.newt-old` first and moves back if the rename fails.
+- Bytes go to the folder's hidden `.newt-put`, never to the final name.
+- A replaced file moves to the folder's `.newt-old`, after the folder's
+  `.newt-old-name` marker holding its name is synced. If the new file's rename
+  fails, the old file moves back.
 - Physical input, a disconnect, 3 s without a complete line, a 1 s reply
   stall, 600 s in all, or a malformed or stale line abandons the lease: the
   temp is removed, the final name keeps what it held, and the session ends
-  (`ERROR abandoned reason=...` while the host is still there). A HELLO also
-  ends the lease and is answered as a new handshake.
+  (`ERROR abandoned reason=...` while the host is still there). Physical input,
+  a disconnect and the 600 s bound also stop DONE while it reads the temp back
+  and just before its first rename. From the first rename on, DONE always
+  finishes or moves the old file back. A HELLO also ends the lease and is
+  answered as a new handshake.
 - A refused request (`ERROR REASON` or `ERROR card step=STEP code=ERRNO`) ends
   the lease with the temp removed; the session continues.
-- A power loss can leave `.newt-put` or `.newt-old`; the next write to that
-  folder removes them. The app and update scans never offer a hidden name.
+- `ERROR recovery-needed step=STEP code=ERRNO` means the folder holds a
+  replaced file's only copy as `.newt-old`. It is kept, never removed.
+- Each FILE first resolves its folder's `.newt-old`, the trace of a power loss
+  or a failed move back. If the marker's file is missing, the backup goes back
+  under that name. If it is present, it already holds the new file, so the
+  backup is removed. A backup without a readable marker refuses every write to
+  that folder until the card is checked by hand. A leftover `.newt-put` is
+  removed. The app and update scans never offer a hidden name.
 
 ### Host
 
@@ -193,13 +209,14 @@ checked before the port opens. The client checks the device's final size and
 SHA-256 against its own, stops at the first failure and never retries. When
 DONE's answer never arrives the file may or may not be in place: the receipt
 says `"result": "unknown"`, and the card must be checked after a fresh
-handshake. Each file's receipt entry gives its result, `free_before` and
+handshake. `"result": "recovery-needed"` means the device kept the old file as
+`.newt-old`; the next put to that folder restores it if its name is missing. Each file's receipt entry gives its result, `free_before` and
 seconds; DATA lines are summarised once per file instead of traced one by one.
 
-Each chunk waits for its answer, so speed depends on the USB round trip and
-the card. The estimate is 50 to 100 KB/s: under a second for a 36 KB file and
-about a minute for a 3.6 MB `newt.bin`. It is not yet measured on hardware.
-DONE reads the whole file back, so its host deadline grows with the size.
+Each 150-byte chunk waits for its answer, so speed depends on the USB round
+trip. The estimate is 30 to 50 KB/s: about a second for a 36 KB file and two
+minutes for a 3.6 MB `newt.bin`. It is not yet measured on hardware. DONE reads
+the whole file back, so its host deadline grows with the size.
 
 ## One Home build
 

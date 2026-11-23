@@ -4,9 +4,10 @@
 rust/tests/dev_put/lease.rs drives newt_core::dev_put over a fake card that
 stores every write at once and a scripted host. It pins the name and folder
 rules, admission, and that the final name holds only the old file or the whole
-verified new one, whatever ends the lease. This runs it in a scratch copy of
-rust/. Each negative control then breaks one rule there and expects the named
-test to fail, never to fail to compile.
+verified new one, whatever ends the lease, while a backup that may be a file's
+only copy is never removed. This runs it in a scratch copy of rust/. Each
+negative control then breaks one rule there and expects the named test to
+fail, never to fail to compile.
 """
 import importlib.util
 import json
@@ -22,7 +23,7 @@ sys.path.insert(0, str(ROOT / 'tools'))
 from gate_tier import negative_controls
 
 BINARY = 'dev_put'
-TESTS = 21
+TESTS = 29
 # (what breaks, its file under rust/core/src, its text there, the broken text, the test that must fail)
 CONTROLS = (
     ('the SHA-256 is not compared', 'dev_put/lease.rs', "        if digest != sha256 { return Err(Refused::DigestMismatch); }\n", "",
@@ -34,6 +35,21 @@ CONTROLS = (
      'admission_refuses_reading_opening_and_away_from_home'),
     ('bytes go straight to the final name', 'dev_put/lease.rs', "let fd = self.card.create(folder.temp())",
      "let fd = self.card.create(path(&target))", 'physical_input_abandons_and_keeps_the_old_file'),
+    ('a later file removes an unresolved backup', 'dev_put/lease.rs',
+     "            Entry::File => {}\n            Entry::Folder | Entry::Other => return Err(Refused::Recovery(\"backup\", 0)),\n",
+     "            Entry::File => return self.remove_hidden(folder.old()),\n"
+     "            Entry::Folder | Entry::Other => return Err(Refused::Recovery(\"backup\", 0)),\n",
+     'a_power_loss_mid_replace_is_restored_before_another_file'),
+    ('the read-back ignores a takeover', 'dev_put/lease.rs',
+     "            if let Some(reason) = self.interruption() { return Err(Refused::Abandoned(reason)); }\n", "",
+     'a_press_while_done_reads_back_stops_it_there'),
+    ('the first rename ignores a takeover', 'dev_put/lease.rs',
+     "        if let Some(reason) = self.interruption() {\n            if replacing { let _ = self.card.remove(folder.marker()); }\n"
+     "            return Err(Refused::Abandoned(reason));\n        }\n", "",
+     'a_press_just_before_the_first_rename_keeps_the_old_file'),
+    ('a failed restore reads as a plain refusal', 'dev_put/lease.rs',
+     'is_err() { return Err(Refused::Recovery("rename", code)); }', 'is_err() { return Err(Refused::Card("rename", code)); }',
+     'a_failed_restore_keeps_the_backup_and_says_so'),
 )
 
 

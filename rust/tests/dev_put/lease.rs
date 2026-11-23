@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 //! The bridge's card write (newt_core::dev_put) over a fake card and host:
 //! the name and folder rules, admission, and that the final name only ever
-//! holds the old file or the whole verified new one, whatever ends the lease.
+//! holds the old file or the whole verified new one, whatever ends the lease,
+//! with a backup never removed while it may be a file's only copy.
 mod fakes;
 mod sha256;
 
 use fakes::{Event, FakeCard, FakeWire, HostHash, Node, FAILED};
 use newt_core::dev_put::{self, admit, name_allowed, Busy, End, Facts, Session, CAP_BYTES, CHUNK_BYTES, IDLE_MS,
-    MEMORY_BYTES, RESERVE_BYTES};
+    LINE_BYTES, MEMORY_BYTES, RESERVE_BYTES, RX_QUEUE_BYTES};
 use sha256::sha256;
 
 const BOOT: u32 = 7;
@@ -17,7 +18,9 @@ const DEV: &str = "/newt-sd/Newt/Dev";
 const TARGET: &str = "/newt-sd/Newt/Dev/runtime.bin";
 const TEMP: &str = "/newt-sd/Newt/Dev/.newt-put";
 const OLD: &str = "/newt-sd/Newt/Dev/.newt-old";
-const BANNER: &str = "PUT line=4160 chunk=3072 cap=7798784";
+const MARKER: &str = "/newt-sd/Newt/Dev/.newt-old-name";
+const OTHER: &str = "/newt-sd/Newt/Dev/other.bin";
+const BANNER: &str = "PUT line=255 chunk=150 cap=7798784";
 
 /// The host's side of one lease: lines with fresh IDs in the PUT's session.
 struct Host { id: u32, script: Vec<Event> }
@@ -57,6 +60,7 @@ fn lease(card: &mut FakeCard, host: &mut Host) -> Outcome {
 }
 
 fn lease_with(card: &mut FakeCard, mut wire: FakeWire) -> Outcome {
+    wire.pressed = card.pressed.clone();
     let mut memory: Box<[u8; MEMORY_BYTES]> = vec![0; MEMORY_BYTES].try_into().expect("lease memory");
     let session = Session { boot: BOOT, session: SESSION, request: PUT_ID };
     let end = dev_put::run(session, &mut memory, &mut wire, card, &mut HostHash::default());
@@ -91,16 +95,22 @@ fn unchanged(card: &FakeCard, old: Option<&[u8]>) {
     assert_eq!(card.file(TARGET), old, "the final name keeps what it held");
 }
 
+/// No backup or marker left: every replacement finished or was undone.
+fn resolved(card: &FakeCard) {
+    assert_eq!((card.file(OLD), card.file(MARKER)), (None, None));
+}
+
 #[test]
 fn names_outside_the_safe_set_are_refused() {
+    // FAT drops a trailing dot, so `newt.bin.` would be `newt.bin`.
     for bad in [&b""[..], b"..", b"../x", b"a/b", b"/abs", b"a\\b", b".hidden", b"a..b", b"a b", b"x\0",
-        "caf\u{e9}".as_bytes(), &[b'a'; 33]] {
+        "caf\u{e9}".as_bytes(), &[b'a'; 33], b"a.", b"newt.bin.", b"a.txt "] {
         assert!(!name_allowed(bad), "{bad:?}");
     }
     for good in [&b"newt.bin"[..], b"app-1_x.txt", b"0", &[b'a'; 32]] {
         assert!(name_allowed(good), "{good:?}");
     }
-    for name in ["..", "../Books", ".newt-put"] {
+    for name in ["..", "../Books", ".newt-put", "newt.bin."] {
         let mut card = FakeCard::default();
         let outcome = lease(&mut card, Host::new().line(&format!("FILE dev {name} 0 {}", hex(&sha256(b"")))));
         assert_eq!(outcome.bodies(), [BANNER, "ERROR name"], "{name}");
@@ -137,7 +147,7 @@ fn admission_refuses_reading_opening_and_away_from_home() {
 
 #[test]
 fn a_file_lands_whole_under_its_name() {
-    // The runtime spike's largest file: 11 whole chunks and a partial one.
+    // The runtime spike's largest file: 245 whole chunks and a partial one.
     let bytes = pattern(36_856);
     let mut card = FakeCard::default();
     let mut host = Host::new();
@@ -146,7 +156,7 @@ fn a_file_lands_whole_under_its_name() {
     let outcome = lease(&mut card, &mut host);
     assert_eq!(outcome.end, End::Kept { last_id });
     let mut expected = vec![BANNER.to_owned(), format!("FILE free={}", 1u64 << 30)];
-    expected.extend((1..=11).map(|n| format!("DATA {}", n * CHUNK_BYTES)).chain(["DATA 36856".into(), done(&bytes)]));
+    expected.extend((1..=245).map(|n| format!("DATA {}", n * CHUNK_BYTES)).chain(["DATA 36856".into(), done(&bytes)]));
     assert_eq!(outcome.bodies(), expected);
     let ids: Vec<u32> = outcome.replies.iter().map(|&(id, _)| id).collect();
     assert_eq!(ids, (PUT_ID..=last_id).collect::<Vec<_>>(), "each reply answers its own request");
@@ -180,21 +190,134 @@ fn an_existing_file_is_replaced_only_after_verification() {
     let mut card = FakeCard::default();
     card.put_file(TARGET, &old);
     card.put_file(TEMP, b"left by a power loss");
-    card.put_file(OLD, b"also left by a power loss");
+    card.put_file(MARKER, b"stale.bin");
     let outcome = lease(&mut card, Host::new().put("dev", "runtime.bin", &new));
     assert_eq!(outcome.last(), done(&new));
     assert_eq!(card.file(TARGET), Some(&new[..]));
-    assert_eq!((card.file(TEMP), card.file(OLD)), (None, None));
+    assert_eq!(card.file(TEMP), None);
+    resolved(&card);
 }
 
 #[test]
 fn a_failed_rename_puts_the_old_file_back() {
-    let mut card = FakeCard { fail_rename_onto: Some(TARGET), ..FakeCard::default() };
+    let mut card = FakeCard { fail_rename_onto: Some((TARGET, 1)), ..FakeCard::default() };
     card.put_file(TARGET, b"old");
     let outcome = lease(&mut card, Host::new().put("dev", "runtime.bin", &pattern(4_000)));
     assert_eq!(outcome.last(), format!("ERROR card step=rename code={FAILED}"));
     unchanged(&card, Some(b"old"));
-    assert_eq!(card.file(OLD), None);
+    resolved(&card);
+}
+
+#[test]
+fn a_failed_restore_keeps_the_backup_and_says_so() {
+    let mut card = FakeCard { fail_rename_onto: Some((TARGET, 2)), ..FakeCard::default() };
+    card.put_file(TARGET, b"old");
+    let mut host = Host::new();
+    host.put("dev", "runtime.bin", &pattern(4_000));
+    let last_id = host.id;
+    let outcome = lease(&mut card, &mut host);
+    assert_eq!(outcome.last(), format!("ERROR recovery-needed step=rename code={FAILED}"));
+    assert_eq!(outcome.end, End::Kept { last_id });
+    assert_eq!((card.file(TARGET), card.file(TEMP)), (None, None));
+    assert_eq!((card.file(OLD), card.file(MARKER)), (Some(&b"old"[..]), Some(&b"runtime.bin"[..])));
+    // The folder's next write, of any name, first puts the old file back.
+    let outcome = lease(&mut card, Host::new().put("dev", "other.bin", b"other"));
+    assert_eq!(outcome.last(), done(b"other"));
+    assert_eq!((card.file(TARGET), card.file(OTHER)), (Some(&b"old"[..]), Some(&b"other"[..])));
+    resolved(&card);
+}
+
+/// A replacement a power loss stopped after the target moved aside.
+fn moved_aside(target: Option<&[u8]>) -> FakeCard {
+    let mut card = FakeCard::default();
+    card.put_file(OLD, b"the only copy");
+    card.put_file(MARKER, b"runtime.bin");
+    card.put_file(TEMP, b"verified new bytes");
+    if let Some(bytes) = target { card.put_file(TARGET, bytes); }
+    card
+}
+
+#[test]
+fn a_power_loss_mid_replace_is_restored_before_another_file() {
+    let mut card = moved_aside(None);
+    let outcome = lease(&mut card, Host::new().put("dev", "other.bin", b"other"));
+    assert_eq!(outcome.last(), done(b"other"));
+    assert_eq!(card.file(TARGET), Some(&b"the only copy"[..]));
+    assert_eq!(card.file(OTHER), Some(&b"other"[..]));
+    resolved(&card);
+}
+
+#[test]
+fn a_power_loss_after_the_install_drops_only_the_backup() {
+    let mut card = moved_aside(Some(b"installed"));
+    let outcome = lease(&mut card, Host::new().put("dev", "other.bin", b"other"));
+    assert_eq!(outcome.last(), done(b"other"));
+    assert_eq!(card.file(TARGET), Some(&b"installed"[..]));
+    resolved(&card);
+}
+
+#[test]
+fn a_backup_it_cannot_resolve_refuses_every_write() {
+    for (marker, reply) in [(None, "ERROR recovery-needed step=marker code=-2"),
+        (Some(&b"../Books"[..]), "ERROR recovery-needed step=marker code=0"),
+        (Some(b""), "ERROR recovery-needed step=marker code=0")] {
+        let mut card = moved_aside(None);
+        card.nodes.remove(MARKER);
+        if let Some(marker) = marker { card.put_file(MARKER, marker); }
+        let outcome = lease(&mut card, Host::new().put("dev", "other.bin", b"other"));
+        assert_eq!(outcome.bodies(), [BANNER, reply], "{marker:?}");
+        assert_eq!(card.file(OLD), Some(&b"the only copy"[..]), "the backup is never removed");
+        assert_eq!((card.file(TARGET), card.file(OTHER)), (None, None));
+    }
+}
+
+/// A replacement whose DONE sees a press when `step` runs for the `nth` time.
+fn pressed_during_done(step: &'static str, nth: u32) -> (FakeCard, Outcome, Vec<u8>) {
+    let new = pattern(4_000);
+    let mut card = FakeCard { press_on: Some((step, nth)), ..FakeCard::default() };
+    card.put_file(TARGET, b"old");
+    let outcome = lease(&mut card, Host::new().put("dev", "runtime.bin", &new));
+    (card, outcome, new)
+}
+
+#[test]
+fn a_press_while_done_reads_back_stops_it_there() {
+    let (card, outcome, _) = pressed_during_done("read", 1);
+    assert_eq!(outcome.end, End::Cancelled);
+    assert_eq!(outcome.last(), "ERROR abandoned reason=physical-input");
+    assert_eq!(card.count("read"), 1, "the read-back stops at the next chunk, not at its end");
+    unchanged(&card, Some(b"old"));
+    resolved(&card);
+}
+
+#[test]
+fn a_press_just_before_the_first_rename_keeps_the_old_file() {
+    // The second sync is the marker's, the last card step before the renames.
+    let (card, outcome, _) = pressed_during_done("sync", 2);
+    assert_eq!(outcome.end, End::Cancelled);
+    assert_eq!(outcome.last(), "ERROR abandoned reason=physical-input");
+    assert_eq!(card.count("rename"), 0);
+    unchanged(&card, Some(b"old"));
+    resolved(&card);
+}
+
+#[test]
+fn a_press_after_the_first_rename_never_stops_it_halfway() {
+    let (card, outcome, new) = pressed_during_done("rename", 1);
+    assert_eq!(outcome.last(), done(&new));
+    assert_eq!(card.file(TARGET), Some(&new[..]));
+    resolved(&card);
+    assert!(outcome.wire.pressed.get(), "the press is left for the screen");
+}
+
+#[test]
+fn every_lease_line_fits_the_receive_queue() {
+    // The longest DATA line: 10-digit boot, session and ID, an offset near the cap.
+    let line = format!("N1 {0} {0} {0} DATA {1} {2}\n", u32::MAX, CAP_BYTES - 1, "A".repeat(CHUNK_BYTES / 3 * 4));
+    assert!(line.len() <= RX_QUEUE_BYTES && LINE_BYTES < RX_QUEUE_BYTES, "{}", line.len());
+    let (card, outcome) = interrupted(Event::Line(format!("{}\n", "A".repeat(LINE_BYTES + 1))));
+    assert_eq!(outcome.last(), "ERROR abandoned reason=line", "a longer line is never taken");
+    unchanged(&card, Some(b"old"));
 }
 
 #[test]
@@ -225,17 +348,17 @@ fn the_card_bytes_not_the_received_ones_are_checked() {
 fn done_before_every_byte_is_short() {
     let bytes = pattern(4_000);
     let mut card = FakeCard::default();
-    let outcome = lease(&mut card, Host::new().file("dev", "runtime.bin", &bytes).data(&bytes[..3_072]).line("DONE"));
+    let outcome = lease(&mut card, Host::new().file("dev", "runtime.bin", &bytes).data(&bytes[..2 * CHUNK_BYTES]).line("DONE"));
     assert_eq!(outcome.last(), "ERROR short");
     unchanged(&card, None);
 }
 
-/// A transfer one chunk in, then `event`; the old file must survive it.
+/// A transfer two chunks in, then `event`; the old file must survive it.
 fn interrupted(event: Event) -> (FakeCard, Outcome) {
     let bytes = pattern(8_000);
     let mut card = FakeCard::default();
     card.put_file(TARGET, b"old");
-    let outcome = lease(&mut card, Host::new().file("dev", "runtime.bin", &bytes).data(&bytes[..3_072]).then(event));
+    let outcome = lease(&mut card, Host::new().file("dev", "runtime.bin", &bytes).data(&bytes[..2 * CHUNK_BYTES]).then(event));
     (card, outcome)
 }
 
@@ -287,8 +410,9 @@ fn out_of_session_lines_cancel() {
 #[test]
 fn bad_chunks_are_refused() {
     let bytes = pattern(4_000);
-    let whole = base64(&bytes[..3_072]);
-    for (data, reason) in [(format!("DATA 1 {whole}"), "offset"), (format!("DATA 0 {}", base64(&bytes[..3_000])), "length"),
+    let whole = base64(&bytes[..CHUNK_BYTES]);
+    for (data, reason) in [(format!("DATA 1 {whole}"), "offset"),
+        (format!("DATA 0 {}", base64(&bytes[..CHUNK_BYTES - 3])), "length"),
         (format!("DATA 0 *{}", &whole[1..]), "encoding"), ("DATA 0 QR==".into(), "encoding"),
         ("DATA 0".into(), "arguments")] {
         let mut card = FakeCard::default();

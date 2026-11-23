@@ -5,7 +5,9 @@ DONE. The device writes a hidden temp, reads it back and checks its size and
 SHA-256 before renaming it into place; this checks the device's final size
 and SHA-256 again. Until DONE is sent the final name is unchanged whatever
 fails. A DONE whose answer never arrives may or may not have replaced the
-file, so nothing is retried: the run stops and says so.
+file, so nothing is retried: the run stops and says so. Each line fits the
+device's 256-byte USB receive queue whole, and the next is sent only after its
+answer, so the queue never holds more than one.
 """
 import base64
 import hashlib
@@ -15,8 +17,8 @@ import time
 
 FOLDERS = ('apps', 'update', 'dev')
 NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,31}')
-CHUNK_BYTES = 3072
-LINE_BYTES = 4160
+CHUNK_BYTES = 150
+LINE_BYTES = 255
 CAP_BYTES = 0x770000  # one app slot, so a bench newt.bin fits
 OFFER = f'PUT line={LINE_BYTES} chunk={CHUNK_BYTES} cap={CAP_BYTES}'
 MAX_FILES = 64
@@ -25,7 +27,12 @@ READ_BACK_RATE = 100_000  # bytes/s the device reads the temp back at, at least
 
 
 class Refused(ValueError):
-    """The device answered this request with ERROR; the final name is unchanged."""
+    """The device answered this request with ERROR; the final name is unchanged
+    unless the answer is recovery-needed."""
+
+
+class RecoveryNeeded(ValueError):
+    """The folder holds a replaced file's only copy as .newt-old."""
 
 
 class CommitUnknown(ValueError):
@@ -33,9 +40,9 @@ class CommitUnknown(ValueError):
 
 
 def card_name(name):
-    if not NAME.fullmatch(name) or '..' in name:
+    if not NAME.fullmatch(name) or '..' in name or name.endswith('.'):
         raise ValueError(f'Card name {name!r} must be 1-32 of A-Z a-z 0-9 . _ -, '
-                         'start with a letter or digit and hold no ..')
+                         'start with a letter or digit and hold no .. or trailing dot')
     return name
 
 
@@ -51,8 +58,9 @@ def plan(paths, name=None):
         if len(data) > CAP_BYTES:
             raise ValueError(f'{path} is larger than the {CAP_BYTES}-byte card write cap')
         files.append((str(path), card_name(name or Path(path).name), data))
-    if len({card for _, card, _ in files}) != len(files):
-        raise ValueError('Two files share a card name')
+    # FAT ignores case, so a.txt and A.TXT are one file.
+    if len({card.lower() for _, card, _ in files}) != len(files):
+        raise ValueError('Two files share a card name (FAT ignores case)')
     return files
 
 
@@ -141,6 +149,12 @@ def put_files(client, folder, files, timeout, report):
             except CommitUnknown as error:
                 entry.update(result='unknown', host_write_completed=error.host_write_completed)
                 raise
+            except Refused as error:
+                if not str(error).startswith('ERROR recovery-needed'):
+                    raise
+                entry['result'] = 'recovery-needed'
+                raise RecoveryNeeded(f'{error}: the folder holds a replaced file as .newt-old. The next put to '
+                                     'this folder restores it if its name is missing; otherwise check the card.') from error
     finally:
         client.untraced = ()
     total = sum(entry['size'] for entry in report['files'])

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! The lease itself: its line protocol, the temp file and the checked rename.
 use super::{Card, End, Entry, Folder, Session, Wire, CAP_BYTES, CHUNK_BYTES, IDLE_MS, LINE_BYTES,
-    MEMORY_BYTES, NAME_BYTES, NEWT, PATH_BYTES, RESERVE_BYTES, STALL_MS, TOTAL_MS, name_allowed};
+    MEMORY_BYTES, NAME_BYTES, NEWT, PATH_BYTES, RESERVE_BYTES, RX_QUEUE_BYTES, STALL_MS, TOTAL_MS, name_allowed};
 use crate::update_online::Hash;
 use crate::wire::crc32;
 use core::ffi::CStr;
@@ -43,6 +43,11 @@ struct Lease<'a> {
 #[derive(Debug)]
 enum Refused { Order, Arguments, Folder, Name, Size, Digest, Offset, Length, Encoding, Short,
     CardFull(u64), Target, Temp, SizeMismatch, DigestMismatch, Hash, Card(&'static str, i32),
+    /// A backup holds the only copy of a file and could not be resolved; it
+    /// and its marker stay for the folder's next FILE.
+    Recovery(&'static str, i32),
+    /// DONE stopped before its first rename: answered as an abandoned lease.
+    Abandoned(&'static str),
     /// The reply itself stalled or the host left: nothing more can be said.
     Reply }
 
@@ -74,6 +79,10 @@ impl Lease<'_> {
                 Ok(Step::Next) => {}
                 Ok(Step::Finished) => return End::Kept { last_id: id },
                 Err(Refused::Reply) => return End::Cancelled,
+                Err(Refused::Abandoned(reason)) => {
+                    self.best_effort(reason);
+                    return End::Cancelled;
+                }
                 Err(refused) => {
                     self.refuse(id, &refused);
                     return End::Kept { last_id: id };
@@ -110,11 +119,16 @@ impl Lease<'_> {
     }
 
     fn abandoned(&mut self, activity: u32) -> Option<&'static str> {
-        let now = self.wire.now();
+        let idle = self.wire.now().wrapping_sub(activity) >= IDLE_MS;
+        self.interruption().or(idle.then_some("timeout"))
+    }
+
+    /// Takeover, a disconnect or the lease's deadline: checked while waiting
+    /// for a line and through DONE up to its first rename.
+    fn interruption(&mut self) -> Option<&'static str> {
         if self.wire.physical_input() { return Some("physical-input"); }
         if !self.wire.connected() { return Some("disconnected"); }
-        if now.wrapping_sub(self.started) >= TOTAL_MS { return Some("total-time"); }
-        if now.wrapping_sub(activity) >= IDLE_MS { return Some("timeout"); }
+        if self.wire.now().wrapping_sub(self.started) >= TOTAL_MS { return Some("total-time"); }
         None
     }
 
@@ -148,14 +162,11 @@ impl Lease<'_> {
         if !name_allowed(name.as_bytes()) { return Err(Refused::Name); }
         let size = number(size).filter(|&size| size <= CAP_BYTES).ok_or(Refused::Size)?;
         let sha256 = digest_hex(digest).ok_or(Refused::Digest)?;
-        let mut target = [0; PATH_BYTES];
-        let directory = folder.path().to_bytes();
-        target[..directory.len()].copy_from_slice(directory);
-        target[directory.len()] = b'/';
-        target[directory.len() + 1..][..name.len()].copy_from_slice(name.as_bytes());
+        let target = target_path(folder, name.as_bytes());
 
         self.folder(NEWT)?;
         self.folder(folder.path())?;
+        self.recover(folder)?;
         match self.card.entry(path(&target)).map_err(|code| Refused::Card("target", code))? {
             Entry::Missing | Entry::File => {}
             Entry::Folder | Entry::Other => return Err(Refused::Target),
@@ -181,14 +192,7 @@ impl Lease<'_> {
         let decoded = decode_base64_in_place(&mut self.line[start..arguments.1]).ok_or(Refused::Encoding)?;
         if decoded != (size - written).min(CHUNK_BYTES as u32) as usize { return Err(Refused::Length); }
         let fd = open.fd.ok_or(Refused::Order)?;
-        let mut bytes = &self.line[start..start + decoded];
-        while !bytes.is_empty() {
-            match self.card.write(fd, bytes) {
-                Ok(0) => return Err(Refused::Card("write", 0)),
-                Ok(put) => bytes = bytes.get(put..).ok_or(Refused::Card("write", 0))?,
-                Err(code) => return Err(Refused::Card("write", code)),
-            }
-        }
+        write_all(self.card, fd, &self.line[start..start + decoded]).map_err(|code| Refused::Card("write", code))?;
         let written = written + decoded as u32;
         if let Some(open) = &mut self.open { open.written = written; }
         self.answer(format_args!("DATA {written}"))
@@ -209,17 +213,28 @@ impl Lease<'_> {
         let target = path(&target);
         // FAT's rename never replaces, so the old file steps aside first.
         let replacing = self.card.entry(target).map_err(|code| Refused::Card("target", code))? == Entry::File;
+        if replacing { self.mark(folder, &target.to_bytes()[folder.path().to_bytes().len() + 1..])?; }
+        if let Some(reason) = self.interruption() {
+            if replacing { let _ = self.card.remove(folder.marker()); }
+            return Err(Refused::Abandoned(reason));
+        }
+        // From the first rename on, DONE finishes or rolls back.
         if replacing {
-            self.remove_hidden(folder.old())?;
-            self.card.rename(target, folder.old()).map_err(|code| Refused::Card("replace", code))?;
+            if let Err(code) = self.card.rename(target, folder.old()) {
+                let _ = self.card.remove(folder.marker());
+                return Err(Refused::Card("replace", code));
+            }
         }
         if let Err(code) = self.card.rename(folder.temp(), target) {
-            if replacing { let _ = self.card.rename(folder.old(), target); }
+            if replacing {
+                if self.card.rename(folder.old(), target).is_err() { return Err(Refused::Recovery("rename", code)); }
+                let _ = self.card.remove(folder.marker());
+            }
             return Err(Refused::Card("rename", code));
         }
         self.open = None;
-        // A failure here leaves only a hidden file, which the next replace removes.
-        if replacing { let _ = self.card.remove(folder.old()); }
+        // What fails here the folder's next FILE resolves: the target holds the new file.
+        if replacing && self.card.remove(folder.old()).is_ok() { let _ = self.card.remove(folder.marker()); }
         let mut hex = [0; 64];
         for (pair, byte) in hex.chunks_exact_mut(2).zip(digest) {
             pair[0] = HEX[usize::from(byte >> 4)];
@@ -243,6 +258,7 @@ impl Lease<'_> {
         if !self.hash.start() { return Err(Refused::Hash); }
         let mut total: u64 = 0;
         loop {
+            if let Some(reason) = self.interruption() { return Err(Refused::Abandoned(reason)); }
             let got = self.card.read(fd, self.line).map_err(|code| Refused::Card("read", code))?;
             let Some(bytes) = self.line.get(..got) else { return Err(Refused::Card("read", 0)) };
             if bytes.is_empty() { break; }
@@ -262,6 +278,66 @@ impl Lease<'_> {
             Entry::Missing => self.card.make_folder(path).map_err(|code| Refused::Card("folder", code)),
             Entry::File | Entry::Other => Err(Refused::Target),
         }
+    }
+
+    /// Names the backup's target and syncs it before the target moves, so a
+    /// power loss after that leaves a backup the next FILE can resolve.
+    fn mark(&mut self, folder: Folder, name: &[u8]) -> Result<(), Refused> {
+        // FILE resolved any earlier backup; never overwrite the marker of one.
+        if self.card.entry(folder.old()).map_err(|code| Refused::Card("backup", code))? != Entry::Missing {
+            return Err(Refused::Recovery("backup", 0));
+        }
+        let fd = self.card.create(folder.marker()).map_err(|code| Refused::Card("mark", code))?;
+        let synced = write_all(self.card, fd, name).and_then(|()| self.card.sync(fd));
+        let closed = self.card.close(fd);
+        if let Err(code) = synced.and(closed) {
+            let _ = self.card.remove(folder.marker());
+            return Err(Refused::Card("mark", code));
+        }
+        Ok(())
+    }
+
+    /// Finishes or undoes this folder's interrupted replacement before any new
+    /// write: a missing target gets its backup back, a present one already
+    /// holds the new file. A backup is never removed while it may be the only
+    /// copy; one it cannot resolve refuses every write to the folder.
+    fn recover(&mut self, folder: Folder) -> Result<(), Refused> {
+        match self.card.entry(folder.old()).map_err(|code| Refused::Recovery("backup", code))? {
+            Entry::Missing => return self.remove_hidden(folder.marker()),
+            Entry::File => {}
+            Entry::Folder | Entry::Other => return Err(Refused::Recovery("backup", 0)),
+        }
+        let target = self.marked(folder)?;
+        let target = path(&target);
+        match self.card.entry(target).map_err(|code| Refused::Recovery("target", code))? {
+            Entry::Missing => self.card.rename(folder.old(), target).map_err(|code| Refused::Recovery("restore", code))?,
+            Entry::File => self.card.remove(folder.old()).map_err(|code| Refused::Recovery("backup", code))?,
+            Entry::Folder | Entry::Other => return Err(Refused::Recovery("target", 0)),
+        }
+        self.remove_hidden(folder.marker())
+    }
+
+    /// The backup's target from its marker, which must hold one allowed name.
+    fn marked(&mut self, folder: Folder) -> Result<[u8; PATH_BYTES], Refused> {
+        let fd = self.card.open_read(folder.marker()).map_err(|code| Refused::Recovery("marker", code))?;
+        let mut name = [0; NAME_BYTES + 1];
+        let mut length = 0;
+        let read = loop {
+            match self.card.read(fd, &mut name[length..]) {
+                Ok(0) => break Ok(()),
+                Ok(got) if got <= name.len() - length => {
+                    length += got;
+                    if length == name.len() { break Ok(()); }
+                }
+                Ok(_) => break Err(0),
+                Err(code) => break Err(code),
+            }
+        };
+        let closed = self.card.close(fd);
+        read.and(closed).map_err(|code| Refused::Recovery("marker", code))?;
+        let name = &name[..length];
+        if !name_allowed(name) { return Err(Refused::Recovery("marker", 0)); }
+        Ok(target_path(folder, name))
     }
 
     /// A temp or set-aside file a power loss left behind.
@@ -290,6 +366,7 @@ impl Lease<'_> {
         let _ = match refused {
             Refused::CardFull(free) => self.send(id, format_args!("ERROR card-full free={free}")),
             Refused::Card(step, code) => self.send(id, format_args!("ERROR card step={step} code={code}")),
+            Refused::Recovery(step, code) => self.send(id, format_args!("ERROR recovery-needed step={step} code={code}")),
             other => self.send(id, format_args!("ERROR {}", other.reason())),
         };
     }
@@ -345,6 +422,8 @@ impl Refused {
             Self::Hash => "hash",
             Self::CardFull(_) => "card-full",
             Self::Card(..) => "card",
+            Self::Recovery(..) => "recovery-needed",
+            Self::Abandoned(reason) => reason,
             Self::Reply => "reply",
         }
     }
@@ -437,6 +516,27 @@ fn decode_base64_in_place(text: &mut [u8]) -> Option<usize> {
     Some(out)
 }
 
+/// `folder/name` with its NUL; `name` is an allowed name.
+fn target_path(folder: Folder, name: &[u8]) -> [u8; PATH_BYTES] {
+    let mut target = [0; PATH_BYTES];
+    let directory = folder.path().to_bytes();
+    target[..directory.len()].copy_from_slice(directory);
+    target[directory.len()] = b'/';
+    target[directory.len() + 1..][..name.len()].copy_from_slice(name);
+    target
+}
+
+/// Every byte, through short writes; a write that stores nothing fails.
+fn write_all(card: &mut dyn Card, fd: i32, mut bytes: &[u8]) -> Result<(), i32> {
+    while !bytes.is_empty() {
+        match card.write(fd, bytes)? {
+            0 => return Err(0),
+            put => bytes = bytes.get(put..).ok_or(0)?,
+        }
+    }
+    Ok(())
+}
+
 fn path(bytes: &[u8; PATH_BYTES]) -> &CStr {
     // Every target has a NUL: folder and name together stay under PATH_BYTES.
     CStr::from_bytes_until_nul(bytes).unwrap_or_default()
@@ -453,5 +553,8 @@ impl fmt::Write for Cursor<'_> {
 }
 
 const _: () = assert!(c"/newt-sd/Newt/Update/".to_bytes().len() + NAME_BYTES < PATH_BYTES);
-const _: () = assert!(CHUNK_BYTES % 3 == 0 && CHUNK_BYTES % 512 == 0);
-const _: () = assert!(36 + 5 + 10 + 1 + CHUNK_BYTES / 3 * 4 <= LINE_BYTES);
+const _: () = assert!(CHUNK_BYTES % 3 == 0);
+// `N1` and three numbers of up to 10 digits, `DATA `, an offset below the cap
+// (7 digits) and a space, then the chunk's base64; with its LF in the queue.
+const _: () = assert!(CAP_BYTES < 10_000_000 && 2 + 3 * 11 + 1 + 5 + 8 + CHUNK_BYTES / 3 * 4 <= LINE_BYTES);
+const _: () = assert!(LINE_BYTES + 1 <= RX_QUEUE_BYTES);

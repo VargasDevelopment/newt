@@ -2,15 +2,15 @@
 //! The development USB bridge's one card write: a single file into one of
 //! three fixed dev folders, over a short lease that follows the bridge's PUT.
 //!
-//! The bridge keeps its 79-byte command lines. Only inside this lease do lines
-//! grow to `LINE_BYTES`, in caller memory that exists only for the lease. Bytes
-//! go to the folder's fixed temp name, are synced, read back from the card and
-//! checked against the offered size and SHA-256, and only then renamed into
-//! place, so the final name never holds a partial file. A replaced file is
-//! moved aside first and moved back if the rename fails. Physical input, a
-//! disconnect, a stall or a new HELLO abandons the transfer; every exit closes
-//! the file and removes the temp, and the next FILE removes one a power loss
-//! left behind.
+//! Every lease line fits the USB receive queue whole, in caller memory that
+//! exists only for the lease. Bytes go to the folder's fixed temp name, are
+//! synced, read back from the card and checked against the offered size and
+//! SHA-256, and only then renamed into place, so the final name never holds a
+//! partial file. A replaced file is moved aside to a backup whose target a
+//! synced marker names; a failed rename moves it back, and the folder's next
+//! FILE finishes or undoes a replacement a power loss interrupted. Physical
+//! input, a disconnect, a stall or a new HELLO abandons the transfer up to the
+//! first rename; every exit closes the file and removes the temp.
 use core::ffi::CStr;
 
 #[path = "dev_put/lease.rs"]
@@ -19,11 +19,15 @@ pub use lease::run;
 
 /// The largest image an app slot holds, so a bench `newt.bin` fits.
 pub const CAP_BYTES: u32 = crate::update_card::APP_SLOT_BYTES;
-/// Six SD sectors per DATA line; their base64 is exactly 4,096 characters.
-pub const CHUNK_BYTES: usize = 3072;
-/// One lease line without its LF. The longest is DATA: a 36-byte header,
-/// `DATA `, a 10-digit offset, a space and 4,096 base64 characters (4,148).
-pub const LINE_BYTES: usize = 4160;
+/// HWCDC's receive queue (its `begin` default). Its interrupt drops what a
+/// full queue cannot take, so a lease line and its LF must fit it whole; the
+/// host sends one line and waits for its answer.
+pub const RX_QUEUE_BYTES: usize = 256;
+/// Bytes per DATA line: 200 base64 characters.
+pub const CHUNK_BYTES: usize = 150;
+/// One lease line without its LF. The longest is DATA: a header of at most 36
+/// bytes, `DATA `, an offset below the cap, a space and its base64 (249).
+pub const LINE_BYTES: usize = RX_QUEUE_BYTES - 1;
 /// Holds the longest reply (`DONE`, 137 bytes with its maximum header).
 const REPLY_BYTES: usize = 192;
 /// The lease's whole working memory, lent by the caller for one lease.
@@ -79,15 +83,26 @@ impl Folder {
             Self::Dev => c"/newt-sd/Newt/Dev/.newt-old",
         }
     }
+    /// The backup's target name, synced before the target moves aside.
+    pub fn marker(self) -> &'static CStr {
+        match self {
+            Self::Apps => c"/newt-sd/Newt/Apps/.newt-old-name",
+            Self::Update => c"/newt-sd/Newt/Update/.newt-old-name",
+            Self::Dev => c"/newt-sd/Newt/Dev/.newt-old-name",
+        }
+    }
 }
 
 /// One plain name: 1 to 32 of `A-Z a-z 0-9 . _ -`, starting with a letter or
-/// digit, with no `..`. So no separator, parent, absolute path or hidden name.
+/// digit, with no `..` and no trailing dot. So no separator, parent, absolute
+/// path or hidden name, and none FAT would strip to another name (FAT drops a
+/// trailing dot; it also ignores case, which the host checks across a batch).
 pub fn name_allowed(name: &[u8]) -> bool {
     (1..=NAME_BYTES).contains(&name.len())
         && name[0].is_ascii_alphanumeric()
         && name.iter().all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
         && !name.windows(2).any(|pair| pair == b"..")
+        && name.last() != Some(&b'.')
 }
 
 /// What the card holds at a path, read without following a link.

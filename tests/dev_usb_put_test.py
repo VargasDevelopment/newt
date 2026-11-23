@@ -31,13 +31,14 @@ class LeasePeer(module.ProtocolClient):
         super().__init__(0.1, randbelow=lambda size: 17)
         self.caps, self.build = caps, build
         self.silent, self.short, self.answers = silent, short, answers or {}
-        self.writes, self.pending, self.peer_session = [], b'', 0
+        self.writes, self.pending, self.peer_session, self.longest = [], b'', 0, 0
         self.card, self.open = {}, None
 
     def write_data(self, data, remaining):
         tokens = data.decode().split(' ')
         kind = 'HELLO' if tokens[1] == 'HELLO\n' else tokens[4].strip()
         self.writes.append(kind)
+        self.longest = max(self.longest, len(data))
         if kind == self.short:
             raise ValueError('Incomplete serial command write')
         if kind == self.silent:
@@ -103,7 +104,8 @@ def success():
     assert peer.card == {('dev', name): data for _, name, data in FILES}
     assert [entry['result'] for entry in report['put']['files']] == ['written'] * 3
     assert report['put']['files'][1]['sha256'] == hashlib.sha256(FILES[1][2]).hexdigest()
-    assert peer.writes.count('DATA') == 0 + 12 + 2 and peer.writes[-1] == 'STATUS'
+    assert peer.writes.count('DATA') == 0 + 246 + 35 and peer.writes[-1] == 'STATUS'
+    assert peer.longest <= 256, 'each line and its LF fit the device receive queue whole'
     kinds = [record['kind'] for record in report['protocol']['records']]
     assert kinds.count('DATA') == 3, 'DATA is summarised once per file'
     assert len(kinds) < 40
@@ -148,15 +150,28 @@ def an_unknown_commit_is_never_retried():
     assert peer.writes.count('DONE') == 1
 
 
+def a_kept_backup_is_reported_as_recovery_needed():
+    for kind in ('DONE', 'FILE'):
+        peer = LeasePeer(answers={kind: 'ERROR recovery-needed step=rename code=-5'})
+        report = session(peer, FILES[1:])
+        assert '.newt-old' in report['error'], report['error']
+        assert report['put']['files'][0]['result'] == 'recovery-needed'
+        assert peer.writes.count('PUT') == 1, 'the run stops there'
+
+
 def plans_are_checked_before_the_port_opens():
     with tempfile.TemporaryDirectory() as directory:
         folder = Path(directory)
-        for name in ('a.txt', 'b.txt', '.hidden', 'a..b'):
+        for name in ('a.txt', 'b.txt', '.hidden', 'a..b', 'x.'):
             (folder / name).write_bytes(b'x')
+        (folder / 'upper').mkdir()
+        (folder / 'upper/A.TXT').write_bytes(b'y')
         assert put.plan([folder / 'a.txt'], 'renamed.txt')[0][1:] == ('renamed.txt', b'x')
         for paths, name, error in (([folder / '.hidden'], None, 'Card name'), ([folder / 'a..b'], None, 'Card name'),
                                    ([folder / 'a.txt'], '../x', 'Card name'), ([folder / 'a.txt'], 'a/b', 'Card name'),
                                    ([folder / 'a.txt'], 'x' * 33, 'Card name'),
+                                   ([folder / 'x.'], None, 'Card name'), ([folder / 'a.txt'], 'newt.bin.', 'Card name'),
+                                   ([folder / 'a.txt', folder / 'upper/A.TXT'], None, 'FAT ignores case'),
                                    ([folder / 'a.txt', folder / 'b.txt'], 'c.txt', 'exactly one'),
                                    ([folder / 'a.txt', folder / 'a.txt'], None, 'share'),
                                    ([folder / 'a.txt'] * 65, None, 'Put 1 to 64'), ([], None, 'Put 1 to 64')):
@@ -190,9 +205,11 @@ def main():
     refusals_before_any_write()
     failures_before_done_leave_the_name_unchanged()
     an_unknown_commit_is_never_retried()
+    a_kept_backup_is_reported_as_recovery_needed()
     plans_are_checked_before_the_port_opens()
-    print('PASS: dev-usb put: verified final SHA-256, fragmented replies, deadlines, short writes, '
-          'no retry of an unknown commit and plan refusals; no device access')
+    print('PASS: dev-usb put: verified final SHA-256, lines within the receive queue, fragmented replies, '
+          'deadlines, short writes, no retry of an unknown commit, recovery-needed and plan refusals; '
+          'no device access')
 
 
 if __name__ == '__main__':

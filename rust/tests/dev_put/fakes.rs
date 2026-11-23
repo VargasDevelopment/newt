@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: MIT
 //! A card, a serial channel and a SHA-256 for the lease, each as plain as the
 //! firmware's: the card stores every write at once (so a partial file is
-//! visible), refuses a rename onto an existing name, and fails a named step
-//! on request.
+//! visible), refuses a rename onto an existing name, fails a named step on
+//! request, and can press a button when a named step runs.
 use newt_core::dev_put::{Card, Entry, Wire};
 use newt_core::update_online::Hash;
 use newt_core::wire::crc32;
+use std::cell::Cell;
 use std::collections::{BTreeMap, VecDeque};
 use std::ffi::CStr;
+use std::rc::Rc;
 
 pub const FAILED: i32 = -5;
 
@@ -27,14 +29,20 @@ pub struct FakeCard {
     pub flip: Option<usize>,
     /// This step fails with `FAILED`.
     pub fail: Option<&'static str>,
-    /// The first rename onto this path fails with `FAILED`.
-    pub fail_rename_onto: Option<&'static str>,
+    /// The next renames onto this path fail with `FAILED`, this many times.
+    pub fail_rename_onto: Option<(&'static str, u32)>,
+    /// When this step runs for the given time (from 1), a button is pressed:
+    /// the wire sharing `pressed` reports it at its next look.
+    pub press_on: Option<(&'static str, u32)>,
+    pub pressed: Rc<Cell<bool>>,
+    pub steps: BTreeMap<&'static str, u32>,
 }
 
 impl Default for FakeCard {
     fn default() -> Self {
         Self { nodes: BTreeMap::from([("/newt-sd".into(), Node::Folder)]), handles: BTreeMap::new(), next_fd: 3,
-            free: 1 << 30, write_limit: usize::MAX, flip: None, fail: None, fail_rename_onto: None }
+            free: 1 << 30, write_limit: usize::MAX, flip: None, fail: None, fail_rename_onto: None, press_on: None,
+            pressed: Rc::default(), steps: BTreeMap::new() }
     }
 }
 
@@ -56,7 +64,12 @@ impl FakeCard {
         self.nodes.insert(path.into(), Node::File(bytes.to_vec()));
     }
     pub fn open_files(&self) -> usize { self.handles.len() }
-    fn step(&self, name: &str) -> Result<(), i32> {
+    /// How many times a card step ran.
+    pub fn count(&self, step: &str) -> u32 { self.steps.get(step).copied().unwrap_or(0) }
+    fn step(&mut self, name: &'static str) -> Result<(), i32> {
+        let count = self.steps.entry(name).or_default();
+        *count += 1;
+        if self.press_on == Some((name, *count)) { self.pressed.set(true); }
         if self.fail == Some(name) { Err(FAILED) } else { Ok(()) }
     }
     fn parent_is_folder(&self, path: &str) -> bool {
@@ -108,6 +121,7 @@ impl Card for FakeCard {
         Ok(put)
     }
     fn read(&mut self, fd: i32, out: &mut [u8]) -> Result<usize, i32> {
+        self.step("read")?;
         let Some(handle) = self.handles.get_mut(&fd) else { return Err(-9) };
         let Some(Node::File(file)) = self.nodes.get(&handle.path) else { return Err(-9) };
         let got = out.len().min(file.len() - handle.at);
@@ -128,8 +142,8 @@ impl Card for FakeCard {
     fn rename(&mut self, from: &CStr, to: &CStr) -> Result<(), i32> {
         self.step("rename")?;
         let (from, to) = (text(from), text(to));
-        if self.fail_rename_onto == Some(to.as_str()) {
-            self.fail_rename_onto = None;
+        if let Some((path, times)) = self.fail_rename_onto.filter(|&(path, _)| path == to) {
+            self.fail_rename_onto = (times > 1).then_some((path, times - 1));
             return Err(FAILED);
         }
         if self.nodes.contains_key(&to) { return Err(-17); }
@@ -157,12 +171,14 @@ pub struct FakeWire {
     pub write_limit: usize,
     /// The host stops reading: every write accepts nothing.
     pub stalled: bool,
+    /// A press the card made (FakeCard::press_on), taken at the next look.
+    pub pressed: Rc<Cell<bool>>,
 }
 
 impl FakeWire {
     pub fn new(script: Vec<Event>) -> Self {
         Self { script: script.into(), pending: VecDeque::new(), connected: true, clock: 1_000, sent: Vec::new(),
-            write_limit: usize::MAX, stalled: false }
+            write_limit: usize::MAX, stalled: false, pressed: Rc::default() }
     }
     fn front(&mut self, wanted: fn(&Event) -> bool) -> bool {
         if !self.pending.is_empty() || !self.script.front().is_some_and(wanted) { return false; }
@@ -204,7 +220,9 @@ impl Wire for FakeWire {
         put
     }
     fn now(&mut self) -> u32 { self.clock }
-    fn physical_input(&mut self) -> bool { self.front(|event| matches!(event, Event::Press)) }
+    fn physical_input(&mut self) -> bool {
+        self.pressed.take() || self.front(|event| matches!(event, Event::Press))
+    }
     fn pause(&mut self) { self.clock += 1; }
 }
 
