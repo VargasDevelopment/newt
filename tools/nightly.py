@@ -10,7 +10,9 @@ release_publish.py --prerelease.
 
 The version is <next>-dev.YYYYMMDD.N. <next> is the patch after the core of the
 main commit's own version (0.2.1-rc.1 gives 0.2.2); YYYYMMDD is the UTC day; N
-follows every nightly tag of <next> that day, published or not. Devices hold at
+follows every nightly tag of <next> that day, published or not, and every draft
+release's tag: a run that declines to publish keeps its draft but never pushes
+its tag, and the next run must not take that number again. Devices hold at
 most 23 characters of a version, so a longer one is refused. A push that changes
 nothing the image is built from since the last published nightly gets none; a
 tag with no published release (none, or only a draft) never counts as one.
@@ -119,6 +121,16 @@ def published(repository, tag, answer=None):
     return None if release.get('draft') is not False else release
 
 
+def draft_tags(repository, answer=None):
+    """The tags of the repository's draft releases. A draft has no git tag until it publishes, and
+    release_publish.py never deletes one, so a nightly that declined to publish keeps its number taken.
+    A failed read raises: guessing "no drafts" would reuse a draft's number and fail its publish."""
+    command = ['gh', 'api', '--paginate', f'repos/{repository}/releases', '--jq', '.[] | select(.draft) | .tag_name']
+    reply = (answer or (lambda command: subprocess.run(command, capture_output=True)))(command)
+    require(reply.returncode == 0, f'{shlex.join(command)} failed: {reply.stderr.decode().strip()}')
+    return reply.stdout.decode().split()
+
+
 def push_tag(root, tag, source):
     """Pushes a nightly's tag, its one irreversible step, after every check; returns False instead
     when origin's main has moved on from `source`, the stamped commit (its own run publishes). Main's
@@ -154,10 +166,10 @@ def last_source(root, tags, published):
     return None
 
 
-def stamp(published, root=ROOT, today=None, force=False):
+def stamp(published, root=ROOT, today=None, force=False, drafts=()):
     """Commits and tags the nightly of HEAD, main's tip; returns its version, or None when main has
     moved on or the image has not changed since the last published nightly. `published(tag)` reads
-    GitHub."""
+    GitHub; `drafts` are its draft releases' tags, whose numbers are taken too."""
     head = resolve_commit(root, 'HEAD')
     live = git_output(root, 'ls-remote', 'origin', 'refs/heads/main').split('\t')[0]
     if live != head:
@@ -171,7 +183,7 @@ def stamp(published, root=ROOT, today=None, force=False):
               file=sys.stderr)
         return None
     day = (today or datetime.now(timezone.utc)).strftime('%Y%m%d')
-    version = nightly_version(committed_release(root, head)[0], day, tags)
+    version = nightly_version(committed_release(root, head)[0], day, [*tags, *drafts])
     for path, text in stamped(root, head, version).items():
         (root / path).write_text(text)
     git_output(root, 'commit', '-q', '-m', f'chore(release): nightly {version}\n\nSource: {head}', '--', *VERSION_LINES)
@@ -191,7 +203,8 @@ def main(argv=None):
                          help='stamp even when the image has not changed since the last published nightly')
     args = parser.parse_args(argv)
     try:
-        version = stamp(lambda tag: published(args.repository, tag), force=args.force)
+        version = stamp(lambda tag: published(args.repository, tag), force=args.force,
+                        drafts=draft_tags(args.repository))
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         print(f'Nightly stopped: {error}', file=sys.stderr)
         return 1
