@@ -5,6 +5,7 @@ it provides no image decoding evidence. Default execution requires Mac ImageIO.
 """
 import hashlib
 import importlib.util
+import json
 import os
 from pathlib import Path
 import struct
@@ -35,7 +36,7 @@ PORTABLE_CASES = (
     'test_authored_png_corpus_has_locked_payloads_and_rejects_unknown_bytes',
     'test_authored_fixture_routing_prepares_all_four_or_fails',
     'test_general_decoder_explicitly_rejects_linux',
-    'test_required_mac_gate_rejects_linux_and_source_drift_before_report',
+    'test_required_mac_gate_checks_only_imageio_for_exact_source',
 )
 
 
@@ -337,7 +338,7 @@ precondition(CGImageDestinationFinalize(output))
             subprocess.run([str(self.helper), str(image), str(bitmap)], check=True)
             self.assertEqual(bitmap.read_bytes(), fixture.bitmap(image.read_bytes()))
 
-    def test_required_mac_gate_rejects_linux_and_source_drift_before_report(self):
+    def test_required_mac_gate_checks_only_imageio_for_exact_source(self):
         sys.path.insert(0, str(ROOT / 'tools'))
         spec = importlib.util.spec_from_file_location('mac_cover_gate', ROOT / 'tools/check-mac-covers.py')
         gate = importlib.util.module_from_spec(spec)
@@ -345,19 +346,32 @@ precondition(CGImageDestinationFinalize(output))
         report = self.root / '.build/mac-covers/report.json'
         report.parent.mkdir(parents=True)
         report.write_text('{"passed":true}')
+        expected = 'a' * 40
         with patch.object(gate.platform, 'system', return_value='Linux'), \
              patch.object(gate.subprocess, 'run') as run:
             with self.assertRaisesRegex(RuntimeError, 'needs macOS ImageIO'):
-                gate.run_gate(self.root.resolve(), 'a' * 40)
+                gate.run_gate(self.root.resolve(), expected)
             run.assert_not_called()
         self.assertFalse(report.exists())
         with patch.object(gate.platform, 'system', return_value='Darwin'), \
              patch.object(gate, 'committed_source', side_effect=[{'sha': 'a'}, {'sha': 'b'}]), \
-             patch.object(gate, 'reviewed_frames'), \
              patch.object(gate.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)):
             with self.assertRaisesRegex(RuntimeError, 'source changed'):
-                gate.run_gate(self.root.resolve(), 'a' * 40)
+                gate.run_gate(self.root.resolve(), expected)
         self.assertFalse(report.exists())
+        source = {'sha': expected}
+        root = self.root.resolve()
+        with patch.object(gate.platform, 'system', return_value='Darwin'), \
+             patch.object(gate.platform, 'platform', return_value='Darwin test'), \
+             patch.object(gate, 'committed_source', return_value=source), \
+             patch.object(gate.subprocess, 'run') as run:
+            gate.run_gate(root, expected)
+            run.assert_called_once_with(
+                [sys.executable, '-B', str(root / 'tests/library_cover_prepare_test.py')],
+                cwd=root, check=True)
+        receipt = json.loads(report.read_text())
+        self.assertEqual(receipt['phases'], ['mac-imageio-cover-tests'])
+        self.assertEqual(receipt['source'], source)
 
 
 if __name__ == '__main__':

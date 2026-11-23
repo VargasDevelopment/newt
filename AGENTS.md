@@ -56,7 +56,7 @@ On Linux, add `--profile linux` to `check.py`.
 
 Some evidence CI cannot give. Add it where it applies:
 
-- Cover extraction or reviewed UI frames: the Mac ImageIO cover gate on the
+- Host ImageIO cover preparation: the Mac ImageIO cover gate on the
   exact commit ([docs/CI.md](docs/CI.md#explicit-cover-coverage-boundary)).
 - Device behaviour: a check on a real X3 ([Evidence](#evidence)).
 - A release: release acceptance ([docs/RELEASING.md](docs/RELEASING.md)).

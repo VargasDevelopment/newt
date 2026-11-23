@@ -287,31 +287,29 @@ inputs. Failure or receipt drift stops the sequence; ceilings are unchanged.
 
 ## Explicit cover coverage boundary
 
-The firmware draws covers on the device with its own decoders: baseline and
-progressive JPEG, and PNG. On Linux, the `jpeg_decoder` and `png_decoder`
-families, the core `cover_tolerance` tests and the preview's cover flows
-(`tests/preview_cover_test.py`) cover them. The host prepare tool,
-`tools/prepare-library-covers.py`, extracts covers with macOS ImageIO, and the
-Mac gate below covers it. For that tool, Linux is not claimed to support
-arbitrary PNG/JPEG, EXIF orientation, resizing or general decoder parity.
-Its test-only decoder accepts only four committed, SHA-locked authored grayscale
-PNGs. Each corresponding packed cover was compared against the production Mac
-Swift helper with zero differing bytes. All 22 reviewed UI frames remain
-mandatory and unchanged; unknown fixture bytes fail closed.
+**Linux.** The firmware uses its own baseline JPEG, progressive JPEG and PNG
+decoders. The `jpeg_decoder` and `png_decoder` families, the core
+`cover_tolerance` tests and the preview's cover flows
+(`tests/preview_cover_test.py`) exercise those paths. The Linux gate also
+verifies all 22 reviewed UI frames rendered by the firmware host build. The
+prepared-cover cases use a test helper that accepts only four committed,
+SHA-locked authored PNGs and returns their matching packed ImageIO output.
+Unknown fixture bytes fail closed.
 
-Linux reports `complete_software_coverage: false` and requires a separate fresh
-Mac gate for the exact candidate:
+**Mac.** Run the host-only Swift ImageIO cover helper gate on the exact
+candidate. It runs the full cover preparation test suite, which exercises the
+helper with authored PNG and JPEG inputs and compares the four locked fixtures
+against actual ImageIO output.
 
 ```sh
 python3 -B tools/check-mac-covers.py --expected-commit FULL_SHA
 ```
 
-That gate runs the complete ImageIO suite and directly verifies all 22 actual
-renderer frames, with committed source and golden authority checked before and
-after. Its report is `.build/mac-covers/report.json`. A Linux PASS alone cannot
-satisfy complete software acceptance. The Mac report is reviewed separately;
-no saved report can bypass Linux or Mac execution. Canonical local Mac
-`tools/check.py` retains its full cover suite.
+The Mac gate checks committed source before and after the suite and writes
+`.build/mac-covers/report.json`. Complete software acceptance requires fresh
+Linux and Mac runs for the same commit. The Linux report marks
+`complete_software_coverage: false` because the ImageIO evidence comes from the
+separate Mac run.
 
 ## Locked inputs and fresh environments
 
