@@ -5,7 +5,7 @@ The preview is the real firmware built for the host over C fakes
 (rust/host/preview/fakes). Each world is a card with no Newt/Covers and
 synthetic books whose covers are made here: baseline grayscale JPEGs declared
 the EPUB3 way (cover-image) and the EPUB2 way (<meta name="cover">), stored
-and deflated, and one book whose cover form the firmware does not decode, the
+and deflated, one with the common "image/jpg" media type, and one book whose cover form the firmware does not decode, the
 known gap. Cover work starts after 2 s without input; the preview presses
 only after 4 s without a refresh, press or card access, so staying on a
 screen lets that work finish. Each control is the same build with one
@@ -33,9 +33,6 @@ from gate_tier import negative_controls  # noqa: E402
 
 BACK, CONFIRM, RIGHT = 0, 1, 3
 SHELF = (CONFIRM,)
-# Right past the first shelf's four books, to the fifth.
-NEXT_SHELF = (CONFIRM, RIGHT, RIGHT, RIGHT, RIGHT)
-OPEN_FIRST = (CONFIRM, CONFIRM)
 # rust/firmware/reader_cover_idle.rs CoverResult.
 PRODUCED, CANCELLED, UNSUPPORTED, IO_ERROR = 2, 3, 6, 9
 ROWS = re.compile(r'COVER work=attempt result=(\d+)')
@@ -48,10 +45,17 @@ ART, NO_ART = 28 + ROW_BYTES * HEIGHT, 28
 # Routes as the card holds them (little-endian rust/core/src/cover.rs NO_ART words).
 CJB6, CJB5 = b'CJB6', b'CJB5'
 MTIME = 1790812800
-# Book name: (declaration, deflated, cover form). Names sort into shelf order.
-SUPPORTED = {'Alder': ('epub3', False), 'Birch': ('epub3', True),
-             'Cedar': ('epub2', False), 'Dogwood': ('epub2', True)}
-GAP = 'Elm'
+# Book name: how its cover is declared and stored. Names sort into shelf order.
+SUPPORTED = {
+    'Alder': {'declaration': 'epub3'},
+    'Birch': {'declaration': 'epub3', 'deflated': True},
+    'Cedar': {'declaration': 'epub2'},
+    'Dogwood': {'declaration': 'epub2', 'deflated': True},
+    'Elm': {'declaration': 'epub3', 'media': 'image/jpg'},
+}
+# A cover form the firmware does not decode, the known gap; last on the shelves.
+GAP = 'Yew'
+BOOKS = [*SUPPORTED, GAP]
 SAMPLE = ROOT / 'tests/fixtures/the-small-lantern.epub'
 
 
@@ -88,7 +92,7 @@ def jpeg(width, height, dc, frame=0xc0):
 
 def grey(seed, x, y):
     """The grey of art(seed)'s 8x8 block (x, y): diagonal bands."""
-    return (x * 8 + y * 4 + seed * 64) % 256
+    return (x * 8 + y * 4 + seed * 48) % 256
 
 
 def art(seed):
@@ -96,16 +100,16 @@ def art(seed):
     return jpeg(288, 376, lambda x, y: (grey(seed, x, y) - 128) * 8)
 
 
-def epub(path, title, image, declaration='epub3', deflated=False):
+def epub(path, title, image, declaration='epub3', deflated=False, media='image/jpeg'):
     """The sample under `title`, with `image` as its declared cover."""
     with zipfile.ZipFile(SAMPLE) as source:
         opf = source.read('OEBPS/content.opf').decode()
         opf = opf.replace('The Small Lantern', title).replace('small-lantern:1', title)
         if declaration == 'epub2':
             opf = opf.replace('</metadata>', '<meta name="cover" content="art"/></metadata>')
-            item = '<item id="art" href="art.jpg" media-type="image/jpeg"/>'
+            item = f'<item id="art" href="art.jpg" media-type="{media}"/>'
         else:
-            item = '<item id="art" href="art.jpg" media-type="image/jpeg" properties="cover-image"/>'
+            item = f'<item id="art" href="art.jpg" media-type="{media}" properties="cover-image"/>'
         opf = opf.replace('</manifest>', item + '</manifest>')
         with zipfile.ZipFile(path, 'w', zipfile.ZIP_STORED) as archive:
             for entry in source.infolist():
@@ -118,8 +122,8 @@ def epub(path, title, image, declaration='epub3', deflated=False):
 def books():
     """Newt/Books for every world, made once per run."""
     folder = Path(tempfile.mkdtemp(prefix='newt-cover-books-'))
-    for seed, (name, (declaration, deflated)) in enumerate(SUPPORTED.items()):
-        epub(folder / f'{name}.epub', name, art(seed), declaration, deflated)
+    for seed, (name, form) in enumerate(SUPPORTED.items()):
+        epub(folder / f'{name}.epub', name, art(seed), **form)
     # Progressive (SOF2): the decoder takes only baseline frames.
     epub(folder / f'{GAP}.epub', GAP, jpeg(288, 376, lambda x, y: 0, frame=0xc2))
     return folder
@@ -162,6 +166,16 @@ class World:
         return sorted(path.name for path in self.covers.glob('*.tmp')) if self.covers.exists() else []
 
 
+def to_book(name):
+    """Keys from Home to Books with `name` selected, which shows its shelf."""
+    return (CONFIRM,) + (RIGHT,) * BOOKS.index(name)
+
+
+def shelves():
+    """The books of each shelf of four, in slot order."""
+    return [BOOKS[at:at + 4] for at in range(0, len(BOOKS), 4)]
+
+
 def region(frame, left, top):
     """The 144x188 one-bit region at (left, top), packed as a cover raster."""
     out = bytearray()
@@ -200,61 +214,68 @@ def art_problem(world, book):
 
 # Each case returns None when the firmware behaved, else what went wrong.
 def books_shelf(binary):
-    """Books makes the visible shelf's covers and repaints with them; the
+    """Books makes each visible shelf's covers and repaints with them; the
     unsupported book gets a bare record with a "no cover" result."""
     with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
         world = World(binary, scratch)
-        shelf, results, _ = world.run(SHELF)
-        for book in SUPPORTED:
-            if problem := art_problem(world, book):
-                return problem
-        if results != [PRODUCED] * len(SUPPORTED):
-            return f'the shelf\'s attempts ended {results}'
+        shown = {}
+        for names in shelves():
+            frame, results, _ = world.run(to_book(names[0]))
+            expected = [UNSUPPORTED if book == GAP else PRODUCED for book in names]
+            if results != expected:
+                return f'the shelf of {names} ended {results}, not {expected}'
+            for index, book in enumerate(names):
+                shown[book] = slot(frame, index)
+                if book == GAP:
+                    if world.cover(GAP) != record(GAP, CJB6):
+                        return f'the unsupported book has {world.cover(GAP)!r}'
+                elif problem := art_problem(world, book):
+                    return problem
+                elif shown[book] != world.cover(book)[28:]:
+                    return f'the shelf does not show {book}\'s new cover'
         if len({world.cover(book) for book in SUPPORTED}) != len(SUPPORTED):
             return 'two books share one cover'
-        for index, book in enumerate(SUPPORTED):
-            if slot(shelf, index) != world.cover(book)[28:]:
-                return f'the shelf does not show {book}\'s new cover'
-        gap, results, _ = world.run(NEXT_SHELF)
-        if results != [UNSUPPORTED] or world.cover(GAP) != record(GAP, CJB6):
-            return f'the unsupported book ended {results} with {world.cover(GAP)!r}'
-        if any(slot(shelf, index) == slot(gap, 0) for index in range(len(SUPPORTED))):
+        if any(shown[book] == shown[GAP] for book in SUPPORTED):
             return 'a shelf cover looks like the "No cover" slot'
         if world.temporaries():
             return f'cover work left {world.temporaries()}'
 
 
 def home(binary):
-    """Home makes the current book's cover, reads it again and paints it."""
-    with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
-        world = World(binary, scratch)
-        world.run(OPEN_FIRST)
-        # Books made its shelf before the book opened; leave Home its own work.
-        shutil.rmtree(world.covers)
-        frame, results, log = world.run((BACK,))
-        book = next(iter(SUPPORTED))
-        if problem := art_problem(world, book):
-            return problem
-        if results != [PRODUCED] or HOME_READY not in log.split(f'result={PRODUCED} ', 1)[-1]:
-            return f'Home\'s attempts ended {results} with no later "{HOME_READY}"'
-        if region(frame, 192, 94) != world.cover(book)[28:]:
-            return 'Home does not paint the new cover'
+    """Home makes the current book's cover, reads it again and paints it, for
+    each supported cover form."""
+    for book in SUPPORTED:
+        with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
+            world = World(binary, scratch)
+            world.run(to_book(book) + (CONFIRM,))
+            # Books made its shelves before the book opened; leave Home its own work.
+            shutil.rmtree(world.covers)
+            frame, results, log = world.run((BACK,))
+            if problem := art_problem(world, book):
+                return problem
+            if results != [PRODUCED] or HOME_READY not in log.split(f'result={PRODUCED} ', 1)[-1]:
+                return f'Home\'s attempts for {book} ended {results} with no later "{HOME_READY}"'
+            if region(frame, 192, 94) != world.cover(book)[28:]:
+                return f'Home does not paint {book}\'s new cover'
 
 
 def old_records(binary):
     """A CJB5 bare record (from before #46, as v0.3.0 wrote it) is retried
     once and then never again; a current CJB6 one is used as it is."""
+    # The gap's shelf holds only its own retry: its other books are current.
+    gap_shelf = shelves()[-1]
+    records = {**{book: CJB6 for book in gap_shelf}, 'Alder': CJB5, 'Birch': CJB6, GAP: CJB5}
     with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
-        world = World(binary, scratch, {'Alder': CJB5, 'Birch': CJB6, GAP: CJB5})
+        world = World(binary, scratch, records)
         _, results, _ = world.run(SHELF)
         if problem := art_problem(world, 'Alder'):
             return f'the CJB5 record was not retried: {problem}'
         if world.cover('Birch') != record('Birch', CJB6) or results != [PRODUCED] * 3:
             return f'the CJB6 record was not kept as it is (attempts {results})'
-        _, results, _ = world.run(NEXT_SHELF)
+        _, results, _ = world.run(to_book(gap_shelf[0]))
         if results != [UNSUPPORTED] or world.cover(GAP) != record(GAP, CJB6):
             return f'the unsupported book\'s CJB5 retry ended {results} with {world.cover(GAP)!r}'
-        _, results, _ = world.run(NEXT_SHELF)
+        _, results, _ = world.run(to_book(gap_shelf[0]))
         if results:
             return f'the unsupported book was retried again: {results}'
 

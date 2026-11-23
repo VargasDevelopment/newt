@@ -66,7 +66,8 @@ impl Handler for State<'_> {
                 else { attrs.exact(b"properties").is_some_and(|p|
                     p.split(|c| b" \t\r\n".contains(c)).any(|p| p == b"cover-image")) };
             if selected && (self.path[0] != 0
-                || !matches!(attrs.exact(b"media-type"), Some(b"image/png" | b"image/jpeg"))
+                // "image/jpg" is not a registered type, but common in books.
+                || !matches!(attrs.exact(b"media-type"), Some(b"image/png" | b"image/jpeg" | b"image/jpg"))
                 || !attrs.exact(b"href").is_some_and(|href| path(self.opf, href, &mut self.path))) {
                 self.status = S::Unsupported;
             }
