@@ -127,9 +127,10 @@ impl<'a> Session<'a>{
         if result!=R::Ready{return result;}self.temporaries|=STAGE;
         let status={let mut raw=Source::new(self.files,self.control);
             if !raw.open(path!(&self.stage,R::IoError),256*1024){return R::IoError;}
-            let status=match document{Document::Container=>xml::container(&mut raw,self.memory,&mut self.found),
-                Document::Package=>xml::package(&mut raw,self.memory,&self.opf,&mut self.found),
-                Document::Page=>xml::page(&mut raw,self.memory,&mut self.found)};
+            let io=self.files.io();
+            let status=match document{Document::Container=>xml::container(io,&mut raw,self.memory,&mut self.found),
+                Document::Package=>xml::package(io,&mut raw,self.memory,&self.opf,&mut self.found),
+                Document::Page=>xml::page(io,&mut raw,self.memory,&mut self.found)};
             self.faulted|=raw.faulted();status};
         if !io::remove_temporary(self.files,path!(&self.stage,R::IoError),Some(self.control)){return self.cancelled(R::IoError);}
         self.temporaries&=!STAGE;metadata(status)

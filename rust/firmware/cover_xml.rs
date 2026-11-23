@@ -2,9 +2,11 @@
 //! Cover XML passes over Salamander's Expat binding (newt_native_io::cover::xml).
 use newt_core::{cover::{MetadataStatus as S, xml::{self,Found,Kind,State}}, xml_session::{Attributes,Handler}};
 use newt_core::zip_window::source::BookSource;
-use newt_native_io::cover::xml::{self as expat, Allocator, Events, Fault};
+use newt_native_io::{UiIo, cover::xml::{self as expat, Allocator, Events, Fault}};
 use super::memory::Memory;
-impl Allocator for Memory<'_> {
+// SAFETY: Memory hands out zeroed max-aligned payloads of at least `bytes`,
+// resizes as realloc does and releases only its own payloads.
+unsafe impl Allocator for Memory<'_> {
     fn allocate(&self, bytes: usize) -> *mut u8 { Memory::allocate(self, bytes) }
     // SAFETY: the trait's contract is Memory::resize's: a live payload of THIS Memory, no loans.
     unsafe fn resize(&self, pointer: *mut u8, bytes: usize) -> *mut u8 {
@@ -30,8 +32,8 @@ impl Events for Cover<'_,'_> {
     fn doctype(&mut self,subset:bool) { self.0.doctype(subset) }
     fn external(&mut self) { self.0.reject() }
 }
-fn parse(raw:&mut dyn BookSource,memory:&Memory<'_>,state:&mut State<'_>)->S {
-    match expat::parse(raw,memory,&mut Cover(state)) {
+fn parse(io:&UiIo,raw:&mut dyn BookSource,memory:&Memory<'_>,state:&mut State<'_>)->S {
+    match expat::parse(io,raw,memory,&mut Cover(state)) {
         Ok(()) => {}
         Err(Fault::Refused(status)) => return status,
         Err(Fault::Read) => state.status=S::IoError,
@@ -48,24 +50,24 @@ fn with_state(memory:&Memory<'_>,kind:Kind,opf:&[u8],found:&mut Found,run:impl F
     run(&mut state)
 }
 /// The package path goes to `found.image`.
-pub fn container(raw:&mut dyn BookSource,memory:&Memory<'_>,found:&mut Found)->S {
-    let result=with_state(memory,Kind::Container,b"",found,|state| parse(raw,memory,state));
+pub fn container(io:&UiIo,raw:&mut dyn BookSource,memory:&Memory<'_>,found:&mut Found)->S {
+    let result=with_state(memory,Kind::Container,b"",found,|state| parse(io,raw,memory,state));
     if result==S::Ok && found.image[0]==0 { S::NotFound } else { result }
 }
-pub fn package(raw:&mut dyn BookSource,memory:&Memory<'_>,opf:&[u8],found:&mut Found)->S {
+pub fn package(io:&UiIo,raw:&mut dyn BookSource,memory:&Memory<'_>,opf:&[u8],found:&mut Found)->S {
     use newt_core::cover::discovery::{path,cbytes};
     let mut canonical=[0;512];
     if !path(b"",opf,&mut canonical) || cbytes(opf)!=cbytes(&canonical) { return S::Unsupported; }
     with_state(memory,Kind::Package,opf,found,|state| {
-        let mut result=parse(raw,memory,state);
-        if result==S::Ok && state.second_pass() { state.resolve=true; state.saw_root=false; result=parse(raw,memory,state); }
+        let mut result=parse(io,raw,memory,state);
+        if result==S::Ok && state.second_pass() { state.resolve=true; state.saw_root=false; result=parse(io,raw,memory,state); }
         if result==S::Ok { state.settle() } else { result }
     })
 }
 /// Reads `found.page`; its cover image replaces `found.image`.
-pub fn page(raw:&mut dyn BookSource,memory:&Memory<'_>,found:&mut Found)->S {
+pub fn page(io:&UiIo,raw:&mut dyn BookSource,memory:&Memory<'_>,found:&mut Found)->S {
     with_state(memory,Kind::Page,b"",found,|state| {
-        let result=parse(raw,memory,state);
+        let result=parse(io,raw,memory,state);
         if result==S::Ok { state.take_page_image() } else { result }
     })
 }

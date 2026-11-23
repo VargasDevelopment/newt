@@ -5,6 +5,7 @@
 use core::{ffi::{CStr,c_char,c_int,c_void}, ptr};
 use newt_core::{cover::{MetadataStatus as S, read}, xml_session::{Attributes,Handler}};
 use newt_core::zip_window::source::BookSource;
+use crate::UiIo;
 /// A cover parse's events: Handler's, plus the DOCTYPE and external entity
 /// reports. Expat stops once `stop_parse` holds after a start or a DOCTYPE.
 pub trait Events: Handler {
@@ -24,8 +25,16 @@ pub enum Fault {
     /// Expat stopped: OutOfMemory for its no-memory error, else Malformed.
     Parse(S),
 }
-/// Every Expat allocation of a parse goes through this.
-pub trait Allocator {
+/// Every Expat allocation of a parse goes through this, and Expat writes
+/// through what it returns.
+///
+/// # Safety
+/// As C's malloc family: `allocate` returns null or a writable block of at
+/// least `bytes`, aligned for any C type. `resize` keeps realloc's meaning:
+/// null or a block of at least `bytes` holding the old contents, the old block
+/// released on success and kept on failure. `release` frees a block from this
+/// allocator once and ignores null.
+pub unsafe trait Allocator {
     fn allocate(&self, bytes: usize) -> *mut u8;
     /// # Safety
     /// `pointer` is null or a live payload from this allocator with no loans.
@@ -43,9 +52,10 @@ struct Suite {
     // SAFETY: Expat relinquishes this suite's exact original payload once.
     free: unsafe extern "C" fn(*mut c_void),
 }
-// SAFETY: serialized UI parser alone owns this lease; nested parses fail Busy.
-// It points at parse's local `&dyn Allocator`, which outlives ParserFree and
-// all callbacks, which cannot reenter. ParserFree clears the pointer.
+// SAFETY: only parse touches this lease, and parse needs the UI owner's
+// `UiIo`, so no other task races it; a nested parse fails Busy. It points at
+// parse's local `&dyn Allocator`, which outlives ParserFree and all callbacks,
+// which cannot reenter. ParserFree clears the pointer.
 static mut ALLOCATOR: *const () = ptr::null();
 // SAFETY: actual pinned Expat C ABI, synchronous callbacks and borrowed byte
 // extents. No callback or parser pointer survives the enclosing Parser lease.
@@ -160,9 +170,10 @@ impl Drop for Parser {
         unsafe { XML_ParserFree(self.0); ALLOCATOR=ptr::null(); }
     }
 }
-/// Parses all of `raw` into `events`, with every Expat allocation from `allocator`.
-pub fn parse(raw:&mut dyn BookSource,allocator:&dyn Allocator,events:&mut dyn Events)->Result<(),Fault> {
-    // SAFETY: UI task exclusively serializes cover parsing; nonnull fails Busy.
+/// Parses all of `raw` into `events`, with every Expat allocation from
+/// `allocator`. `_io` is the UI owner's authority, which serializes parses.
+pub fn parse(_io:&UiIo,raw:&mut dyn BookSource,allocator:&dyn Allocator,events:&mut dyn Events)->Result<(),Fault> {
+    // SAFETY: `_io` keeps every parse on the one UI owner; nonnull fails Busy.
     if unsafe { !ALLOCATOR.is_null() } { return Err(Fault::Refused(S::Busy)); }
     if raw.size()==0 || raw.size()>256*1024 { return Err(Fault::Refused(S::Unsupported)); }
     let suite=Suite{allocate,resize,free};
