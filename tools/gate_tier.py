@@ -39,12 +39,17 @@ SHARD_SECONDS = 'tools/gate-shard-seconds.json'
 # Rust test packets a tests/ script runs, by that script (#360).
 RUST_PACKETS = {'slot_vectors_test.py': 'rust/tests/slot_vectors/',
                 'app_store_test.py': 'rust/tests/app_store/',
-                'dev_put_test.py': 'rust/tests/dev_put/'}
+                'dev_put_test.py': 'rust/tests/dev_put/',
+                'large_epub_corpus_test.py': 'rust/tests/large_epub_corpus/'}
+# Extra non-tests/ files owned by a specific test packet (not shared by all rust:* families).
+PACKET_INPUTS = {'large_epub_corpus_test.py': ('tools/large_epub_corpus.py',)}
+EXTRA_TEST_INPUTS = tuple(path for paths in PACKET_INPUTS.values() for path in paths)
 # tests/ files whose text can name another tests/ file
 TEXT = frozenset(('.py', '.h', '.hpp', '.inc', '.cpp', '.c', '.json', '.txt', '.md'))
 # Product owners select moved positives only; test/harness changes select
 # mutation controls too. Deleted inputs follow the same ownership rules.
-TEST_PATHS = ('tests', 'rust/tests', ':(glob)rust/*.py', ':(glob)rust/*.json', 'rust-health', 'tools/rust-toolchain.py', 'tools/rust_gate_families.py',
+TEST_PATHS = ('tests', 'rust/tests', ':(glob)rust/*.py', ':(glob)rust/*.json', 'rust-health',
+              'tools/rust-toolchain.py', 'tools/rust_gate_families.py', *EXTRA_TEST_INPUTS,
               *(path for roots in FULL_POSITIVE_SOURCES.values() for path in roots))
 
 
@@ -87,7 +92,7 @@ def changed_tests(root, changed):
     positives = {key for name in changed for key in positive_owners(name)}
     changed = [name for name in changed if not positive_owners(name)
                and (name.startswith(('tests/', 'rust/tests/', 'rust-health/'))
-                    or name in SHARED_INPUTS
+                    or name in SHARED_INPUTS or name in EXTRA_TEST_INPUTS
                     or (Path(name).parent.as_posix() == 'rust' and Path(name).suffix in ('.py', '.json')))]
     native = [name for name in changed if Path(name).parts[0] == 'tests']
     rust = [name for name in changed if name not in native]
@@ -175,6 +180,8 @@ def changed_rust_tests(root, changed):
     for script, packet in RUST_PACKETS.items():
         inputs[script] = {path for path in (root / packet).rglob('*') if path.is_file()}
         inputs[script].update(root / name for name in changed if name.startswith(packet))
+    for script, paths in PACKET_INPUTS.items():
+        inputs.setdefault(script, set()).update(root / path for path in paths)
     files = {path for folder in (root / 'rust', health, root / 'tools') for path in folder.rglob('*')
              if path.is_file() and path.suffix in TEXT
              and 'target' not in path.parts and '__pycache__' not in path.parts}

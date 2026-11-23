@@ -22,3 +22,10 @@ newt-reader-atlas = { path = "../reader-atlas" }
 newt-reader-navigation = { path = "../reader-navigation" }
 newt-phased-sink = { path = "../phased-sink" }
 newt-target-expat = { path = "../target-expat" }
+
+# Large-EPUB boundary corpus runner; tests/large_epub_corpus_test.py builds and
+# runs it with generated fixtures and negative controls.
+[[test]]
+name = "large_epub_corpus"
+path = "../tests/large_epub_corpus/corpus.rs"
+test = false

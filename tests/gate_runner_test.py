@@ -439,20 +439,35 @@ class PlanTests(unittest.TestCase):
     def test_push_plan_drops_only_negative_controls(self):
         complete = [phase for phase in gate_plan.plan('linux', False)
                     if str(gate_plan.ROOT / 'rust/check.py') not in phase.command]
-        renamed = {name for name in (phase.name for phase in complete)
-                   if gate_plan.CONTROL_FLAGS.intersection(name.split())}
+        control_renamed = {name for name in (phase.name for phase in complete)
+                           if gate_plan.CONTROL_FLAGS.intersection(name.split())}
+        full_renamed = {name for name in (phase.name for phase in complete)
+                        if gate_plan.FULL_FLAGS.intersection(name.split())}
+        tier_flags = gate_plan.CONTROL_FLAGS | gate_plan.FULL_FLAGS
         for chosen in ((), ('bench_flash_test.py', 'installer_test.py')):
             with self.subTest(chosen=chosen):
                 push = [phase for phase in gate_plan.plan('linux', False, lambda script: script in chosen)
                         if str(gate_plan.ROOT / 'rust/check.py') not in phase.command]
                 gate_runner.prerequisites(push)  # Every ordering still names a phase that runs.
                 dropped = {phase.name for phase in complete} - {phase.name for phase in push}
-                kept = {name for name in renamed if name.split()[0] in chosen}
-                self.assertEqual(dropped, renamed - kept)
-                # A renamed phase still runs, without its control flags.
-                for name in renamed - kept:
-                    self.assertIn(' '.join(part for part in name.split() if part not in gate_plan.CONTROL_FLAGS),
+                kept = {name for name in control_renamed if name.split()[0] in chosen}
+                expected_dropped = (control_renamed - kept) | full_renamed
+                self.assertEqual(dropped, expected_dropped)
+                # A renamed phase still runs, without its dropped tier flags.
+                for name in expected_dropped:
+                    self.assertIn(' '.join(part for part in name.split() if part not in tier_flags),
                                   {phase.name for phase in push})
+
+    def test_large_epub_corpus_runs_full_only_in_full_tier(self):
+        for controls, want_full in (
+            (None, True),
+            (lambda _: False, False),
+            (lambda script: script == 'large_epub_corpus_test.py', False),
+        ):
+            phases = [phase for phase in gate_plan.plan('linux', False, controls)
+                      if any(Path(arg).name == 'large_epub_corpus_test.py' for arg in phase.command)]
+            self.assertEqual(len(phases), 1)
+            self.assertEqual('--full' in phases[0].command, want_full)
 
 
 class StartOrderTests(unittest.TestCase):

@@ -23,3 +23,36 @@ checks the bytes and, where those commits exist, the history itself.
 previews and tests: Quiet Hour uses every card action, and long-text fills
 each text field to its limit. `tools/preview_driver.py --app-package` encodes
 them with `tools/newt_package.py`; they are not shipped apps.
+
+## Synthetic large-EPUB corpus (#61)
+
+`tools/large_epub_corpus.py` generates deterministic, text-only CC0 EPUBs on
+each side of Newt's current ZIP, 48 KiB bank, TOC, page-cache and file-size
+limits (`#60`, `#61`). Large outputs are generated on demand into a scratch
+folder (for example under `.build/`) and never committed.
+
+```sh
+python3 tools/large_epub_corpus.py --list
+python3 tools/large_epub_corpus.py --out .build/corpus --subset fast
+python3 tools/large_epub_corpus.py --out .build/corpus --subset full
+```
+
+Each case isolates one axis (`zip-entries`, `metadata-arena`, `central-dir`,
+`member-size`, `expanded-total`, `file-size`, `zip64`, `name-length`,
+`long-ids`, `toc-size`, `toc-depth`, `chapter-anchors`, `chapter-pages`, and
+`long-web-novel`) and declares its expected `admission::admit` and
+`PhasedReader::open_phased` statuses.
+
+Host verification and timing measurements:
+
+```sh
+python3 tests/large_epub_corpus_test.py            # fast subset + negative controls (gate default)
+python3 tests/large_epub_corpus_test.py --full --measure
+python3 tests/large_epub_corpus_test.py --full --measure --sweep
+```
+
+To measure the same cases on a bench X3 under the device lease, generate the
+wanted subset into a local folder with `--out`, copy the `.epub` files onto
+the bench card's `Newt/Books` folder, and open them on the X3 while recording
+serial telemetry. Host timings and 64-bit struct sizes do not establish X3
+hardware behaviour.

@@ -21,6 +21,8 @@ REVIEWED_UI_TEST = "system_ui_contract_test.py"
 # Arguments that only add a test's negative controls (tools/gate_tier.py).
 CONTROL_FLAGS = frozenset(("--negative-controls", "--negative-control", "--baseline-controls",
                            "--uninstrumented-control"))
+# Arguments that expand a fast test to its full-tier positive matrix.
+FULL_FLAGS = frozenset(("--full",))
 
 # The one native unit binary: the SD bus header the Rust image's board shim links.
 UNIT_TESTS = (("sd_shared_bus_test.cpp", "sd-shared-bus-tests"),)
@@ -55,11 +57,13 @@ def plan(profile: str, fresh_objects: bool, controls=None) -> list[Phase]:
         arguments = tuple(map(str, arguments))
         complete = label((PYTHON, *(() if bytecode else ("-B",)), *arguments))
         script = control_owner or next((Path(argument).name for argument in arguments if argument.endswith(".py")), "")
-        if controls is not None and not controls(script):
-            if full_only:
-                names[complete] = None
-                return
-            arguments = tuple(argument for argument in arguments if argument not in CONTROL_FLAGS)
+        if controls is not None:
+            arguments = tuple(argument for argument in arguments if argument not in FULL_FLAGS)
+            if not controls(script):
+                if full_only:
+                    names[complete] = None
+                    return
+                arguments = tuple(argument for argument in arguments if argument not in CONTROL_FLAGS)
         command = (PYTHON, *(() if bytecode else ("-B",)), *arguments)
         names[complete] = label(command)
         after = tuple(names.get(name, name) for name in after if names.get(name, name) is not None)
@@ -86,6 +90,7 @@ def plan(profile: str, fresh_objects: bool, controls=None) -> list[Phase]:
     test("slot_vectors_test.py")
     test("app_store_test.py")
     test("dev_put_test.py")
+    test("large_epub_corpus_test.py", "--full")
     test("update_publish_test.py")
     test("release_publish_test.py", "--negative-controls")
     test("nightly_test.py", "--negative-controls")

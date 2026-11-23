@@ -83,6 +83,8 @@ class ControlSelectionTests(unittest.TestCase):
             ('rust/tests/slot_vectors/vectors.rs', ('slot_vectors_test.py',)),
             ('rust/tests/app_store/record.rs', ('app_store_test.py',)),
             ('rust/tests/dev_put/lease.rs', ('dev_put_test.py',)),
+            ('rust/tests/large_epub_corpus/corpus.rs', ('large_epub_corpus_test.py',)),
+            ('tools/large_epub_corpus.py', ('large_epub_corpus_test.py',)),
             ('rust/tests/family_dispatch_test.py', tuple(sorted({
                 'family_dispatch_test.py', 'rust:foundation',
                 *('rust:' + family for family in gate_plan.ADAPTER_FAMILIES)}))),
@@ -103,6 +105,7 @@ class ControlSelectionTests(unittest.TestCase):
                                          cwd=root, text=True).splitlines()
         self.assertNotIn('rust/phased-reader/host/fixtures.py', listed)
         self.assertIn('rust/check.py', listed)
+        self.assertIn('tools/large_epub_corpus.py', listed)
 
     def test_real_shared_validator_dependencies_plan_every_foundation_campaign(self):
         def require_shared_walk():
@@ -170,6 +173,7 @@ class ControlSelectionTests(unittest.TestCase):
             self.assertIn(':(glob)rust/*.py', paths)
             self.assertNotIn('rust/*.py', paths)
             self.assertIn('rust-health', paths)
+            self.assertIn('tools/large_epub_corpus.py', paths)
             self.assertNotIn('rust', paths)
             self.assertFalse(any('*.rs' in path for path in paths))
 
