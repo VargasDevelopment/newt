@@ -152,7 +152,9 @@ entry in that test.
   (`fix(reader): keep the chapter after a wake`). The type sets the version
   bump, and the gate rejects other subjects. GitHub makes the pull request's
   title the merge subject, so the title is a Conventional Commit too; the gate
-  checks it.
+  checks it. The changelog lists only these titles, so the title's type names
+  the most important change: a pull request that adds a feature is `feat:`,
+  even when most of its files are CI.
 - The body says what changed, why, the focused checks you ran, and your
   evidence (above). Write `Closes #N` for the issue it fixes.
 - Comments explain why, briefly. Keep them true when the code changes.

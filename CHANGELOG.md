@@ -19,11 +19,14 @@ no firmware version, tag or installed image is changed by that closure.
 
 ### Feat
 - **update**: offer test builds behind a hidden Developer page (NEWT-99, NEWT-113, #15)
+- **release**: stamp and publish nightly test builds (NEWT-99)
 ### Fix
 - **release**: list What's new lines the repository's published notes have not shown (NEWT-77, #9)
 
 ## v0.2.0
 
+### Feat
+- **update**: read updates from the public source repository
 ### Fix
 - **installer**: read in 256-byte packets and really reset the X3, so macOS Chrome can check it (NEWT-77, #4)
 - **ci**: gate a pull request's own head, not GitHub's merge commit (NEWT-77, #3)
