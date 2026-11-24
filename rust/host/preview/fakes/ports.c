@@ -391,6 +391,7 @@ int32_t newt_nvs_visit(uint8_t (*visit)(void *, const char *, const char *, uint
 
 /* ---- the card: native_io.c's POSIX calls, relocated, plus these hooks ---- */
 static char descriptors[256][4096];
+static int cover_heap_dropped;
 /* "card.trace=TEXT": each file open or folder listing of a card path holding
  * TEXT appends "open PATH" or "list PATH" to card-trace.txt, so a test can
  * see which card work a boot did. */
@@ -439,6 +440,8 @@ static void edit_file(const char *path) {
     utimensat(AT_FDCWD, host, (struct timespec[2]){before.st_atim, before.st_mtim}, 0);
 }
 void preview_io_open(int32_t fd, const char *path) {
+    const char *drop = preview_conf("cover.heap.drop.on");
+    if (fd >= 0 && drop && *drop && strstr(path, drop)) cover_heap_dropped = 1;
     if (fd >= 0 && fd < 256) snprintf(descriptors[fd], sizeof descriptors[fd], "%s", path);
     trace_card("open", path);
     change_file(path);
@@ -597,6 +600,9 @@ _Bool newt_cover_heap_supported(void) { return 1; }
 /* "cover.heap.free=BYTES": the free heap cover work sees, so a test can make
  * Memory's live check refuse a large block. */
 size_t newt_cover_heap_free_bytes(void) {
+    /* A card open consumes heap after commit has begun, above the guard floor
+     * but with too little spare room to admit another CRC block. */
+    if (cover_heap_dropped) return 68 * 1024;
     const char *free_bytes = preview_conf("cover.heap.free");
     return free_bytes && *free_bytes ? (size_t)strtoul(free_bytes, NULL, 10) : 172032;
 }

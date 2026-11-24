@@ -500,6 +500,24 @@ def low_heap(binary):
             return f'the next visit ended {results}: {problem}'
 
 
+def commit_heap_drop(binary):
+    """An admitted CRC block survives a later heap dip during the pending open,
+    for both artwork and a no-art record."""
+    for book, result in (('Alder', PRODUCED), (GAP, UNSUPPORTED)):
+        records = {name: record(name, CJB6) for name in BOOKS if name != book}
+        with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
+            world = World(binary, scratch, records, **{'cover.heap.drop.on': '.nlc.tmp'})
+            _, results, _ = world.run(to_book(book))
+            # The dip may decline a later job's admission; this commit must finish.
+            if results[:1] != [result] or world.temporaries():
+                return f'commit heap dip ended {results}, left {world.temporaries()}'
+            if book in SUPPORTED:
+                if problem := art_problem(world, book):
+                    return problem
+            elif world.cover(book) != record(book, CJB6):
+                return 'commit heap dip lost the no-art record'
+
+
 def changed_book(binary):
     """A book whose bytes change after cover work has read it whole, keeping
     its size and times as a same-size copy on FAT can, gets no record and no
@@ -597,6 +615,14 @@ CASES = [
         # An I/O fault records the book as having no cover.
         [('cover_session.rs', 'if !verdict(result)||!self.unfaulted(){self.no_art=false;return(result,false);}',
           'if !verdict(result)&&result!=R::IoError{self.no_art=false;return(result,false);}')]]),
+    (commit_heap_drop, [
+        [('cover_session.rs',
+          '        // Admit all commit workspace before writing a pending record.\n'
+          '        let Some(mut block)=self.memory.block(io::CRC_BYTES)else{return R::Declined;};\n', ''),
+         ('cover_session.rs',
+          '        if self.source.crc(block.as_mut())!=Some(self.source_crc)||',
+          '        let Some(mut block)=self.memory.block(io::CRC_BYTES)else{return R::Declined;};\n'
+          '        if self.source.crc(block.as_mut())!=Some(self.source_crc)||')]]),
     (changed_book, [
         # A changed book's second whole read is not compared with its first.
         [('cover_session.rs', 'if self.source.crc(block.as_mut())!=Some(self.source_crc)||',
