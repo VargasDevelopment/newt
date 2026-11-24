@@ -359,7 +359,7 @@ def plan(image, receipt, bench_receipt=None, prerelease=False, git=None, github=
     # export put every older tag on one commit, and a first release here (or the hop) has other readers.
     shown = set() if night else announced(github.all_releases(), tag)
     news = [] if night else list(dict.fromkeys(line for _, lines in whats_new(header) for line in lines
-                                               if line not in shown))
+                                               if line not in shown or line == "Various smaller enhancements."))
     notes = render_notes(version, commit, build, image, news)
     if main:
         notes = nightly.notes(source, main, git.subject(main), git.version(main)) + '\n' + notes
