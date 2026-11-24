@@ -191,6 +191,19 @@ fn version_label<'a>(line: &'a mut [u8; 34], prefix: &[u8], version: &[u8]) -> &
     tail[..count].copy_from_slice(&version[..count]);
     &line[..prefix.len() + count]
 }
+const TITLE_PITCH: i32 = 40;
+const WHATS_NEW_TOP: i32 = 146;
+/// "Updated to <version>" on one title line when it fits. A longer test-build
+/// version takes its own line under "Updated to" rather than losing its end;
+/// official versions keep one line, so the notes keep their room.
+fn updated_title<'a>(line: &'a mut [u8; 34], version: &'a [u8]) -> (&'a [u8], Option<&'a [u8]>) {
+    let title = version_label(line, b"Updated to ", version);
+    if width(title, 32, true) <= SYSTEM_CONTENT_WIDTH {
+        (title, None)
+    } else {
+        (b"Updated to", Some(version))
+    }
+}
 
 fn about(frame: Option<&mut Frame>, bar: &SystemBar, view: AboutView, build: BuildIdentity<'_>) {
     let selected = view == AboutView::WhatsNewRow;
@@ -278,8 +291,9 @@ pub struct WhatsNewUpdate<'a> {
     pub changes: [Option<&'a [u8]>; 6],
 }
 include!(concat!(env!("OUT_DIR"), "/whats_new.rs"));
-pub fn draw_whats_new(c: &mut UiCanvas<'_>, updates: &[WhatsNewUpdate<'_>]) -> bool {
-    let mut top = 146;
+/// Draws whole updates from `top` down. It stops, returning false, at the
+/// first update that is malformed or would not fit; older ones stay out too.
+pub fn draw_whats_new(c: &mut UiCanvas<'_>, updates: &[WhatsNewUpdate<'_>], mut top: i32) -> bool {
     for u in updates {
         let mut rows = [0; 6];
         let mut bottom = top + 34;
@@ -494,7 +508,12 @@ pub fn render_device_ui(
         ),
         DevicePage::About => about(frame, bar, state.about, build),
         DevicePage::WhatsNew => {
-            let mut version = [0; 34];
+            let mut line = [0; 34];
+            let (title, version) = if state.about == AboutView::Updated {
+                updated_title(&mut line, build.version)
+            } else {
+                (b"What's new".as_slice(), None)
+            };
             let mut page = SystemPage::new(
                 frame,
                 bar,
@@ -502,13 +521,15 @@ pub fn render_device_ui(
                     back: Some(b"Back"),
                     ..Default::default()
                 },
-                Some(if state.about == AboutView::Updated {
-                    version_label(&mut version, b"Updated to ", build.version)
-                } else {
-                    b"What's new"
-                }),
+                Some(title),
             );
-            draw_whats_new(page.canvas(), &WHATS_NEW);
+            let mut top = WHATS_NEW_TOP;
+            if let Some(version) = version {
+                let line_top = SYSTEM_TITLE_TOP + TITLE_PITCH;
+                text(page.canvas(), SYSTEM_CONTENT_LEFT, line_top, version, 32, true, SYSTEM_CONTENT_WIDTH);
+                top += TITLE_PITCH;
+            }
+            draw_whats_new(page.canvas(), &WHATS_NEW, top);
         }
         DevicePage::ReadingStats => {
             let shown = stats_graph_position(state.list_focus);

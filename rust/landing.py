@@ -160,7 +160,7 @@ def check(checker, before, snapshot, identity):
         portable = runner.cargo(ws, checker.BUILD/'landing-host-target', 'test', '--workspace',
                                 '--exclude', 'newt-app-image', '--exclude', 'newt-native-input-owner',
                                 '--target', HOST)
-        require_tests(support, portable, 427)
+        require_tests(support, portable, 428)
         with foundation_commands(checker, runner):
             cases, expected, binary = checker.foundation(snapshot, checker.BUILD/'target', portable_done=True)
         support.require(len(cases) == 60368, 'complete foundation corpus')

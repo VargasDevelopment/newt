@@ -24,6 +24,8 @@ RUNNING = re.search(r'#define NEWT_FIRMWARE_VERSION "([^"]+)"',
 NEWER, OLDER = '9.0.0', '0.0.9'
 # A test build: a GitHub pre-release, offered only with Test builds On.
 TEST_BUILD = f'{NEWER}-dev.20261123.1'
+# The longest version a published update may carry (tools/update_publish.py).
+LONGEST = '0.4.1-dev.20261124.1234'
 BUILD = '0123456789ab'
 SLOT_BYTES, SECTOR = 0x770000, 4096
 STATE_VALID, STATE_ABORTED = 2, 4
@@ -139,8 +141,10 @@ def update_world(name):
         world['manifest'] = b'format=newt-update-1\nkind=newt\nversion=broken\n'
     elif name == 'unsaved':
         world['conf'] = {'store.drop': 'card-sync:/newt-sd/Newt/State/nb'}
-    elif name == 'updated':
+    elif name in ('updated', 'updated-longest'):
         world.update(offer=None, conf={'image.state': '1'})
+        if name == 'updated-longest':
+            world['conf']['image.version'] = LONGEST
     elif name == 'none':
         world['offer'] = None
     elif name == 'no-card':
