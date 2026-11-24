@@ -101,7 +101,7 @@ pub enum HolidayHat {
     None,
     Witch,
     Christmas,
-    /// A pilgrim hat, a plaid scarf and a pumpkin.
+    /// A pilgrim hat, a striped scarf and a pumpkin.
     Thanksgiving,
 }
 impl HolidayHat {
