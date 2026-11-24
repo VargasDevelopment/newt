@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3685904,
+      "flash_bytes": 3686160,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,10 +28,10 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "6699196ebc33db14a7b1e40005ade2b31df0d5c8",
+      "source_revision": "bb8d9489250db4cf1ce25154f66a1933c8339f6d",
       "before": 3685328,
-      "after": 3685904,
-      "reason": "+848 B against main (+576 B over the last ceiling): #42 offers both landscape directions. Clockwise is the counterclockwise frame turned half a turn (byte-reversed copy with bit-reversed bytes), Previous and Next swap on book screens while a clockwise frame is shown, NWTP v3 stores only the clockwise choice, packed settings words gain a half-turn bit with one shared pack/unpack (the sleep record's wake_orientation feeds wake diagnostics), and Quick Start and Reading settings gain the third choice and its copy. Clean regional DEV USB builds: main be2f702f 3,685,056 B; 6699196e 3,685,904 B. RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, all 328 selected stack frames unchanged.",
+      "after": 3686160,
+      "reason": "+848 B against main (+832 B over the last ceiling): #42 offers both landscape directions. Clockwise is the counterclockwise frame turned half a turn (byte-reversed copy with bit-reversed bytes), Previous and Next swap on book screens while a clockwise frame is shown, NWTP v3 stores only the clockwise choice, packed settings words gain a half-turn bit with one shared pack/unpack (the sleep record's wake_orientation feeds wake diagnostics), and Quick Start and Reading settings gain the third choice and its copy. Clean regional DEV USB builds: main 9b97239b 3,685,312 B; bb8d9489 3,686,160 B. RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, all 328 selected stack frames unchanged.",
       "reviewer": "Lead (Codex Astra re-review, 2026-11-24)"
     },
     "ram_bytes": {
