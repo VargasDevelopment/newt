@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "072f35f5574f89f4ab460406e8b32e607d110208",
+      "source_revision": "73f430571c9a293f92a0c27e472039b0186d7f38",
       "before": 3683584,
       "after": 3683744,
-      "reason": "+160 B: #78 moves a long test-build version onto its own line under Updated to, so What's new no longer cuts it off; official versions keep one title line. Clean regional DEV USB builds measure main 2f01d80e at 3,683,584 B and 072f35f5 at 3,683,744 B. RAM 124,096 -> 124,096 B, lent Wi-Fi RAM 22,528 -> 22,528 B, RTC 300 -> 300 B, selected stack frames within their existing ceilings.",
-      "reviewer": "Pending: Lead review of the clean before/after builds in the #78 pull request"
+      "reason": "+160 B: #78 moves a long test-build version onto its own line under Updated to, so What's new no longer cuts it off; official versions keep one title line. Clean regional DEV USB builds measure main 2f01d80e at 3,683,584 B, and both 072f35f5 and 73f43057 at 3,683,744 B. RAM 124,096 -> 124,096 B, lent Wi-Fi RAM 22,528 -> 22,528 B, RTC 300 -> 300 B, selected stack frames within their existing ceilings.",
+      "reviewer": "Lead (Claude Opus) after an independent Opus xhigh review of fc78b249 and Codex (no findings); fixes since are tests, comments, fixtures and one value-identical shared constant (SYSTEM_BODY_TOP), and the clean rebuild of 73f43057 measures the same flash, RAM and RTC."
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
