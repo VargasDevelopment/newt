@@ -32,10 +32,11 @@ pub const PATH_BYTES: usize = 512;
 pub const IDLE_MS: u32 = 3_000;
 const STALL_MS: u32 = 1_000;
 const ROOT: &CStr = c"/newt-sd";
-// One global lease and recovery marker: internal names cannot be destinations.
-const TEMP: &CStr = c"/newt-sd/.newt-put";
-const OLD: &CStr = c"/newt-sd/.newt-old";
-const MARKER: &CStr = c"/newt-sd/.newt-old-name";
+// 8.3 names have no alternate long-name aliases that could target our temp.
+// One global lease and recovery marker; these names cannot be destinations.
+const TEMP: &CStr = c"/newt-sd/NEWT.PUT";
+const OLD: &CStr = c"/newt-sd/NEWT.OLD";
+const MARKER: &CStr = c"/newt-sd/NEWT.MRK";
 
 #[path = "dev_put/path.rs"]
 mod path;

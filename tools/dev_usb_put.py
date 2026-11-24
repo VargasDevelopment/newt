@@ -23,7 +23,7 @@ class Refused(ValueError):
 
 
 class RecoveryNeeded(ValueError):
-    """The device cannot prove a commit finished or undone; the folder needs a hand check."""
+    """The device cannot prove a commit finished or undone; the card needs a filesystem check."""
 
 
 class CommitUnknown(ValueError):
@@ -33,7 +33,7 @@ class CommitUnknown(ValueError):
 def card_name(name):
     stem = name.split('.', 1)[0].upper()
     device = stem in ('CON', 'PRN', 'AUX', 'NUL') or re.fullmatch(r'(COM|LPT)[1-9]', stem)
-    if (not name or name.lower() in ('.newt-put', '.newt-old', '.newt-old-name') or len(name.encode('utf-16-le')) > 510 or device or '..' in name
+    if (not name or name.lower() in ('newt.put', 'newt.old', 'newt.mrk', '.newt-put', '.newt-old', '.newt-old-name') or len(name.encode('utf-16-le')) > 510 or device or '..' in name
             or name.endswith(('.', ' ')) or any(ord(c) < 32 or 127 <= ord(c) <= 159 or c in '<>:"/\\|?*' for c in name)):
         raise ValueError(f'Invalid FAT card name {name!r}')
     return name
@@ -54,8 +54,6 @@ def card_target(folder, name):
     target = f'{folder}/{card_name(name)}' if folder else card_name(name)
     if len(('/newt-sd/' + target).encode()) > 511:
         raise ValueError('Card path exceeds the native 511-byte path bound')
-    if target.split('/')[0].lower() in ('.newt-put', '.newt-old', '.newt-old-name'):
-        raise ValueError('Card path is reserved for PUT recovery')
     return target
 
 
@@ -168,7 +166,7 @@ def put_files(client, folder, files, timeout, report):
                 if not str(error).startswith('ERROR recovery-needed'):
                     raise
                 entry['result'] = 'recovery-needed'
-                raise RecoveryNeeded(f'{error}: the folder keeps .newt-old, .newt-put and .newt-old-name for a '
+                raise RecoveryNeeded(f'{error}: the card keeps its reserved files and marker for a '
                                      'hand check; see "Card write" in docs/dev-usb-bridge.md.') from error
     finally:
         client.untraced = ()

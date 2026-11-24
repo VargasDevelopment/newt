@@ -10,9 +10,9 @@
 //! the long name reports it missing. So DONE syncs a marker naming its target
 //! before any rename, new files included, and removes it only after both
 //! renames and the backup's removal; a marker the next FILE finds refuses the
-//! folder, and recovery deletes nothing.
+//! card, and recovery deletes nothing.
 use super::{write_all, Lease, Refused};
-use crate::dev_put::{Entry, TEMP, OLD, MARKER};
+use crate::dev_put::{Entry, TEMP, OLD, MARKER, PATH_BYTES};
 use core::ffi::CStr;
 
 impl Lease<'_> {
@@ -50,7 +50,7 @@ impl Lease<'_> {
         // one-sector window writes the entry's sector before it loads a FAT
         // sector: a power loss inside the unlink only leaks clusters.
         if replacing { self.card.remove(OLD).map_err(|code| Refused::Recovery("backup", code))?; }
-        // A marker this leaves refuses the folder's next FILE: the hand check clears it.
+        // A marker this leaves refuses the next FILE: the hand check clears it.
         let _ = self.card.remove(MARKER);
         Ok(())
     }
@@ -69,20 +69,36 @@ impl Lease<'_> {
         Refused::Card(step, code)
     }
 
-    /// Before any write to the folder. A marker that outlived its DONE means a
+    /// Before any write to the card. A marker that outlived its DONE means a
     /// commit stopped somewhere between its marker and its cleanup, and no
     /// presence check can say where (see the module note), so it refuses every
     /// write until the card is checked by hand. Without one no rename is left
     /// unresolved.
-    pub(super) fn recover(&mut self, ) -> Result<(), Refused> {
-        let old = self.hidden(OLD, "backup")?;
-        if self.hidden(MARKER, "marker")? { return Err(Refused::Recovery("commit", 0)); }
-        // FILE then removes a leftover temp; a backup without its marker has no known target.
+    pub(super) fn recover(&mut self) -> Result<(), Refused> {
+        let old = self.recovery_file(OLD, "backup")?;
+        if self.recovery_file(MARKER, "marker")? { return Err(Refused::Recovery("commit", 0)); }
+        // FILE then removes an abandoned temp; a backup alone has no known target.
         if old { return Err(Refused::Recovery("backup", 0)); }
         Ok(())
     }
 
-    pub(super) fn hidden(&mut self, path: &CStr, step: &'static str) -> Result<bool, Refused> {
+    /// Parents were checked without following links before these old paths
+    /// are probed. New transfers have a single recovery namespace at the root.
+    pub(super) fn recover_legacy(&mut self, target: &CStr) -> Result<(), Refused> {
+        let parent_end = target.to_bytes().iter().rposition(|&b| b == b'/').ok_or(Refused::Name)? + 1;
+        let mut legacy = [0; PATH_BYTES];
+        legacy[..parent_end].copy_from_slice(&target.to_bytes()[..parent_end]);
+        for name in [b".newt-old-name".as_slice(), b".newt-old"] {
+            if parent_end + name.len() >= PATH_BYTES { continue; }
+            legacy[parent_end..].fill(0);
+            legacy[parent_end..parent_end + name.len()].copy_from_slice(name);
+            let path = CStr::from_bytes_until_nul(&legacy).map_err(|_| Refused::Name)?;
+            if self.recovery_file(path, "legacy")? { return Err(Refused::Recovery("legacy", 0)); }
+        }
+        Ok(())
+    }
+
+    pub(super) fn recovery_file(&mut self, path: &CStr, step: &'static str) -> Result<bool, Refused> {
         match self.card.entry(path).map_err(|code| Refused::Recovery(step, code))? {
             Entry::Missing => Ok(false),
             Entry::File => Ok(true),

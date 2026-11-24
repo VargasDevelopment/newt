@@ -46,8 +46,8 @@ struct Lease<'a> {
 #[derive(Debug)]
 enum Refused { Order, Arguments, Name, Size, Digest, Offset, Length, Short,
     CardFull(u64), Target, Temp, SizeMismatch, DigestMismatch, Hash, Card(&'static str, i32),
-    /// A commit the lease cannot prove finished or undone; the folder's
-    /// hidden files and marker stay for a person to check.
+    /// A commit the lease cannot prove finished or undone; the card's
+    /// scratch files and marker stay for a person to check.
     Recovery(&'static str, i32),
     /// DONE stopped before its first rename: answered as an abandoned lease.
     Abandoned(&'static str),
@@ -126,13 +126,13 @@ impl Lease<'_> {
         self.interruption().or(idle.then_some("timeout"))
     }
 
-    /// Takeover or a disconnect: checked while waiting
-    /// for a line and through DONE up to its commit point. DONE reads no line,
+    /// Takeover or a disconnect: checked during reception and through DONE
+    /// up to its commit point. DONE reads no line,
     /// so a HELLO sent meanwhile is read after DONE answers.
     fn interruption(&mut self) -> Option<&'static str> {
         if self.wire.physical_input() { return Some("physical-input"); }
         if !self.wire.connected() { return Some("disconnected"); }
-            None
+        None
     }
 
     fn parse(&mut self, length: usize) -> Result<Request, End> {
@@ -166,16 +166,6 @@ impl Lease<'_> {
         let sha256 = digest_hex(digest).ok_or(Refused::Digest)?;
 
         self.recover()?;
-        // Older DEV images kept commit markers beside the target. Never
-        // overwrite a file that such an unresolved rename may still alias.
-        let mut legacy = target;
-        let parent_end = path(&target).to_bytes().iter().rposition(|&b| b == b'/').ok_or(Refused::Name)? + 1;
-        for name in [b".newt-old-name".as_slice(), b".newt-old"] {
-            if parent_end + name.len() >= PATH_BYTES { continue; }
-            legacy[parent_end..].fill(0);
-            legacy[parent_end..parent_end + name.len()].copy_from_slice(name);
-            if self.hidden(path(&legacy), "legacy")? { return Err(Refused::Recovery("legacy", 0)); }
-        }
         // Check every parent without following links, including existing ones.
         let mut parent = target;
         for at in ROOT.to_bytes().len() + 1..path(&target).to_bytes().len() {
@@ -184,11 +174,12 @@ impl Lease<'_> {
             self.folder(path(&parent))?;
             parent[at] = b'/';
         }
+        self.recover_legacy(path(&target))?;
         match self.card.entry(path(&target)).map_err(|code| Refused::Card("target", code))? {
             Entry::Missing | Entry::File => {}
             Entry::Folder | Entry::Other => return Err(Refused::Target),
         }
-        self.remove_hidden(TEMP)?;
+        self.remove_temp(TEMP)?;
         let free = self.card.free_bytes().map_err(|code| Refused::Card("free", code))?;
         if size > free { return Err(Refused::CardFull(free)); }
         // Recorded before create, so a failed create's partial temp is removed.
@@ -298,8 +289,8 @@ impl Lease<'_> {
         }
     }
 
-    /// A temp or set-aside file a power loss left behind.
-    fn remove_hidden(&mut self, path: &CStr) -> Result<(), Refused> {
+    /// Remove only an abandoned temp after recovery has ruled out a commit.
+    fn remove_temp(&mut self, path: &CStr) -> Result<(), Refused> {
         match self.card.entry(path).map_err(|code| Refused::Card("temp", code))? {
             Entry::Missing => Ok(()),
             Entry::File => self.card.remove(path).map_err(|code| Refused::Card("temp", code)),

@@ -8,9 +8,11 @@ pub fn name_allowed(name: &[u8]) -> bool {
     let Ok(text) = core::str::from_utf8(name) else { return false };
     let stem = text.split('.').next().unwrap_or_default();
     let device = ["CON", "PRN", "AUX", "NUL"].iter().any(|word| stem.eq_ignore_ascii_case(word))
-        || ((stem.get(..3).is_some_and(|p| p.eq_ignore_ascii_case("COM") || p.eq_ignore_ascii_case("LPT")))
+        || (stem.get(..3).is_some_and(|p| p.eq_ignore_ascii_case("COM") || p.eq_ignore_ascii_case("LPT"))
             && stem.len() == 4 && matches!(stem.as_bytes()[3], b'1'..=b'9'));
-    !text.is_empty() && ![b".newt-put".as_slice(), b".newt-old", b".newt-old-name"].iter().any(|reserved| name.eq_ignore_ascii_case(reserved))
+    let reserved = [b"NEWT.PUT".as_slice(), b"NEWT.OLD", b"NEWT.MRK", b".newt-put", b".newt-old", b".newt-old-name"]
+        .iter().any(|reserved| name.eq_ignore_ascii_case(reserved));
+    !text.is_empty() && !reserved
         && text.encode_utf16().count() <= 255 && !device
         && !name.windows(2).any(|pair| pair == b"..")
         && !matches!(name.last(), Some(b'.' | b' '))

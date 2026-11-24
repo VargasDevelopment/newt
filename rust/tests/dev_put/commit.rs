@@ -174,3 +174,16 @@ fn a_hello_during_done_is_read_after_its_answer() {
     resolved(&card);
     assert_eq!(outcome.wire.unread(), "N1 HELLO\n", "the bridge reads the HELLO next");
 }
+
+#[test]
+fn legacy_folder_recovery_names_are_not_overwritten() {
+    for name in [".newt-old", ".newt-old-name"] {
+        let mut card = FakeCard::default();
+        card.put_file(TARGET, b"old");
+        card.put_file(&format!("{DEV}/{name}"), b"unresolved");
+        let before = card.nodes.clone();
+        let outcome = lease(&mut card, Host::new().put("dev", "runtime.bin", b"new"));
+        assert_eq!(outcome.last(), "ERROR recovery-needed step=legacy code=0");
+        assert_eq!(card.nodes, before, "never touch possible old aliases");
+    }
+}

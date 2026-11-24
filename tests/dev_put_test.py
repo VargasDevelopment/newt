@@ -23,9 +23,9 @@ sys.path.insert(0, str(ROOT / 'tools'))
 from gate_tier import negative_controls
 
 BINARY = 'dev_put'
-TESTS = 35
+TESTS = 36
 # Recovery's one rule: a marker the next FILE finds refuses.
-MARKED = '        if self.hidden(MARKER, "marker")? { return Err(Refused::Recovery("commit", 0)); }\n'
+MARKED = '        if self.recovery_file(MARKER, "marker")? { return Err(Refused::Recovery("commit", 0)); }\n'
 # (what breaks, its file under rust/core/src, its text there, the broken text, the test that must fail)
 CONTROLS = (
     ('the SHA-256 is not compared', 'dev_put/lease.rs', "        if digest != sha256 { return Err(Refused::DigestMismatch); }\n", "",
@@ -42,18 +42,18 @@ CONTROLS = (
      'paths_cannot_follow_non_directory_parents'),
     ('raw reception ignores takeover and idle timeout', 'dev_put/lease.rs',
      '            if let Some(reason) = self.abandoned(activity) { return Err(Refused::Abandoned(reason)); }\n',
-     '            if let Some(reason) = self.abandoned(activity) { return Ok(Step::Next); }\n',
+     '            if let Some(reason) = self.abandoned(activity) { if reason != "physical-input" { return Err(Refused::Abandoned(reason)); } }\n',
      'an_interrupted_raw_block_never_replaces_the_final_file'),
     ('an open book does not refuse', 'dev_put.rs', "    if facts.reader_open { return Err(Busy::Reading); }\n", "",
      'admission_refuses_reading_opening_and_away_from_home'),
     ('bytes go straight to the final name', 'dev_put/lease.rs', "let fd = self.card.create(TEMP)",
      "let fd = self.card.create(path(&target))", 'physical_input_abandons_and_keeps_the_old_file'),
     ('recovery deletes a file or clears the marker while a marker stands', 'dev_put/commit.rs', MARKED,
-     "        if self.hidden(MARKER, \"marker\")? { let _ = self.card.remove(OLD); "
+     "        if self.recovery_file(MARKER, \"marker\")? { let _ = self.card.remove(OLD); "
      "let _ = self.card.remove(TEMP); let _ = self.card.remove(MARKER); return Ok(()); }\n",
      'commit::a_rename_a_power_loss_cut_short_is_never_unlinked'),
     ('a marker clears once no backup or temp shows (the target alone, or nothing)', 'dev_put/commit.rs', MARKED,
-     "        if self.hidden(MARKER, \"marker\")? {\n"
+     "        if self.recovery_file(MARKER, \"marker\")? {\n"
      "            if !old && self.card.entry(TEMP) == Ok(Entry::Missing) { return self.card.remove(MARKER)"
      ".map_err(|code| Refused::Recovery(\"marker\", code)); }\n"
      "            return Err(Refused::Recovery(\"commit\", 0));\n        }\n",
@@ -69,8 +69,8 @@ CONTROLS = (
      "            // No rename ran, so the temp the exit removes is no other name's.\n"
      "            let _ = self.card.remove(MARKER);\n            return Err(Refused::Abandoned(reason));\n        }\n", "",
      'commit::a_press_just_before_the_first_rename_keeps_the_old_file'),
-    ('an idle transfer never times out', 'dev_put/lease.rs',
-     'self.interruption().or(idle.then_some("timeout"))', 'self.interruption()',
+    ('an idle transfer waits past its bound', 'dev_put/lease.rs',
+     'wrapping_sub(activity) >= IDLE_MS', 'wrapping_sub(activity) >= IDLE_MS * 2',
      'silence_times_out_and_removes_the_temp'),
     ('a failed restore reads as a plain refusal', 'dev_put/commit.rs',
      'is_err() { return Err(Refused::Recovery("rename", code)); }', 'is_err() { return Err(Refused::Card("rename", code)); }',

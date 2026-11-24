@@ -17,9 +17,9 @@ const SESSION: u32 = 0x9000_0001;
 const PUT_ID: u32 = 0x8000_0010;
 const DEV: &str = "/newt-sd/Newt/Dev";
 const TARGET: &str = "/newt-sd/Newt/Dev/runtime.bin";
-const TEMP: &str = "/newt-sd/.newt-put";
-const OLD: &str = "/newt-sd/.newt-old";
-const MARKER: &str = "/newt-sd/.newt-old-name";
+const TEMP: &str = "/newt-sd/NEWT.PUT";
+const OLD: &str = "/newt-sd/NEWT.OLD";
+const MARKER: &str = "/newt-sd/NEWT.MRK";
 const OTHER: &str = "/newt-sd/Newt/Dev/other.bin";
 const BANNER: &str = "PUT line=4351 chunk=4096 path=hex data=raw";
 
@@ -106,7 +106,7 @@ fn names_outside_the_safe_set_are_refused() {
     for good in [&b"newt.bin"[..], b"app-1_x.txt", b"0", b".hidden", b"a b", "caf\u{e9}".as_bytes(), &[b'a'; 255]] {
         assert!(name_allowed(good), "{good:?}");
     }
-    for target in ["..", "../Books/a", "Newt/../x", "/absolute", "a//b", "a/", "./x", "a\\b", "C:/x", ".NEWT-PUT", ".newt-old/x", ".newt-old-name", "a/nul.txt", "bad."] {
+    for target in ["..", "../Books/a", "Newt/../x", "/absolute", "a//b", "a/", "./x", "a\\b", "C:/x", ".NEWT-PUT", ".newt-old/x", ".newt-old-name", "NEWT.PUT", "newt.old", "Newt.Mrk", "a/NEWT.PUT", "a/nul.txt", "bad."] {
         let mut card = FakeCard::default();
         let outcome = lease(&mut card, Host::new().file("", target, b""));
         assert_eq!(outcome.bodies(), [BANNER, "ERROR name"], "{target}");
@@ -267,7 +267,7 @@ fn interrupted(event: Event) -> (FakeCard, Outcome) {
 
 #[test]
 fn an_interrupted_raw_block_never_replaces_the_final_file() {
-    for event in [Event::Press, Event::Unplug, Event::Line(String::new())] {
+    for (event, reason) in [(Event::Press, Some("physical-input")), (Event::Unplug, None), (Event::Line(String::new()), Some("timeout"))] {
         let mut card = FakeCard::default();
         card.put_file(TARGET, b"old");
         let mut host = Host::new();
@@ -276,6 +276,7 @@ fn an_interrupted_raw_block_never_replaces_the_final_file() {
             .then(Event::Bytes(pattern(CHUNK_BYTES / 2))).then(event);
         let outcome = lease(&mut card, &mut host);
         assert_eq!(outcome.end, End::Cancelled);
+        if let Some(reason) = reason { assert_eq!(outcome.last(), format!("ERROR abandoned reason={reason}")); }
         assert_eq!(card.count("write"), 0, "never store an incomplete block");
         unchanged(&card, Some(b"old"));
         resolved(&card);

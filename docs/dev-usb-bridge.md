@@ -148,7 +148,8 @@ receive queue is included when `dev-usb` / `NEWT_DEV_USB` is off.
   UTF-16 units; the complete native path, including `/newt-sd/`, fits 511 bytes.
   Every existing parent is checked without following links. Missing directories
   are created. A final file may be replaced; a directory or other kind never is.
-  The internal `.newt-put`, `.newt-old` and `.newt-old-name` names are reserved.
+  The internal `NEWT.PUT`, `NEWT.OLD` and `NEWT.MRK` names and older
+  `.newt-put`, `.newt-old`, `.newt-old-name` names are reserved.
   FAT ignores case, so the host refuses duplicate names within a batch.
 - **Size:** no PUT file-size cap or reserved free-space allowance. FILE checks
   the card's free bytes; insufficient space answers `ERROR card-full free=N`.
@@ -180,10 +181,10 @@ The queue uses 4,096 more heap bytes in DEV builds; a lease separately borrows
 4,543 heap bytes and releases them on every exit. The bridge's ordinary
 80-byte command RX buffer and 512-byte reply bound do not change.
 
-- Bytes go to the card root's hidden `.newt-put`; the final name is untouched
+- Bytes go to the card root's reserved `NEWT.PUT`; the final name is untouched
   until DONE. A partial raw block is never written.
-- Before its first rename, DONE syncs root `.newt-old-name`, containing the
-  complete relative target. A replaced file moves to root `.newt-old`, the
+- Before its first rename, DONE syncs root `NEWT.MRK`, containing the
+  complete relative target. A replaced file moves to root `NEWT.OLD`, the
   verified temp takes its name, and only then are backup and marker removed.
   A failed install rename attempts to restore the old file.
 - Physical input, disconnect, 3 s without receive progress / a complete header,
@@ -200,6 +201,9 @@ The queue uses 4,096 more heap bytes in DEV builds; a lease separately borrows
   A FAT rename cut short can leave two names or a hidden short alias on one
   cluster chain: deleting either can free the other's data. A marker therefore
   never triggers automatic deletion or recovery from mere presence checks.
+  Old per-folder markers/backups also refuse writes to their target directory.
+  The root scratch names use 8.3 form so no alternate long-name alias can
+  bypass the destination checks.
 
 To clear `recovery-needed`, repair the card's FAT filesystem on a computer,
 confirm it has no cross-linked files, then remove the internal files. If repair
