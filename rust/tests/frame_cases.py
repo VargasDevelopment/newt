@@ -153,10 +153,14 @@ def assert_invariants(case, reply):
 # Apply each independently to a disposable integrated workspace. A control
 # must compile and then fail parity/invariants; compilation failure is no pass.
 CONTROLS = (
+    # Both landscapes share landscape(); each caller passes its ink, so these
+    # mutate the full-frame polarity and the selector copy at their callers.
     ('BW landscape polarity', 'core/src/frame.rs',
-     '*output = !*input;', '*output = *input;'),
+     'if landscape(logical, native, orientation, |byte| !byte) {',
+     'if landscape(logical, native, orientation, |byte| byte) {'),
     ('landscape gray selectors retained', 'core/src/frame.rs',
-     'native.copy_from_slice(logical);', 'native.fill(0);'),
+     'if landscape(logical, native, orientation, |byte| byte) {',
+     'if landscape(logical, native, orientation, |_| 0) {'),
     ('complete prefix accepted', 'core/src/frame.rs',
      'if bytes > FRAME_BYTES {', 'if bytes >= FRAME_BYTES {'),
     ('invalid region atomicity', 'core/src/frame.rs',

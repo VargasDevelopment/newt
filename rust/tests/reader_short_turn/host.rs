@@ -133,9 +133,32 @@ fn scenario(bytes: Vec<u8>, finished: bool) {
     }).unwrap();
 }
 use home_startup::CardPort;
+/// Wake diagnostics report a retained book's orientation through
+/// `SleepRecord::wake_orientation`, which unpacks the whole word: clockwise
+/// sets the layout-class bit too, so bit 0 alone would report counterclockwise.
+fn retained_clockwise() {
+    use newt_core::{app::{AppState, Screen}, preferences::Orientation};
+    use retained_runtime::record::{Recovery, make_record};
+    let state = AppState { screen: Screen::EpubReading, ..AppState::default() };
+    let progress = Progress { book: 7, ..Progress::default() };
+    for orientation in [Orientation::Portrait, Orientation::LandscapeCcw, Orientation::LandscapeCw] {
+        let settings = ViewSettings { orientation, ..ViewSettings::default() };
+        for sd_source in [false, true] {
+            let record = make_record(&state, Some(&progress), settings, true, Recovery::Ordinary, sd_source);
+            assert_eq!(record.reader_view(), Some(settings), "retained {orientation:?} evidence");
+            assert_eq!(record.wake_orientation(None), Some(orientation),
+                "wake diagnostics report retained {orientation:?}");
+            let other = if orientation == Orientation::Portrait { Orientation::LandscapeCw } else { Orientation::Portrait };
+            let durable = ViewSettings { orientation: other, ..settings };
+            assert_eq!(record.wake_orientation(Some(durable)), Some(other),
+                "wake diagnostics prefer the durable target");
+        }
+    }
+}
 fn main() {
     let path = std::env::args().nth(1).expect("generated public fixture");
     if path == "--restore-policy" {
+        retained_clockwise();
         boot_policy::check();
         return;
     }

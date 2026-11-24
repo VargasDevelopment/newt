@@ -40,6 +40,14 @@
     "witness": "reclaim must precede first settings write"
   },
   {
+    "name": "startup-durable-preferences-removed",
+    "file": "firmware/home_startup.rs",
+    "old": "    fn begin(&mut self) {\n        self.restore_reader_preferences();",
+    "new": "    fn begin(&mut self) {\n        let _ = Self::restore_reader_preferences;",
+    "kind": "startup",
+    "witness": "durable clockwise choice must survive a cold reset"
+  },
+  {
     "name": "start-failure-returns",
     "file": "firmware/app_startup.rs",
     "old": "Err(_) => stop(&mut log, Some((&mut board, logical)), \"storage unavailable\"),",

@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3685328,
+      "flash_bytes": 3686160,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "a93488d17199d580c61456ac84a91a44eb11b485",
-      "before": 3684224,
-      "after": 3685328,
-      "reason": "+1,104 B: #74 makes covers faster. Whole-book cover CRCs read in 8 KiB steps from a cover Memory block with one handle check per pass, cover members stage in 4 KiB writes, and the cover CRC uses a 1 KiB table in flash instead of a bitwise loop (same values, so saved covers stay valid). Starting cover work now needs 4 KiB more free heap: the planned peak counts the 48 KiB staging block instead of 44 KiB. Clean regional DEV USB builds: main cdf1f424 (same firmware tree as c09d3225) 3,684,224 B; a93488d1 3,685,328 B. RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, all 328 selected stack frames unchanged.",
-      "reviewer": "Lead (Claude Opus) after an independent Opus xhigh review and Codex review of the pushed head"
+      "source_revision": "bb8d9489250db4cf1ce25154f66a1933c8339f6d",
+      "before": 3685328,
+      "after": 3686160,
+      "reason": "+848 B against main (+832 B over the last ceiling): #42 offers both landscape directions. Clockwise is the counterclockwise frame turned half a turn (byte-reversed copy with bit-reversed bytes), Previous and Next swap on book screens while a clockwise frame is shown, NWTP v3 stores only the clockwise choice, packed settings words gain a half-turn bit with one shared pack/unpack (the sleep record's wake_orientation feeds wake diagnostics), and Quick Start and Reading settings gain the third choice and its copy. Clean regional DEV USB builds: main 9b97239b 3,685,312 B; bb8d9489 3,686,160 B. RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, all 328 selected stack frames unchanged.",
+      "reviewer": "Lead (Codex Astra re-review, 2026-11-24)"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",

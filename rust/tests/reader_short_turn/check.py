@@ -167,6 +167,7 @@ def composition_controls(run, command, epub, workspace, out):
 def recovery_controls(run, command, dense, workspace, out):
     policy = workspace / 'firmware/reader_restore_policy.rs'
     pages = workspace / 'firmware/reader_pages.rs'
+    record = workspace / 'firmware/retained_runtime/record.rs'
     for target, name, original, mutation, arguments, witness in (
         (policy, 'cold-exact',
          '(Some(DurableCheckpoint::PageStart), _) => RestorePolicy::ColdCheckpoint,',
@@ -181,6 +182,12 @@ def recovery_controls(run, command, dense, workspace, out):
          'if resolved { return hint; }',
          'if resolved || hint == MissingProbe::Complete { return hint; }',
          [dense, '--cache-upgrade'], 'old Pages version must be missing for the producer'),
+        # The decoding before #42's review: bit 0 alone reads clockwise as counterclockwise.
+        (record, 'wake-bit-zero',
+         'durable.or_else(|| self.reader_view()).map(|settings| settings.orientation)',
+         'durable.map(|settings| settings.orientation).or(Some(if self.reader_settings & 1 != 0 '
+         '{ Orientation::LandscapeCcw } else { Orientation::Portrait }))',
+         ['--restore-policy'], 'wake diagnostics report retained'),
     ):
         source = target.read_text()
         assert source.count(original) == 1
@@ -192,7 +199,7 @@ def recovery_controls(run, command, dense, workspace, out):
         host.write_text(paths((HERE / 'host.rs').read_text(), HERE, {target: replacement}))
         run([*command, host, '-o', child / 'program'])
         run([child / 'program', *arguments], witness=witness)
-    print('PASS compiled restore policy and old Pages producer controls rejected')
+    print('PASS compiled restore policy, wake orientation and old Pages producer controls rejected')
 
 
 if __name__ == '__main__':

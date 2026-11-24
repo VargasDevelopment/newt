@@ -4,7 +4,7 @@ use super::*;
 use crate::imported_revision::{Digest, session};
 use newt_core::{
     page_cache::{CacheStorage, WriterMemory, layout_generation_hash},
-    preferences::{Orientation, ViewSettings},
+    preferences::ViewSettings,
 };
 
 // Use the envelope version for pagination changes that replace Pages in place.
@@ -271,7 +271,7 @@ pub(super) fn identity(
     identity_at_generation(settings, digest, spine, hash, generation).map(|name| (name, generation))
 }
 fn identity_generation(settings: ViewSettings, language: BookLanguage) -> u32 {
-    let params = reader_parameters(settings.orientation == Orientation::LandscapeCcw, None, language);
+    let params = reader_parameters(settings.orientation.is_landscape(), None, language);
     let mix = |h: u32, v: u32| (h ^ v).wrapping_mul(16777619);
     let engine = CACHE_ENGINE_REVISION;
     let mut generation = layout_generation_hash(&params, newt_reader_atlas::IDENTITY, false);
@@ -300,7 +300,8 @@ fn identity_at_generation(
     for (at, value) in [(84, spine), (88, generation), (92, CACHE_ENGINE_REVISION)] {
         encoded[at..at + 4].copy_from_slice(&value.to_le_bytes());
     }
-    encoded[96] = settings.orientation as u8;
+    // The layout class, not the turn: both landscapes share their pages.
+    encoded[96] = u8::from(settings.orientation.is_landscape());
     encoded[97] = u8::from(settings.slim_progress_bar);
     encoded[98] = settings.refresh_pages;
     let mut key = [0; 32];
@@ -325,7 +326,7 @@ pub trait CachePresence {
 
 pub(super) fn reader_settings_match(reader: &PhasedReader<'_, '_>, settings: ViewSettings) -> bool {
     let defaults = ViewSettings::default();
-    reader.landscape == (settings.orientation == Orientation::LandscapeCcw)
+    reader.landscape == settings.orientation.is_landscape()
         && settings.slim_progress_bar == defaults.slim_progress_bar
         && settings.refresh_pages == defaults.refresh_pages
 }

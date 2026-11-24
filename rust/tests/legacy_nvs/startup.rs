@@ -12,7 +12,7 @@ pub mod flash;
 use flash::Flash;
 use home_startup::HomeRuntime;
 use newt_c3_board::Board;
-use newt_core::{preferences::{Orientation, Preferences},
+use newt_core::{preferences::{Orientation, Preferences, ViewSettings}, wire::{crc32, put32},
     progress::{Progress, Locator}, external_progress_store::ExternalProgressStore,
     durable::{Backend, Load, StorageOpen}};
 use std::collections::BTreeMap;
@@ -46,7 +46,44 @@ fn legacy(flash: &mut Flash) -> (String, [u8; 32]) {
     ]));
     (name, digest)
 }
+/// Clockwise needs NWTP v3. Each row starts from durable bytes alone, as a cold boot does.
+fn clockwise(tokens: &mut [u8; 2]) {
+    let clockwise = ViewSettings { orientation: Orientation::LandscapeCw, ..Default::default() };
+    let fallback = ViewSettings { orientation: Orientation::LandscapeCcw, ..clockwise };
+    let durable = Preferences { sequence: 4, settings: clockwise }.encode().unwrap();
+    let mut downgraded = durable;
+    put32(&mut downgraded, 4, 2);
+    let checksum = crc32(&downgraded[..20]);
+    put32(&mut downgraded, 20, checksum);
+    for case in ["saved", "failed-commit", "v2-header"] {
+        // Room for a few 24-byte records; no legacy keys to reclaim here.
+        let mut flash = Flash { free_entries: 16, ..Flash::default() };
+        let bytes = if case == "v2-header" { downgraded } else { durable };
+        flash.spaces.insert("newt_prefs".into(), BTreeMap::from([("slot0".into(), bytes.to_vec())]));
+        let mut home = start(tokens, flash, Card::new(), true);
+        if case == "v2-header" {
+            assert_eq!(home.preferences.settings(), ViewSettings::default(), "clockwise under v2 is corrupt");
+            assert!(!home.preferences.writable());
+            continue;
+        }
+        assert_eq!(home.preferences.settings(), clockwise, "durable clockwise choice must survive a cold reset");
+        home.nvs.fail_commit = case == "failed-commit";
+        assert_eq!(home.preferences.save(&mut home.nvs, fallback), case == "saved");
+        // The runtime keeps the old choice until the commit verifies.
+        assert_eq!(home.preferences.settings(), if case == "saved" { fallback } else { clockwise });
+        let flash = core::mem::take(&mut home.nvs);
+        let card = home.card.clone();
+        drop(home);
+        let restored = start(tokens, flash, card, true).preferences.settings();
+        if case == "saved" {
+            assert_eq!(restored, fallback, "explicit fallback must replace the clockwise choice");
+        } else {
+            assert!([clockwise, fallback].contains(&restored));
+        }
+    }
+}
 fn main() {
+    clockwise(&mut [0; 2]);
     // One row per startup invariant: no cross-product of unrelated faults.
     for case in ["first-write", "full", "near-full", "failed-commit", "missing", "corrupt", "sd-absent", "sd-readonly", "sd-sync"] {
         let mut flash = Flash { free_entries: usize::from(case == "near-full"), ..Flash::default() };

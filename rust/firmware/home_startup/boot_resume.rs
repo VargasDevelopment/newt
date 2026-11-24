@@ -3,7 +3,7 @@
 //! sleep_resume_store.h:15–27,102–111. No source or descriptor is owned here.
 use newt_core::{
     durable::{Backend, Load},
-    preferences::{Orientation, ViewSettings},
+    preferences::ViewSettings,
     progress::Progress,
     save_notice::{ReadingSaveNotice, ResumeIssue},
     sleep_intent::{SleepResumeIntent, SleepResumeStore, progress_checkpoint},
@@ -112,11 +112,8 @@ impl Target {
         {
             return None;
         }
-        self.settings = ViewSettings {
-            orientation: if intent.settings & 1 == 0 { Orientation::Portrait } else { Orientation::LandscapeCcw },
-            slim_progress_bar: intent.settings & 2 != 0,
-            refresh_pages: (intent.settings >> 8) as u8,
-        };
+        // valid() above has checked the packed settings.
+        self.settings = ViewSettings::unpacked(intent.settings)?;
         self.anchor = intent.settings & 8 != 0;
         *saved = acknowledged;
         Some(self)

@@ -1,6 +1,7 @@
 // Static independent fixture data: see vectors.json and NOTES.md. Not observations.
 use super::*;
 use crate::imported_revision::RevisionHasher;
+use newt_core::preferences::Orientation;
 struct Vector {
     settings: ViewSettings,
     spine: u32,
@@ -508,6 +509,13 @@ fn independent_identity_presence_and_failures() {
             identity(v.settings, &v.digest, v.spine, &mut h, BookLanguage::default()),
             Ok((v.base, v.generation))
         );
+        // Clockwise hashes the counterclockwise bytes, so it reuses those pages.
+        if v.settings.orientation == Orientation::LandscapeCcw {
+            let turned = ViewSettings { orientation: Orientation::LandscapeCw, ..v.settings };
+            let mut h = Hash { v, calls: 0, fail: 0 };
+            assert_eq!(identity(turned, &v.digest, v.spine, &mut h, BookLanguage::default()),
+                Ok((v.base, v.generation)));
+        }
         // Existing base covers empty/invalid files: contents are never consulted.
         for (base, map, fail, answer, hc, pc) in [
             (true, false, 0, true, 1, 1),

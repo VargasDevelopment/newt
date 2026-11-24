@@ -174,6 +174,7 @@ fn notices_and_geometry() {
     for (orientation, w, y) in [
         (Orientation::Portrait, 474, 180),
         (Orientation::LandscapeCcw, 637, 64),
+        (Orientation::LandscapeCw, 637, 64),
     ] {
         let g = overlay_geometry(ViewSettings {
             orientation,
@@ -197,4 +198,14 @@ fn chapter_next_preserves_requested_focus_for_preparation() {
     assert_eq!(ui.selected, 2);
     // Actual OperationReader preparation must now request 2 before paint;
     // immutable composition cannot replace it with the old menu focus of 1.
+}
+
+#[test]
+fn orientation_row_cycles_every_choice_without_saving() {
+    let settings = ViewSettings::default();
+    let mut ui = ReaderUiState { panel: ReaderPanel::Settings, draft: settings, ..ReaderUiState::default() };
+    for expected in [Orientation::LandscapeCw, Orientation::Portrait, Orientation::LandscapeCcw] {
+        assert_eq!(dispatch_reader_ui(&mut ui, settings, Action::Activate, 0), ReaderUiIntent::Repaint);
+        assert_eq!(ui.draft.orientation, expected);
+    }
 }

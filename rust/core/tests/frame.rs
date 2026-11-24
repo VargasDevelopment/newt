@@ -4,8 +4,8 @@ use newt_core::frame::{self, NativeRegion};
 use newt_core::preferences::{self, Orientation, ViewSettings};
 
 #[test]
-fn frame_extent_matches_both_reader_orientations() {
-    for orientation in [Orientation::Portrait, Orientation::LandscapeCcw] {
+fn frame_extent_matches_every_reader_orientation() {
+    for orientation in Orientation::ALL {
         let geometry = preferences::geometry(ViewSettings {
             orientation,
             ..ViewSettings::default()
@@ -67,5 +67,41 @@ fn invalid_rectangles_fail_before_writing() {
             height
         ));
         assert_eq!(native, [0x69; frame::FRAME_BYTES]);
+    }
+}
+
+fn pixel(frame: &frame::Frame, index: usize) -> bool {
+    frame[index / 8] & (0x80 >> (index % 8)) != 0
+}
+
+/// Clockwise landscape is the counterclockwise picture turned half a turn:
+/// native raster index i in CCW is index last-i in CW, polarity unchanged.
+#[test]
+fn clockwise_landscape_is_a_half_turn_of_counterclockwise() {
+    let mut logical = [0; frame::FRAME_BYTES];
+    let mut seed = 0x2545_f491_u32;
+    for byte in &mut logical {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        *byte = seed as u8;
+    }
+    let (mut ccw, mut cw) = ([0; frame::FRAME_BYTES], [0; frame::FRAME_BYTES]);
+    let (mut ccw_gray, mut cw_gray) = ([0; frame::FRAME_BYTES], [0; frame::FRAME_BYTES]);
+    frame::to_native_frame(&logical, &mut ccw, Orientation::LandscapeCcw);
+    frame::to_native_frame(&logical, &mut cw, Orientation::LandscapeCw);
+    frame::to_native_selectors(&logical, &mut ccw_gray, Orientation::LandscapeCcw);
+    frame::to_native_selectors(&logical, &mut cw_gray, Orientation::LandscapeCw);
+    let last = frame::FRAME_BYTES * 8 - 1;
+    for at in 0..=last {
+        assert_eq!(pixel(&cw, last - at), pixel(&ccw, at));
+        assert_eq!(pixel(&cw_gray, last - at), pixel(&ccw_gray, at));
+        assert_eq!(pixel(&ccw_gray, at), pixel(&logical, at), "selectors keep polarity");
+    }
+    for bytes in [0, 1, 99, frame::FRAME_BYTES] {
+        let mut prefix = [0x69; frame::FRAME_BYTES];
+        assert!(frame::restore_native_frame_prefix(&logical, &mut prefix, bytes, Orientation::LandscapeCw));
+        assert_eq!(prefix[..bytes], cw[..bytes]);
+        assert!(prefix[bytes..].iter().all(|&byte| byte == 0x69));
     }
 }

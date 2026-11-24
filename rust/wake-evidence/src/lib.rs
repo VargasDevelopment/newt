@@ -210,6 +210,7 @@ fn orientation(v: u8) -> &'static str {
     match v {
         0 => "portrait",
         1 => "CCW",
+        2 => "CW",
         _ => "unavailable",
     }
 }

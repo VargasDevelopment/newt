@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 use super::{FRAME_BYTES, PanelRing};
+use newt_core::preferences::Orientation;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -19,7 +20,7 @@ pub struct Status {
     pub width: u32,
     pub height: u32,
     pub ready: bool,
-    pub landscape: bool,
+    pub orientation: Orientation,
     pub monochrome: bool,
 }
 

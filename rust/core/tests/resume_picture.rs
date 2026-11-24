@@ -129,7 +129,7 @@ fn valid_checksum_does_not_bypass_header_field_checks() {
         (0, b'X'),
         (4, 0),
         (4, 2),
-        (80, 2),
+        (80, 3),
         (80, 255),
         (81, 2),
         (81, 255),
@@ -149,6 +149,13 @@ fn valid_checksum_does_not_bypass_header_field_checks() {
         seal(&mut bytes);
         rejects_unchanged(&bytes);
     }
+    // Clockwise landscape (2) is a valid orientation byte, not a corrupt one.
+    let mut bytes = clean;
+    bytes[80] = Orientation::LandscapeCw as u8;
+    seal(&mut bytes);
+    let mut output = Record::default();
+    assert!(output.decode(&bytes));
+    assert_eq!(output.binding.settings.orientation, Orientation::LandscapeCw);
     // Every unused label/tail byte must be zero, excluding the frame CRC.
     fixture(0).encode(&mut clean);
     for at in (100..356).chain(360..508) {

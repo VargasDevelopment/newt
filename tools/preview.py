@@ -24,7 +24,7 @@ def main() -> None:
     parser.add_argument("--telemetry", choices=("unknown", "sample"), default="unknown",
                         help="sample is invented preview telemetry, never a hardware measurement")
     parser.add_argument("--actions", type=action_list)
-    parser.add_argument("--reader-orientation", choices=("portrait", "landscape-ccw"),
+    parser.add_argument("--reader-orientation", choices=("portrait", "landscape-ccw", "landscape-cw"),
                         help="Quick Start's book orientation; without it Quick Start is skipped, which keeps "
                              "books upright. System screens remain portrait")
     parser.add_argument("--reader-progress-bar", choices=("on", "off"), default="on",
