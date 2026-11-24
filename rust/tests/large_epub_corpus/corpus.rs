@@ -309,9 +309,11 @@ fn run_open_phased(path: &Path, mode: &str) -> OpenMetrics {
             assert_eq!(reader.publish(&mut source, &mut frame), Status::Ok);
             m.page_turn_ms = t2.elapsed().as_secs_f64() * 1000.0;
         }
+        let before_menu = reader.info();
         let t3 = Instant::now();
         m.menu_status = Some(reader.prepare_chapter_menu_phased(&mut source, u32::MAX, &mut storage, &mut loan, &mut backend));
         m.menu_ms = t3.elapsed().as_secs_f64() * 1000.0;
+        assert_eq!(reader.info(), before_menu, "Contents preparation moved the reading position");
         let menu = reader.chapter_menu().info();
         m.menu_valid = Some(menu.valid);
         m.menu_authored = Some(menu.authored);

@@ -35,7 +35,6 @@ fn main() -> std::io::Result<()> {
     }
     let root = std::path::PathBuf::from(std::env::args_os().nth(1).expect("fixture directory"));
     for (name, case) in [
-        ("menu", Menu),
         ("plain", Plain),
         ("cross-spine", CrossSpine),
         ("inline", Plain),

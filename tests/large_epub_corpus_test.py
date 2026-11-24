@@ -59,6 +59,8 @@ CONTROLS = (
      "let optional = optional.map(|_| ());", "toc-mapping-over"),
     ("Contents fallback loses its capacity notice", READER,
      "navigation.set_contents_fallback(contents_fallback(authored, optional));", "", "toc-nav-over-arena"),
+    ("malformed Contents loses its explanation", READER,
+     "else { ContentsFallback::Invalid }", "else { ContentsFallback::None }", "toc-malformed"),
     ("generic Contents fallback returns invalid/empty menu", READER, "Err(status) => (project(arena, &[]), status),", "Err(status) => (false, status),", "toc-nav-over-arena"),
     ("the 64 MiB source-file cap is removed", PHASED, "if bytes > admission::EXTERNAL_MAX_BYTES {", "if false {", "file-size-over"),
 )
