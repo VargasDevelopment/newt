@@ -25,7 +25,7 @@ def rejects(callback, text):
         raise AssertionError('Expected bounded protocol failure')
 
 
-def serial_open_validation(client_type=module.SerialClient):
+def serial_open_validation(platform='linux'):
     class Driver:
         """Linux CDC asserts both lines; pinned pySerial applies DTR first."""
         def __init__(self, *, port, **settings):
@@ -74,9 +74,9 @@ def serial_open_validation(client_type=module.SerialClient):
             self.lines = {'dtr': False, 'rts': False}
             self.is_open = False
 
-    with patch.object(module.sys, 'platform', 'linux'):
+    with patch.object(module.sys, 'platform', platform):
         for _ in range(2):
-            peer = client_type(SimpleNamespace(Serial=Driver), '/dev/mock-only', 1)
+            peer = module.SerialClient(SimpleNamespace(Serial=Driver), '/dev/mock-only', 1)
             assert peer.port.resets == 0, 'opening reset the C3'
             assert peer.port.states == [(True, True), (False, True), (False, False)]
             peer.close()
@@ -84,13 +84,9 @@ def serial_open_validation(client_type=module.SerialClient):
 
 
 def serial_open_control():
-    source = (ROOT / 'tools/dev-usb.py').read_text()
-    original = "self.port.dtr = sys.platform.startswith('linux')"
-    assert source.count(original) == 1
-    namespace = {'__file__': str(ROOT / 'tools/dev-usb.py'), '__name__': 'serial_open_control'}
-    exec(compile(source.replace(original, 'self.port.dtr = False'), namespace['__file__'], 'exec'), namespace)
     try:
-        serial_open_validation(namespace['SerialClient'])
+        # The unchanged non-Linux preset reproduces the old Linux ordering.
+        serial_open_validation(platform='darwin')
     except AssertionError as error:
         assert str(error) == 'opening reset the C3', str(error)
     else:
