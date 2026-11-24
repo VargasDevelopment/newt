@@ -198,8 +198,9 @@ impl<B: ParserBackend + ?Sized, C: CacheStorage + CachePresence>
         spine: u32,
         r: &mut OperationReader<'_, '_, '_, '_, '_, '_, B>,
     ) -> session::Build {
-        // Reader currently carries orientation only. Refuse unsupported view
-        // choices instead of routing pages under settings it never received.
+        // The cache must match the reader's page layout (orientation and text
+        // size). Refuse other view choices instead of routing pages under
+        // settings the reader never received.
         if !reader_settings_match(r.reader, self.settings) {
             return session::Build::Failed(Status::Unsupported);
         }
