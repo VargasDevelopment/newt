@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3686160,
+      "flash_bytes": 3687792,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "bb8d9489250db4cf1ce25154f66a1933c8339f6d",
-      "before": 3685328,
-      "after": 3686160,
-      "reason": "+848 B against main (+832 B over the last ceiling): #42 offers both landscape directions. Clockwise is the counterclockwise frame turned half a turn (byte-reversed copy with bit-reversed bytes), Previous and Next swap on book screens while a clockwise frame is shown, NWTP v3 stores only the clockwise choice, packed settings words gain a half-turn bit with one shared pack/unpack (the sleep record's wake_orientation feeds wake diagnostics), and Quick Start and Reading settings gain the third choice and its copy. Clean regional DEV USB builds: main 9b97239b 3,685,312 B; bb8d9489 3,686,160 B. RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, all 328 selected stack frames unchanged.",
-      "reviewer": "Lead (Codex Astra re-review, 2026-11-24)"
+      "source_revision": "e1a4e1bd810575e4979268eb97a7c287e7498782",
+      "before": 3686160,
+      "after": 3687792,
+      "reason": "+1,632 B measured (+1,632 B over the 3,686,160 B ceiling): #50 decodes 3-component Adobe APP14 transform-0 RGB JPEGs to BT.601 greyscale in both baseline (jpeg/mod.rs) and progressive interleaved DC first scans (jpeg/progressive.rs), distinguishes absent APP14 from unsupported transform values including 255, supports shared Huffman table 0 and SOS component-ID remapping for RGB scans, maps unsupported baseline headers to BookStatus::Unsupported (jpeg/renderer.rs) so unrenderable RGB forms refuse cleanly without drawing red-only art, and bumps cover NO_ART from CJB6 to CJB7 (cover.rs). Peak cover memory is unchanged (reuses baseline's 6-block MCU buffer and 12 stack bytes in progressive). Clean regional DEV USB builds: main 61e0972f 3,686,160 B; e1a4e1bd 3,687,792 B. RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, selected stack frames 0/16/32/48/480 B (within 0/16/32/48/656 B ceilings).",
+      "reviewer": "Lead (Codex Astra review, 2026-11-24)"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
