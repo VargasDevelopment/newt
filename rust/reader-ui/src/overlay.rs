@@ -259,29 +259,40 @@ mod tests {
     use super::*;
     use newt_phased_reader::{ContentsFallback, PhasedReader, Selection};
     use newt_reader_navigation::{Section, metadata::Metadata};
-    use newt_core::{package_parsers::PackageResult, zip_window::arena::Arena};
+    use newt_core::{package_parsers::{ManifestItem, PackageResult, TocEntry}, zip_window::arena::Arena};
     use std::boxed::Box;
 
     #[test]
     fn contents_overlay_explains_capacity_damage_and_absence() {
-        let settings = ViewSettings::default();
+        let settings = ViewSettings { orientation: Orientation::Portrait, ..Default::default() };
         let ui = ReaderUiState { panel: ReaderPanel::Chapters, ..Default::default() };
         let OverlayGeometry { x, y, width: w, height: h } = overlay_geometry(settings);
-        for (fallback, expected) in [
-            (ContentsFallback::Capacity, b"Contents too large; numbers shown.".as_slice()),
-            (ContentsFallback::Invalid, b"Contents unreadable; numbers shown.".as_slice()),
-            (ContentsFallback::None, b"This book has no contents list".as_slice()),
+        assert_eq!(newt_core::preferences::geometry(settings).width, 528);
+        for (fallback, authored, expected) in [
+            (ContentsFallback::Capacity, false, b"Contents too large; numbers shown.".as_slice()),
+            (ContentsFallback::Invalid, false, b"Contents unreadable; numbers shown.".as_slice()),
+            (ContentsFallback::None, false, b"This book has no contents list".as_slice()),
+            (ContentsFallback::None, true, b"From the book's contents".as_slice()),
         ] {
-            let mut bytes = [];
-            let arena = Arena::new(&mut bytes);
+            assert!(width(expected, 21, false) <= w - 44, "portrait notice is clipped");
+            let mut bytes = [0; 64];
+            let mut arena = Arena::new(&mut bytes);
+            let href = arena.copy_nul_ref(Some(b"chapter.xhtml"));
+            let title = arena.copy_nul_ref(Some(b"Start"));
+            let media_type = arena.copy_nul_ref(Some(b"application/xhtml+xml"));
+            let manifest = [ManifestItem { href, media_type, ..Default::default() }];
+            let entries = [newt_core::zip_container::Entry { name: href,
+                name_hash: newt_core::zip_container::hash_path(b"chapter.xhtml"), ..Default::default() }];
+            let toc = [TocEntry { href, title, ..Default::default() }];
             let package = PackageResult { spine_count: 1, ..Default::default() };
             let book = Metadata { arena: &arena, package: &package,
-                manifest: &[], spine: &[], toc: &[], entries: &[] };
+                manifest: &manifest, spine: &[0], toc: if authored { &toc } else { &[] }, entries: &entries };
             let mut selections = [Selection::default(), Selection::default()];
-            assert!(selections[1].navigation.bind_menu(&book, Section::default(), 0, &mut []));
+            assert!(selections[1].navigation.bind_menu(&book, Section::default(), 0, &mut [0]));
             selections[1].navigation.set_contents_fallback(fallback);
             let reader = PhasedReader::new(&mut selections, None, false);
             assert!(reader.chapter_menu().info().valid);
+            assert_eq!(reader.chapter_menu().info().authored, authored);
             let mut actual = Box::new([0; newt_core::frame::FRAME_BYTES]);
             render_reader_overlay(&ui, settings, None, &Progress::default(), true,
                 Some(&mut actual), Some(reader.chapter_menu()), None, None);
