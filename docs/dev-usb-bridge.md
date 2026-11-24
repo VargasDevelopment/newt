@@ -136,8 +136,7 @@ be interpreted separately; host receipts identify the observation session.
 `Newt/Books`. `Newt/Dev` remains useful for inert test files. This is a DEV
 interface: staging a book, app, update or state record can change device behavior.
 The code is `rust/core/src/dev_put.rs`; the firmware glue is
-`rust/firmware/app_runtime/card_write.rs`. None of this path or its enlarged
-receive queue is included when `dev-usb` / `NEWT_DEV_USB` is off.
+`rust/firmware/app_runtime/card_write.rs`. None of the scoped PUT receive path is included when `dev-usb` / `NEWT_DEV_USB` is off.
 
 - **When:** only on Home with no book open, opening or due to reopen. Otherwise
   PUT answers `ERROR busy reason=reading|opening|not-home`. Update mode and a
@@ -173,13 +172,21 @@ receive queue is included when `dev-usb` / `NEWT_DEV_USB` is off.
    size/SHA-256 verification and commit. Incoming bytes alone are not the check.
 
 The old 150-byte Base64 blocks came from HWCDC's default 256-byte RX queue:
-its ISR drops bytes when that queue fills. DEV startup now requests 4,352 bytes
-**before** beginning the port. A maximal DATA header and its 4,096-byte payload
-fit whole. The host waits for the answer before another frame. Allocation
-failure leaves normal startup working and refuses PUT with `ERROR no-memory`.
-The queue uses 4,096 more heap bytes in DEV builds; a lease separately borrows
-4,543 heap bytes and releases them on every exit. The bridge's ordinary
-80-byte command RX buffer and 512-byte reply bound do not change.
+its ISR drops bytes when that queue fills. That queue stays unchanged.
+For a granted PUT only, an exclusive receive token masks the RX interrupt,
+drains bytes already in the SDK queue first, then polls the C3 hardware FIFO.
+The FIFO applies USB backpressure while the lease fills its bounded buffer.
+TX and the SDK's TX interrupt handling are unchanged. HELLO, DIAG, FRAME and
+refused PUT requests keep their ordinary SDK receive path.
+
+The token restores the previous RX enable bit on every lease exit, including
+errors, disconnect, timeout and cancellation. It leaves pending FIFO bytes and
+raw RX status for the SDK after restoration, so the next HELLO or PUT works.
+Only the mask register read/modify/write uses a tiny critical section; no wait
+or allocation occurs in it. Every input wait remains bounded by the lease's
+3-second, non-renewing header/block timeout. A lease borrows one 4,543-byte heap block and frees
+it on exit; no larger queue or receive buffer is held while PUT is unused.
+The bridge's ordinary 80-byte command RX and 512-byte reply bounds do not change.
 
 - Bytes go to the card root's reserved `NEWT.PUT`; the final name is untouched
   until DONE. A partial raw block is never written.
@@ -187,7 +194,7 @@ The queue uses 4,096 more heap bytes in DEV builds; a lease separately borrows
   complete relative target. A replaced file moves to root `NEWT.OLD`, the
   verified temp takes its name, and only then are backup and marker removed.
   A failed install rename attempts to restore the old file.
-- Physical input, disconnect, 3 s without receive progress / a complete header,
+- Physical input, disconnect, 3 s without a complete header or raw block,
   a 1 s reply stall, or malformed/stale input abandons the lease and removes
   the temp. There is no total-duration deadline on an active transfer.
   Physical input and disconnect also stop read-back and the check immediately

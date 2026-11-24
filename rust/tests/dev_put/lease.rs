@@ -6,10 +6,11 @@
 mod commit;
 mod fakes;
 mod sha256;
+mod receive_owner;
 
 use fakes::{Event, FakeCard, FakeWire, HostHash, Node, FAILED};
 use newt_core::dev_put::{self, admit, name_allowed, Busy, End, Facts, Session, CHUNK_BYTES, IDLE_MS,
-    LINE_BYTES, MEMORY_BYTES, RX_QUEUE_BYTES};
+    LINE_BYTES, MEMORY_BYTES, FRAME_BYTES};
 use sha256::sha256;
 
 const BOOT: u32 = 7;
@@ -214,10 +215,10 @@ fn an_existing_file_is_replaced_only_after_verification() {
 }
 
 #[test]
-fn every_lease_line_fits_the_receive_queue() {
+fn every_lease_frame_is_bounded() {
     // The longest DATA line: 10-digit boot, session and ID, an offset near the cap.
     let line = format!("N1 {0} {0} {0} DATA {1} {2}\n", u32::MAX, u64::MAX - 1, CHUNK_BYTES);
-    assert!(line.len() + CHUNK_BYTES <= RX_QUEUE_BYTES && LINE_BYTES < RX_QUEUE_BYTES, "{}", line.len());
+    assert!(line.len() + CHUNK_BYTES <= FRAME_BYTES && LINE_BYTES < FRAME_BYTES, "{}", line.len());
     let (card, outcome) = interrupted(Event::Line(format!("{}\n", "A".repeat(LINE_BYTES + 1))));
     assert_eq!(outcome.last(), "ERROR abandoned reason=line", "a longer line is never taken");
     unchanged(&card, Some(b"old"));
@@ -263,6 +264,22 @@ fn interrupted(event: Event) -> (FakeCard, Outcome) {
     card.put_file(TARGET, b"old");
     let outcome = lease(&mut card, Host::new().file("dev", "runtime.bin", &bytes).data(&bytes[..CHUNK_BYTES]).then(event));
     (card, outcome)
+}
+
+#[test]
+fn a_raw_block_has_a_nonrenewing_deadline() {
+    let bytes = pattern(CHUNK_BYTES);
+    let mut card = FakeCard::default();
+    card.put_file(TARGET, b"old");
+    let mut host = Host::new();
+    host.file("dev", "runtime.bin", &bytes).line(&format!("DATA 0 {CHUNK_BYTES}"))
+        .then(Event::Bytes(bytes[..32].to_vec())).then(Event::Wait(IDLE_MS - 10))
+        .then(Event::Bytes(bytes[32..64].to_vec())).then(Event::Wait(20))
+        .then(Event::Bytes(bytes[64..].to_vec())).line("DONE");
+    let outcome = lease(&mut card, &mut host);
+    assert_eq!(outcome.end, End::Cancelled);
+    assert_eq!(outcome.last(), "ERROR abandoned reason=timeout");
+    unchanged(&card, Some(b"old"));
 }
 
 #[test]

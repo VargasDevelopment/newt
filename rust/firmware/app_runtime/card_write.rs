@@ -3,7 +3,7 @@
 //! the bridge's serial loan and the input gate. Its working memory is one heap
 //! block that exists only while the lease runs.
 #![forbid(unsafe_code)]
-use crate::{app_image::{Events, Home}, board_clock::BoardBus, dev_usb::Bridge, serial_console::DevChannel};
+use crate::{app_image::{Events, Home}, board_clock::BoardBus, dev_usb::Bridge, serial_console::PutChannel};
 use core::ffi::CStr;
 use newt_core::dev_put::{self, Card, Entry, Session, Wire, MEMORY_BYTES};
 use newt_native_io::OsNative;
@@ -13,10 +13,6 @@ const MOUNT: &CStr = c"/newt-sd";
 
 /// Runs one granted lease to its end and hands the outcome to the bridge.
 pub fn lease(bridge: &mut Bridge, home: &mut Home<'_>, events: &mut Events<'_, '_>, session: Session) {
-    if newt_c3_board::dev_usb::rx_capacity() < dev_put::RX_QUEUE_BYTES {
-        bridge.put_refused(session.request, b"ERROR no-memory");
-        return;
-    }
     let mut block = newt_sdk_heap::Bytes::try_new(MEMORY_BYTES);
     let Some(memory) = block.as_mut().and_then(|block| <&mut [u8; MEMORY_BYTES]>::try_from(block.as_mut()).ok()) else {
         bridge.put_refused(session.request, b"ERROR no-memory");
@@ -25,10 +21,15 @@ pub fn lease(bridge: &mut Bridge, home: &mut Home<'_>, events: &mut Events<'_, '
     let mut ended = None;
     let mounted = home.with_storage_io(|home, io| {
         let BoardBus { board, log } = &mut home.bus;
-        let mut wire = LeaseWire { channel: log.dev_channel(board.monotonic_clock()), events, tx_flush_pending: false };
+        let clock = board.monotonic_clock();
         let mut card = DevCard(io.port());
         // A failed hash scope leaves `ended` empty: the lease never began.
-        let _ = board.with_sha256(|hash| ended = Some(dev_put::run(session, memory, &mut wire, &mut card, hash)));
+        let _ = board.with_sha256(|hash| {
+            // Acquire only after admission, memory, mount and hash succeeded,
+            // before the offer lets the host send any FILE or DATA bytes.
+            let mut wire = LeaseWire { channel: log.dev_channel(clock).receive_put(), events, tx_flush_pending: false };
+            ended = Some(dev_put::run(session, memory, &mut wire, &mut card, hash));
+        });
     });
     let now = home.bus.board.monotonic_clock().millis();
     match (mounted, ended) {
@@ -39,7 +40,7 @@ pub fn lease(bridge: &mut Bridge, home: &mut Home<'_>, events: &mut Events<'_, '
 }
 
 struct LeaseWire<'a, 'events, 'task> {
-    channel: DevChannel<'a>,
+    channel: PutChannel<'a>,
     events: &'a mut Events<'events, 'task>,
     tx_flush_pending: bool,
 }

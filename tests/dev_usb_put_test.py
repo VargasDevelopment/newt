@@ -109,7 +109,7 @@ def success():
     assert [entry['result'] for entry in report['put']['files']] == ['written'] * 3
     assert report['put']['files'][1]['sha256'] == hashlib.sha256(FILES[1][2]).hexdigest()
     assert peer.writes.count('DATA') == 0 + 9 + 2 and peer.writes[-1] == 'STATUS'
-    assert peer.longest <= 4352, 'each line and its LF fit the device receive queue whole'
+    assert peer.longest <= 4352, 'each header and raw payload fit the frame bound'
     kinds = [record['kind'] for record in report['protocol']['records']]
     assert kinds.count('DATA') == 3, 'DATA is summarised once per file'
     assert len(kinds) < 40

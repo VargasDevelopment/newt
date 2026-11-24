@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! The lease itself: its line protocol, the temp file and the checked rename.
 use super::{Card, End, Entry, Session, Wire, CHUNK_BYTES, IDLE_MS, LINE_BYTES,
-    MEMORY_BYTES, ROOT, PATH_BYTES, TEMP, MARKER, STALL_MS, RX_QUEUE_BYTES, target_path};
+    MEMORY_BYTES, ROOT, PATH_BYTES, TEMP, MARKER, STALL_MS, FRAME_BYTES, target_path};
 use crate::update_online::Hash;
 use crate::wire::crc32;
 use core::ffi::CStr;
@@ -204,14 +204,13 @@ impl Lease<'_> {
         // Length framing makes every byte, including LF, NUL and HELLO, data.
         // The whole header+block fits RX; cancellation never writes a prefix.
         let mut received = 0;
-        let mut activity = self.wire.now();
+        let activity = self.wire.now();
         while received < decoded {
             if let Some(reason) = self.abandoned(activity) { return Err(Refused::Abandoned(reason)); }
             let byte = self.wire.read_byte();
             if byte < 0 { self.wire.pause(); continue; }
             self.line[received] = byte as u8;
             received += 1;
-            activity = self.wire.now();
         }
         write_all(self.card, fd, &self.line[..decoded]).map_err(|code| Refused::Card("write", code))?;
         let written = written + decoded as u64;
@@ -393,5 +392,5 @@ fn path(bytes: &[u8; PATH_BYTES]) -> &CStr {
 }
 
 // Three u32 IDs, a u64 offset and length, LF, then the whole raw block.
-const _: () = assert!(2 + 3 * 11 + 1 + 5 + 21 + 21 + CHUNK_BYTES <= RX_QUEUE_BYTES);
-const _: () = assert!(LINE_BYTES + 1 <= RX_QUEUE_BYTES);
+const _: () = assert!(2 + 3 * 11 + 1 + 5 + 21 + 21 + CHUNK_BYTES <= FRAME_BYTES);
+const _: () = assert!(LINE_BYTES + 1 <= FRAME_BYTES);

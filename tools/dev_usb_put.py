@@ -1,8 +1,8 @@
 """DEV PUT: validated card-relative paths and acknowledged raw blocks.
 
 Only DONE can replace the final name, after sync and card read-back SHA-256.
-An unknown DONE is never retried. Each header plus payload fits the DEV RX
-queue whole, so an arbitrarily slow receiver cannot overflow it.
+An unknown DONE is never retried. Raw blocks use the scoped hardware FIFO
+receiver with USB backpressure; the ordinary SDK RX queue stays unchanged.
 """
 import hashlib
 from pathlib import Path
@@ -90,7 +90,7 @@ class Lease:
         if len(data) > LINE_BYTES + 1:
             raise ValueError('Lease line exceeds its bound')
         if len(data) + len(payload) > LINE_BYTES + 1:
-            raise ValueError('Lease frame exceeds the receive queue')
+            raise ValueError('Lease frame exceeds its bound')
         data += payload
         if kind != 'DATA':  # thousands of DATA lines are summarised, not traced
             client.trace('request', *identity, kind, body)

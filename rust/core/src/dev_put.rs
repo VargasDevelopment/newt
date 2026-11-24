@@ -18,12 +18,12 @@ use core::ffi::CStr;
 mod lease;
 pub use lease::run;
 
-/// DEV HWCDC queue, configured before its interrupt starts. A whole frame,
-/// including LF, fits it; the host waits for an answer before sending another.
-pub const RX_QUEUE_BYTES: usize = 4352;
+/// Maximum host frame. The active lease polls FIFO with hardware backpressure;
+/// the normal SDK receive queue stays at 256 bytes.
+pub const FRAME_BYTES: usize = 4352;
 /// Raw bytes per DATA block; amortizes card writes and replies without Base64.
 pub const CHUNK_BYTES: usize = 4096;
-pub const LINE_BYTES: usize = RX_QUEUE_BYTES - 1;
+pub const LINE_BYTES: usize = FRAME_BYTES - 1;
 const REPLY_BYTES: usize = 192;
 /// One heap loan only while a lease owns the port and card.
 pub const MEMORY_BYTES: usize = LINE_BYTES + REPLY_BYTES;

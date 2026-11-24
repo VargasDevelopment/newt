@@ -23,7 +23,7 @@ sys.path.insert(0, str(ROOT / 'tools'))
 from gate_tier import negative_controls
 
 BINARY = 'dev_put'
-TESTS = 36
+TESTS = 38
 # Recovery's one rule: a marker the next FILE finds refuses.
 MARKED = '        if self.recovery_file(MARKER, "marker")? { return Err(Refused::Recovery("commit", 0)); }\n'
 # (what breaks, its file under rust/core/src, its text there, the broken text, the test that must fail)
@@ -44,6 +44,13 @@ CONTROLS = (
      '            if let Some(reason) = self.abandoned(activity) { return Err(Refused::Abandoned(reason)); }\n',
      '            if let Some(reason) = self.abandoned(activity) { if reason != "physical-input" { return Err(Refused::Abandoned(reason)); } }\n',
      'an_interrupted_raw_block_never_replaces_the_final_file'),
+    ('the receive token forgets restoration', '../../salamander/board/dev_usb.rs',
+     'unsafe { nsc_put_rx_end(self.previous) }', 'let _ = self.previous;',
+     'receive_owner::every_lease_exit_restores_rx'),
+    ('raw progress renews the deadline', 'dev_put/lease.rs',
+     '        let activity = self.wire.now();\n        while received < decoded {\n',
+     '        while received < decoded {\n            let activity = self.wire.now();\n',
+     'a_raw_block_has_a_nonrenewing_deadline'),
     ('an open book does not refuse', 'dev_put.rs', "    if facts.reader_open { return Err(Busy::Reading); }\n", "",
      'admission_refuses_reading_opening_and_away_from_home'),
     ('bytes go straight to the final name', 'dev_put/lease.rs', "let fd = self.card.create(TEMP)",
@@ -118,6 +125,46 @@ def control(run, workspace, target, support, name, source, good, bad, test):
     print(f'PASS control: {test} fails when {name}', flush=True)
 
 
+def native_receive(run, workspace, output, support):
+    native = workspace / 'firmware/serial_console/native'
+    fixture = workspace / 'tests/dev_put/native'
+    source = native / 'serial_console.cpp'
+    good = source.read_text()
+    def check(enabled):
+        binary = output / f'native-rx-{enabled}'
+        run.run([run.tools['clang++'], '--no-default-config', '-std=c++17',
+                 f'-DNEWT_DEV_USB={enabled}', '-DARDUINO_USB_MODE=1', '-DARDUINO_USB_CDC_ON_BOOT=1', '-DCONFIG_IDF_TARGET_ESP32C3=1',
+                 '-I' + str(fixture), '-I' + str(native), source, fixture / 'receive.cpp',
+                 '-fuse-ld=/usr/bin/x86_64-linux-gnu-ld.bfd', '-o', binary], workspace)
+        return binary
+    for enabled in (0, 1):
+        run.run([check(enabled)], workspace)
+    print('PASS native RX: ordinary SDK path, ordered drain, RX-only mask and pending-byte restoration', flush=True)
+    if not negative_controls(__file__):
+        return
+    for name, before, after in [
+        ('restore removed', 'if (previous) usb_serial_jtag_ll_ena_intr_mask(USB_SERIAL_JTAG_INTR_SERIAL_OUT_RECV_PKT);', 'if (previous) { (void)previous; }'),
+        ('queued bytes skipped', 'if (nsc_port_available(Serial) > 0) return nsc_port_read_byte(Serial);', ''),
+        ('ordinary reads use leased FIFO', 'int nsc_read_byte(void) { return nsc_port_read_byte(Serial); }',
+         'int nsc_read_byte(void) { return nsc_put_rx_read_byte(); }'),
+    ]:
+        support.require(good.count(before) == 1, f'native control anchor: {name}')
+        source.write_text(good.replace(before, after))
+        try:
+            binary = check(1)
+            number = len(run.commands)
+            try:
+                run.run([binary], workspace)
+            except RuntimeError:
+                error = (run.output / f'{number:03d}.stderr').read_text()
+                support.require('Assertion' in error or 'assertion' in error, f'{name}: must fail an assertion')
+            else:
+                raise RuntimeError(f'native RX control survived: {name}')
+        finally:
+            source.write_text(good)
+        print(f'PASS native RX control: {name}', flush=True)
+
+
 def main():
     support = load('dev_put_support', ROOT / 'rust/tests/inflate/run_support.py')
     support.install_signal_handlers()
@@ -132,6 +179,7 @@ def main():
         run.env['RUSTFLAGS'] = '-Dwarnings -Ccodegen-units=1'
         target = output / 'target'
         try:
+            native_receive(run, workspace, output, support)
             result = run.run([test_binary(run, workspace, target)], workspace)
             support.require(f'test result: ok. {TESTS} passed; 0 failed; 0 ignored' in result,
                             f'all {TESTS} {BINARY} tests ran and passed')

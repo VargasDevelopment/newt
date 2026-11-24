@@ -206,7 +206,7 @@ impl Card for FakeCard {
 
 /// What the host does next, in order. A press or an unplug happens when the
 /// lease next looks while no byte is waiting; after the script, silence.
-pub enum Event { Line(String), Bytes(Vec<u8>), Press, Unplug }
+pub enum Event { Line(String), Bytes(Vec<u8>), Wait(u32), Press, Unplug }
 
 pub struct FakeWire {
     script: VecDeque<Event>,
@@ -265,6 +265,10 @@ impl Wire for FakeWire {
         if self.pending.is_empty() {
             match self.script.front() {
                 Some(Event::Line(_)) => { let Some(Event::Line(line)) = self.script.pop_front() else { unreachable!() }; self.pending.extend(line.into_bytes()); }
+                Some(Event::Wait(_)) => {
+                    let Some(Event::Wait(ms)) = self.script.pop_front() else { unreachable!() };
+                    self.clock += ms;
+                }
                 Some(Event::Bytes(_)) => { let Some(Event::Bytes(bytes)) = self.script.pop_front() else { unreachable!() }; self.pending.extend(bytes); }
                 _ => {}
             }
