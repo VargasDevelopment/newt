@@ -87,10 +87,11 @@ To open a pull request, run focused checks for the area you changed:
 - One test family: that family's tests.
 - Firmware sources: also `python3 tools/firmware-build.py`, a quick compile.
 
-On Linux, add `--profile linux` to `check.py`. These checks need the pinned
-project toolchain described in the [README](README.md#build-from-source).
-A change to only `README.md`, `AGENTS.md`, `CONTRIBUTING.md`, the pull
-request template, or Markdown and images directly in `docs/` (not
+These checks run on Linux x86_64 with the pinned project toolchain described in
+the [README](README.md#build-from-source); see
+[docs/CI.md](docs/CI.md#explicit-cover-coverage-boundary) for Linux and Mac
+platform support. A change to only `README.md`, `AGENTS.md`, `CONTRIBUTING.md`,
+the pull request template, or Markdown and images directly in `docs/` (not
 `docs/toolchain-*`), needs no local check: CI's
 [docs lane](docs/CI.md#docs-lane) checks it.
 

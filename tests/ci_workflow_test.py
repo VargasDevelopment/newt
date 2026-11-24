@@ -54,8 +54,6 @@ class WorkflowControls(unittest.TestCase):
                     if Path(command[2]).name == 'release_tools_test.py':
                         raise PrerequisiteFailure('authored prerequisite failure')
                 arguments = ['check.py', '--suite', suite]
-                if sys.platform == 'linux':
-                    arguments.extend(['--profile', 'linux'])
                 with patch.object(sys, 'argv', arguments), \
                         patch.object(host_check, 'verify_source_pin'), \
                         patch.object(host_check, 'phase_run', side_effect=phase), \
@@ -786,6 +784,21 @@ class GateControls(unittest.TestCase):
             'START Mac ImageIO cover helper tests',
             f'PASS Mac ImageIO cover helper gate for {expected}',
         ])
+
+    def test_ci_gate_refuses_non_linux_hosts_with_a_clear_message(self):
+        for host_platform, machine in (('darwin', 'arm64'), ('linux', 'aarch64')):
+            with self.subTest(host_platform=host_platform, machine=machine), \
+                    patch.object(gate.gate_plan.sys, 'platform', host_platform), \
+                    patch.object(gate.gate_plan.platform, 'machine', return_value=machine), \
+                    patch.object(gate, 'committed_source') as source, \
+                    patch.object(gate.gate_tier, 'ci_tier', return_value='push'):
+                for call in (lambda: gate.host_options('push', 'all'),
+                             lambda: gate.commands(self.root, sys.executable, 'push'),
+                             lambda: gate.coverage(self.root, 'push', 'all', ''),
+                             lambda: gate.run_gate(self.root, self.expected)):
+                    with self.assertRaisesRegex(RuntimeError, r'Linux x86_64.*check-mac-covers\.py'):
+                        call()
+                source.assert_not_called()
 
 
 if __name__ == '__main__':

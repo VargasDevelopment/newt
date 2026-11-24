@@ -477,7 +477,7 @@ def cpu_budgets(path=None, *, fresh_objects=None):
     # Validate against the complete plan, not a selected quick/focused subset.
     # Prerequisites/focused commands run outside that plan but share this policy.
     import gate_plan
-    names = {phase.name for profile in ('canonical', 'linux') for phase in gate_plan.plan(profile, False)}
+    names = {phase.name for profile in gate_plan.PROFILES for phase in gate_plan.plan(profile, False)}
     names.update(('release_tools.py', 'release_tools.py --no-tags', 'release_tools_test.py'))
     unknown = set(policy['phases']) - names
     if unknown:

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Complete host gate. This does not compile or flash ESP32 firmware."""
 import os
+import platform
 import sys
 
 sys.dont_write_bytecode = True
@@ -14,6 +15,17 @@ if sys.flags.optimize:
 os.environ.update(UBSAN_OPTIONS="halt_on_error=1", ASAN_OPTIONS="halt_on_error=1:abort_on_error=1")
 
 HANDOFF_GUARD = "NEWT_CHECK_PYTHON_HANDOFF"
+SUPPORTED_HOST = ("linux", "x86_64")
+MAC_COVER_NOTE = ("The host gate runs only on Linux x86_64; on a Mac, run "
+                  "tools/check-mac-covers.py (docs/CI.md#explicit-cover-coverage-boundary)")
+
+
+def require_supported_host() -> None:
+    """Reject unsupported hosts before looking for a checkout's pinned Python."""
+    current = platform.machine()
+    if (sys.platform, current) != SUPPORTED_HOST:
+        sys.exit(f"Host gate requires {SUPPORTED_HOST[0]} {SUPPORTED_HOST[1]} "
+                 f"(current host: {sys.platform} {current}). {MAC_COVER_NOTE}")
 
 
 def handoff_to_pinned_python(root: str) -> None:
@@ -21,7 +33,7 @@ def handoff_to_pinned_python(root: str) -> None:
 
     A distro python3 fails the strict runtime check (tools/python_runtime.py),
     and may be too old for the gate's imports, so this runs before any of them
-    and uses only os and sys. No pinned Python is an error, never a fallback.
+    and uses only os, platform and sys. No pinned Python is an error, never a fallback.
     """
     pinned = os.path.join(root, ".toolchain/platformio/penv/bin/python")
     target = os.path.realpath(pinned)
@@ -38,6 +50,7 @@ def handoff_to_pinned_python(root: str) -> None:
 
 
 if __name__ == "__main__":
+    require_supported_host()
     handoff_to_pinned_python(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import argparse
@@ -68,7 +81,7 @@ def phase_compile(name, build):
     return binary
 
 
-def focused(suite, profile):
+def focused(suite):
     if suite == 'cache':
         phase_run([sys.executable, '-B', str(ROOT / 'tests/host_objects_test.py')], check=True, cwd=ROOT,
                   cpu_budgets=gate_runner.cpu_budgets())
@@ -77,10 +90,7 @@ def focused(suite, profile):
         for script in ('library_preview_test.py', 'library_cover_prepare_test.py', 'system_ui_contract_test.py',
                        'system_ui_rule_test.py', 'preview_owners_test.py', 'preview_update_test.py'):
             command = [sys.executable, '-B', str(ROOT / 'tests' / script)]
-            if script != 'library_cover_prepare_test.py':
-                command.append(str(binary))
-            elif profile == 'linux':
-                command.append('--portable-only')
+            command.append('--portable-only' if script == 'library_cover_prepare_test.py' else str(binary))
             phase_run(command, check=True, cwd=ROOT,
                       cpu_budgets=gate_runner.cpu_budgets())
     print(f"PASS development suite {suite}; complete host/native gates and physical proof remain required", flush=True)
@@ -107,8 +117,8 @@ def configured_main() -> None:
     parser.add_argument('--no-time-budget', action='store_true',
                         help="Skip the tier's wall-time budget: the caller budgets the whole run (tools/ci_gate.py)")
     parser.add_argument('--fresh-objects', action='store_true', help='Recompile reusable objects for cache comparison')
-    parser.add_argument('--profile', choices=('canonical', 'linux'), default='canonical',
-                        help='Linux profile uses portable cover/cache checks')
+    parser.add_argument('--profile', choices=tuple(gate_plan.PROFILES), default='linux',
+                        help='Host gate profile (Linux x86_64 only; uses portable cover checks)')
     parser.add_argument('-j', '--jobs', type=int, default=gate_runner.default_jobs(),
                         help='Phases and compiler jobs at once (default: the usable CPUs); 1 is the serial gate')
     parser.add_argument('--host-jobs', type=int, help='Per-user phase/compiler slots across checkouts (default usable CPUs; NEWT_HOST_GLOBAL_JOBS)')
@@ -124,10 +134,10 @@ def configured_main() -> None:
         parser.error('--jobs must be at least 1')
     if args.host_jobs is not None and args.host_jobs < 1:
         parser.error('--host-jobs must be at least 1')
-    if args.profile == 'linux' and sys.platform != 'linux':
-        parser.error('The Linux coverage profile requires a real Linux host')
-    if args.profile == 'canonical' and sys.platform == 'linux':
-        parser.error('Linux must explicitly select --profile linux')
+    try:
+        gate_plan.require_host(args.profile)
+    except (RuntimeError, ValueError) as error:
+        parser.error(str(error))
     if args.fresh_objects:
         os.environ['NEWT_HOST_OBJECT_CACHE'] = '0'
     with gate_runner.job_environment(ROOT, args.jobs, args.host_jobs):
@@ -155,7 +165,7 @@ def gate(args) -> None:
               flush=True)
         return
     if args.suite != 'all':
-        focused(args.suite, args.profile)
+        focused(args.suite)
         return
     print(f"PASS: official FreeInk source {FREEINK_COMMIT}, checkout inputs clean", flush=True)
     print(f"TIER {args.tier}: negative controls of {included or 'no test'}", flush=True)
@@ -171,9 +181,8 @@ def gate(args) -> None:
         gate_tier.check_time_budget(f'{args.tier} tier host gate', time.perf_counter() - args.started,
                                     gate_tier.time_budget(args.tier, 'check'), timings)
     print("PASS: host compile (ASan/UBSan), Rust checks and CLI validation")
-    if args.profile == 'linux':
-        print('Linux software coverage: portable cover/cache controls; '
-              'for Mac ImageIO coverage see docs/CI.md#explicit-cover-coverage-boundary')
+    print('Linux software coverage: portable cover/cache controls; '
+          'for Mac ImageIO coverage see docs/CI.md#explicit-cover-coverage-boundary')
     print("Hardware firmware compilation and physical bring-up are separate gates.")
 
 

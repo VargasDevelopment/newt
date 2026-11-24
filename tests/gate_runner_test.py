@@ -404,36 +404,127 @@ class PlanTests(unittest.TestCase):
                     self.assertNotIn(other.name, before(phase.name), (phase.name, other.name))
 
     def test_shared_outputs_and_timing_hazards_are_declared(self):
-        for profile, fresh in (('linux', False), ('linux', True), ('canonical', False)):
-            with self.subTest(profile=profile, fresh=fresh):
-                plan = gate_plan.plan(profile, fresh)
-                needs, closure = gate_runner.prerequisites(plan), {}
-                def before(name):
-                    if name not in closure:
-                        closure[name] = set(needs[name]).union(*(before(item) for item in needs[name]))
-                    return closure[name]
-                pairs = [('compile newt-preview', name) for name in
-                          ('library_preview_test.py', 'system_ui_contract_test.py', 'system_ui_rule_test.py',
-                           'preview_owners_test.py', 'preview_update_test.py', 'preview_reader_wake_test.py',
-                           'preview_card_app_test.py', 'preview_cover_test.py', 'gate_previews.py')]
-                pairs += [(f'compile {name}', name) for _, name in gate_plan.UNIT_TESTS]
-                for first, second in pairs:
-                    self.assertIn(first, before(second), (first, second))
-                alone = {phase.name for phase in plan if phase.alone}
-                self.assertEqual(alone, set())
+        for profile in gate_plan.PROFILES:
+            for fresh in (False, True):
+                with self.subTest(profile=profile, fresh=fresh):
+                    plan = gate_plan.plan(profile, fresh)
+                    needs, closure = gate_runner.prerequisites(plan), {}
+                    def before(name):
+                        if name not in closure:
+                            closure[name] = set(needs[name]).union(*(before(item) for item in needs[name]))
+                        return closure[name]
+                    pairs = [('compile newt-preview', name) for name in
+                              ('library_preview_test.py', 'system_ui_contract_test.py', 'system_ui_rule_test.py',
+                               'preview_owners_test.py', 'preview_update_test.py', 'preview_reader_wake_test.py',
+                               'preview_card_app_test.py', 'preview_cover_test.py', 'gate_previews.py')]
+                    pairs += [(f'compile {name}', name) for _, name in gate_plan.UNIT_TESTS]
+                    for first, second in pairs:
+                        self.assertIn(first, before(second), (first, second))
+                    alone = {phase.name for phase in plan if phase.alone}
+                    self.assertEqual(alone, set())
 
     def test_quick_plan_is_the_complete_plans_phases_with_their_prerequisites(self):
-        for profile, fresh in (('linux', False), ('linux', True), ('canonical', False)):
-            with self.subTest(profile=profile, fresh=fresh):
-                complete, quick = gate_plan.plan(profile, fresh), gate_plan.quick(profile, fresh)
-                names = [phase.name for phase in quick]
-                self.assertEqual(quick, [phase for phase in complete if phase.name in names])
-                self.assertEqual(set(names) - set(gate_plan.QUICK),
-                                 {'compile newt-preview', *(f'compile {unit}' for _, unit in gate_plan.UNIT_TESTS)})
-                gate_runner.prerequisites(quick)
+        for profile in gate_plan.PROFILES:
+            for fresh in (False, True):
+                with self.subTest(profile=profile, fresh=fresh):
+                    complete, quick = gate_plan.plan(profile, fresh), gate_plan.quick(profile, fresh)
+                    names = [phase.name for phase in quick]
+                    self.assertEqual(quick, [phase for phase in complete if phase.name in names])
+                    self.assertEqual(set(names) - set(gate_plan.QUICK),
+                                     {'compile newt-preview', *(f'compile {unit}' for _, unit in gate_plan.UNIT_TESTS)})
+                    gate_runner.prerequisites(quick)
         with patch.object(gate_plan, 'QUICK', (*gate_plan.QUICK, 'retired_test.py')), \
                 self.assertRaisesRegex(ValueError, 'retired_test.py'):
             gate_plan.quick('linux', False)
+
+    def test_profiles_match_supported_host_build_platform_and_reject_unsupported(self):
+        import check as host_check
+        import firmware_host_build
+
+        toolchain = json.loads((gate_plan.ROOT / 'rust/toolchain.json').read_text())
+        rust_host_targets = {item['target'] for item in toolchain['components']
+                             if item['name'] in ('rustc', 'cargo')}
+        self.assertEqual(rust_host_targets, {firmware_host_build.HOST})
+        self.assertEqual(tuple(gate_plan.PROFILES), ('linux',))
+        for profile in gate_plan.PROFILES:
+            _, _, triple = gate_plan.validate_profile(profile)
+            self.assertEqual(triple, firmware_host_build.HOST)
+            self.assertIn(triple, rust_host_targets)
+        cover_phases = [phase for phase in gate_plan.plan('linux', False)
+                        if any(Path(arg).name == 'library_cover_prepare_test.py' for arg in phase.command)]
+        self.assertEqual(len(cover_phases), 1)
+        self.assertIn('--portable-only', cover_phases[0].command)
+
+        # Negative control: a profile naming a platform the firmware host build cannot run on fails.
+        bad_profiles = {**gate_plan.PROFILES, 'canonical': ('darwin', 'arm64', 'aarch64-apple-darwin')}
+        with patch.object(gate_plan, 'PROFILES', bad_profiles):
+            with self.assertRaisesRegex(ValueError, 'aarch64-apple-darwin'):
+                gate_plan.validate_profile('canonical')
+            with self.assertRaisesRegex(ValueError, 'aarch64-apple-darwin'):
+                gate_plan.plan('canonical', False)
+
+        # The removed canonical profile is rejected by both gate_plan and check.py.
+        with self.assertRaisesRegex(ValueError, 'Unsupported host gate profile'):
+            gate_plan.plan('canonical', False)
+        stderr = io.StringIO()
+        with patch.object(sys, 'argv', ['check.py', '--profile', 'canonical']), \
+                patch('sys.stderr', stderr), self.assertRaises(SystemExit) as exited:
+            host_check.configured_main()
+        self.assertNotEqual(exited.exception.code, 0)
+        self.assertIn('canonical', stderr.getvalue())
+
+        # Non-Linux and non-x86_64 hosts fail clearly with guidance to the Mac cover gate.
+        for host_platform, machine in (('darwin', 'arm64'), ('linux', 'aarch64')):
+            with self.subTest(host_platform=host_platform, machine=machine), \
+                    patch.object(gate_plan.sys, 'platform', host_platform), \
+                    patch.object(gate_plan.platform, 'machine', return_value=machine):
+                with self.assertRaisesRegex(RuntimeError, r'Linux x86_64.*check-mac-covers\.py'):
+                    gate_plan.require_host('linux')
+                stderr = io.StringIO()
+                with patch.object(sys, 'argv', ['check.py']), \
+                        patch('sys.stderr', stderr), self.assertRaises(SystemExit) as exited:
+                    host_check.configured_main()
+                self.assertNotEqual(exited.exception.code, 0)
+                self.assertIn('Linux x86_64', stderr.getvalue())
+                self.assertIn('check-mac-covers.py', stderr.getvalue())
+
+    def test_check_entrypoint_rejects_unsupported_hosts_before_pinned_python_handoff(self):
+        import check as host_check
+
+        self.assertEqual(host_check.SUPPORTED_HOST, gate_plan.PROFILES['linux'][:2])
+        self.assertEqual(host_check.MAC_COVER_NOTE, gate_plan.MAC_COVER_NOTE)
+        source = (gate_plan.ROOT / 'tools/check.py').read_text()
+        guard = '    require_supported_host()\n'
+        self.assertEqual(source.count(guard), 1)
+
+        def run_entry(script_text, host_platform, machine):
+            with tempfile.TemporaryDirectory() as directory:
+                gate = Path(directory) / 'tools/check.py'
+                gate.parent.mkdir()
+                gate.write_text(script_text)
+                driver = (
+                    f"import platform, runpy, sys\n"
+                    f"sys.platform = {host_platform!r}\n"
+                    f"platform.machine = lambda: {machine!r}\n"
+                    f"sys.argv = [{str(gate)!r}]\n"
+                    f"runpy.run_path({str(gate)!r}, run_name='__main__')\n"
+                )
+                return subprocess.run([sys.executable, '-I', '-B', '-c', driver],
+                                      capture_output=True, text=True, timeout=60)
+
+        for host_platform, machine in (('darwin', 'arm64'), ('linux', 'aarch64')):
+            with self.subTest(host_platform=host_platform, machine=machine):
+                result = run_entry(source, host_platform, machine)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('Linux x86_64', result.stderr)
+                self.assertIn('check-mac-covers.py', result.stderr)
+                self.assertNotIn('pinned Python', result.stderr)
+
+        # Negative control: removing the early host guard falls through to the missing pinned-Python error.
+        without_guard = run_entry(source.replace(guard, '', 1), 'darwin', 'arm64')
+        self.assertNotEqual(without_guard.returncode, 0)
+        self.assertIn('pinned Python', without_guard.stderr)
+        self.assertNotIn('check-mac-covers.py', without_guard.stderr)
 
 
     def test_push_plan_drops_only_negative_controls(self):
