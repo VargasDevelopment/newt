@@ -323,7 +323,9 @@ below and publishes the release there; only the Lead runs it with `--publish`.
 6. The notes, in plain words: the What's new lines this update adds: those no
    published release notes in the same repository have shown yet, so a first
    release there lists them all. The standard "Various smaller enhancements."
-   line is kept even when an earlier release used it. Then the build's identity: version, full
+   line may repeat in an entry with a new line, or as the newest entry's only
+   line for a fixes-only update. An already published older entry cannot supply
+   it by itself. Then the build's identity: version, full
    source commit, 12-hex build ID, `newt.bin` size and SHA-256. The CHANGELOG
    stays out: it describes internal work. No links into the source
    repository while it is private (they 404; the tool refuses them until the

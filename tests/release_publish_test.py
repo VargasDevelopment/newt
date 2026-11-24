@@ -26,7 +26,7 @@ sys.path.insert(0, str(ROOT / 'tests'))
 sys.path.insert(0, str(ROOT / 'tools'))
 sys.path.insert(0, str(args.tool_root))
 import release_publish
-from release_publish import (ASSETS, DRAFT, HOP_REPOSITORY, NOTICES, SOURCE_REPOSITORY, UPDATE_SOURCE, WHATS_NEW,
+from release_publish import (ASSETS, DRAFT, HOP_REPOSITORY, NOTICES, SOURCE_REPOSITORY, STANDARD_NOTE, UPDATE_SOURCE, WHATS_NEW,
                              plan, publish, update_repository)
 from bench_candidate import sha
 from update_publish_test import BUILD, REVISION, VERSION, app, identity, newt_image, receipt
@@ -258,15 +258,24 @@ class ReleasePublishTests(unittest.TestCase):
         github.add(TAG, {}, draft=False, body=first)
         self.assertEqual(self.plan(github=github).notes, self.plan().notes)
 
-    def test_standard_note_repeats_in_later_release_notes(self):
-        standard = 'Various smaller enhancements.'
-        git = FakeGit()
-        git.files[REVISION, WHATS_NEW] = HEADER.replace('Reading is faster.', standard)
-        github = FakeGitHub(previous=SHOWN + "\n## What's new\n\n- " + standard + '\n')
-        notes = self.plan(git=git, github=github).notes
-        self.assertEqual(notes.count('- ' + standard + '\n'), 1)
-        self.assertNotIn('- Update in Settings installs Newt from the SD card.\n', notes)
-        self.assertIn('- Updates arrive over "Wi-Fi".\n', notes)
+    def test_standard_note_belongs_to_a_current_entry(self):
+        old = 'Update in Settings installs Newt from the SD card.'
+        fresh = 'Reading is faster.'
+        for entries, expected in (
+                ([[fresh], [old, STANDARD_NOTE]], [fresh]),
+                ([[STANDARD_NOTE], [old, STANDARD_NOTE]], [STANDARD_NOTE]),
+                ([[fresh, STANDARD_NOTE], [old, STANDARD_NOTE]], [fresh, STANDARD_NOTE]),
+                ([[old, STANDARD_NOTE]], []),
+                ([[old], [fresh, STANDARD_NOTE]], [fresh, STANDARD_NOTE])):
+            with self.subTest(entries=entries):
+                git = FakeGit()
+                git.files[REVISION, WHATS_NEW] = 'inline constexpr WhatsNewUpdate kWhatsNew[] = {' + ''.join(
+                    '{"Oct 30, 2026", {' + ','.join(release_publish.json.dumps(line) for line in lines) + '}},'
+                    for lines in entries) + '};'
+                github = FakeGitHub(previous="## What's new\n\n- " + old + '\n- ' + STANDARD_NOTE + '\n')
+                notes = self.plan(git=git, github=github).notes
+                section = notes.split('## This build')[0]
+                self.assertEqual([line[2:] for line in section.splitlines() if line.startswith('- ')], expected)
 
     def test_cpp_repository_cannot_override_the_shipped_rust_url(self):
         git = FakeGit()
@@ -612,8 +621,10 @@ class ReleasePublishTests(unittest.TestCase):
 CONTROLS = (
     ('        for delay in (1, 2, 4):', '        for delay in ():',
      'test_new_draft_readback_retries_absence_with_a_bound'),
-    ('if line not in shown or line == "Various smaller enhancements."', 'if line not in shown',
-     'test_standard_note_repeats_in_later_release_notes'),
+    ('line == STANDARD_NOTE and current', 'line == STANDARD_NOTE',
+     'test_standard_note_belongs_to_a_current_entry'),
+    ('(index == 0 and lines == [STANDARD_NOTE])', 'False',
+     'test_standard_note_belongs_to_a_current_entry'),
     ('    if tagged != commit:', '    if False:', 'test_refuses_untagged_build'),
     ('    if tagged != commit:', '    if False:', 'test_refuses_mismatched_tag'),
     ('    manifest = update_publish.newt_manifest(image, receipt)',
