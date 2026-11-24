@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! Frozen DEV-only cover counters, monitor lease, rows and read-only census.
 #![forbid(unsafe_code)]
-use core::{cell::Cell,fmt::{self,Write}};
+use core::{cell::Cell,fmt::Write};
+use crate::serial_console::Row as Record;
 use newt_native_io::{UiIo,cover::observer as sdk};
 use newt_native_storage::Kind;
 use super::{io::Control,CoverResult as R};
@@ -63,22 +64,12 @@ pub fn collect(clock:fn()->u32,work:impl FnOnce(&Heap<'_>)->R)->(R,Observation){
     };
     observation.finish_time(clock());(result,observation)
 }
-/// Keep C snprintf's exact bounded capacity and total-length result. Overflow
-/// stays unloggable; no truncation, silent trimming or extra output allocation.
-struct Record<'a>{bytes:&'a mut[u8],length:usize}
-impl<'a> Record<'a>{fn new(bytes:&'a mut[u8])->Self{Self{bytes,length:0}}}
-impl Write for Record<'_>{
-    fn write_str(&mut self,value:&str)->fmt::Result{
-        let room=self.bytes.len().saturating_sub(self.length.saturating_add(1));
-        let take=room.min(value.len());
-        if take!=0{self.bytes[self.length..self.length+take].copy_from_slice(&value.as_bytes()[..take]);}
-        self.length=self.length.saturating_add(value.len());Ok(())
-    }
-}
-fn emit(io:&UiIo,control:&dyn Control,record:Record<'_>)->bool{
-    if record.length==0||record.length>=record.bytes.len()||control.stopped()
-        ||newt_c3_board::dev_usb::available_for_write()<record.length as i32{return false;}
-    sdk::write(io,&record.bytes[..record.length])==record.length
+// None defers before writing. Any write attempt is final: the SDK may have
+// queued bytes even when it reports zero or a short count.
+fn emit(io:&UiIo,control:&dyn Control,record:Record<'_>)->Option<bool>{
+    if record.length==0||record.length>record.bytes.len(){return Some(false);}
+    if control.stopped()||newt_c3_board::dev_usb::available_for_write()<record.length as i32{return None;}
+    Some(sdk::write(io,&record.bytes[..record.length])==record.length)
 }
 #[derive(Default)]
 struct Census{scanned:u32,art:u32,no_art:u32,temporary:u32,other:u32,errors:u32,limited:bool,interrupted:bool,skipped:bool}
@@ -115,24 +106,65 @@ fn census(io:&UiIo,control:&dyn Control)->Census{
     }
     if !directory.close(){out.errors+=1;}out
 }
+/// Return the required retry space; finished or unformattable rows leave the slot.
 #[inline(never)]
-pub fn report(observation:&Observation,result:R,io:&UiIo,control:&dyn Control){
-    let mut logged=false;
-    if observation.opens.get()!=0||observation.path_stats.get()!=0||result!=R::Idle{
-        let min_free=if observation.min_free.get()==usize::MAX{0}else{observation.min_free.get()};
-        let min_largest=if observation.min_largest.get()==usize::MAX{0}else{observation.min_largest.get()};
-        let mut bytes=[0;384];let mut record=Record::new(&mut bytes);
-        let formatted=write!(record,"COVER work={} result={} elapsed_ms={} reads={} read_bytes={} writes={} write_bytes={} opens={} path_stats={} min_free_local={} min_largest_observed={} monitor_start={} monitor_stop={} stack_min_free={}\n",
-            if result==R::Idle{"cached"}else{"attempt"},result as u8,observation.elapsed.get(),observation.reads.get(),
-            observation.read_bytes.get(),observation.writes.get(),observation.write_bytes.get(),observation.opens.get(),
-            observation.path_stats.get(),min_free,min_largest,observation.monitor_start.get(),observation.monitor_stop.get(),sdk::stack_min_free());
-        if formatted.is_ok(){logged=emit(io,control,record);}
+fn report(observation:&Observation,result:R,io:&UiIo,control:&dyn Control)->Option<u16>{
+    if control.stopped()||newt_c3_board::dev_usb::available_for_write()<200{return Some(200);}
+    let min_free=if observation.min_free.get()==usize::MAX{0}else{observation.min_free.get()};
+    let min_largest=if observation.min_largest.get()==usize::MAX{0}else{observation.min_largest.get()};
+    let mut bytes=[0;384];let mut record=Record::new(&mut bytes);
+    let formatted=write!(record,"COVER work={} result={} elapsed_ms={} reads={} read_bytes={} writes={} write_bytes={} opens={} path_stats={} min_free_local={} min_largest_observed={} monitor_start={} monitor_stop={} stack_min_free={}\n",
+        if result==R::Idle{"cached"}else{"attempt"},result as u8,observation.elapsed.get(),observation.reads.get(),
+        observation.read_bytes.get(),observation.writes.get(),observation.write_bytes.get(),observation.opens.get(),
+        observation.path_stats.get(),min_free,min_largest,observation.monitor_start.get(),observation.monitor_stop.get(),sdk::stack_min_free());
+    if formatted.is_err(){return None;}
+    let needed=record.length as u16;
+    match emit(io,control,record){
+        None=>return Some(needed),Some(false)=>return None,Some(true)=>{},
     }
-    if logged&&result!=R::Idle{
+    if result!=R::Idle{
         let census=census(io,control);let mut bytes=[0;160];let mut record=Record::new(&mut bytes);
         let formatted=write!(record,"COVER_CACHE scanned={} art_shape={} noart_shape={} tmp_names={} other={} errors={} limited={} interrupted={} skipped={}\n",
             census.scanned,census.art,census.no_art,census.temporary,census.other,census.errors,
             u8::from(census.limited),u8::from(census.interrupted),u8::from(census.skipped));
-        if formatted.is_ok(){emit(io,control,record);}
+        if formatted.is_ok(){let _=emit(io,control,record);}
+    }
+    None
+}
+
+/// Retry passes exclude blocking paints. The retry budget and rejected row
+/// length use the padding beside the result, keeping this DEV state at 52 B.
+struct Attempt{observation:Observation,needed:u16,result:R,drain_ticks:u8}
+#[derive(Default)]
+pub struct Pending(Option<Attempt>);
+#[cfg(target_pointer_width="32")]
+const _:()=assert!(core::mem::size_of::<Pending>()==52);
+pub enum Drain{Done,Stopped,Wait}
+impl Pending{
+    pub fn ready(&self,control:&dyn Control)->bool{
+        self.0.as_ref().is_some_and(|attempt|!control.stopped()
+            &&newt_c3_board::dev_usb::available_for_write()>=i32::from(attempt.needed))
+    }
+    pub fn draining(&mut self,control:&dyn Control)->Drain{
+        let Some(attempt)=self.0.as_mut()else{return Drain::Done;};
+        if attempt.result==R::Idle||attempt.drain_ticks==0{return Drain::Done;}
+        if control.stopped(){return Drain::Stopped;}
+        attempt.drain_ticks-=1;Drain::Wait
+    }
+    pub fn record(&mut self,result:R,observation:Observation){
+        let no_work=observation.opens.get()==0&&observation.path_stats.get()==0;
+        if result==R::Cancelled&&no_work{return;}
+        if result==R::Idle&&self.0.as_ref().is_some_and(|pending|pending.result!=R::Idle){return;}
+        if !no_work||result!=R::Idle{
+            self.0=Some(Attempt{result,observation,needed:200,drain_ticks:20});
+        }
+    }
+    pub fn publish(&mut self,io:&UiIo,control:&dyn Control){
+        if !self.ready(control){return;}
+        let Some(attempt)=self.0.as_mut()else{return;};
+        match report(&attempt.observation,attempt.result,io,control){
+            None=>self.0=None,
+            Some(needed)=>attempt.needed=attempt.needed.max(needed),
+        }
     }
 }

@@ -41,7 +41,7 @@ import preview_driver  # noqa: E402
 import rust_preview  # noqa: E402
 from gate_tier import negative_controls  # noqa: E402
 
-BACK, CONFIRM, RIGHT = 0, 1, 3
+BACK, CONFIRM, LEFT, RIGHT = 0, 1, 2, 3
 SHELF = (CONFIRM,)
 # rust/firmware/reader_cover_idle.rs CoverResult.
 PRODUCED, CANCELLED, DECLINED, MISSING, UNSUPPORTED, INVALID, IO_ERROR = 2, 3, 4, 5, 6, 8, 9
@@ -321,7 +321,7 @@ def books():
     return folder
 
 
-def record(book, route):
+def record(book, route=CJB7):
     """A bare cover record for `book` on the `route` (CJB3, CJB5, CJB6 or CJB7)."""
     return SIGNATURE + struct.pack('<QQ', (books() / f'{book}.epub').stat().st_size, MTIME) + route
 
@@ -460,8 +460,8 @@ def home(binary):
             frame, results, log = world.run((BACK,))
             if problem := art_problem(world, book):
                 return problem
-            if results != [PRODUCED] or HOME_READY not in log.split(f'result={PRODUCED} ', 1)[-1]:
-                return f'Home\'s attempts for {book} ended {results} with no later "{HOME_READY}"'
+            if results != [PRODUCED] or HOME_READY not in log:
+                return f'Home\'s attempts for {book} ended {results} with no "{HOME_READY}"'
             if region(frame, 192, 94) != world.cover(book)[28:]:
                 return f'Home does not paint {book}\'s new cover'
 
@@ -506,15 +506,81 @@ def transient(binary):
             return f'a read fault ended {results}, left {world.cover(book)!r} and {world.temporaries()}'
     with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
         # Back during its work: Home has no book, so no other cover work runs.
-        # A cancelled attempt logs no row (input is pending), so only Alder's shows.
+        # The cancelled attempt's row waits until Back has been handled.
         world = World(binary, scratch, **{'card.back': stage})
         _, results, _ = world.run(SHELF)
-        if results != [PRODUCED] or world.cover(book) is not None or world.temporaries():
+        if results != [PRODUCED, CANCELLED] or world.cover(book) is not None or world.temporaries():
             return f'Back during cover work ended {results}, left {world.cover(book)!r} and {world.temporaries()}'
         preview_driver.write_conf(world.directory, {'card.back': ''})
         _, results, _ = world.run(SHELF)
         if results != [PRODUCED] * 3 or (problem := art_problem(world, book)):
             return f'the next visit ended {results}: {art_problem(world, book)}'
+
+
+def usb_backpressure(binary):
+    """Short pressure keeps every row; a stalled host cannot hold up covers."""
+    for pause, cached, input_during_prepare in ((30, False, False), (60000, False, False),
+                                                (1000, True, False), (1000, True, True)):
+        with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
+            records = {book: record(book) for book in BOOKS if book != 'Alder'} if cached else None
+            world = World(binary, scratch, records, **{'cover.usb.pause_ms': str(pause), 'cover.usb.free': '210',
+                         'cover.prepare.input': str(int(input_during_prepare))})
+            _, results, _ = world.run(SHELF)
+            if results != ([PRODUCED] if cached else [PRODUCED] * 4 if pause == 30 else []):
+                return f'USB pause={pause}, cached={cached}, input={input_during_prepare} lost or repeated attempt rows: {results}'
+            blocked = world.directory / 'cover-blocked.txt'
+            if blocked.exists() and blocked.read_text():
+                return 'a cover row entered the USB write with too little space'
+            formats = (world.directory / 'cover-formats.txt').read_text().splitlines()
+            if len(formats) > 8:
+                return f'USB pressure repeatedly formatted the pending row: {len(formats)}'
+            # A host that never drains USB must not hold up cover generation.
+            for book in (['Alder'] if cached else shelves()[0]):
+                if problem := art_problem(world, book):
+                    return problem
+
+
+def usb_write_failures(binary):
+    """A zero/short return after the space gate is final, never a retry."""
+    for result in ('zero', 'short'):
+        with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
+            world = World(binary, scratch, **{'cover.usb.write_result': result})
+            _, _, log = world.run(SHELF)
+            writes = (world.directory / 'cover-writes.txt').read_text().splitlines()
+            if len(writes) != 4 or 'COVER_CACHE ' in log:
+                return f'{result} send retried or ran a census: writes={len(writes)}'
+            for book in shelves()[0]:
+                if problem := art_problem(world, book):
+                    return problem
+
+
+def usb_input_drain(binary):
+    """Pending DEV input neither sleeps nor spends the cover drain budget."""
+    with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
+        world = World(binary, scratch, **{'cover.usb.pause_ms': '570',
+                      'cover.usb.free': '210', 'cover.drain.input_ms': '12'})
+        _, results, _ = world.run(SHELF)
+        if results != [PRODUCED] * 4:
+            return f'pending input spent the quiet drain budget: {results}'
+        if not (world.directory / 'cover-input.txt').exists():
+            return 'the pending-input injection did not run'
+        if (world.directory / 'cover-input-delay.txt').exists():
+            return 'cover draining slept with pending input'
+        for book in shelves()[0]:
+            if problem := art_problem(world, book):
+                return problem
+
+
+def absent_card_idle(binary):
+    """Idle telemetry with no pending row never retries a failed card mount."""
+    counts = []
+    for keys in ((), (RIGHT, LEFT)):
+        with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
+            world = World(binary, scratch, **{'card.absent': '1', 'card.mount.trace': '1'})
+            world.run(keys)
+            counts.append(len((world.directory / 'mounts.txt').read_text().splitlines()))
+    if counts[0] != counts[1]:
+        return f'idle time caused repeated mounts without a pending row: {counts}'
 
 
 def low_heap(binary):
@@ -650,6 +716,26 @@ CASES = [
         # A retry records its verdict on the old route, so it retries again.
         [('cover_session.rs', 'self.commit(&self.header(cover::NO_ART),&[])',
           'self.commit(&self.header(u32::from_le_bytes(*b"CJB3")),&[])')]]),
+    (usb_backpressure, [
+        [('cover_observation.rs', 'Some(needed)=>attempt.needed=attempt.needed.max(needed),',
+          'Some(_)=>self.0=None,')],
+        [('cover_observation.rs',
+          '||newt_c3_board::dev_usb::available_for_write()<record.length as i32', '')],
+        [('cover_observation.rs', 'i32::from(attempt.needed)', '200')],
+        [('cover_observation.rs', 'attempt.drain_ticks-=1;', '')],
+        [('cover_observation.rs', '        if result==R::Cancelled&&no_work{return;}\n', '')],
+        [('cover_observation.rs', 'attempt.drain_ticks==0',
+          'attempt.drain_ticks==0||super::millis().wrapping_sub(attempt.observation.started.wrapping_add(attempt.observation.elapsed.get()))>=200')],
+        [('cover_observation.rs',
+          '        if result==R::Idle&&self.0.as_ref().is_some_and(|pending|pending.result!=R::Idle){return;}\n', '')]]),
+    (usb_write_failures, [
+        [('cover_observation.rs', 'Some(false)=>return None', 'Some(false)=>return Some(needed)')]]),
+    (usb_input_drain, [
+        [('cover_observation.rs', '        if control.stopped(){return Drain::Stopped;}\n', '')],
+        [('cover_observation.rs', 'if control.stopped(){return Drain::Stopped;}',
+          'if control.stopped(){attempt.drain_ticks-=1;return Drain::Stopped;}')]]),
+    (absent_card_idle, [
+        [('reader_cover_producer.rs', 'if self.cover_observation.ready(&poll){', 'if true{')]]),
     (low_heap, [
         # Memory admits a block however little heap would stay free.
         [('cover_memory.rs', ' || self.heap.free_bytes() < charge + RESERVE', '')]]),
@@ -688,8 +774,9 @@ def main():
             return
         for case, controls in CASES:
             for edits in controls:
-                control = rust_preview.build(edits=edits)
-                assert case(control) is not None, f'{case.__name__}: passes with {edits[0][0]} changed'
+                # Fake clocks make these assertions independent of CPU speed.
+                control = rust_preview.control(edits, optimize=False)
+                assert case(control) is not None, f'{case.__name__}: passes with {edits!r}'
         print(f'PASS: {len(CASES)} cover flows run the firmware; each control fails')
     finally:
         shutil.rmtree(books(), ignore_errors=True)

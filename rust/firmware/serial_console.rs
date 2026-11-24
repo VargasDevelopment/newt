@@ -96,3 +96,16 @@ impl fmt::Write for SerialConsole {
         }
     }
 }
+
+/// A complete serial row: bounded formatting fails before any USB write.
+pub(crate) struct Row<'a> { pub(crate) bytes: &'a mut [u8], pub(crate) length: usize }
+impl<'a> Row<'a> {
+    pub(crate) fn new(bytes: &'a mut [u8]) -> Self { Self { bytes, length: 0 } }
+}
+impl fmt::Write for Row<'_> {
+    fn write_str(&mut self, text: &str) -> fmt::Result {
+        let end = self.length.checked_add(text.len()).ok_or(fmt::Error)?;
+        let out = self.bytes.get_mut(self.length..end).ok_or(fmt::Error)?;
+        out.copy_from_slice(text.as_bytes()); self.length = end; Ok(())
+    }
+}

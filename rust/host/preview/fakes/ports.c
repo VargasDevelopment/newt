@@ -264,11 +264,47 @@ void nsc_begin(void) { serial_log = fopen(preview_path("serial.log"), "ab"); }
 void nsc_set_tx_timeout_ms(uint32_t ms) { (void)ms; }
 void nsc_flush(void) { if (serial_log) fflush(serial_log); }
 void nsc_wake_transmitter(void) {}
-int32_t nsc_available_for_write(void) { return 4096; }
+static uint32_t cover_usb_resume;
+static int cover_usb_work, cover_monitor_active;
+static size_t cover_usb_used;
+static uint32_t cover_usb_drain, cover_input_begin, cover_input_end;
+static int cover_usb_model(void) {
+    return preview_conf_long("cover.usb.pause_ms", 0) || preview_conf("cover.usb.write_result");
+}
+static int cover_input_pending(void) {
+    return nb_millis() >= cover_input_begin && nb_millis() < cover_input_end;
+}
+static void cover_trace(const char *name) {
+    FILE *trace = fopen(preview_path(name), "ab");
+    if (trace) { fputs("tick\n", trace); fclose(trace); }
+}
+int32_t nsc_available_for_write(void) {
+    if (!cover_usb_model()) return 4096;
+    if (nb_millis() < cover_usb_resume) return (int32_t)preview_conf_long("cover.usb.free", 200);
+    if (nb_millis() >= cover_usb_drain) cover_usb_used = 0;
+    return (int32_t)(256 - cover_usb_used);
+}
 uint8_t nsc_connected(void) { return (uint8_t)connected; }
-int32_t nsc_available(void) { return (int32_t)(request_length - request_next); }
+int32_t nsc_available(void) {
+    if (cover_input_pending()) { cover_trace("cover-input.txt"); return 1; }
+    /* Input arriving inside prepare, before any cover handle opens. */
+    if (preview_conf_long("cover.prepare.input", 0) && cover_monitor_active && !cover_usb_work
+        && nb_millis() < cover_usb_resume) return 1;
+    return (int32_t)(request_length - request_next);
+}
 int32_t nsc_read_byte(void) { return request_next < request_length ? (uint8_t)request[request_next++] : -1; }
 size_t nsc_write(const uint8_t *data, size_t length) {
+    if (cover_usb_model()) {
+        size_t free_bytes = (size_t)nsc_available_for_write();
+        if (length >= 6 && memcmp(data, "COVER ", 6) == 0) {
+            if (length > free_bytes) { cover_trace("cover-blocked.txt"); return 0; }
+            cover_trace("cover-writes.txt");
+            if (preview_conf_is("cover.usb.write_result", "zero")) return 0;
+            if (preview_conf_is("cover.usb.write_result", "short")) length /= 2;
+        }
+        cover_usb_used = length > 256 - cover_usb_used ? 256 : cover_usb_used + length;
+        cover_usb_drain = nb_millis() + 30;
+    }
     if (serial_log) fwrite(data, 1, length, serial_log);
     for (size_t i = 0; i < length; ++i) {
         if (data[i] == '\n') {
@@ -291,6 +327,7 @@ static void press(uint8_t button) {
 }
 static uint32_t step_at;
 void nb_delay_ms(uint32_t ms) {
+    if (ms == 10 && cover_input_pending()) cover_trace("cover-input-delay.txt");
     preview_advance(ms ? ms : 1);
     settled += ms ? ms : 1;
     load_script();
@@ -462,6 +499,7 @@ static void edit_file(const char *path) {
 void preview_io_open(int32_t fd, const char *path) {
     const char *drop = preview_conf("cover.heap.drop.on");
     if (fd >= 0 && drop && *drop && strstr(path, drop)) cover_heap_dropped = 1;
+    cover_usb_work = 1;
     if (fd >= 0 && fd < 256) snprintf(descriptors[fd], sizeof descriptors[fd], "%s", path);
     trace_card("open", path);
     change_file(path);
@@ -609,11 +647,23 @@ int32_t newt_cover_fstat(int32_t fd, struct cover_facts *out) {
 }
 _Bool newt_cover_complete_handle_metadata(void) { return 1; }
 _Bool newt_cover_rename_replaces_destination(void) { return 1; }
-int32_t newt_cover_heap_monitor_start(void) { return 0; }
-int32_t newt_cover_heap_monitor_stop(void) { return 0; }
+int32_t newt_cover_heap_monitor_start(void) { cover_usb_work = 0; cover_monitor_active = 1; return 0; }
+int32_t newt_cover_heap_monitor_stop(void) {
+    cover_monitor_active = 0;
+    /* A busy CDC send buffer after cover work; it drains on later UI passes. */
+    if (cover_usb_work) {
+        cover_usb_resume = nb_millis() + (uint32_t)preview_conf_long("cover.usb.pause_ms", 0);
+        cover_input_begin = nb_millis() + (uint32_t)preview_conf_long("cover.paint_ms", 400) + 10;
+        cover_input_end = cover_input_begin + (uint32_t)preview_conf_long("cover.drain.input_ms", 0);
+    }
+    return 0;
+}
 size_t newt_cover_heap_monitor_minimum(void) { return 150000; }
 size_t newt_cover_heap_monitor_largest(void) { return 110592; }
-uint32_t newt_cover_stack_min_free(void) { return 4096; }
+uint32_t newt_cover_stack_min_free(void) {
+    if (cover_usb_model()) cover_trace("cover-formats.txt");
+    return 4096;
+}
 /* The cover producer's heap, as native/cover.cpp over heap_caps: blocks up
  * to 64 KiB, charged their usable size plus the 16-byte block header. */
 _Bool newt_cover_heap_supported(void) { return 1; }

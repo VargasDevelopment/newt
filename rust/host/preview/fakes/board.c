@@ -43,7 +43,13 @@ int32_t nb_begin(void *d) {
     if (file) { refreshed = fread(shown, sizeof shown, 1, file) == 1; fclose(file); }
     return NB_OK;
 }
-int32_t nb_mount_sd(void) { return preview_conf_is("card.absent", "1") ? NB_IO : NB_OK; }
+int32_t nb_mount_sd(void) {
+    if (preview_conf_is("card.mount.trace", "1")) {
+        FILE *file = fopen(preview_path("mounts.txt"), "a");
+        if (file) { fputs("mount\n", file); fclose(file); }
+    }
+    return preview_conf_is("card.absent", "1") ? NB_IO : NB_OK;
+}
 int32_t nb_input_begin(void *i) { return i ? NB_OK : NB_NULL; }
 int32_t nb_frame(void *d, struct nb_frame *out) {
     if (!out) return NB_NULL;
@@ -68,6 +74,8 @@ void nb_return_build(void *d) {
 int32_t nb_update(void *d, uint32_t mode, uint32_t off) {
     if (!d || lent) return NB_NULL;
     if (mode > 2 || off > 1) return NB_MODE;
+    if (preview_conf_long("cover.usb.pause_ms", 0))
+        preview_advance((uint32_t)preview_conf_long("cover.paint_ms", 400));
     memcpy(shown, pixels, sizeof shown);
     refreshed = 1;
     preview_settle_reset();

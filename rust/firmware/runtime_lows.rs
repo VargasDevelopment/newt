@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! The frozen single pending runtime-observation byte and USB row.
-use core::fmt::{self, Write};
-use crate::{dev_usb::Bridge, serial_console::SerialConsole};
+use core::fmt::Write;
+use crate::{dev_usb::Bridge, serial_console::{SerialConsole,Row}};
 use newt_c3_board::hardware::HardwareReader;
 use newt_core::app::Screen;
 
@@ -31,21 +31,13 @@ impl RuntimeLows {
             Kind::StageOverlay => "stage-full-overlay", Kind::None => "none",
         };
         let mut bytes = [0;128];
-        let mut row = Row { bytes: &mut bytes, length: 0 };
+        let mut row = Row::new(&mut bytes);
         if writeln!(row, "Runtime: kind={} stack-size=20480 stack-min-free={} heap-min-free={}", name, stack, heap).is_err() {
             return false;
         }
         let text = match core::str::from_utf8(&row.bytes[..row.length]) { Ok(text) => text, Err(_) => return false };
         self.pending = Kind::None;
         log.write_str(text).is_ok()
-    }
-}
-struct Row<'a> { bytes: &'a mut [u8], length: usize }
-impl Write for Row<'_> {
-    fn write_str(&mut self, text: &str) -> fmt::Result {
-        let end = self.length.checked_add(text.len()).ok_or(fmt::Error)?;
-        let out = self.bytes.get_mut(self.length..end).ok_or(fmt::Error)?;
-        out.copy_from_slice(text.as_bytes()); self.length = end; Ok(())
     }
 }
 const _: () = assert!(core::mem::size_of::<RuntimeLows>() == 1);

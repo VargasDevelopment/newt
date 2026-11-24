@@ -15,7 +15,7 @@ use newt_input_policy::native::UiQueue;
 #[path="cover_probe.rs"] mod probe;
 #[path="cover_job.rs"] mod job;
 #[path="cover_idle_step.rs"] mod idle_step;
-#[path="cover_observation.rs"] mod observation;
+#[path="cover_observation.rs"] pub(super) mod observation;
 #[path="cover_heap.rs"] mod heap;
 use io::Control;
 use job::Targets;
@@ -61,12 +61,13 @@ fn prepare_empty(state:&mut CoverIdleState,screen:Screen,targets:&Targets<'_>,co
 }
 #[inline(never)]
 fn run_step(state:&mut CoverIdleState,screen:Screen,targets:&Targets<'_>,
-    io:&newt_native_io::UiIo,control:&dyn Control,published:&mut dyn FnMut())->CoverResult{
+    io:&newt_native_io::UiIo,control:&dyn Control,
+    #[cfg(feature="dev-usb")] pending:&mut observation::Pending,published:&mut dyn FnMut())->CoverResult{
     #[cfg(feature="dev-usb")]
     {
         let(result,observation)=observation::collect(millis,|heap|
             idle_step::step(state,screen as u8,targets,io,control,heap,millis,BOOKS,COVERS,published));
-        observation::report(&observation,result,io,control);result
+        pending.record(result,observation);pending.publish(io,control);result
     }
     #[cfg(not(feature="dev-usb"))]
     {idle_step::step(state,screen as u8,targets,io,control,&heap::Heap::new(None),millis,BOOKS,COVERS,published)}
@@ -83,8 +84,19 @@ impl Runtime{
     pub(super) fn service_covers_image(&mut self,home:&mut Home<'_>,ui:&mut Application<'_>,
         _logical:&mut Frame,events:&mut Events<'_,'_>)->bool{
         let screen=ui.app.screen;
+        // Pending DEV rows resume draining only after leaving Reading.
         if screen==Screen::EpubReading{return false;}
         let poll=Poll{queue:events.queue,cadence:YieldCadence::new()};
+        #[cfg(feature="dev-usb")]
+        {
+            if self.cover_observation.ready(&poll){
+                let _=home.with_storage_io(|_,io|self.cover_observation.publish(io,&poll));
+            }
+            match self.cover_observation.draining(&poll){
+                observation::Drain::Done=>{},observation::Drain::Stopped=>return false,
+                observation::Drain::Wait=>{crate::app_power::delay_ms(10);return false;}
+            }
+        }
         let mut home_eligible=false;
         if screen==Screen::Home&&ui.home_cover.held().is_none(){
             self.visit_home(&mut|view|home_eligible=view.cover_eligible&&view.identity.is_some_and(|i|i.valid()));
@@ -112,14 +124,16 @@ impl Runtime{
                     catalog.with_shelf_names(&mut files,first,|names|{
                         let targets=targets(names,selected-first,false);
                         dispatch(&mut self.idle,screen,&targets,&poll,|state|
-                            run_step(state,screen,&targets,io,&poll,&mut published))
+                            run_step(state,screen,&targets,io,&poll,
+                                #[cfg(feature="dev-usb")] &mut self.cover_observation,&mut published))
                     })
                 }else{
                     let identity=self.selection.identity();
                     let names=core::slice::from_ref(&identity.filename);
                     let targets=targets(names,0,true);
                     dispatch(&mut self.idle,screen,&targets,&poll,|state|
-                        run_step(state,screen,&targets,io,&poll,&mut published))
+                        run_step(state,screen,&targets,io,&poll,
+                                #[cfg(feature="dev-usb")] &mut self.cover_observation,&mut published))
                 }
             });
             match result{Ok(result)=>result,Err(_)=>return false}
@@ -128,7 +142,7 @@ impl Runtime{
             Dispatch::Paint=>true,Dispatch::Quiet=>false,Dispatch::Generated(result)=>{
                 // Every SDK loan, job allocation and descriptor has ended. The
                 // publication callback already advanced the same word before
-                // monitor completion and DEV rows. Queue only its repaint here.
+                // monitor completion. DEV rows may wait for USB; queue repaint here.
                 if result==CoverResult::Produced{self.idle.defer_repaint();}
                 if result==CoverResult::Cancelled{return false;}
                 crate::app_power::delay_ms(10);
