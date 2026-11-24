@@ -71,6 +71,9 @@ pipeline reproduces the pinned 30 px bitmaps byte for byte.
   not change.
 - Every other glyph (non-Latin and the added fallback faces) still resamples
   from 30 px.
+- Native shapes are stored 1-bit, ink where the 2-bit coverage is ≥2 (the level
+  drawing keeps), in rows of (width + 7) / 8 bytes. Each glyph's 16-bit offset
+  is relative to its face's base in that size's bitmap.
 - Outputs: `rust/reader-atlas/src/native.rs` and `rust/reader-atlas/native/*.bin`,
   recorded under `native_sizes` in `rust/reader-atlas/provenance.json`.
 - Source mode (`--font-source-dir`) loads the system FreeType library

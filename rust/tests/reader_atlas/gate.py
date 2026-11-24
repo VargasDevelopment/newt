@@ -87,14 +87,17 @@ def run_gate(root, output, seconds=540, only=None, source_root=None, positive_on
     transport=load('atlas_transport',recipe/'transport.py')
     cases=json.loads(zlib.decompress((recipe/'fixtures.json.zlib').read_bytes()))['cases']
     controls=json.loads((recipe/'controls.json').read_text())
+    # Mutants only a unit test can see (native sizes are outside the 30 px corpus).
+    unit_controls=json.loads((recipe/'unit_controls.json').read_text())
     byid={c['id']:c for c in cases}
     for control in controls:
         require(control['frozen_witnesses']==[byid[w] for w in control['witnesses']], 'witness differs from frozen corpus')
     if only:
         selected=[c for c in controls if c['name'] in only]
-        require(len(selected)==len(set(only)),'unknown control')
-    else: selected=controls
-    if positive_only: selected=[]
+        unit_selected=[c for c in unit_controls if c['name'] in only]
+        require(len(selected)+len(unit_selected)==len(set(only)),'unknown control')
+    else: selected,unit_selected=controls,unit_controls
+    if positive_only: selected,unit_selected=[],[]
     report={'complete':False,'scope':'all 8471 frozen-output/Rust positives fresh; selected control witnesses fresh; link-only RV32 borrowed retention',
             'full_controls':not bool(only) and not positive_only,'controls':[],'firmware':False,'hardware':False}
     def seal():
@@ -130,6 +133,21 @@ def run_gate(root, output, seconds=540, only=None, source_root=None, positive_on
             rows=admit(run,transport,mutant,dst,selected_cases)
             require(any(semantic_kill(row,c,control) for row,c in zip(rows,selected_cases)), 'mutant survived: '+control['name'])
             report['controls'].append({'name':control['name'],'witnesses':control['witnesses'],'clean_compile_runtime_transport':True,'semantic_kill':True})
+            seal()
+        for index,control in enumerate(unit_selected):
+            dst,target,_=workspace(f'unit-{index:02d}',control)
+            # The mutant must compile cleanly; only its asserted witness may kill it.
+            run.cargo(dst,target,'test','-p','newt-reader-atlas','--target',HOST,'--lib','--no-run')
+            number=len(run.commands)
+            # A positional filter: Run.cargo appends its flags, so no '--' here.
+            try: run.cargo(dst,target,'test','-p','newt-reader-atlas','--target',HOST,'--lib',control['test'])
+            except RuntimeError:
+                log=run.output/f'{number:03d}'
+                logs=log.with_suffix('.stdout').read_text()+log.with_suffix('.stderr').read_text()
+                require(run.commands[number].get('returncode')==101 and 'test result: FAILED.' in logs
+                        and control['witness'] in logs,'unit control must fail its witness: '+control['name'])
+            else: raise RuntimeError('mutant survived: '+control['name'])
+            report['controls'].append({'name':control['name'],'test':control['test'],'witness':control['witness'],'semantic_kill':True})
             seal()
         report['retention']=retain(run,support,recipe,baseline,target,products)
         seal()

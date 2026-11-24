@@ -1,0 +1,15 @@
+[
+ {
+  "name": "native-bypass",
+  "policy": "Native sizes resample the 30 px atlas instead of drawing their own shapes; the frozen corpus draws only at 30 px, so a unit test must catch it.",
+  "edits": [
+   {
+    "file": "src/lib.rs",
+    "anchor": ".filter(|_| index < LEGACY)",
+    "replacement": ".filter(|_| false)"
+   }
+  ],
+  "test": "safety_tests::native_sizes_draw_their_own_bitmaps",
+  "witness": "native glyph must draw its own bitmap"
+ }
+]

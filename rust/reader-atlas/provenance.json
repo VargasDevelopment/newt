@@ -628,29 +628,30 @@
     ],
     "glyphs_per_face": 341,
     "render": "pinned rasterizer profile at 14 pt; DPI = 150 * px / 30; 30 px reproduced byte for byte",
+    "storage": "1-bit rows, (width + 7) / 8 bytes each, high bit first; ink where 2-bit coverage >= 2",
     "sources": {
       "Regular": "crossink-lexend-regular",
       "Bold": "crossink-lexend-bold",
       "Italic": "crossink-lexend-italic",
       "BoldItalic": "crossink-lexend-bolditalic"
     },
-    "native_rs_sha256": "4c620a882907be31da9449c72e50d19db1b89e34e9c9e9a6cab56494cef3d88d",
+    "native_rs_sha256": "f66900a3f28383fb8e40bdb5224fbc0048747ea201a1c1c093b840d34a291120",
     "bitmaps": {
       "22px.bin": {
-        "bytes": 76471,
-        "sha256": "baddc161dcb7d831060ba67b8c69ee9e7bfa924bcb2345112c94ab28fb28c8dd"
+        "bytes": 42668,
+        "sha256": "6074fda398b094d7a75e4b1770414cd39b658e27a90a49eb45203a2ffdcf4627"
       },
       "24px.bin": {
-        "bytes": 89794,
-        "sha256": "79896bde47ea990154bc8a2419e5ffd9cafab90c6c5511d7afa1e4ff3861446a"
+        "bytes": 49466,
+        "sha256": "7fc0d46e7cb16f43ada542725cfa938a3ac578c914e912a81e3b1d2973dc3e65"
       },
       "27px.bin": {
-        "bytes": 111108,
-        "sha256": "44eccc60e2a0989b2122907cfa071ea65ee05887a12b75c6fbbf8966fa2bbf61"
+        "bytes": 61690,
+        "sha256": "726cb1878b79b8ee6064f9ae5bb09c25a938db77a6b0a3eb403e7adffcd019f8"
       },
       "34px.bin": {
-        "bytes": 170579,
-        "sha256": "c836bd6b3751959ab8e3e119b6304a22d74739a5c5fdbfca24861deb8c43825c"
+        "bytes": 94077,
+        "sha256": "bdc520db2800081ec6d64bf5f967dcf0e6c12106e8d449578e3ef5b01a5928b5"
       }
     }
   }
