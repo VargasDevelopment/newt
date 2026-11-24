@@ -25,7 +25,7 @@ mod reader_action { pub use newt_core::reader_action_profile::ActionStage; }
 
 use core::ffi::CStr;
 use newt_core::{progress::Progress, producer_policy::Stop, zip_window::source::BookSource};
-use newt_phased_reader::{PhasedReader, Selection, phase_storage::{BANK_BYTES, Storage}};
+use newt_phased_reader::{PageLayout, PhasedReader, Selection, phase_storage::{BANK_BYTES, Storage}};
 use newt_phased_sink::{Plan, Run, RUNS, TEXT};
 use newt_reader_ui::{Action, DeviceInfo, ExternalOwner, PhysicalOpen, ReaderPanel, ReaderUiIntent,
     ReaderUiState, RestorePolicy, StrictSource, ViewSettings};

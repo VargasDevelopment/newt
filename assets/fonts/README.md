@@ -48,7 +48,8 @@ source-font hinting with automatic hinting explicitly disabled for every source,
 16.16 to sixteenths. Grayscale cutoffs 48/96/160 produce 2-bit coverage; drawing
 keeps coverage ≥2. Profile tag 30 identifies this 29.1667-em-pixel source scale,
 with **ascent 30, line height 36**; it does not redefine the point size. Sizes
-8–90 use the existing nearest-center resampling.
+8–90 use the existing nearest-center resampling, except the Latin-core shapes
+at the reading sizes 22, 24, 27 and 34 px, which are native (below).
 
 The C++ font generator (`tools/make-reader-font.py` and
 `tools/reader_font_extension.py`) was retired when the C++ firmware was removed
@@ -56,6 +57,26 @@ in NEWT-90. The checked-in JSON tables here and their converted Rust literal
 tables in `rust/reader-atlas/src/data.rs` are now pinned literals;
 `python3 tools/pack-reader-atlas.py --check` verifies the packed Rust atlas
 against `rust/reader-atlas/source/reader_font_data.inc`.
+
+### Native reading sizes
+
+`tools/make-native-reader-sizes.py` renders the 341 Latin-core glyphs of each
+Lexend Deca face at 22, 24, 27 and 34 px with the pinned profile above. Only
+the DPI changes: DPI = 150 × px / 30 (110, 120, 135, 170), so 30 px is exactly
+the pinned 150 DPI. Before it writes anything, the tool proves that its
+pipeline reproduces the pinned 30 px bitmaps byte for byte.
+
+- Only the drawn shapes are native. Advances, kerning, ascent and line height
+  are still the 30 px atlas values scaled to the size, so line breaking does
+  not change.
+- Every other glyph (non-Latin and the added fallback faces) still resamples
+  from 30 px.
+- Outputs: `rust/reader-atlas/src/native.rs` and `rust/reader-atlas/native/*.bin`,
+  recorded under `native_sizes` in `rust/reader-atlas/provenance.json`.
+- Source mode (`--font-source-dir`) loads the system FreeType library
+  (`libfreetype.so.6`, which must report 2.14.2) through ctypes and reads the
+  pinned TTFs. Nothing is downloaded or installed.
+- `--check` uses only the standard library. `tools/code_health.py` runs it.
 
 Historical C++ import/check commands that produced the pinned JSON tables:
 

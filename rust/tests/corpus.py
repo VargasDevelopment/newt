@@ -148,7 +148,7 @@ def corpus():
     for index in range(24):
         altered = bytearray(golden); altered[index] ^= 0x80
         add('prefs_decode', hx(altered))
-    for version in [0, 4, 0xffffffff]:
+    for version in [0, 5, 0xffffffff]:
         for size in [0, 4, 7, 8, 12, 24, 25]:
             add('prefs_decode', hx((prefs(version=version) + b'\0')[:size]))
     for index in range(12, 20):

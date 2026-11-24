@@ -28,8 +28,8 @@ PROCEDURE_NAMES = (
     "code_health_sram.py", "wifi-sections.py", "crt_bundle.py", "verify-wifi-link.py", "wifi_link_image.py",
     "object_relocations.py", "wifi_lent_heap.py", "verify-next-boot.py", "make-builtin-app.py", "newt_package.py",
     "make-reader-fixture.py", "make-stage-backdrop.py", "brand_source.py", "pack-reader-atlas.py",
-    "apply-freeink-patch.py", "daily_firmware.py", "rust_app_archive.py", "rust-toolchain.py", "rust_app_link.py",
-    "rust_resource_inputs.py", "rust_image_measurements.py")
+    "make-native-reader-sizes.py", "apply-freeink-patch.py", "daily_firmware.py", "rust_app_archive.py",
+    "rust-toolchain.py", "rust_app_link.py", "rust_resource_inputs.py", "rust_image_measurements.py")
 
 # Absolute budget bound for the explicitly declared existing X3 build target.
 # Actual capacity is measured from the generated table, never overridden here.
