@@ -1030,19 +1030,21 @@ impl<'a> EngineState<'a> {
         self.run_count += 1;
         if span.link != 0 && self.link_count < self.storage.links.len() {
             let p = self.storage.paragraph_links[usize::from(span.link - 1)];
-            let target = self.copy_bytes(&p.path[..p.path_len]);
-            let fragment = self.copy_bytes(&p.fragment[..p.fragment_len]);
-            if let (Some(target), Some(fragment)) = (target, fragment) {
-                self.storage.links[self.link_count] = Link {
-                    target,
-                    fragment,
-                    x: *x as i16,
-                    y: rb.wrapping_sub(sz as i16),
-                    width: width.max(1) as u16,
-                    height: sz.wrapping_add(sz / 4),
-                };
-                self.link_count += 1
-            }
+            let Some(target) = self.copy_bytes(&p.path[..p.path_len]) else {
+                return false;
+            };
+            let Some(fragment) = self.copy_bytes(&p.fragment[..p.fragment_len]) else {
+                return false;
+            };
+            self.storage.links[self.link_count] = Link {
+                target,
+                fragment,
+                x: *x as i16,
+                y: rb.wrapping_sub(sz as i16),
+                width: width.max(1) as u16,
+                height: sz.wrapping_add(sz / 4),
+            };
+            self.link_count += 1;
         }
         *x += width;
         true
