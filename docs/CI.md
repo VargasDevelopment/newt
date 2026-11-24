@@ -204,8 +204,9 @@ which makes `success()` false for every later job, so `release-tag` and
 its subject, so each lane's job checks the title the event carries with the
 pinned Commitizen (`tools/release_tools.py --pr-title`), and `gate` fails on a
 title that is not a Conventional Commit. An edit of the pull request (title,
-body or base) starts a new run, which cancels the older one (whose `gate`
-concludes `cancelled`, not `failure`), so the whole gate runs again: about 5
+body or base) starts a new run, which cancels the older run if it is still
+running (its unfinished `gate` concludes `cancelled`, not `failure`; a `gate`
+that already finished keeps its result), so the whole gate runs again: about 5
 minutes and 40 hosted runner-minutes in the full lane, one job in the docs
 lane. A run that checked only the title would have to post `gate` from an
 earlier run's result for the same head, and a `gate` it skipped would count as
