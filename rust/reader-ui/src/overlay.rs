@@ -94,6 +94,7 @@ pub fn render_reader_overlay(
         }
         ReaderPanel::Chapters => {
             let info = chapters.as_ref().map(|v| v.info()).unwrap_or_default();
+            let fallback = chapters.as_ref().map(|v| v.fallback()).unwrap_or_default();
             if !ready || !info.valid || info.count == 0 {
                 text(
                     &mut c,
@@ -152,6 +153,10 @@ pub fn render_reader_overlay(
                         failure_line.unwrap_or(b"")
                     } else if ui.notice == ReaderUiNotice::ChapterLocationUnresolved {
                         b"That chapter's location could not be found"
+                    } else if fallback == newt_phased_reader::ContentsFallback::Capacity {
+                        b"Contents too large; numbers shown."
+                    } else if fallback == newt_phased_reader::ContentsFallback::Invalid {
+                        b"Contents unreadable; numbers shown."
                     } else if info.authored {
                         b"From the book's contents"
                     } else {
@@ -246,4 +251,59 @@ pub fn render_reader_overlay(
         _ => b"Prev/Next: choose / Select / Back",
     };
     text(&mut c, x + 22, y + h - 32, hint, 17, false, w - 44);
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+    use super::*;
+    use newt_phased_reader::{ContentsFallback, PhasedReader, Selection};
+    use newt_reader_navigation::{Section, metadata::Metadata};
+    use newt_core::{package_parsers::{ManifestItem, PackageResult, TocEntry}, zip_window::arena::Arena};
+    use std::boxed::Box;
+
+    #[test]
+    fn contents_overlay_explains_capacity_damage_and_absence() {
+        let settings = ViewSettings { orientation: Orientation::Portrait, ..Default::default() };
+        let ui = ReaderUiState { panel: ReaderPanel::Chapters, ..Default::default() };
+        let OverlayGeometry { x, y, width: w, height: h } = overlay_geometry(settings);
+        assert_eq!(newt_core::preferences::geometry(settings).width, 528);
+        for (fallback, authored, expected) in [
+            (ContentsFallback::Capacity, false, b"Contents too large; numbers shown.".as_slice()),
+            (ContentsFallback::Invalid, false, b"Contents unreadable; numbers shown.".as_slice()),
+            (ContentsFallback::None, false, b"This book has no contents list".as_slice()),
+            (ContentsFallback::None, true, b"From the book's contents".as_slice()),
+        ] {
+            assert!(width(expected, 21, false) <= w - 44, "portrait notice is clipped");
+            let mut bytes = [0; 64];
+            let mut arena = Arena::new(&mut bytes);
+            let href = arena.copy_nul_ref(Some(b"chapter.xhtml"));
+            let title = arena.copy_nul_ref(Some(b"Start"));
+            let media_type = arena.copy_nul_ref(Some(b"application/xhtml+xml"));
+            let manifest = [ManifestItem { href, media_type, ..Default::default() }];
+            let entries = [newt_core::zip_container::Entry { name: href,
+                name_hash: newt_core::zip_container::hash_path(b"chapter.xhtml"), ..Default::default() }];
+            let toc = [TocEntry { href, title, ..Default::default() }];
+            let package = PackageResult { spine_count: 1, ..Default::default() };
+            let book = Metadata { arena: &arena, package: &package,
+                manifest: &manifest, spine: &[0], toc: if authored { &toc } else { &[] }, entries: &entries };
+            let mut selections = [Selection::default(), Selection::default()];
+            assert!(selections[1].navigation.bind_menu(&book, Section::default(), 0, &mut [0]));
+            selections[1].navigation.set_contents_fallback(fallback);
+            let reader = PhasedReader::new(&mut selections, None, false);
+            assert!(reader.chapter_menu().info().valid);
+            assert_eq!(reader.chapter_menu().info().authored, authored);
+            let mut actual = Box::new([0; newt_core::frame::FRAME_BYTES]);
+            render_reader_overlay(&ui, settings, None, &Progress::default(), true,
+                Some(&mut actual), Some(reader.chapter_menu()), None, None);
+            // Replace only the notice with its independently specified text;
+            // the rest of the real overlay must remain identical.
+            let mut wanted = actual.clone();
+            let g = newt_core::preferences::geometry(settings);
+            let mut canvas = UiCanvas::new(Some(&mut wanted), g.width.into(), g.height.into());
+            canvas.rect(x + 22, y + h - 63, w - 44, 26, false);
+            text(&mut canvas, x + 22, y + h - 63, expected, 21, false, w - 44);
+            assert!(actual[..] == wanted[..], "wrong Contents footer for {fallback:?}");
+        }
+    }
 }

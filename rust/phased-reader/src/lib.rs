@@ -11,6 +11,7 @@ pub mod scan;
 pub mod styles;
 pub mod watch;
 pub use reader::*;
+pub use newt_reader_navigation::ContentsFallback;
 pub use resources::*;
 pub mod borrowed;
 pub mod bounded;

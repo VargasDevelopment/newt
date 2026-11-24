@@ -97,6 +97,7 @@ pub struct ChapterMenuView<'a> {
     navigation: &'a Navigation,
 }
 impl ChapterMenuView<'_> {
+    pub fn fallback(&self) -> crate::ContentsFallback { self.navigation.contents_fallback() }
     pub fn info(&self) -> MenuInfo {
         self.navigation.menu_info()
     }
@@ -805,6 +806,13 @@ fn bind_menu_source<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
         })
 }
 
+fn contents_fallback(authored: bool, status: Status) -> crate::ContentsFallback {
+    use crate::ContentsFallback;
+    if !authored || status == Status::Ok { ContentsFallback::None }
+    else if status == Status::OutOfMemory { ContentsFallback::Capacity }
+    else { ContentsFallback::Invalid }
+}
+
 // Both physical and disjoint storage use canonical counted TOC parsing and the
 // same optional-navigation degradation/live-source policy on the same Book.
 fn bind_menu_book<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
@@ -814,6 +822,7 @@ fn bind_menu_book<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     mut bind: impl FnMut(&Metadata<'_, '_>, &mut Navigation) -> bool,
 ) -> Result<(), Status> {
     if book.package().spine_count != expected_spines as usize { return Err(Status::Stale); }
+    let authored = book.navigation_item().is_some();
     let declaration = book.navigation_item().and_then(|m| m.href)
         .and_then(|h| book.arena().c_string(h)).and_then(|h| book.catalog().find(h))
         .map(|(_, e)| (e, book.navigation_is_epub3()));
@@ -844,15 +853,17 @@ fn bind_menu_book<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
                 })?)
         } else { Err(Status::Unsupported) }
     } else { Err(Status::Unsupported) };
+    let optional = optional.and_then(|bound| bound.then_some(()).ok_or(Status::OutOfMemory));
     let (bound, optional) = match optional {
-        Ok(bound) => (bound, Status::Ok),
+        Ok(()) => (true, Status::Ok),
         Err(status) => (project(arena, &[]), status),
     };
     arena.release(mark);
     let live = guarded.guard();
     if live != Status::Ok { return Err(live); }
     if matches!(optional, Status::IoError | Status::Stale) { return Err(optional); }
-    if !bound { navigation.invalidate_menu(); }
+    if !bound { navigation.invalidate_menu(); return Err(Status::Unsupported); }
+    navigation.set_contents_fallback(contents_fallback(authored, optional));
     Ok(())
 }
 fn bind_menu_projection(

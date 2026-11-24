@@ -768,7 +768,7 @@ impl ExternalOwner {
 }
 
 /// Complete direct operation dispatch, including the on-demand menu preparation
-/// used by jump. Mapping capacity denial remains the real optional OOM result.
+/// used by jump. Optional mapping denial uses the canonical generic rows.
 pub fn execute_direct<B: ParserBackend + ?Sized>(
     op: OperationReader<'_, '_, '_, '_, '_, '_, B>,
     source: &mut dyn BookSource,

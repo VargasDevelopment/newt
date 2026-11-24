@@ -29,6 +29,9 @@ pub const TITLE_TRUNCATED: u16 = 1 << 6;
 pub const INVALID_SPINE: u16 = 1 << 7;
 pub const UNORDERED: u16 = 1 << 8;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ContentsFallback { #[default] None, Capacity, Invalid }
+
 const FRAGMENT: u8 = 1;
 const RESOLVED: u8 = 2;
 const AMBIGUOUS: u8 = 4;
@@ -339,6 +342,7 @@ struct MenuState {
     current_generic: bool,
     authored: bool,
     current_exact: bool,
+    fallback: ContentsFallback,
 }
 #[derive(Clone, Copy)]
 enum Projection {
@@ -362,6 +366,15 @@ pub struct Navigation {
 pub mod initialization;
 
 impl Navigation {
+    pub fn set_contents_fallback(&mut self, reason: ContentsFallback) {
+        if let Projection::Menu(menu) = &mut self.projection { menu.fallback = reason; }
+    }
+    pub fn contents_fallback(&self) -> ContentsFallback {
+        match self.projection {
+            Projection::Menu(menu) => menu.fallback,
+            _ => ContentsFallback::None,
+        }
+    }
     pub fn reset(&mut self) {
         *self = Self::default();
     }

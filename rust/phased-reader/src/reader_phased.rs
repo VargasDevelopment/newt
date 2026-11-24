@@ -632,8 +632,8 @@ impl PhasedReader<'_, '_> {
                     bind_menu_book(book, selected.spines, navigation,
                         sr.directory, &mut crate::phase_storage::ScopedToc, |book, navigation| {
                             // Mapping uses the dead admission-hash/path region.
-                            // Denial leaves an invalid optional projection, as
-                            // does legacy caller mapping exhaustion (Ok/invalid).
+                            // Denial uses the same generic projection as optional
+                            // Contents parse/space failure; it cannot publish empty success.
                             crate::phase_storage::with_menu_mapping(sr.paths, book.toc.len(), |mapping| {
                                 bind_menu_projection(book, navigation, current, focus, mapping)
                             }).unwrap_or(false)
