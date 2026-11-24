@@ -12,12 +12,17 @@ struct AtlasKern { key: u16, value16: i8 }
 struct AtlasKernClasses { left: u8, right: u8 }
 #[repr(C)]
 struct AddedKernClasses { left: u16, right: u16 }
+/// A Latin-core shape rasterized natively at one reading size; `offset` indexes its size's bitmap.
+#[repr(C)]
+struct NativeGlyph { width: u8, height: u8, left: i8, top: i8, offset: u32 }
+struct NativeSize { px: u16, bitmap: &'static [u8], faces: [[NativeGlyph; LEGACY]; 4] }
 mod data { use super::{AtlasGlyph, AtlasKern, AtlasKernClasses, AddedKernClasses}; include!("data.rs"); }
 use data::*;
 const _: () = assert!(core::mem::size_of::<AtlasGlyph>() == 8);
 const _: () = assert!(core::mem::size_of::<AtlasKern>() == 4);
 const _: () = assert!(core::mem::size_of::<AtlasKernClasses>() == 2);
 const _: () = assert!(core::mem::size_of::<AddedKernClasses>() == 4);
+const _: () = assert!(core::mem::size_of::<NativeGlyph>() == 8);
 pub const PROFILE_SIZE: u16 = 30;
 pub const IDENTITY: u32 = 0xce2bda74;
 const ASCII: usize = 95;
@@ -26,6 +31,7 @@ const COUNT: usize = LEGACY + kReaderAddedCodepoints.len();
 
 mod faces;
 use faces::{Face, AddedFace, face, added};
+mod native;
 
 fn glyph_index(cp: u32) -> usize {
     if (32..=126).contains(&cp) { return (cp - 32) as usize; }
@@ -51,7 +57,8 @@ fn semantic(f: &Face, a: &AddedFace, cp: u32) -> i32 {
 }
 pub const fn effective_size(px: u16) -> i32 { if px < 8 { 8 } else if px > 90 { 90 } else { px as i32 } }
 fn rounded(value16: i32, px: i32) -> i32 { (value16 * px + 240) / 480 }
-fn scaled(value: i32, px: i32) -> i32 { let n = (value.abs() * px + 15) / 30; if value < 0 { -n } else { n } }
+fn scaled(value: i32, px: i32) -> i32 { resized(value, px, 30) }
+fn resized(value: i32, px: i32, from: i32) -> i32 { let n = (value.abs() * px + from / 2) / from; if value < 0 { -n } else { n } }
 fn cell(f: &Face, a: &AddedFace, index: usize, size: i32) -> i32 { if index < COUNT { rounded(i32::from(glyph(f,a,index).advance16), size) } else { size } }
 fn kern(f: &Face, a: &AddedFace, left: usize, right: usize) -> i32 {
     if left >= LEGACY || right >= LEGACY {
@@ -103,6 +110,18 @@ impl Font for ReaderAtlas {
         (rounded(advance+kern(f,a,l,r),size)-rounded(advance,size)) as i16
     }
 }
+/// What `draw` copies or resamples: a glyph's 2-bit rows and the size they were rasterized at.
+struct Shape { width: u8, height: u8, left: i8, top: i8, pixels: &'static [u8], px: i32 }
+/// Latin-core glyphs have native shapes at the other reading sizes; everything else resamples 30 px.
+fn shape(f: &Face, a: &AddedFace, style: u8, index: usize, size: i32) -> Shape {
+    if let Some(native) = native::NATIVE.iter().find(|n| i32::from(n.px) == size).filter(|_| index < LEGACY) {
+        let g = &native.faces[usize::from(style & 3)][index];
+        return Shape { width: g.width, height: g.height, left: g.left, top: g.top, pixels: &native.bitmap[g.offset as usize..], px: size };
+    }
+    let g = glyph(f,a,index);
+    let table = if index >= LEGACY { &kReaderAddedBitmap[a.offsets[index-LEGACY] as usize..] } else if index < ASCII { f.bitmap } else { f.extra_bitmap };
+    Shape { width: g.width, height: g.height, left: g.left, top: g.top, pixels: &table[usize::from(g.offset)..], px: PROFILE_SIZE.into() }
+}
 fn nibble(value: u8) -> u8 { ((value>>4)&8) | ((value>>3)&4) | ((value>>2)&2) | ((value>>1)&1) }
 impl ReaderAtlas {
     /// Caller owns the exact packed frame; rejection precedes every write.
@@ -112,19 +131,18 @@ impl ReaderAtlas {
         let f = face(style); let a = added(style);
         if semantic(f,a,cp) >= 0 { return Ok(()); }
         let found = glyph_index(cp); let index = if found < COUNT { found } else { (b'?' - 32) as usize };
-        let g = glyph(f,a,index);
-        let bitmap = if index >= LEGACY { &kReaderAddedBitmap[a.offsets[index-LEGACY] as usize..] } else if index < ASCII { f.bitmap } else { f.extra_bitmap };
-        if g.width == 0 || g.height == 0 { return Ok(()); }
         let size = effective_size(px);
-        let width = scaled(i32::from(g.width),size).max(1); let height = scaled(i32::from(g.height),size).max(1);
-        let left = i64::from(pen_x)+i64::from(scaled(i32::from(g.left),size));
-        let top = i64::from(baseline)-i64::from(scaled(i32::from(g.top),size));
+        let g = shape(f,a,style,index,size);
+        if g.width == 0 || g.height == 0 { return Ok(()); }
+        let width = resized(i32::from(g.width),size,g.px).max(1); let height = resized(i32::from(g.height),size,g.px).max(1);
+        let left = i64::from(pen_x)+i64::from(resized(i32::from(g.left),size,g.px));
+        let top = i64::from(baseline)-i64::from(resized(i32::from(g.top),size,g.px));
         let overhang = if pen_x >= geometry.margin && i64::from(pen_x)+i64::from(cell(f,a,found,size)) <= i64::from(geometry.width-geometry.margin) { geometry.margin/2 } else { 0 };
         let clip_left = i64::from(geometry.margin-overhang); let clip_right = i64::from(geometry.width-geometry.margin+overhang);
         let stride = (usize::from(g.width)+3)/4;
-        if size == 30 && left >= clip_left && left+i64::from(width) <= clip_right && top >= i64::from(geometry.margin) && top+i64::from(height) <= i64::from(geometry.content_bottom) {
+        if size == g.px && left >= clip_left && left+i64::from(width) <= clip_right && top >= i64::from(geometry.margin) && top+i64::from(height) <= i64::from(geometry.content_bottom) {
             for row in 0..usize::from(g.height) {
-                let source = &bitmap[usize::from(g.offset)+row*stride..];
+                let source = &g.pixels[row*stride..];
                 for col in (0..usize::from(g.width)).step_by(8) {
                     let mut ink = nibble(source[col/4])<<4;
                     if col+4 < usize::from(g.width) { ink |= nibble(source[col/4+1]); }
@@ -147,7 +165,7 @@ impl ReaderAtlas {
                 let x = left+i64::from(col);
                 if x < clip_left || x >= clip_right { continue; }
                 let source_col = ((2*col+1)*i32::from(g.width)/(2*width)) as usize;
-                let value = bitmap[usize::from(g.offset)+source_row*stride+source_col/4];
+                let value = g.pixels[source_row*stride+source_col/4];
                 if ((value>>(6-2*(source_col%4)))&3) < 2 { continue; }
                 let bit = (y*i64::from(geometry.width)+x) as usize;
                 frame[bit/8] |= 0x80>>(bit%8);

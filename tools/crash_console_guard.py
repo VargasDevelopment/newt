@@ -102,4 +102,8 @@ def rust_registers(base_code, base_data, functions, reading_only=False):
                  "kReaderBoldItalicExtraBitmap", "kReaderAddedBitmap"):
         data["newt_reader_atlas::data::" + name + "Blocks"] = glyphs
     data["newt_reader_atlas::data::BITMAP_BLOCKS"] = glyphs
+    # Native shapes for the other reading sizes: 1-bit font pixels whose bytes
+    # make-native-reader-sizes.py --check binds to provenance.json.
+    for px in (22, 24, 27, 34):
+        data[f"newt_reader_atlas::native::BITMAP_{px}PX"] = glyphs
     return code, data
