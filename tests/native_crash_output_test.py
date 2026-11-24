@@ -517,6 +517,33 @@ class CrashOutputGuard(unittest.TestCase):
 
 
 class CrashGatePure(unittest.TestCase):
+    def test_put_rx_requires_exactly_the_reviewed_builders(self):
+        from crash_console_guard import rust_registers, validate_console_registers
+        rx = {"nsc_put_rx_begin", "nsc_put_rx_end", "nsc_put_rx_read_byte"}
+        base = {"newt::firmware::UsbChannel::wakeTransmitter(unsigned int)": "existing TX review"}
+        fonts = dict.fromkeys(("newt::kHomeKerns", "newt::kHomeRuns",
+                               "newt_reader_atlas::data::kReaderAddedBitmap"), "existing font review")
+        absent, original_data = rust_registers(base, fonts, {})
+        self.assertFalse(rx & absent.keys())
+        for present in (rx, {"nsc_put_rx_begin"}):
+            code, data = rust_registers(base, fonts, present)
+            self.assertEqual(code.keys() - absent.keys(), rx)
+            self.assertEqual(code["nsc_wake_transmitter"], "existing TX review")
+            self.assertEqual(data, original_data)
+            self.assertEqual({code[name] for name in rx}, {
+                "reviewed by Newt Lead, cross-family native review: Astra, 2026-11-24 (325bb44a, delta 7896ff2b)"})
+            linked = {name: ["42000000: 600437b7 lui a5,0x60043"] for name in code}
+            validate_console_registers(linked, [], [], "", code, data)
+            for name in rx:
+                # Removing a reviewed entry or linked builder must still fail.
+                with self.assertRaisesRegex(RuntimeError, "unreviewed code"):
+                    validate_console_registers(linked, [], [], "", {k: v for k, v in code.items() if k != name}, data)
+                with self.assertRaisesRegex(RuntimeError, "no longer by"):
+                    validate_console_registers({k: v for k, v in linked.items() if k != name}, [], [], "", code, data)
+            with self.assertRaisesRegex(RuntimeError, "unreviewed code"):
+                validate_console_registers({**linked, "unreviewed_rx": linked["nsc_put_rx_begin"]},
+                                           [], [], "", code, data)
+
     """Authored disassembly exercises the resolver without invoking a compiler."""
 
     def lines(self, aligned=True):
