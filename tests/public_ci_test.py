@@ -256,17 +256,41 @@ class PublicWorkflow(unittest.TestCase):
                     'check': {'result': check, 'outputs': {}}, 'docs': {'result': docs, 'outputs': {}}}
         for result in ('success', 'failure', 'cancelled', 'skipped'):
             with self.subTest(check=result):
-                # success() holds only when every need succeeded; cancelled() when the run was cancelled.
-                state = {**base, 'success': result == 'success', 'cancelled': result == 'cancelled'}
-                self.assertTrue(trust_expression(gate['if'])(state))  # it runs, so it can fail
+                # One lane's job is always skipped, so success() is false in every real run;
+                # cancelled() holds when the run itself was cancelled.
+                state = {**base, 'success': False, 'cancelled': result == 'cancelled'}
+                # Cancelled runs stop at gate (concluding cancelled, not failure); every
+                # non-cancelled outcome (success, failure, unexpected skip) runs gate so it can fail.
+                self.assertEqual(trust_expression(gate['if'])(state), result != 'cancelled')
                 passed = passes(needs('full', result, 'skipped'))
                 self.assertEqual(passed, result == 'success')
                 self.assertEqual(passes(needs('docs', 'skipped', result)), result == 'success')
                 # The tag job runs only after the gate job itself succeeded. success() is false in
                 # every real run, since one lane's job is always skipped, so it cannot decide.
-                gate_result = 'success' if passed else 'failure'
+                gate_result = 'success' if passed else ('cancelled' if result == 'cancelled' else 'failure')
                 self.assertEqual(trust_expression(tag['if'])(
-                    {**base, 'success': False, 'cancelled': False, 'needs.gate.result': gate_result}), passed)
+                    {**base, 'success': False, 'cancelled': result == 'cancelled',
+                     'needs.gate.result': gate_result}), passed)
+        # Non-cancelled classify/check/docs failures or unexpected skips still run and fail gate.
+        non_cancelled = {**base, 'success': False, 'cancelled': False}
+        self.assertTrue(trust_expression(gate['if'])(non_cancelled))
+        for lane, check, docs, classify in (
+            ('full', 'failure', 'skipped', 'success'),
+            ('full', 'skipped', 'skipped', 'success'),
+            ('docs', 'skipped', 'failure', 'success'),
+            ('docs', 'skipped', 'skipped', 'success'),
+            ('full', 'skipped', 'skipped', 'failure'),
+            (None, 'skipped', 'skipped', 'failure'),
+            (None, 'skipped', 'skipped', 'skipped'),
+        ):
+            with self.subTest(lane=lane, check=check, docs=docs, classify=classify):
+                self.assertFalse(passes(needs(lane, check, docs, classify)))
+        # Controls: always() would run gate on a cancelled run (reporting a false failure),
+        # while dropping the status function would apply implicit success() and skip gate on failures.
+        self.assertIn('!cancelled()', gate['if'])
+        self.assertTrue(trust_expression(gate['if'].replace('!cancelled()', 'always()'))(
+            {**base, 'success': False, 'cancelled': True}))
+        self.assertFalse(trust_expression(gate['if'].replace('!cancelled() && ', ''))(non_cancelled))
         # Only the lane's own job stands for the gate: the other one, run or failed, never passes it.
         self.assertFalse(passes(needs('docs', 'success', 'skipped')))
         self.assertFalse(passes(needs('full', 'skipped', 'success')))

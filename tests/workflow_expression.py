@@ -7,6 +7,7 @@ import re
 
 
 LITERALS = {'true': True, 'false': False, 'null': None}
+STATUS_FUNCTIONS = frozenset(('success', 'failure', 'cancelled', 'always'))
 
 
 def loose_equal(left, right):
@@ -29,9 +30,13 @@ def trust_expression(expression):
     closed, rather than testing a separate policy implementation. A context path
     such as github.event.repository.private reads values['event.repository.private'],
     and needs.classify.outputs.lane reads values['needs.classify.outputs.lane'];
-    None stands for a value the event does not carry."""
+    None stands for a value the event does not carry. As in GitHub Actions, an
+    expression that calls no status check function implicitly requires success()."""
     text = re.sub(r'!(?!=)', ' not ', expression.replace('&&', ' and ').replace('||', ' or '))
     syntax = ast.parse(text.strip(), mode='eval')
+    has_status_check = any(isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                           and not node.keywords and not node.args and node.func.id in STATUS_FUNCTIONS
+                           for node in ast.walk(syntax))
     def path(node):
         if isinstance(node, ast.Name) and node.id == 'github':
             return []
@@ -50,7 +55,7 @@ def trust_expression(expression):
         if isinstance(node, ast.Attribute):
             return values['.'.join(path(node))]
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and not node.keywords:
-            if node.func.id in ('success', 'cancelled') and not node.args:
+            if node.func.id in ('success', 'failure', 'cancelled') and not node.args:
                 return values[node.func.id]
             if node.func.id == 'always' and not node.args:
                 return True
@@ -68,7 +73,10 @@ def trust_expression(expression):
             equal = loose_equal(effective(node.left, values), effective(node.comparators[0], values))
             return equal if isinstance(node.ops[0], ast.Eq) else not equal
         raise AssertionError('Unreviewed workflow trust expression')
-    return lambda values: effective(syntax, values)
+    def evaluate(values):
+        matched = effective(syntax, values)
+        return (has_status_check or values.get('success', True)) and matched
+    return evaluate
 
 
 PRIVATE_ID = '1400798123'  # The private repository's immutable ID (fresh-gates.yml).

@@ -155,11 +155,12 @@ than in the tool lock, whose hash keys the toolchain caches;
 **Parts.** The `check` job is a matrix of eight parts: seven shards of the host
 gate (`tools/ci_gate.py --part I/7`, which runs `tools/check.py --shard I/7`)
 and `native`, the plain clean compile and the one clean
-`firmware-build.py --clean --health-report` build. The `gate` job always runs
-where public CI runs and passes only when its lane's jobs succeeded
-([Docs lane](#docs-lane)), so a failed, cancelled or skipped part fails it
-rather than skipping it; it is the one check to require and the one the
-release-tag job reads. Each part has the tier's whole CI job budget
+`firmware-build.py --clean --health-report` build. The `gate` job runs whenever
+a public CI run is not cancelled (`!cancelled()`) and passes only when its
+lane's jobs succeeded ([Docs lane](#docs-lane)), so a failed or unexpectedly
+skipped dependency fails it rather than skipping it, while a cancelled run
+concludes `cancelled` instead of reporting a false failure; it is the one check
+to require and the one the release-tag job reads. Each part has the tier's whole CI job budget
 (`tools/gate-time-budgets.json`); no budget is split or edited. A pull
 request that changes a test also runs that test's negative controls (the
 `local` tier) in the part that holds them, so it can take longer.
@@ -203,11 +204,13 @@ which makes `success()` false for every later job, so `release-tag` and
 its subject, so each lane's job checks the title the event carries with the
 pinned Commitizen (`tools/release_tools.py --pr-title`), and `gate` fails on a
 title that is not a Conventional Commit. An edit of the pull request (title,
-body or base) starts a new run, which cancels the older one, so the whole gate
-runs again: about 5 minutes and 40 hosted runner-minutes in the full lane, one
-job in the docs lane. A run that checked only the title would have to post
-`gate` from an earlier run's result for the same head, and a `gate` it skipped
-would count as passing.
+body or base) starts a new run, which cancels the older run if it is still
+running (its unfinished `gate` concludes `cancelled`, not `failure`; a `gate`
+that already finished keeps its result), so the whole gate runs again: about 5
+minutes and 40 hosted runner-minutes in the full lane, one job in the docs
+lane. A run that checked only the title would have to post `gate` from an
+earlier run's result for the same head, and a `gate` it skipped would count as
+passing.
 
 **Shards come from the gate's own plan.** `tools/gate_tier.py` `shard()` takes
 the tier's plan, keeps every phase with the phases it runs `after` in one
