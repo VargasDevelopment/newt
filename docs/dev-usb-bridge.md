@@ -2,7 +2,7 @@
 
 `NEWT_DEV_USB` defaults to zero in source, excluding the protocol and its storage; the one firmware build (regional DEV) sets it, so every current Newt image carries the bridge. It is not an installed capability or permission to connect/flash hardware.
 
-The bridge accepts only a handshake, semantic button events, read-only status/boot diagnostics, bounded capture of the existing logical framebuffer, and one bounded card write (below). Main remains the sole app/display owner; the physical polling task retains InputManager ownership. Synthetic and physical events share the queue. Responses distinguish accepted, consumed, and render-return completion. Render-return does not prove physical panel appearance or waveform quality.
+The bridge accepts only a handshake, semantic button events, read-only status/boot diagnostics, bounded capture of the existing logical framebuffer, and one cancellable card write (below). Main remains the sole app/display owner; the physical polling task retains InputManager ownership. Synthetic and physical events share the queue. Responses distinguish accepted, consumed, and render-return completion. Render-return does not prove physical panel appearance or waveform quality.
 
 An installed development image remains development-capable across resets until replaced. A handshake activates a session, which expires on observed disconnect, replacement handshake, physical interaction, stalled output, or 60 seconds without commands. Boot/session/request IDs reject stale input. This is a development test interface, not an authenticated authority boundary. A future build without it (for OTA or a release) would leave it out.
 

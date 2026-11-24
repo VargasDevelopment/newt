@@ -16,7 +16,7 @@ from bench_lease import lease_port
 from dev_usb_panel_telemetry import (
     MAX_PRESS_TELEMETRY, collect_press_telemetry, decode_panel_ring)
 from dev_usb_firmware_rows import MAX_LISTEN_SECONDS, FirmwareRows, listen
-from dev_usb_put import card_folder, card_target, plan, put_files
+from dev_usb_put import card_target, plan, put_files
 
 RECORD = re.compile(rb'!N1 ([0-9]+) ([0-9]+) ([0-9]+) (.*) \*([0-9a-f]{8})\n\Z')
 MAX_AUDIT_RECORDS = 2048  # Covers both directions of 32 PRESSes and two full captures.
@@ -429,7 +429,7 @@ def main():
     parser.add_argument('--listen', type=float, default=0, help='after the last press, read firmware rows (0–600 s)')
     # PUT validates every destination before opening the port.
     parser.add_argument('--folder', help='put: any card-relative directory (e.g. Newt/Books; . for card root); apps/update/dev are aliases')
-    parser.add_argument('--file', action='append', type=Path, default=[], help='put: a local file, repeatable')
+    parser.add_argument('--file', action='append', type=Path, default=[], help='put: local file, repeatable; 4 KiB raw blocks, limited by free card space')
     parser.add_argument('--name', help='put: the card name for a single --file (default: its own name)')
     args = parser.parse_args()
     if not 0.1 <= args.timeout <= 30 or len(args.press) > 32 or not 0 <= args.listen <= MAX_LISTEN_SECONDS:

@@ -2,7 +2,7 @@
 //! The development USB bridge's one card write: a single file at
 //! any validated card-relative path, over a cancellable lease that follows the bridge's PUT.
 //!
-//! Every lease line fits the USB receive queue whole, in caller memory that
+//! Every lease frame fits the USB receive queue whole, in caller memory that
 //! exists only for the lease. Bytes go to the card root's reserved temp name, are
 //! synced, read back from the card and checked against the offered size and
 //! SHA-256, and only then renamed into place, so the final name never holds a
