@@ -188,13 +188,15 @@ impl<'a> Session<'a>{
         file.still_bound(path!(&self.pending,false))
     }
     fn commit(&mut self,header:&[u8;28],payload:&[u8])->R{
-        if !self.control.poll(){return R::Cancelled;}self.temporaries|=PENDING;
+        if !self.control.poll(){return R::Cancelled;}
+        // Admit all commit workspace before writing a pending record.
+        let Some(mut block)=self.memory.block(io::CRC_BYTES)else{return R::Declined;};
+        self.temporaries|=PENDING;
         let Ok(fd)=self.files.open(path!(&self.pending,R::IoError),true)else{return R::IoError;};
         let mut valid=io::write(self.files,self.control,fd,header)
             &&(payload.is_empty()||io::write(self.files,self.control,fd,payload))&&self.control.poll()&&self.files.sync(fd);
         if !self.files.close(fd){valid=false;}
         if !valid||!self.verify_pending(header,payload)||!self.source.still_bound(path!(&self.book,R::IoError))||!self.control.poll(){return self.cancelled(R::IoError);}
-        let Some(mut block)=self.memory.block(io::CRC_BYTES)else{return R::Declined;};
         if self.source.crc(block.as_mut())!=Some(self.source_crc)||!self.source.still_bound(path!(&self.book,R::IoError)){return self.cancelled(R::Invalid);}
         if !self.current_path_matches(block.as_mut()){return self.cancelled(R::Invalid);}
         if !self.prepare_final(){return self.cancelled(R::IoError);}
