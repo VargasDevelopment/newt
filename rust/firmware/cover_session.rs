@@ -7,7 +7,14 @@ use newt_core::{cover::{self,Member,MetadataStatus as M,discovery,xml::Found},zi
 const STAGE:u8=1;const PENDING:u8=2;const EARLY:u8=4;
 #[derive(Clone,Copy)]
 enum Document{Container,Package,Page}
-pub fn verdict(result:R)->bool{matches!(result,R::Missing|R::Unsupported|R::Incomplete|R::Invalid)}
+fn reason(result:R)->Option<cover::NoCoverReason>{match result{
+    R::Missing=>Some(cover::NoCoverReason::Missing),
+    R::Unsupported=>Some(cover::NoCoverReason::Unsupported),
+    R::Incomplete=>Some(cover::NoCoverReason::Incomplete),
+    R::Invalid=>Some(cover::NoCoverReason::Invalid),
+    _=>None,
+}}
+pub fn verdict(result:R)->bool{reason(result).is_some()}
 pub fn metadata(result:M)->R{match result{M::Ok=>R::Ready,M::NotFound=>R::Missing,M::Unsupported=>R::Unsupported,
     M::IoError=>R::IoError,M::OutOfMemory=>R::Declined,_=>R::Invalid}}
 macro_rules! path {
@@ -50,9 +57,10 @@ impl<'a> Session<'a>{
     pub fn run(&mut self,books:&[u8],covers:&[u8],name:&CStr)->(R,bool){
         let result=self.attempt(books,covers,name);
         if !self.source.bound(){self.resume.book=0;}
-        if !verdict(result)||!self.unfaulted(){self.no_art=false;return(result,false);}
-        self.no_art=if self.temporaries&EARLY!=0{self.record_early()}else{
-            self.resume.step=Step::Decided;self.resume.verdict=result;self.record_no_art()
+        let Some(reason)=reason(result)else{self.no_art=false;return(result,false);};
+        if !self.unfaulted(){self.no_art=false;return(result,false);}
+        self.no_art=if self.temporaries&EARLY!=0{self.record_early(reason)}else{
+            self.resume.step=Step::Decided;self.resume.verdict=result;self.record_no_art(reason)
         };
         (result,self.no_art)
     }
@@ -170,8 +178,8 @@ impl<'a> Session<'a>{
         }
     }
     fn header(&self,check:u32)->[u8;28]{cover::header(self.source.size(),self.source.binding().seconds as u64,check)}
-    fn record_no_art(&mut self)->bool{
-        self.control.poll()&&self.source.still_bound(path!(&self.book,false))&&self.commit(&self.header(cover::NO_ART),&[])==R::Produced
+    fn record_no_art(&mut self,reason:cover::NoCoverReason)->bool{
+        self.control.poll()&&self.source.still_bound(path!(&self.book,false))&&self.commit(&self.header(cover::no_art_route(reason)),&[])==R::Produced
     }
     fn publish(&mut self,pixels:&[u8])->R{
         if !self.control.poll(){return R::Cancelled;}
@@ -226,9 +234,9 @@ impl<'a> Session<'a>{
         self.files.rename_replaces_destination()
             ||(self.control.poll()&&self.files.unlink(path!(&self.final_path,false)).is_ok())
     }
-    fn record_early(&mut self)->bool{
+    fn record_early(&mut self,reason:cover::NoCoverReason)->bool{
         if !self.control.poll()||!self.source.still_bound(path!(&self.book,false)){return false;}
-        let header=self.header(cover::NO_ART);self.temporaries|=PENDING;
+        let header=self.header(cover::no_art_route(reason));self.temporaries|=PENDING;
         let Ok(fd)=self.files.open(path!(&self.pending,false),true)else{return false;};
         let mut valid=io::write(self.files,self.control,fd,&header)&&self.control.poll()&&self.files.sync(fd);
         if !self.files.close(fd){valid=false;}

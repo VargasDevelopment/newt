@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Frozen Home cover session (home_cover.h), with no held source/Board loan.
 use super::home_refresh::HomeRefresh;
-use crate::library_covers::{CoverBookFacts, PreparedCovers};
+use crate::library_covers::{CoverBookFacts, CoverFact, PreparedCovers};
 use newt_core::sd_resume::SdResumeRecord;
 use newt_native_io::UiIo;
 use newt_sdk_heap::Fixed;
@@ -75,7 +75,8 @@ impl HomeCover {
         if self.facts.record != workspace.identity.checksum {
             self.facts = CoverBookFacts { record: workspace.identity.checksum, ..CoverBookFacts::default() };
         }
-        if self.facts.no_cover { self.step = Step::NoCover; return; }
+        if self.facts.fact.is_no_cover() { self.step = Step::NoCover; return; }
+        if self.facts.fact != CoverFact::Unchecked { self.step = Step::NotReady; return; }
         let mut native = io.port();
         let mut covers = PreparedCovers::new(&mut native, Some(&mut self.facts));
         let Workspace { pixels, ready, identity } = &mut *workspace;

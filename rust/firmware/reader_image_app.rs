@@ -176,6 +176,14 @@ impl Reader for Runtime {
         self.note_idle_paint(screen, generation, includes_cover, now);
     }
 
+    fn library_cover_state(&self) -> crate::reader_image::cover_idle::ShelfCoverState {
+        self.idle.library_state()
+    }
+
+    fn note_library_paint(&mut self, view: u32, any_making: bool, now: u32) {
+        self.idle.painted_library(view, any_making, now);
+    }
+
     #[cfg(feature = "dev-usb")]
     fn consumed_input(&mut self, physical: bool, button: u8, action: Action, now: u32,
         before: Screen, after: Screen, reader_was_open: bool,

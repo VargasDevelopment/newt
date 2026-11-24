@@ -89,6 +89,8 @@ pub trait Reader {
     fn cancel_sleep(&mut self, home: &mut Home<'_>, now: u32);
     fn note_input(&mut self, now: u32);
     fn note_paint(&mut self, screen: Screen, generation: u32, includes_cover: bool, now: u32);
+    fn library_cover_state(&self) -> crate::reader_image::cover_idle::ShelfCoverState;
+    fn note_library_paint(&mut self, view: u32, any_making: bool, now: u32);
     #[cfg(feature = "dev-usb")]
     fn consumed_input(&mut self, physical: bool, button: u8, action: Action, now: u32,
         before: Screen, after: Screen, reader_was_open: bool);

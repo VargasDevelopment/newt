@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 //! Actual automatic Home/shelf cover producer, joined to the single idle owner.
-use super::{Runtime,millis,cover_idle::{CoverIdleState,CoverResume,CoverResult,Step},
+use super::{Runtime,millis,cover_idle::{CoverIdleState,CoverResume,CoverResult,Step,shelf_view},
     cover_resume::CoverResumeOwner};
 use crate::{app_image::{Home,Application,Events,Reader},home_startup::CardPort};
 use core::ffi::CStr;
-use newt_core::{app::Screen,frame::Frame,reader_scheduler::YieldCadence,cover};
+use newt_core::{app::Screen,frame::Frame,reader_scheduler::YieldCadence};
 use newt_input_policy::native::UiQueue;
 #[path="cover_memory.rs"] mod memory;
 #[path="cover_io.rs"] mod io;
@@ -73,10 +73,9 @@ fn run_step(state:&mut CoverIdleState,screen:Screen,targets:&Targets<'_>,
     {idle_step::step(state,screen as u8,targets,io,control,&heap::Heap::new(None),millis,BOOKS,COVERS,published)}
 }
 fn targets<'a>(names:&'a [[u8;96]],selected:usize,home:bool)->Targets<'a>{
-    let mut out=Targets{count:names.len().min(4),selected,view:cover::fnv(2_166_136_261,&[if home{2}else{1}]),..Targets::default()};
+    let mut out=Targets{count:names.len().min(4),selected,view:shelf_view(names,home),..Targets::default()};
     for(slot,name)in names.iter().take(4).enumerate(){
         out.names[slot]=CStr::from_bytes_until_nul(name).ok();
-        if let Some(name)=out.names[slot]{out.view=cover::name_key(out.view,name.to_bytes());}
     }
     out
 }
@@ -103,6 +102,7 @@ impl Runtime{
         }
         let shelf=screen==Screen::Library&&!ui.library.no_card&&!ui.library.loading
             &&ui.catalog.as_ref().is_some_and(|c|c.status()==newt_library_current::LibraryStatus::Ok&&c.size()!=0);
+        let mut shelf_count=0usize;
         let dispatched=if !shelf&&!home_eligible{empty_visit(&mut self.idle,screen,&poll)}else{
             let result=home.with_storage_io(|home,io|{
                 // The optional selected source/receipt stay alive. Return only
@@ -123,6 +123,7 @@ impl Runtime{
                     let mut files=newt_native_io::LibraryFiles::new(io);
                     catalog.with_shelf_names(&mut files,first,|names|{
                         let targets=targets(names,selected-first,false);
+                        shelf_count=targets.count;
                         dispatch(&mut self.idle,screen,&targets,&poll,|state|
                             run_step(state,screen,&targets,io,&poll,
                                 #[cfg(feature="dev-usb")] &mut self.cover_observation,&mut published))
@@ -142,11 +143,13 @@ impl Runtime{
             Dispatch::Paint=>true,Dispatch::Quiet=>false,Dispatch::Generated(result)=>{
                 // Every SDK loan, job allocation and descriptor has ended. The
                 // publication callback already advanced the same word before
-                // monitor completion. DEV rows may wait for USB; queue repaint here.
-                if result==CoverResult::Produced{self.idle.defer_repaint();}
+                // monitor completion. DEV rows may wait for USB; queue only its
+                // repaint (or one batched Books settle repaint after every slot finishes).
+                let settle=shelf&&self.idle.pending_mark_shown()&&self.idle.shelf_done(shelf_count);
+                if result==CoverResult::Produced||settle{self.idle.defer_repaint();}
                 if result==CoverResult::Cancelled{return false;}
                 crate::app_power::delay_ms(10);
-                if result!=CoverResult::Produced||poll.stopped(){return false;}
+                if (result!=CoverResult::Produced&&!settle)||poll.stopped(){return false;}
                 self.idle.consume_repaint();true
             }
         }

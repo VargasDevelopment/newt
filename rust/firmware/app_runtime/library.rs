@@ -1,13 +1,24 @@
 // SPDX-License-Identifier: MIT
 //! Actual Library traversal and painting over the mounted UI I/O capability.
 use super::AppRuntime;
-use crate::{app_image::{Application, Home, Reader}, library_covers::PreparedCovers, rest_app::RestApp};
+use crate::{
+    app_image::{Application, Home, Reader},
+    library_covers::PreparedCovers,
+    reader_image::cover_idle::{ShelfCoverState, shelf_view},
+    rest_app::RestApp,
+};
 use newt_c3_board::{Error, MonotonicClock};
 use newt_core::{app::Screen, frame::Frame};
 use newt_library_current::{Catalog, LibraryStatus, scan::{self, FirmwareProgress, PaceNative, Report}};
 use newt_native_io::LibraryFiles;
 use newt_sdk_heap::Fixed;
 use crate::reader_action::Trace;
+
+pub struct LibraryPaint {
+    pub includes_cover: bool,
+    pub view: u32,
+    pub any_making: bool,
+}
 
 impl Application<'_> {
     /// browse has already ended the reader's physical use before entering.
@@ -64,28 +75,43 @@ impl Application<'_> {
         result.map(|_| ())
     }
 
-    /// Some preserves the renderer's full-shelf versus focus-only result.
-    pub fn paint_library(&mut self, home: &mut Home<'_>, logical: &mut Frame, force: bool, composition: super::display::Composition<'_>) -> Result<Option<bool>, Error> {
+    /// Some preserves the renderer's full-shelf versus focus-only result and shelf cover status.
+    pub fn paint_library(
+        &mut self,
+        home: &mut Home<'_>,
+        logical: &mut Frame,
+        force: bool,
+        composition: super::display::Composition<'_>,
+        shelf_state: ShelfCoverState,
+    ) -> Result<Option<LibraryPaint>, Error> {
         if self.app.screen != Screen::Library { return Ok(None); }
         let started = super::display::refresh_start(&mut home.bus.board);
         self.home_refresh.invalidate();
         self.home_cover.release();
         let bar = home.clock.read_system_bar(&mut home.bus, &self.info, false);
-        let includes_cover = if self.library.loading || self.library.no_card || self.catalog.is_none() {
+        let painted = if self.library.loading || self.library.no_card || self.catalog.is_none() {
             if !newt_library_current_ui::paint_without_files(&mut self.library, Some(logical), &bar) {
                 return Ok(None);
             }
-            true
+            LibraryPaint { includes_cover: true, view: 0, any_making: false }
         } else {
             let Self { app, library, tiny, pause, installed, prompt, quick_start, catalog, .. } = self;
             let mut runtime = AppRuntime { rest: RestApp { app, library, tiny, pause, definition: installed.running(), prompt }, quick_start };
-            let Some(includes_cover) = home.with_storage_io(|_, io| {
+            let Some(painted) = home.with_storage_io(|_, io| {
                 let mut files = LibraryFiles::new(io);
+                let view = catalog.as_deref_mut()
+                    .filter(|c| c.status() == LibraryStatus::Ok && c.size() > 0)
+                    .map_or(0, |c| {
+                        let selected = runtime.rest.library.selected.min(c.size() - 1);
+                        let first = newt_library_current_ui::shelf_first(selected);
+                        c.with_shelf_names(&mut files, first, |names| shelf_view(names, false))
+                    });
                 let mut native = io.port();
-                let mut covers = PreparedCovers::new(&mut native, None);
-                runtime.paint_library(&bar, catalog.as_deref_mut(), &mut files, Some(logical), Some(&mut covers))
+                let mut covers = PreparedCovers::for_library(&mut native, shelf_state, view);
+                let includes_cover = runtime.paint_library(&bar, catalog.as_deref_mut(), &mut files, Some(logical), Some(&mut covers))?;
+                Some(LibraryPaint { includes_cover, view, any_making: covers.any_making() })
             })? else { return Ok(None); };
-            includes_cover
+            painted
         };
         #[cfg(feature = "dev-usb")]
         let panels = Some(&mut *self.panels);
@@ -94,7 +120,7 @@ impl Application<'_> {
         self.displayed.binary(&mut home.bus.board, logical, &mut self.ui_refresh, panels, force, started, composition)?;
         #[cfg(feature = "dev-usb")]
         self.runtime_lows.painted(self.app.screen);
-        Ok(Some(includes_cover))
+        Ok(Some(painted))
     }
 }
 
@@ -114,9 +140,8 @@ impl<R: Reader> PaceNative for ScanPace<'_, '_, '_, R> {
         self.ui.app.screen = Screen::Library;
         self.ui.library.loading = true;
         self.ui.press = crate::app_image::PressState::Idle;
-        match self.ui.paint_library(self.home, self.logical, false, super::display::Composition::scoped(self.trace)) {
-            Ok(Some(includes_cover)) => self.reader.note_paint(self.ui.app.screen,
-                self.ui.displayed.generation, includes_cover, self.clock.millis()),
+        match self.ui.paint_library(self.home, self.logical, false, super::display::Composition::scoped(self.trace), ShelfCoverState::default()) {
+            Ok(Some(painted)) => self.reader.note_library_paint(painted.view, painted.any_making, self.clock.millis()),
             Ok(None) => {}
             Err(error) => self.error = Some(error),
         }

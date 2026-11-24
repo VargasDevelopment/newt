@@ -336,7 +336,13 @@ void nb_delay_ms(uint32_t ms) {
     if (script_next < script_count) {
         step_at = nb_millis();
         /* The reader keeps reading time across an idle minute, as on a device. */
-        if (script[script_next] == WAIT_MINUTE) { ++script_next; preview_advance(60000); step_at = nb_millis(); return; }
+        if (script[script_next] == WAIT_MINUTE) {
+            ++script_next;
+            preview_advance(60000);
+            step_at = nb_millis();
+            if (script_next == script_count || script[script_next] != WAIT_MINUTE) settled = 0;
+            return;
+        }
         if (!task_started || task_suspended) { fputs("no input task for a scripted press\n", stderr); preview_finish(72, "no-input"); }
         settled = 0;
         press(script[script_next++]);
@@ -542,6 +548,20 @@ int preview_io_fault(const char *operation, int32_t fd) {
     snprintf(what, sizeof what, "%s:%s", operation, fd >= 0 && fd < 256 ? descriptors[fd] : "");
     return preview_store_fault(what);
 }
+/* "card-stat:PATH" in store.refuse fails every stat; "card.stat.once=TEXT"
+ * fails only the first stat whose path holds TEXT (transient SD read glitch). */
+static int card_stat_once_used;
+int preview_stat_fault(const char *path) {
+    if (!path) return 0;
+    const char *once = preview_conf("card.stat.once");
+    if (!card_stat_once_used && once && *once && strstr(path, once)) {
+        card_stat_once_used = 1;
+        return 1;
+    }
+    char what[4200];
+    snprintf(what, sizeof what, "card-stat:%s", path);
+    return preview_store_fault(what) == 1;
+}
 
 /* Library folders list in name order, so a preview never depends on the host
  * file system's directory order. A refused "card-list:PATH" fails the open.
@@ -638,6 +658,7 @@ static int32_t cover_facts(int status, const struct stat *info, struct cover_fac
     return 0;
 }
 int32_t newt_cover_stat(const char *path, struct cover_facts *out) {
+    if (preview_stat_fault(path)) { errno = EIO; return cover_facts(-1, NULL, out); }
     struct stat info;
     return cover_facts(lstat(fixture_path(path), &info), &info, out);
 }
@@ -670,6 +691,7 @@ _Bool newt_cover_heap_supported(void) { return 1; }
 /* "cover.heap.free=BYTES": the free heap cover work sees, so a test can make
  * Memory's live check refuse a large block. */
 size_t newt_cover_heap_free_bytes(void) {
+    preview_freeze_at("cover.work");
     /* A card open consumes heap after commit has begun, above the guard floor
      * but with too little spare room to admit another CRC block. */
     if (cover_heap_dropped) return 68 * 1024;
