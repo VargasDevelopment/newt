@@ -176,3 +176,36 @@ fn graph_selection_and_axis_vectors() {
     assert_eq!(stats_graph_slot(&g, 101), -1);
     assert_eq!(stats_graph_position(255).view, StatsGraphView::Summary);
 }
+#[test]
+fn the_newt_dresses_for_each_holiday_on_its_dates_only() {
+    use newt_core::{stats_clock::stats_clock, time_zone::ClockTime};
+    let on = |year, month, day| {
+        HolidayHat::on(stats_clock(ClockTime {
+            year,
+            month,
+            day,
+            hour: 9,
+            ..ClockTime::default()
+        }))
+    };
+    assert_eq!(on(2026, 10, 31), HolidayHat::Witch);
+    assert_eq!(on(2026, 11, 26), HolidayHat::Thanksgiving);
+    assert_eq!(on(2030, 11, 28), HolidayHat::Thanksgiving);
+    assert_eq!(on(2026, 12, 25), HolidayHat::Christmas);
+    for (year, month, day) in [(2026, 11, 25), (2026, 11, 27), (2026, 11, 19), (2030, 11, 21)] {
+        assert_eq!(on(year, month, day), HolidayHat::None, "{year}-{month}-{day}");
+    }
+    // The outfit draws in both planes: the gray planes get its exact complement.
+    let draw = |hat, selector| {
+        let mut frame = [if selector { 255 } else { 0 }; FRAME_BYTES];
+        let mut info = DeviceInfo::default();
+        info.hat = hat;
+        render_sleep_ui(&info, Some(&mut frame), portrait(), selector);
+        frame
+    };
+    let dressed = draw(HolidayHat::Thanksgiving, false);
+    assert_ne!(dressed, draw(HolidayHat::None, false));
+    for (a, b) in dressed.iter().zip(draw(HolidayHat::Thanksgiving, true)) {
+        assert_eq!(*a, !b);
+    }
+}

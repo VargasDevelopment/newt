@@ -85,6 +85,16 @@ def clock_value(text):
     return int(hours), int(minutes)
 
 
+def date_value(text):
+    try:
+        day = __import__('datetime').date.fromisoformat(text)
+    except ValueError:
+        raise Invalid(f'--date needs YYYY-MM-DD, not {text!r}') from None
+    if len(text) != 10:
+        raise Invalid(f'--date needs YYYY-MM-DD, not {text!r}')
+    return day.year, day.month, day.day
+
+
 def action_codes(text):
     """Comma-separated presses. "a+b" presses b before a's screen settles, so
     one input drain handles both; wake cannot join a group."""
@@ -118,10 +128,12 @@ def parse(arguments):
     known = {'--screen', '--telemetry', '--actions', '--clock', '--reader-orientation', '--reader-progress-bar',
              '--stats', '--other-firmware', '--update', '--library-fixture', '--build-id', '--build-date',
              '--working-preview', '--opening-preview', '--quick-start', '--quick-start-facts', '--radio',
-             '--app-package'}
+             '--app-package', '--date'}
     unknown = set(flags) - known
     if unknown:
         raise Invalid(f'unknown flags {sorted(unknown)}')
+    if '--date' in flags and '--clock' not in flags:
+        raise Invalid('--date needs --clock')
     keys = []
     for screen in flags.get('--screen', []):
         keys += SCREENS[choice('--screen', screen, SCREENS)]
@@ -146,6 +158,7 @@ def parse(arguments):
         keys=keys,
         telemetry=choice('--telemetry', last('--telemetry', 'unknown'), TELEMETRY),
         clock=clock_value(last('--clock')) if '--clock' in flags else None,
+        date=date_value(last('--date')) if '--date' in flags else TODAY,
         orientation=choice('--reader-orientation', last('--reader-orientation'), (None, *QUICK_START)),
         bar=choice('--reader-progress-bar', last('--reader-progress-bar', 'on'), ('on', 'off')),
         stats=choice('--stats', last('--stats'), (None, *STATS)),
@@ -404,7 +417,7 @@ def world(firmware, directory, options):
     write_conf(directory, conf)
     fresh(directory)
     if options['clock']:
-        (directory / 'clock.bin').write_bytes(clock_registers(*TODAY, *options['clock']))
+        (directory / 'clock.bin').write_bytes(clock_registers(*options['date'], *options['clock']))
 
 
 def preview(firmware, arguments):
