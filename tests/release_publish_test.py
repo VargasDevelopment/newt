@@ -540,6 +540,25 @@ class ReleasePublishTests(unittest.TestCase):
                                      [1, 2, 4][:min(misses, 3)])
                 self.assertEqual(len(github.created), 1)
 
+    def test_draft_readback_failures_never_push_a_nightly_tag(self):
+        for answer, message, delays in (
+                (ValueError('read failed'), 'read failed', []),
+                ({'draft': False}, 'shows no draft', []),
+                (None, 'shows no draft', [1, 2, 4])):
+            with self.subTest(answer=answer):
+                git = stamped_git()
+                release, github = self.nightly(git=git)
+                out = self.dir / f'out{len(delays)}{type(answer).__name__}'
+                with mock.patch.object(github, 'release_for', return_value=answer) as read, \
+                        mock.patch('release_publish.time.sleep') as sleep:
+                    if isinstance(answer, ValueError):
+                        read.side_effect = answer
+                    with self.assertRaisesRegex(ValueError, message):
+                        publish(release, out, github, git)
+                    self.assertEqual([call.args[0] for call in sleep.call_args_list], delays)
+                    self.assertEqual(read.call_count, len(delays) + 1)
+                self.assertEqual((git.pushed, github.patched), ([], []))
+
     def test_lost_publish_answer_that_published_succeeds(self):
         github = FakeGitHub('lost')
         with redirect_stderr(io.StringIO()) as printed:
