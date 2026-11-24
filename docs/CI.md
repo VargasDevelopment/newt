@@ -293,8 +293,10 @@ inputs. Failure or receipt drift stops the sequence; ceilings are unchanged.
 **Platform support.** The host gate (`tools/check.py`), CI gate (`tools/ci_gate.py`),
 host previews (`tools/rust_preview.py`), and firmware host build
 (`tools/firmware_host_build.py`) run only on **Linux x86_64** (`--profile linux`,
-the default). On any other platform they fail with a clear error rather than
-running an incomplete gate. A **Mac** runs only the host-only Swift ImageIO cover
+the default). On any other platform the gate entrypoints (`tools/check.py`,
+`tools/ci_gate.py`) stop with a clear error rather than running an incomplete
+gate; the preview and host build helpers have no such check and fail on the
+first missing tool. A **Mac** runs only the host-only Swift ImageIO cover
 gate (`tools/check-mac-covers.py`); it does not run `tools/check.py`, build the
 firmware for the host, or render reviewed frames.
 
