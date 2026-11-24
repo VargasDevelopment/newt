@@ -204,8 +204,23 @@ fn the_newt_dresses_for_each_holiday_on_its_dates_only() {
         frame
     };
     let dressed = draw(HolidayHat::Thanksgiving, false);
-    assert_ne!(dressed, draw(HolidayHat::None, false));
     for (a, b) in dressed.iter().zip(draw(HolidayHat::Thanksgiving, true)) {
         assert_eq!(*a, !b);
     }
+    // Golden for the owner-approved outfit (#117): pixels it changes and the
+    // whole frame. Night is the firmware's full inversion of this same frame.
+    let plain = draw(HolidayHat::None, false);
+    let changed: u32 = dressed
+        .iter()
+        .zip(plain)
+        .map(|(a, b)| (a ^ b).count_ones())
+        .sum();
+    let fnv = dressed.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &b| {
+        (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3)
+    });
+    assert_eq!(
+        (changed, fnv),
+        (6049, 0x82dd_0881_ff64_8c53),
+        "the Thanksgiving outfit differs from the reviewed art"
+    );
 }

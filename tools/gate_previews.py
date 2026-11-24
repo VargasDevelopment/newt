@@ -58,7 +58,8 @@ def main() -> None:
     for arguments in (("--screen", "nonsense"), ("--telemetry", "live"),
                       ("--actions", "next,,wake"), ("--actions", "sleep,"),
                       ("--actions", "shell"), ("--screen",), ("--clock", "24:00"), ("--clock", "9:41"),
-                      ("--clock", "12:00", "--date", "2026-11-31"), ("--date", "2026-11-26"),
+                      ("--clock", "12:00", "--date", "2026-11-31"), ("--clock", "12:00", "--date", "2126-11-26"),
+                      ("--clock", "12:00", "--date", "1999-11-25"), ("--date", "2026-11-26"),
                       ("--reader-orientation", "landscape"),
                       ("--reader-progress-bar", "yes"), ("--reader-orientation",), ("--stats", "busy"),
                       ("--other-firmware", "maybe"), ("--update", "maybe")):

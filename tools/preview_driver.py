@@ -92,6 +92,9 @@ def date_value(text):
         raise Invalid(f'--date needs YYYY-MM-DD, not {text!r}') from None
     if len(text) != 10:
         raise Invalid(f'--date needs YYYY-MM-DD, not {text!r}')
+    # The DS3231 fake stores two year digits and no century bit.
+    if not 2000 <= day.year <= 2099:
+        raise Invalid(f'--date needs a year from 2000 to 2099, not {day.year}')
     return day.year, day.month, day.day
 
 
