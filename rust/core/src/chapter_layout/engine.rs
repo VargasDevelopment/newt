@@ -206,13 +206,48 @@ impl<'a> EngineState<'a> {
             self.pending_margin = 0
         }
     }
-    fn append(&mut self, backend: &mut dyn Backend, b: u8) {
+    fn append(&mut self, backend: &mut dyn Backend, bytes: &[u8]) -> usize {
         if self.len + 1 >= self.storage.text.len() {
-            let p = self.paragraph;
+            let end = self.len;
+            let mut cut = end;
+            if bytes[0] & 0xc0 == 0x80 {
+                // A full buffer can end inside a character, even across callbacks.
+                // A lead byte at distance `back` must start a sequence longer than `back + 1` bytes.
+                for (back, (&byte, min_lead)) in self.storage.text[..end].iter().rev()
+                    .zip([0xc2, 0xe0, 0xf0]).enumerate()
+                {
+                    if byte & 0xc0 != 0x80 {
+                        if (min_lead..=0xf4).contains(&byte) {
+                            cut = end - 1 - back;
+                        }
+                        break;
+                    }
+                }
+            }
+            if cut == 0 {
+                self.failed = true;
+                return 0;
+            }
+            let span_at_cut = if cut < end { self.span_index(cut) } else { 0 };
+            self.len = cut;
             self.flush(backend);
-            self.paragraph = p;
+            if self.failed || self.stopped {
+                return 0;
+            }
             self.paragraph.before = 0;
-            self.continued = true
+            self.continued = true;
+            if cut < end {
+                // Flushing resets the counts while leaving the buffered data intact.
+                let mut span = self.storage.spans[span_at_cut];
+                if usize::from(span.start) != cut {
+                    span.margin = 0;
+                }
+                span.start = 0;
+                self.storage.text.copy_within(cut..end, 0);
+                self.len = end - cut;
+                self.storage.spans[0] = span;
+                self.span_count = 1;
+            }
         }
         if self.span_count == 0 {
             let s = self.state();
@@ -226,8 +261,11 @@ impl<'a> EngineState<'a> {
             self.span_count = 1;
             self.pending_margin = 0
         }
-        self.storage.text[self.len] = b;
-        self.len += 1
+        let free = &mut self.storage.text[self.len..];
+        let count = (free.len() - 1).min(bytes.len());
+        free[..count].copy_from_slice(&bytes[..count]);
+        self.len += count;
+        count
     }
     /// Attribute values are consumed during the callback; caller does not retain XML views.
     pub fn start(
@@ -298,7 +336,7 @@ impl<'a> EngineState<'a> {
             self.flush(backend);
             self.latch(n, d, false)
         } else if n == b"br" {
-            self.append(backend, b'\n')
+            self.append(backend, b"\n");
         } else if n == b"hr" {
             self.flush(backend);
             let lh = self.line_height(backend, self.params.base_size);
@@ -378,7 +416,9 @@ impl<'a> EngineState<'a> {
                 at += 1;
             } else {
                 if self.pending_space {
-                    self.append(backend, b' ');
+                    if self.append(backend, b" ") == 0 {
+                        return;
+                    }
                     self.pending_space = false;
                 }
                 let start = at;
@@ -395,13 +435,11 @@ impl<'a> EngineState<'a> {
                 }
                 let mut run = &t[start..at];
                 while !run.is_empty() {
-                    self.append(backend, run[0]);
-                    let count = self.storage.text.len().saturating_sub(self.len + 1).min(run.len() - 1);
-                    if count > 0 {
-                        self.storage.text[self.len..self.len + count].copy_from_slice(&run[1..1 + count]);
-                        self.len += count;
+                    let count = self.append(backend, run);
+                    if count == 0 {
+                        return;
                     }
-                    run = &run[1 + count..];
+                    run = &run[count..];
                 }
             }
         }

@@ -464,6 +464,45 @@ fn bounded_mock_backend_and_handler_reborrow() {
 }
 
 #[test]
+fn full_text_buffer_keeps_utf8_characters_whole() {
+    const CAPACITY: usize = 8;
+    let mut mismatches = Vec::new();
+    for character in ['é', '漢', '🙂'] {
+        for bytes_before_flush in 1..character.len_utf8() {
+            let prefix = "a".repeat(CAPACITY - 1 - bytes_before_flush);
+            let input = format!("{prefix}{character}z");
+            let mut utf8 = [0; 4];
+            let encoded = character.encode_utf8(&mut utf8).as_bytes();
+            let (first, rest) = encoded.split_at(bytes_before_flush);
+            let mut font = Fixed;
+            let mut sink = Capture::default();
+            let mut backend = SplitBackend { font: &mut font, sink: &mut sink };
+            with_text_capacity(&mut backend, 128, CAPACITY, |engine| {
+                engine.start(b"body", None, None, None, None, None);
+                engine.text(prefix.as_bytes());
+                engine.start(b"b", None, None, None, None, None);
+                engine.text(first);
+                engine.text(rest);
+                engine.end(b"b");
+                engine.text(b"z");
+                assert!(engine.finish());
+                assert_eq!(engine.chars, input.chars().count() as u32);
+            });
+            let runs = sink.pages.iter().flat_map(|(_, _, runs)| runs);
+            let output: Vec<_> = runs.clone().flat_map(|run| run.0.iter().copied()).collect();
+            let bold: Vec<_> = runs
+                .filter(|run| run.4 & BOLD != 0)
+                .flat_map(|run| run.0.iter().copied())
+                .collect();
+            if output != input.as_bytes() || bold != encoded {
+                mismatches.push((character, bytes_before_flush, output, bold));
+            }
+        }
+    }
+    assert!(mismatches.is_empty(), "text or style lost at flush boundaries: {mismatches:?}");
+}
+
+#[test]
 fn full_text_run_preserves_failed_flush() {
     struct InvalidHeight(i16);
     impl Font for InvalidHeight {
