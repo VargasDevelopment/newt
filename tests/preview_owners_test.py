@@ -113,7 +113,9 @@ def control_flags() -> None:
                      '-Cdebug-assertions=no', '-Coverflow-checks=no']
     assert root == ['rustc', '-Copt-level=1', '-Cpanic=abort']
     overrides = [[], ['-O'], ['-Copt-level=1'], ['-C', 'opt-level=2'],
-                 ['--codegen=opt-level=2'], ['--codegen', 'opt-level=2'], ['-C']]
+                 ['--codegen=opt-level=2'], ['--codegen', 'opt-level=2'], ['-C'],
+                 ['-gO'], ['-Og'], ['-gCopt-level=2'], ['-gCdebug-assertions=yes'],
+                 ['-gCoverflow-checks=yes'], ['@flags.rsp']]
     for key in ('debug-assertions', 'overflow-checks', 'debug_assertions', 'overflow_checks'):
         overrides.extend([[f'-C{key}=yes'], ['-C', f'{key}=yes'],
                           [f'--codegen={key}=yes'], ['--codegen', f'{key}=yes']])
@@ -135,6 +137,11 @@ def main():
     fakes = {path.name: path.read_text() for path in sorted((PREVIEW / "fakes").glob("*.c")) if path.name != "entry.c"}
     natives = declared_natives()
     binary = Path(sys.argv[1]) if len(sys.argv) == 2 else rust_preview.cli(rust_preview.build())
+    # Also pin the real builder's command, not only synthetic flag matrices.
+    root_command = json.loads(rust_preview.LINK.read_text())['command']
+    assert rust_preview._control_command(root_command, False) == [
+        '-Copt-level=0' if arg == '-Copt-level=1' else arg for arg in root_command
+    ] + ['-Cdebug-assertions=no', '-Coverflow-checks=no']
     compiled, expected = compiled_copy(), expected_copy()
     found = file_problems(files) + entry_problems(entry) + fake_problems(fakes, natives) \
         + copy_problems(compiled, expected)

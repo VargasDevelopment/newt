@@ -128,6 +128,12 @@ def cli(firmware: Path, path: Path | None = None) -> Path:
 def _control_command(command, optimize):
     if optimize:
         return list(command)
+    # Response files and bundled short options can hide codegen overrides.
+    # Refuse those spellings instead of implementing rustc's option parser.
+    for arg in command:
+        if arg.startswith('@') or (arg.startswith('-') and not arg.startswith(('--', '-C', '-L'))
+                                   and len(arg) > 2 and any(flag in arg for flag in 'OC')):
+            raise ValueError('control cannot validate response files or bundled O/C flags')
     options, pending = [], False
     for arg in command:
         if pending:
