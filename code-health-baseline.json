@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3682480,
+      "flash_bytes": 3682800,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "d86a12b95737819c28e4f818f6e42adc8b027628",
-      "before": 3680304,
-      "after": 3682480,
-      "reason": "#53 applies the declared book language to line breaking. The reviewed build includes the all-language warm-presence loop, language for the bounded reader, and language in the current and next chapter producer's segment names. Clean regional DEV USB builds measure 3,680,304 to 3,682,480 B (+2,176 B overall, +240 B since the first review fixes). RAM remains 124,096 B, lent Wi-Fi RAM 22,528 B, and RTC 300 B. All selected static frames fit their unchanged ceilings.",
-      "reviewer": "Lead, after independent review (Opus xhigh, round 3)"
+      "source_revision": "1795e0fe491a65bbed6a51b58ca663b8efc2ed2d",
+      "before": 3682480,
+      "after": 3682800,
+      "reason": "+320 B: the 0.4.0 What's new notes. Version string length unchanged. Clean regional DEV USB builds measure main 203a4846 at 3,682,480 B and the release commit at 3,682,800 B. RAM 124,096 -> 124,096 B, lent Wi-Fi RAM 22,528 -> 22,528 B, RTC 300 -> 300 B, stacks unchanged.",
+      "reviewer": "Lead (Claude Opus), reviewed 2026-11-24 against the clean before/after builds"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
