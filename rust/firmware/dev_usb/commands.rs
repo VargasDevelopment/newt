@@ -121,7 +121,11 @@ impl Bridge {
                 self.tx_progress = now;
                 self.tx_flush_pending = true;
             }
-            newt_core::dev_put::End::Cancelled => self.cancel(),
+            newt_core::dev_put::End::Cancelled => {
+                self.cancel();
+                self.tx_progress = now;
+                self.tx_flush_pending = true;
+            }
             newt_core::dev_put::End::Hello => self.hello(build, now),
         }
     }

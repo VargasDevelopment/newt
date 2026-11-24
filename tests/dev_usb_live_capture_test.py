@@ -3,10 +3,14 @@
 
 rust/tests/dev_usb_live_capture/capture.rs compiles the real firmware bridge
 (rust/firmware/dev_usb.rs) and real board channel (rust/salamander/board/dev_usb.rs)
-against a cycle-accurate model of ESP32-C3 USB_SERIAL_JTAG, Arduino HWCDC's
-256-byte wrapping TX ring buffer, 64-byte EP1 IN FIFO auto-flush, and Linux
-cdc_acm's 512-byte Bulk IN URB. Negative controls break each part of the fix
-and verify the exact Apps stall and Settings `ERROR capture-expired` regressions.
+against a packet- and state-level model of ESP32-C3 USB_SERIAL_JTAG, Arduino
+HWCDC's 256-byte wrapping TX ring buffer, 64-byte EP1 IN FIFO auto-flush, and
+Linux cdc_acm's 512-byte Bulk IN URB. Because this host harness swaps out the
+native C++ `nsc_*` helpers (rust/firmware/serial_console/native/serial_console.cpp)
+with the Rust model, breaking the real C++ register flush would not fail this
+suite; real-flush evidence comes from Virtual X3 and bench hardware runs.
+Negative controls break each Rust part of the fix and verify the Apps stall,
+Settings `ERROR capture-expired`, and cancelled-PUT tail-stall regressions.
 """
 import importlib.util
 import json
@@ -22,7 +26,7 @@ sys.path.insert(0, str(ROOT / 'tools'))
 from gate_tier import negative_controls
 
 BINARY = 'dev_usb_live_capture'
-TESTS = 4
+TESTS = 5
 # (what breaks, path under rust/, good text, broken text, test that must fail)
 CONTROLS = (
     ('Bridge skips flush_tx_tail on Apps live capture (reproduces Apps stall)',
@@ -45,6 +49,20 @@ CONTROLS = (
      '    if available_for_write() < HWCDC_TX_RING_BYTES {\n        let _ = wake_transmitter();\n        return false;\n    }\n',
      '',
      'flush_tx_tail_waits_for_ring_drain_and_hw_fifo_before_sending_zlp'),
+    ('put_ended(End::Cancelled) drops pending tail flush after a cancelled PUT reply',
+     'firmware/dev_usb/commands.rs',
+     '            newt_core::dev_put::End::Cancelled => {\n'
+     '                self.cancel();\n'
+     '                self.tx_progress = now;\n'
+     '                self.tx_flush_pending = true;\n'
+     '            }\n',
+     '            newt_core::dev_put::End::Cancelled => self.cancel(),\n',
+     'cancelled_put_reply_flushes_64_byte_tail'),
+    ('Bridge::cancel clears pending transport tail flush during session cancellation',
+     'firmware/dev_usb.rs',
+     '        self.capture = false;\n        self.capture_expired = false;\n    }\n',
+     '        self.capture = false;\n        self.capture_expired = false;\n        self.tx_flush_pending = false;\n    }\n',
+     'cancelled_put_reply_flushes_64_byte_tail'),
 )
 
 

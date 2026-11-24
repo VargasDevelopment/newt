@@ -84,7 +84,6 @@ impl Bridge {
         self.rendered = false;
         self.capture = false;
         self.capture_expired = false;
-        self.tx_flush_pending = false;
     }
 
     fn reply(&mut self, id: u32, body: &[u8]) {
@@ -107,6 +106,7 @@ impl Bridge {
     pub fn consume(&mut self, ticket: u32, connected: bool, now: u32) -> bool {
         if !connected || self.session == 0 || now.wrapping_sub(self.session_activity) >= 60_000 {
             self.cancel();
+            if !connected { self.tx_flush_pending = false; }
             return false;
         }
         if ticket == 0 || ticket != self.pending_ticket || self.consumed {
@@ -160,6 +160,7 @@ impl Bridge {
             self.tx_flush_pending = false;
         } else if now.wrapping_sub(self.tx_progress) >= 1_000 {
             self.cancel();
+            self.tx_flush_pending = false;
         }
     }
 
@@ -187,6 +188,7 @@ impl Bridge {
         let now = channel.now();
         if !channel.connected() {
             self.cancel();
+            self.tx_flush_pending = false;
             return;
         }
         if self.session != 0 && now.wrapping_sub(self.session_activity) >= 60_000 {
@@ -207,6 +209,7 @@ impl Bridge {
             let sent = channel.write(&self.tx[usize::from(self.tx_offset)..usize::from(self.tx_size)]);
             if sent > remaining {
                 self.cancel();
+                self.tx_flush_pending = false;
                 return;
             }
             if sent != 0 {
@@ -219,6 +222,7 @@ impl Bridge {
                 self.tx_flush_pending = true;
             } else if now.wrapping_sub(self.tx_progress) >= 1_000 {
                 self.cancel();
+                self.tx_flush_pending = false;
             }
             return;
         }
@@ -257,6 +261,7 @@ impl Bridge {
                 self.rx_size += 1;
             }
         }
+        self.flush_tx(channel, now);
     }
 }
 

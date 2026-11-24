@@ -4,8 +4,12 @@
 //! auto-flush, and Linux cdc_acm's 512-byte Bulk IN URB.
 //!
 //! Compiles the real firmware bridge (`rust/firmware/dev_usb.rs`) and real
-//! board channel (`rust/salamander/board/dev_usb.rs`) against a cycle-accurate
-//! HWCDC + USB_SERIAL_JTAG + cdc_acm transport model.
+//! board channel (`rust/salamander/board/dev_usb.rs`) against a packet- and
+//! state-level HWCDC + USB_SERIAL_JTAG + cdc_acm transport model. Because this
+//! host harness swaps out the native C++ `nsc_*` helpers
+//! (`rust/firmware/serial_console/native/serial_console.cpp`), breaking the
+//! real C++ register flush would not fail this test; real-flush evidence comes
+//! from Virtual X3 and bench hardware runs.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -253,6 +257,8 @@ struct FakeDevice {
     status: Status,
     frame: Box<[u8; FRAME_BYTES]>,
     queued: Vec<ButtonEvent>,
+    accept_put: bool,
+    granted_put: Option<newt_core::dev_put::Session>,
 }
 
 impl FakeDevice {
@@ -276,6 +282,8 @@ impl FakeDevice {
             },
             frame: frame.try_into().expect("exact frame size"),
             queued: Vec::new(),
+            accept_put: false,
+            granted_put: None,
         }
     }
 }
@@ -286,8 +294,13 @@ impl Device for FakeDevice {
     fn enqueue(&mut self, event: ButtonEvent) -> bool { self.queued.push(event); true }
     fn panel_ring(&mut self) -> Option<&PanelRing> { None }
     fn diagnostics(&mut self) -> Diagnostics { Diagnostics::default() }
-    fn put(&mut self, _session: newt_core::dev_put::Session) -> Result<(), newt_core::dev_put::Busy> {
-        Err(newt_core::dev_put::Busy::NotHome)
+    fn put(&mut self, session: newt_core::dev_put::Session) -> Result<(), newt_core::dev_put::Busy> {
+        if self.accept_put {
+            self.granted_put = Some(session);
+            Ok(())
+        } else {
+            Err(newt_core::dev_put::Busy::NotHome)
+        }
     }
 }
 
@@ -612,4 +625,184 @@ fn stalled_host_cancels_flush_and_consumed_waits_for_tail_flush() {
     ch.now_ms += 1;
     bridge.poll(&mut ch, &mut dev, "8dad3b493384", true);
     assert!(bridge.consumption_acknowledged(ticket));
+}
+
+struct NoopCard;
+impl newt_core::dev_put::Card for NoopCard {
+    fn entry(&mut self, _: &core::ffi::CStr) -> Result<newt_core::dev_put::Entry, i32> { Err(-1) }
+    fn make_folder(&mut self, _: &core::ffi::CStr) -> Result<(), i32> { Err(-1) }
+    fn create(&mut self, _: &core::ffi::CStr) -> Result<i32, i32> { Err(-1) }
+    fn open_read(&mut self, _: &core::ffi::CStr) -> Result<i32, i32> { Err(-1) }
+    fn write(&mut self, _: i32, _: &[u8]) -> Result<usize, i32> { Err(-1) }
+    fn read(&mut self, _: i32, _: &mut [u8]) -> Result<usize, i32> { Err(-1) }
+    fn sync(&mut self, _: i32) -> Result<(), i32> { Err(-1) }
+    fn close(&mut self, _: i32) -> Result<(), i32> { Err(-1) }
+    fn remove(&mut self, _: &core::ffi::CStr) -> Result<(), i32> { Err(-1) }
+    fn rename(&mut self, _: &core::ffi::CStr, _: &core::ffi::CStr) -> Result<(), i32> { Err(-1) }
+    fn free_bytes(&mut self) -> Result<u64, i32> { Err(-1) }
+}
+
+struct NoopHash;
+impl newt_core::update_online::Hash for NoopHash {
+    fn start(&mut self) -> bool { true }
+    fn update(&mut self, _: &[u8]) -> bool { true }
+    fn finish(&mut self, _: &mut [u8; 32]) -> bool { true }
+}
+
+/// Mirrors `rust/firmware/app_runtime/card_write.rs::LeaseWire`: tracks
+/// `tx_flush_pending` only for the lease lifetime and drops it on return.
+struct TestLeaseWire {
+    now_ms: u32,
+    tx_flush_pending: bool,
+    injected_bad_line: bool,
+    pause_host_on_abandon: bool,
+}
+
+impl newt_core::dev_put::Wire for TestLeaseWire {
+    fn connected(&mut self) -> bool { board_dev_usb::connected() }
+    fn read_byte(&mut self) -> i32 {
+        let byte = board_dev_usb::read_byte();
+        if byte < 0 && self.tx_flush_pending && board_dev_usb::flush_tx_tail() {
+            self.tx_flush_pending = false;
+        }
+        byte
+    }
+    fn write(&mut self, bytes: &[u8]) -> usize {
+        if self.injected_bad_line && self.pause_host_on_abandon {
+            with_model(|m| m.host_drain_paused = true);
+        }
+        let sent = board_dev_usb::write(bytes);
+        if sent != 0 {
+            self.tx_flush_pending = true;
+        }
+        sent
+    }
+    fn now(&mut self) -> u32 { self.now_ms }
+    fn physical_input(&mut self) -> bool { false }
+    fn pause(&mut self) {
+        self.now_ms += 1;
+        with_model(|m| m.step_usb_frames(1));
+        if !self.injected_bad_line {
+            let lines = with_model(|m| m.take_delivered_lines());
+            if lines.iter().any(|l| l.contains(" PUT ")) {
+                // Reposition empty TX ring to offset 252 so the 68-byte
+                // `ERROR abandoned reason=syntax` reply splits as 4 + 64 bytes
+                // across the 256-byte ring wrap.
+                with_model(|m| {
+                    assert_eq!(m.tx_len, 0);
+                    assert!(!m.hw_fifo_busy);
+                    m.tx_read = 252;
+                    m.tx_write = 252;
+                    m.host_urb.clear();
+                    m.host_delivered.clear();
+                    m.host_send_line("bad syntax");
+                });
+                self.injected_bad_line = true;
+            }
+        }
+    }
+}
+
+#[test]
+fn cancelled_put_reply_flushes_64_byte_tail() {
+    // Concrete 68-byte syntax-abandon reply:
+    // `!N1 3622628779 1 2147483649 ERROR abandoned reason=syntax *XXXXXXXX\n`
+    // Starting at ring offset 252, HWCDC sends 4 bytes (252..256) then a full
+    // 64-byte packet (0..64) that Linux cdc_acm holds in its 512-byte URB
+    // unless Bridge flushes a ZLP after `put_ended(End::Cancelled, ...)`.
+    const BOOT: u32 = 3_622_628_779;
+    const REQ_ID: u32 = 2_147_483_649;
+
+    with_model(|m| *m = HwCdcModel::new(0));
+    let mut bridge = Bridge::new(BOOT);
+    let mut ch = BoardChannel { now_ms: 1_000 };
+    let mut dev = FakeDevice::new(0, 1);
+    dev.accept_put = true;
+
+    let _ = exchange(&mut bridge, &mut ch, &mut dev, "N1 HELLO", BOOT, 1, 0, None);
+    // Let HELLO's own tail flush complete before PUT arrives, matching steady
+    // idle state on Home so `bridge.tx_flush_pending` starts strictly false.
+    ch.now_ms += 10;
+    bridge.poll(&mut ch, &mut dev, "8dad3b493384", true);
+    assert!(!bridge.output_pending(), "HELLO tail flush must finish before PUT");
+    with_model(|m| {
+        m.step_usb_frames(2);
+        m.host_delivered.clear();
+        m.host_urb.clear();
+        m.host_send_line(&format!("N1 {BOOT} 1 {REQ_ID} PUT"));
+    });
+    bridge.poll(&mut ch, &mut dev, "8dad3b493384", true);
+    let session = dev.granted_put.take().expect("PUT lease granted");
+    assert!(!bridge.output_pending(), "PUT admission leaves Bridge flush idle");
+
+    // Run the real `newt_core::dev_put::run()` until it sends the 68-byte
+    // `ERROR abandoned reason=syntax` reply and returns `End::Cancelled`.
+    let mut memory = [0u8; newt_core::dev_put::MEMORY_BYTES];
+    let mut card = NoopCard;
+    let mut hash = NoopHash;
+    let end = {
+        let mut wire = TestLeaseWire {
+            now_ms: ch.now_ms,
+            tx_flush_pending: false,
+            injected_bad_line: false,
+            pause_host_on_abandon: true,
+        };
+        let end = newt_core::dev_put::run(session, &mut memory, &mut wire, &mut card, &mut hash);
+        ch.now_ms = wire.now_ms;
+        assert!(wire.injected_bad_line);
+        assert!(wire.tx_flush_pending, "lease dropped with pending tail flush");
+        end
+    };
+    assert_eq!(end, newt_core::dev_put::End::Cancelled);
+
+    bridge.put_ended(end, "8dad3b493384", ch.now_ms);
+    // Session cancellation (e.g. a subsequent physical button press) must keep
+    // the pending transport tail flush alive.
+    bridge.physical_input();
+    assert!(bridge.output_pending(), "cancelled PUT must keep tail flush pending");
+
+    // Host drains the pre-write ZLP, the 4-byte pre-wrap short packet (252..256),
+    // and the 64-byte post-wrap packet (0..64). The 64-byte tail stays held in
+    // cdc_acm's URB with no later serial output.
+    with_model(|m| {
+        m.host_drain_paused = false;
+        m.step_usb_frames(10);
+        assert_eq!(m.tx_len, 0);
+        assert!(!m.hw_fifo_busy);
+        assert_eq!(m.host_urb.len(), EP1_MAX_PACKET, "last 64 bytes must wait in URB for ZLP");
+        assert!(m.take_delivered_lines().is_empty());
+    });
+
+    // Polling Bridge with zero subsequent serial output sends the ZLP and
+    // delivers the full 68-byte syntax-abandon reply.
+    ch.now_ms += 10;
+    bridge.poll(&mut ch, &mut dev, "8dad3b493384", true);
+    assert!(!bridge.output_pending(), "tail flush must clear once ZLP is staged");
+    assert!(bridge.background_work_ready());
+    with_model(|m| m.step_usb_frames(2));
+    let delivered = with_model(|m| m.take_delivered_lines());
+    assert_eq!(delivered.len(), 1);
+    assert_eq!(delivered[0].len() + 1, 68);
+    assert_eq!(
+        parse_protocol_line(&delivered[0], BOOT, 1, REQ_ID),
+        "ERROR abandoned reason=syntax"
+    );
+
+    // The protocol session itself was cancelled, so reusing session 1 fails.
+    let err = exchange(&mut bridge, &mut ch, &mut dev, &format!("N1 {BOOT} 1 {} STATUS", REQ_ID + 1), BOOT, 0, REQ_ID + 1, None);
+    assert_eq!(err, "ERROR session");
+
+    // Bounded timeout: if the host stops draining USB after a cancelled PUT,
+    // the 1,000 ms tx_progress limit clears `tx_flush_pending` cleanly.
+    with_model(|m| m.host_drain_paused = true);
+    bridge.put_ended(newt_core::dev_put::End::Cancelled, "8dad3b493384", ch.now_ms);
+    with_model(|m| { let _ = m.write(b"pending"); });
+    assert!(bridge.output_pending());
+    ch.now_ms += 990;
+    bridge.poll(&mut ch, &mut dev, "8dad3b493384", true);
+    assert!(bridge.output_pending());
+    ch.now_ms += 10;
+    bridge.poll(&mut ch, &mut dev, "8dad3b493384", true);
+    assert!(!bridge.output_pending());
+    assert!(bridge.background_work_ready());
 }
