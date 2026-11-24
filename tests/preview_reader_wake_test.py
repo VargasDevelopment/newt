@@ -310,10 +310,14 @@ def main():
     if not negative_controls(__file__):
         print(f'PASS: {len(CASES)} wake and cold-start flows run the firmware (controls not in this tier)')
         return
+    # Cases that share a control share its build. The preview's clock is fake,
+    # so these assertions don't depend on CPU speed and controls skip optimization.
+    built = {}
     for case, controls in CASES:
-        for name, old, new in controls:
-            control = rust_preview.build(edits=[(name, old, new)])
-            assert case(control) is not None, f'{case.__name__}: passes with {name} changed'
+        for edit in controls:
+            if edit not in built:
+                built[edit] = rust_preview.control([edit], optimize=False)
+            assert case(built[edit]) is not None, f'{case.__name__}: passes with {edit[0]} changed'
     print(f'PASS: {len(CASES)} wake and cold-start flows run the firmware; each control fails')
 
 
