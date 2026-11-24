@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MIT
 #include <Arduino.h>
 #include "serial_console.h"
+#include "hal/usb_serial_jtag_ll.h"
 HWCDC Serial;
 int main() {
     nsc_begin();
 #if NEWT_DEV_USB
-    constexpr uint32_t RX = 4u, TX = 2u, RESET = 8u;
+    constexpr uint32_t RX = USB_SERIAL_JTAG_INTR_SERIAL_OUT_RECV_PKT;
+    constexpr uint32_t TX = USB_SERIAL_JTAG_INTR_SERIAL_IN_EMPTY;
+    constexpr uint32_t RESET = USB_SERIAL_JTAG_INTR_BUS_RESET;
     fake_mask = RX | TX | RESET;
     fake_fifo = {'z'};
     assert(nsc_available() == 0 && nsc_read_byte() == -1);

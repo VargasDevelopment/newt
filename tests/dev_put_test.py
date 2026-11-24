@@ -11,6 +11,7 @@ fail, never to fail to compile.
 """
 import importlib.util
 import json
+import re
 from pathlib import Path
 import shutil
 import sys
@@ -130,11 +131,18 @@ def native_receive(run, workspace, output, support):
     fixture = workspace / 'tests/dev_put/native'
     source = native / 'serial_console.cpp'
     good = source.read_text()
+    # Use the pinned HAL enum without its target-only MMIO/CPU headers. The
+    # hosted toolchain installs this same SDK payload for every gate shard.
+    hal = ROOT / '.toolchain/platformio/packages/framework-arduinoespressif32-libs/esp32c3/include/hal/esp32c3/include/hal/usb_serial_jtag_ll.h'
+    text = hal.read_text()
+    enums = re.findall(r'typedef enum \{[^}]+\} usb_serial_jtag_ll_intr_t;', text)
+    support.require(len(enums) == 1, 'one pinned C3 USB interrupt enum required')
+    (output / 'pinned-usb-irq.h').write_text(text[:text.index('#pragma once')] + '#pragma once\n' + enums[0] + '\n')
     def check(enabled):
         binary = output / f'native-rx-{enabled}'
         run.run([run.tools['clang++'], '--no-default-config', '-std=c++17',
                  f'-DNEWT_DEV_USB={enabled}', '-DARDUINO_USB_MODE=1', '-DARDUINO_USB_CDC_ON_BOOT=1', '-DCONFIG_IDF_TARGET_ESP32C3=1',
-                 '-I' + str(fixture), '-I' + str(native), source, fixture / 'receive.cpp',
+                 '-I' + str(output), '-I' + str(fixture), '-I' + str(native), source, fixture / 'receive.cpp',
                  '-fuse-ld=/usr/bin/x86_64-linux-gnu-ld.bfd', '-o', binary], workspace)
         return binary
     for enabled in (0, 1):
@@ -145,6 +153,12 @@ def native_receive(run, workspace, output, support):
     for name, before, after in [
         ('restore removed', 'if (previous) usb_serial_jtag_ll_ena_intr_mask(USB_SERIAL_JTAG_INTR_SERIAL_OUT_RECV_PKT);', 'if (previous) { (void)previous; }'),
         ('queued bytes skipped', 'if (nsc_port_available(Serial) > 0) return nsc_port_read_byte(Serial);', ''),
+        ('begin clears BUS_RESET',
+         'usb_serial_jtag_ll_disable_intr_mask(USB_SERIAL_JTAG_INTR_SERIAL_OUT_RECV_PKT);\n    portEXIT_CRITICAL(&lock);\n    return previous;',
+         'usb_serial_jtag_ll_disable_intr_mask(USB_SERIAL_JTAG_INTR_SERIAL_OUT_RECV_PKT | USB_SERIAL_JTAG_INTR_BUS_RESET);\n    portEXIT_CRITICAL(&lock);\n    return previous;'),
+        ('end clears BUS_RESET',
+         '    portEXIT_CRITICAL(&lock);\n    // Do not clear RX raw status:',
+         '    usb_serial_jtag_ll_disable_intr_mask(USB_SERIAL_JTAG_INTR_BUS_RESET);\n    portEXIT_CRITICAL(&lock);\n    // Do not clear RX raw status:'),
         ('ordinary reads use leased FIFO', 'int nsc_read_byte(void) { return nsc_port_read_byte(Serial); }',
          'int nsc_read_byte(void) { return nsc_put_rx_read_byte(); }'),
     ]:
