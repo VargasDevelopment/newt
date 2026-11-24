@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3689776,
+      "flash_bytes": 3971984,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "99670e2e2d977a5b338f035dd6d5ff9eaf8d553c",
-      "before": 3687792,
-      "after": 3689776,
-      "reason": "+2,208 B measured over main 1716a76f (+1,984 B over the 3,687,792 B ceiling): #48 encodes versioned no-cover reason bare records (CJ + version byte C + M/U/I/X in cover.rs, automatically retrying older bare versions including CJB3..=CJB7), shows \"Making cover\" at 18 pt on uncached Books cards while cover work is pending and explains the selected book's no-cover reason or retryable pause (\"Cover will be made later\") on the existing Books note line with system notices keeping precedence (library-current-ui/src/lib.rs, library_covers.rs), distinguishes missing or invalid book metadata from retryable stat errors so transient/persistent SD stat errors keep the settle repaint and deferred note path (library_covers.rs), packs shelf-settle and retryable-pause flags into unused bits of CoverIdleState::settled with mask-preserving updates so Books performs at most one batched settle repaint and Home stays quiet under H2 (reader_cover_idle.rs, cover_idle_step.rs, reader_cover_producer.rs), and reads only the 28-byte .nlc header on focus moves. Clean regional DEV USB builds: main 1716a76f 3,687,568 B; 99670e2e 3,689,776 B. RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, CoverIdleState/CoverBookFacts/LibraryUiState sizes unchanged (16 B each), selected stack frames 0/16/32/48/480 B (within 0/16/32/48/656 B ceilings).",
-      "reviewer": "Newt Lead (cross-family review: Astra)"
+      "source_revision": "3f972a980c7caede28e260a03ce79003b6938e30",
+      "before": 3689776,
+      "after": 3971984,
+      "reason": "+282,208 B over the 3,689,776 B ceiling (main 78d59ea4 measures 3,689,776 B; owner-approved growth of about 280 KB): #41 adds a reader-chosen text size (22/24/27/30/34 px, default 30) drawn from native per-size shapes. Native Latin-core shapes for 22, 24, 27 and 34 px (341 glyphs x 4 faces per size, FreeType 2.14.2 at the pinned profile, provenance in rust/reader-atlas/provenance.json), stored 1-bit packed with rows of (w+7)/8 bytes and no compression: 247,901 B of bitmaps (22 px 42,668; 24 px 49,466; 27 px 61,690; 34 px 94,077) plus 32,736 B of 6-byte glyph records with u16 face-relative offsets and 64 B of face bases; about 1,500 B of code for the Text size row and its Aa sample, NWTP v4 byte 15, packed bits 16..24, the resume picture header byte, PageLayout and the 1-bit draw path. Clean regional DEV USB builds: main 78d59ea4 3,689,776 B; 3f972a98 3,971,984 B, 56.6% of the 7,016,448 B usable app flash (52.6% on main). RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, all 328 selected stack frames unchanged.",
+      "reviewer": "Lead review pending"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
