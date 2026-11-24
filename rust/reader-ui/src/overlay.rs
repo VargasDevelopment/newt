@@ -154,9 +154,9 @@ pub fn render_reader_overlay(
                     } else if ui.notice == ReaderUiNotice::ChapterLocationUnresolved {
                         b"That chapter's location could not be found"
                     } else if fallback == newt_phased_reader::ContentsFallback::Capacity {
-                        b"Contents too large. Showing section numbers."
+                        b"Contents too large; numbers shown."
                     } else if fallback == newt_phased_reader::ContentsFallback::Invalid {
-                        b"Contents unreadable. Showing section numbers."
+                        b"Contents unreadable; numbers shown."
                     } else if info.authored {
                         b"From the book's contents"
                     } else {
