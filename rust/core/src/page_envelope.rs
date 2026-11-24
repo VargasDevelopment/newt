@@ -2,9 +2,10 @@
 //! media and binds route/block position; it does not authenticate a writer.
 #![forbid(unsafe_code)]
 
-// Pages written before whole-line pagination can contain split lines and
-// duplicate character starts. Regenerate them through normal cache admission.
-const VERSION: u32 = 2;
+// Pages written under v1 can contain split lines and duplicate character
+// starts; pages written under v2 can drop links past a page's link slots.
+// Regenerate them in place through normal cache admission.
+const VERSION: u32 = 3;
 
 pub const BLOCK_BYTES: u32 = 4096;
 pub const MANIFEST_BYTES: u32 = 64;

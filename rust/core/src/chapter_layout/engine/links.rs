@@ -21,8 +21,9 @@ impl EngineState<'_> {
         }
     }
 
-    /// Record one visual segment's link rect, merging adjacent segments of the
-    /// same link on the current line and refusing the line when slots run out.
+    /// Record one visual segment's link rect, merging adjacent same-height
+    /// segments of the same link on the current line and refusing the line when
+    /// page link slots run out.
     pub(super) fn record_link(
         &mut self,
         link_id: u8,
@@ -37,15 +38,30 @@ impl EngineState<'_> {
             return true;
         }
         if *active_link == link_id {
-            if let Some(link) = self.storage.links[..self.link_count].last_mut() {
-                extend_link(link, x, y, width, height);
-                return true;
+            if let Some(link) = self
+                .link_count
+                .checked_sub(1)
+                .and_then(|i| self.storage.links.get_mut(i))
+            {
+                // Only merge when the vertical band matches; uniting taller
+                // inline text with normal text spreads the tall hit box over
+                // adjacent lines.
+                if link.y == y && link.height == height {
+                    let left = i32::from(link.x).min(i32::from(x));
+                    let right = (i32::from(link.x) + i32::from(link.width))
+                        .max(i32::from(x) + i32::from(width));
+                    link.x = left as i16;
+                    link.width = (right - left).min(i32::from(u16::MAX)) as u16;
+                    return true;
+                }
             }
         }
-        if self.link_count >= self.storage.links.len() {
+        let Some(slot) = self.storage.links.get_mut(self.link_count) else {
             return false;
-        }
-        let p = &self.storage.paragraph_links[usize::from(link_id - 1)];
+        };
+        let Some(p) = self.storage.paragraph_links.get(usize::from(link_id - 1)) else {
+            return false;
+        };
         let Some(target) =
             copy_page_bytes(self.storage.page, &mut self.pool_len, &p.path[..p.path_len])
         else {
@@ -58,7 +74,7 @@ impl EngineState<'_> {
         ) else {
             return false;
         };
-        self.storage.links[self.link_count] = Link {
+        *slot = Link {
             target,
             fragment,
             x,
@@ -70,17 +86,4 @@ impl EngineState<'_> {
         *active_link = link_id;
         true
     }
-}
-
-fn extend_link(link: &mut Link, x: i16, y: i16, width: u16, height: u16) {
-    let left = i32::from(link.x).min(i32::from(x));
-    let top = i32::from(link.y).min(i32::from(y));
-    let right =
-        (i32::from(link.x) + i32::from(link.width)).max(i32::from(x) + i32::from(width));
-    let bottom =
-        (i32::from(link.y) + i32::from(link.height)).max(i32::from(y) + i32::from(height));
-    link.x = left as i16;
-    link.y = top as i16;
-    link.width = (right - left).clamp(1, i32::from(u16::MAX)) as u16;
-    link.height = (bottom - top).clamp(0, i32::from(u16::MAX)) as u16;
 }

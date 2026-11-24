@@ -1163,10 +1163,12 @@ fn reserve_page_bytes(page: &[u8], pool_len: &mut usize, n: usize) -> Option<usi
         Some(at)
     }
 }
+#[inline(never)]
 fn copy_page_bytes(page: &mut [u8], pool_len: &mut usize, bytes: &[u8]) -> Option<Bytes> {
     let at = reserve_page_bytes(page, pool_len, bytes.len() + 1)?;
-    page[at..at + bytes.len()].copy_from_slice(bytes);
-    page[at + bytes.len()] = 0;
+    let dst = page.get_mut(at..at + bytes.len() + 1)?;
+    dst[..bytes.len()].copy_from_slice(bytes);
+    dst[bytes.len()] = 0;
     Some(Bytes {
         start: at as u32,
         len: bytes.len() as u16,

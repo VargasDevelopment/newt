@@ -46,14 +46,14 @@ fn card_files(card: &card::Card) -> BTreeMap<String, Vec<u8>> {
         .map(|(name, file)| (name.clone(), file.durable.clone())).collect()
 }
 
-fn seed_v1_pages(card: &card::Card, files: &BTreeMap<String, Vec<u8>>) -> (String, Vec<u8>) {
+fn seed_old_pages(card: &card::Card, files: &BTreeMap<String, Vec<u8>>, version: u32) -> (String, Vec<u8>) {
     let (path, current) = files.iter().find(|(path, _)| path.ends_with(".fibp")).unwrap();
     assert!(path.contains("/Pages/"));
     let mut old = current.clone();
     let manifest = old.len() - page_envelope::MANIFEST_BYTES as usize;
     assert_eq!(&old[manifest..manifest + 4], b"NTBE");
-    // Valid v1 envelope, including the checksum. Keep the exact filename.
-    old[manifest + 4..manifest + 8].copy_from_slice(&1u32.to_le_bytes());
+    // Valid older envelope, including the checksum. Keep the exact filename.
+    old[manifest + 4..manifest + 8].copy_from_slice(&version.to_le_bytes());
     let checksum = page_envelope::crc(u32::MAX, &old[manifest..manifest + 60]) ^ u32::MAX;
     old[manifest + 60..].copy_from_slice(&checksum.to_le_bytes());
     card.seed(path, old.clone());
@@ -61,6 +61,13 @@ fn seed_v1_pages(card: &card::Card, files: &BTreeMap<String, Vec<u8>>) -> (Strin
 }
 
 pub fn resume(bytes: Vec<u8>) {
+    for old_version in [1u32, 2] {
+        resume_from(bytes.clone(), old_version);
+    }
+    println!("PASS old Pages data misses, saved content resumes, and only Pages rebuilds");
+}
+
+fn resume_from(bytes: Vec<u8>, old_version: u32) {
     let mut tokens = [0u8; 2];
     // SAFETY: the existing host Board fake treats these as disjoint tokens.
     let (mut board, pending, _) = unsafe { newt_c3_board::Board::acquire_x3_optional_sd(
@@ -107,7 +114,7 @@ pub fn resume(bytes: Vec<u8>) {
         });
         let mut files = card_files(&card);
         assert!(files.keys().any(|path| path.contains("/State/")));
-        let (backup, legacy) = seed_v1_pages(&card, &files);
+        let (backup, legacy) = seed_old_pages(&card, &files, old_version);
         assert_ne!(card_files(&card), files);
 
         // Recreate the card owners from durable bytes only.
@@ -180,5 +187,4 @@ pub fn resume(bytes: Vec<u8>) {
         let added: Vec<_> = rebuilt.keys().filter(|name| !files.contains_key(*name)).collect();
         assert!(changed.is_empty() && added.is_empty(), "unexpected card changes: {changed:?}, added: {added:?}");
     }).unwrap();
-    println!("PASS old Pages data misses, saved content resumes, and only Pages rebuilds");
 }
