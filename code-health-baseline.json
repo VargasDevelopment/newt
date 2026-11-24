@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3685904,
+      "flash_bytes": 3685968,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,10 +28,10 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "d540a87e9d6489c74504b6682ede4a93ba81fc81",
+      "source_revision": "61c9196d759cf331484e7401fedc821a82b9d4b8",
       "before": 3685328,
-      "after": 3685904,
-      "reason": "+800 B against main (+576 B over the last ceiling): #42 offers both landscape directions. Clockwise is the counterclockwise frame turned half a turn (byte-reversed copy with bit-reversed bytes), Previous and Next swap while a clockwise frame is shown, NWTP v3 stores only the clockwise choice, packed settings words gain a half-turn bit with one shared pack/unpack, and Quick Start and Reading settings gain the third choice and its copy. Clean regional DEV USB builds: main 4baa4985 3,685,104 B; d540a87e 3,685,904 B. RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, all 328 selected stack frames unchanged.",
+      "after": 3685968,
+      "reason": "+864 B against main (+640 B over the last ceiling): #42 offers both landscape directions. Clockwise is the counterclockwise frame turned half a turn (byte-reversed copy with bit-reversed bytes), Previous and Next swap on book screens while a clockwise frame is shown, NWTP v3 stores only the clockwise choice, packed settings words gain a half-turn bit with one shared pack/unpack (the sleep record's reader_view also feeds wake diagnostics), and Quick Start and Reading settings gain the third choice and its copy. Clean regional DEV USB builds: main 4baa4985 3,685,104 B; 61c9196d 3,685,968 B. RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, all 328 selected stack frames unchanged.",
       "reviewer": "Lead review pending (worker measurement)"
     },
     "ram_bytes": {
