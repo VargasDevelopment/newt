@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3683584,
+      "flash_bytes": 3683744,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "3529751a59ed691b5245ecc8b1ec14f6c53e44a5",
-      "before": 3682800,
-      "after": 3683584,
-      "reason": "#64 fits whole lines within the page budget, wraps at the segment cap, and restores saved content after repagination. The measurement includes the #53 staged capture and next-chapter producer language follow-up (phase_session.rs and producer_next_finish.rs). Clean regional DEV USB flash 3,682,800 → 3,683,584 B (+784 B against main 80a49a14). RAM 124,096 → 124,096 B, RTC 300 → 300 B, Wi-Fi lend 22,528 B, and selected stack frames within their existing ceilings.",
-      "reviewer": "Opus xhigh round 4 reviewed measured firmware revision c4295d78 in PR head 144f0ba6. Codex reported no findings on 41aebdcc and 144f0ba6."
+      "source_revision": "072f35f5574f89f4ab460406e8b32e607d110208",
+      "before": 3683584,
+      "after": 3683744,
+      "reason": "+160 B: #78 moves a long test-build version onto its own line under Updated to, so What's new no longer cuts it off; official versions keep one title line. Clean regional DEV USB builds measure main 2f01d80e at 3,683,584 B and 072f35f5 at 3,683,744 B. RAM 124,096 -> 124,096 B, lent Wi-Fi RAM 22,528 -> 22,528 B, RTC 300 -> 300 B, selected stack frames within their existing ceilings.",
+      "reviewer": "Pending: Lead review of the clean before/after builds in the #78 pull request"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
