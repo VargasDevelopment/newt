@@ -7,6 +7,8 @@ use newt_native_io::{UiIo,cover::observer as sdk};
 use newt_native_storage::Kind;
 use super::{io::Control,CoverResult as R};
 use super::heap::Heap;
+// A rejected row replaces this initial gate with its exact required length.
+const MIN_FORMAT_SPACE:u16=200;
 /// The single synchronous idle call's exact frozen observation fields.
 pub struct Observation{
     started:u32,elapsed:Cell<u32>,reads:Cell<usize>,read_bytes:Cell<usize>,
@@ -64,12 +66,12 @@ pub fn collect(clock:fn()->u32,work:impl FnOnce(&Heap<'_>)->R)->(R,Observation){
     };
     observation.finish_time(clock());(result,observation)
 }
-// None defers before writing. Any write attempt is final: the SDK may have
-// queued bytes even when it reports zero or a short count.
-fn emit(io:&UiIo,control:&dyn Control,record:Record<'_>)->Option<bool>{
-    if record.length==0||record.length>record.bytes.len(){return Some(false);}
-    if control.stopped()||newt_c3_board::dev_usb::available_for_write()<record.length as i32{return None;}
-    Some(sdk::write(io,&record.bytes[..record.length])==record.length)
+// Only Deferred precedes a write; Failed may already have queued bytes.
+enum Emit{Failed,Sent,Deferred}
+fn emit(io:&UiIo,control:&dyn Control,record:Record<'_>)->Emit{
+    if record.length==0||record.length>record.bytes.len(){return Emit::Failed;}
+    if control.stopped()||newt_c3_board::dev_usb::available_for_write()<record.length as i32{return Emit::Deferred;}
+    if sdk::write(io,&record.bytes[..record.length])==record.length{Emit::Sent}else{Emit::Failed}
 }
 #[derive(Default)]
 struct Census{scanned:u32,art:u32,no_art:u32,temporary:u32,other:u32,errors:u32,limited:bool,interrupted:bool,skipped:bool}
@@ -109,7 +111,7 @@ fn census(io:&UiIo,control:&dyn Control)->Census{
 /// Return the required retry space; finished or unformattable rows leave the slot.
 #[inline(never)]
 fn report(observation:&Observation,result:R,io:&UiIo,control:&dyn Control)->Option<u16>{
-    if control.stopped()||newt_c3_board::dev_usb::available_for_write()<200{return Some(200);}
+    if control.stopped()||newt_c3_board::dev_usb::available_for_write()<i32::from(MIN_FORMAT_SPACE){return Some(MIN_FORMAT_SPACE);}
     let min_free=if observation.min_free.get()==usize::MAX{0}else{observation.min_free.get()};
     let min_largest=if observation.min_largest.get()==usize::MAX{0}else{observation.min_largest.get()};
     let mut bytes=[0;384];let mut record=Record::new(&mut bytes);
@@ -120,7 +122,7 @@ fn report(observation:&Observation,result:R,io:&UiIo,control:&dyn Control)->Opti
     if formatted.is_err(){return None;}
     let needed=record.length as u16;
     match emit(io,control,record){
-        None=>return Some(needed),Some(false)=>return None,Some(true)=>{},
+        Emit::Deferred=>return Some(needed),Emit::Failed=>return None,Emit::Sent=>{},
     }
     if result!=R::Idle{
         let census=census(io,control);let mut bytes=[0;160];let mut record=Record::new(&mut bytes);
@@ -156,7 +158,7 @@ impl Pending{
         if result==R::Cancelled&&no_work{return;}
         if result==R::Idle&&self.0.as_ref().is_some_and(|pending|pending.result!=R::Idle){return;}
         if !no_work||result!=R::Idle{
-            self.0=Some(Attempt{result,observation,needed:200,drain_ticks:20});
+            self.0=Some(Attempt{result,observation,needed:MIN_FORMAT_SPACE,drain_ticks:20});
         }
     }
     pub fn publish(&mut self,io:&UiIo,control:&dyn Control){

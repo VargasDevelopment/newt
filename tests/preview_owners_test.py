@@ -105,7 +105,29 @@ def repros(binary: Path) -> None:
     assert len(frames) == 3, "Off, Week and Habit draw the same sleep frame"
 
 
+def control_flags() -> None:
+    root = ['rustc', '-Copt-level=1', '-Cpanic=abort']
+    assert rust_preview._control_command(root, True) == root
+    cheap = rust_preview._control_command(root, False)
+    assert cheap == ['rustc', '-Copt-level=0', '-Cpanic=abort',
+                     '-Cdebug-assertions=no', '-Coverflow-checks=no']
+    assert root == ['rustc', '-Copt-level=1', '-Cpanic=abort']
+    overrides = [[], ['-O'], ['-Copt-level=1'], ['-C', 'opt-level=2'],
+                 ['--codegen=opt-level=2'], ['--codegen', 'opt-level=2'], ['-C']]
+    for key in ('debug-assertions', 'overflow-checks', 'debug_assertions', 'overflow_checks'):
+        overrides.extend([[f'-C{key}=yes'], ['-C', f'{key}=yes'],
+                          [f'--codegen={key}=yes'], ['--codegen', f'{key}=yes']])
+    for extra in overrides:
+        command = root + extra if extra else ['rustc', '-Cpanic=abort']
+        try:
+            rust_preview._control_command(command, False)
+        except ValueError:
+            continue
+        raise AssertionError(f'cheap control accepted a different root policy: {command}')
+
+
 def main():
+    control_flags()
     files = {str(path.relative_to(PREVIEW)) for path in PREVIEW.rglob("*") if path.is_file()
              and "__pycache__" not in path.parts}
     entry = (PREVIEW / "fakes/entry.c").read_text()

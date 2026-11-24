@@ -125,17 +125,39 @@ def cli(firmware: Path, path: Path | None = None) -> Path:
     return path
 
 
+def _control_command(command, optimize):
+    if optimize:
+        return list(command)
+    options, pending = [], False
+    for arg in command:
+        if pending:
+            options.append(arg)
+            pending = False
+        elif arg in ('-C', '--codegen'):
+            pending = True
+        elif arg.startswith('-C'):
+            options.append(arg[2:])
+        elif arg.startswith('--codegen='):
+            options.append(arg.removeprefix('--codegen='))
+        elif arg == '-O':
+            options.append('opt-level=2')
+    keys = [option.split('=', 1)[0].replace('_', '-') for option in options]
+    if pending or command.count('-Copt-level=1') != 1 or keys.count('opt-level') != 1:
+        raise ValueError('control requires the root opt-level=1 policy exactly once')
+    if any(key in ('debug-assertions', 'overflow-checks') for key in keys):
+        raise ValueError('control requires the root default debug/overflow policies')
+    # opt-level=1 defaults both policies off. Reject an explicit root override
+    # rather than silently changing its semantics in the cheaper control.
+    return ['-Copt-level=0' if arg == '-Copt-level=1' else arg for arg in command] + [
+        '-Cdebug-assertions=no', '-Coverflow-checks=no']
+
+
 def control(edits, *, optimize: bool = True) -> Path:
     """Relink the last build over a private copy of its generated sources, so
     parallel controls never see each other's edits. Timing-independent suites
     may skip root optimization; the positive preview stays optimized."""
     link = json.loads(LINK.read_text())
-    command = link['command']
-    if not optimize:
-        assert command.count('-Copt-level=1') == 1
-        command = ['-Copt-level=0' if arg == '-Copt-level=1' else arg for arg in command]
-        # Match the optimized root's policies; only optimization changes.
-        command += ['-Cdebug-assertions=no', '-Coverflow-checks=no']
+    command = _control_command(link['command'], optimize)
     source = WORK / 'source'
     key = '%08x' % zlib.crc32(json.dumps((edits, optimize)).encode())
     out = WORK / 'controls' / key

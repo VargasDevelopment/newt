@@ -540,6 +540,11 @@ def usb_backpressure(binary):
 
 def usb_write_failures(binary):
     """A zero/short return after the space gate is final, never a retry."""
+    with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
+        world = World(binary, scratch, **{'cover.usb.write_result': ''})
+        _, results, _ = world.run(SHELF)
+        if results != [PRODUCED] * 4 or (world.directory / 'cover-writes.txt').exists():
+            return f'empty USB fault setting enabled the ring model: {results}'
     for result in ('zero', 'short'):
         with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
             world = World(binary, scratch, **{'cover.usb.write_result': result})
@@ -727,7 +732,7 @@ CASES = [
         [('cover_observation.rs',
           '        if result==R::Idle&&self.0.as_ref().is_some_and(|pending|pending.result!=R::Idle){return;}\n', '')]]),
     (usb_write_failures, [
-        [('cover_observation.rs', 'Some(false)=>return None', 'Some(false)=>return Some(needed)')]]),
+        [('cover_observation.rs', 'Emit::Failed=>return None', 'Emit::Failed=>return Some(needed)')]]),
     (usb_input_drain, [
         [('cover_observation.rs', '        if control.stopped(){return Drain::Stopped;}\n', '')],
         [('cover_observation.rs', 'if control.stopped(){return Drain::Stopped;}',
