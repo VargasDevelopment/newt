@@ -953,6 +953,7 @@ impl<'a> EngineState<'a> {
             order[..n].reverse()
         }
         let before = (self.run_count, self.link_count, self.pool_len);
+        let mut active_link = 0;
         for v in 0..n {
             let sg = segs[usize::from(order[v])];
             let span = self.storage.spans[sg.span];
@@ -978,7 +979,7 @@ impl<'a> EngineState<'a> {
                 x += self.margin(span)
             }
             let hy = sg.end == r.end && r.flags & 2 != 0 && !self.rtl;
-            if !self.emit_segment(backend, sg, hy, baseline, &mut x) {
+            if !self.emit_segment(backend, sg, hy, baseline, &mut x, &mut active_link) {
                 // Unpublished runs, links and bytes are discarded together.
                 // The caller retries this whole line at the top of the next page.
                 (self.run_count, self.link_count, self.pool_len) = before;
@@ -991,30 +992,14 @@ impl<'a> EngineState<'a> {
         self.y = self.y.wrapping_add(lh);
         LinePlacement::Placed(rest)
     }
-    fn reserve(&mut self, n: usize) -> Option<usize> {
-        if n > self.storage.page.len().saturating_sub(self.pool_len) {
-            None
-        } else {
-            let at = self.pool_len;
-            self.pool_len += n;
-            Some(at)
-        }
-    }
-    fn copy_bytes(&mut self, bytes: &[u8]) -> Option<Bytes> {
-        let at = self.reserve(bytes.len() + 1)?;
-        self.storage.page[at..at + bytes.len()].copy_from_slice(bytes);
-        self.storage.page[at + bytes.len()] = 0;
-        Some(Bytes {
-            start: at as u32,
-            len: bytes.len() as u16,
-        })
-    }
     fn emit_segment(
-        &mut self, backend: &mut dyn Backend,
+        &mut self,
+        backend: &mut dyn Backend,
         sg: Segment,
         hy: bool,
         baseline: i16,
         x: &mut i32,
+        active_link: &mut u8,
     ) -> bool {
         let span = self.storage.spans[sg.span];
         let (mut width, mut prev, mut i) = (0, 0, sg.start);
@@ -1026,7 +1011,7 @@ impl<'a> EngineState<'a> {
         let flags = span.flags | sg.extra;
         let n = sg.end - sg.start;
         let need = n + n / 2 + usize::from(hy) + 4;
-        let Some(at) = self.reserve(need) else {
+        let Some(at) = reserve_page_bytes(self.storage.page, &mut self.pool_len, need) else {
             return false;
         };
         let (mut len, mut i) = (0, sg.start);
@@ -1066,23 +1051,15 @@ impl<'a> EngineState<'a> {
             flags,
         };
         self.run_count += 1;
-        if span.link != 0 && self.link_count < self.storage.links.len() {
-            let p = self.storage.paragraph_links[usize::from(span.link - 1)];
-            let Some(target) = self.copy_bytes(&p.path[..p.path_len]) else {
-                return false;
-            };
-            let Some(fragment) = self.copy_bytes(&p.fragment[..p.fragment_len]) else {
-                return false;
-            };
-            self.storage.links[self.link_count] = Link {
-                target,
-                fragment,
-                x: *x as i16,
-                y: rb.wrapping_sub(sz as i16),
-                width: width.max(1) as u16,
-                height: sz.wrapping_add(sz / 4),
-            };
-            self.link_count += 1;
+        if !self.record_link(
+            span.link,
+            active_link,
+            *x as i16,
+            rb.wrapping_sub(sz as i16),
+            width.clamp(1, i32::from(u16::MAX)) as u16,
+            sz.wrapping_add(sz / 4),
+        ) {
+            return false;
         }
         *x += width;
         true
@@ -1126,7 +1103,7 @@ impl<'a> EngineState<'a> {
                 return;
             }
         }
-        let href = self.copy_bytes(&path[..n]);
+        let href = copy_page_bytes(self.storage.page, &mut self.pool_len, &path[..n]);
         let Some(href) = href else {
             self.failed = true;
             return;
@@ -1176,4 +1153,24 @@ enum LinePlacement {
 fn justification_gaps(line: Line, justify_hangul: bool) -> i32 {
     i32::from(line.spaces) + i32::from(line.cjk)
         + if justify_hangul { i32::from(line.hangul) } else { 0 }
+}
+fn reserve_page_bytes(page: &[u8], pool_len: &mut usize, n: usize) -> Option<usize> {
+    if n > page.len().saturating_sub(*pool_len) {
+        None
+    } else {
+        let at = *pool_len;
+        *pool_len += n;
+        Some(at)
+    }
+}
+#[inline(never)]
+fn copy_page_bytes(page: &mut [u8], pool_len: &mut usize, bytes: &[u8]) -> Option<Bytes> {
+    let at = reserve_page_bytes(page, pool_len, bytes.len() + 1)?;
+    let dst = page.get_mut(at..at + bytes.len() + 1)?;
+    dst[..bytes.len()].copy_from_slice(bytes);
+    dst[bytes.len()] = 0;
+    Some(Bytes {
+        start: at as u32,
+        len: bytes.len() as u16,
+    })
 }

@@ -55,6 +55,7 @@ struct Capture {
     pages: Vec<(u32, u32, Vec<(Vec<u8>, i16, i16, u16, u8)>)>,
     page_byte_counts: Vec<usize>,
     links: Vec<(u32, Vec<u8>, Vec<u8>)>,
+    link_rects: Vec<(u32, i16, i16, u16, u16)>,
     stop: bool,
 }
 impl Sink for Capture {
@@ -64,6 +65,13 @@ impl Sink for Capture {
             p.index,
             link.target.get(p.bytes).to_vec(),
             link.fragment.get(p.bytes).to_vec(),
+        )));
+        self.link_rects.extend(p.links.iter().map(|link| (
+            p.index,
+            link.x,
+            link.y,
+            link.width,
+            link.height,
         )));
         self.page_byte_counts.push(p.bytes.len());
         self.pages.push((
@@ -226,6 +234,9 @@ fn link_pool_limit_moves_the_whole_line_with_its_link() {
         ]);
     }
 }
+
+#[path = "chapter_layout/links.rs"]
+mod links;
 
 fn two_lines_on_separate_pages(page_cap: usize, run_cap: usize) {
     let mut sink = Capture::default();
