@@ -853,9 +853,9 @@ fn bind_menu_book<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
                 })?)
         } else { Err(Status::Unsupported) }
     } else { Err(Status::Unsupported) };
+    let optional = optional.and_then(|bound| bound.then_some(()).ok_or(Status::OutOfMemory));
     let (bound, optional) = match optional {
-        Ok(true) => (true, Status::Ok),
-        Ok(false) => (project(arena, &[]), Status::OutOfMemory),
+        Ok(()) => (true, Status::Ok),
         Err(status) => (project(arena, &[]), status),
     };
     arena.release(mark);

@@ -116,8 +116,7 @@ pub(crate) fn select_book_metadata<
         Err(Status::Unsupported)
     };
     let (bound, optional) = match optional {
-        Ok(true) => (true, Status::Ok),
-        Ok(false) => (bind(arena, &[]), Status::OutOfMemory),
+        Ok(bound) => (bound, Status::Ok),
         Err(status) => (bind(arena, &[]), status),
     };
     // The copied projection survives both typed tail reclamation and strings.
