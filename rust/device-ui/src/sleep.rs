@@ -1,7 +1,7 @@
 use crate::*;
 use crate::{Buffer, assets::*, cstr, para, valid_geometry, width};
 use core::fmt::Write;
-use newt_system_ui::clamped_list_buttons;
+use newt_system_ui::{SYSTEM_BODY_TOP, clamped_list_buttons};
 use newt_ui_canvas::{book_title, fold_text};
 pub fn sleep_inverted(e: &SleepExtras) -> bool {
     e.habit == ReadingHabit::Night
@@ -482,7 +482,7 @@ pub fn render_sleep_screen_settings(
             names[i],
             if on[i] { "On" } else { "Off" }
         );
-        page.row(146, i as u32, Some(&buf), i as u32 == pos);
+        page.row(SYSTEM_BODY_TOP, i as u32, Some(&buf), i as u32 == pos);
     }
     let notes = [
         "Shows your book's title and progress. Anyone who sees the device can read it.",

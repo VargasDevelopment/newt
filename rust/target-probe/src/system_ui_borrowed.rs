@@ -36,7 +36,7 @@ pub unsafe extern "C" fn system_ui_borrowed(
             list_overlay_buttons(&list, focus),
             Some(title),
         );
-        page.row(146, focus.into(), Some(title), true);
+        page.row(newt_system_ui::SYSTEM_BODY_TOP, focus.into(), Some(title), true);
     }
     frame
         .iter()

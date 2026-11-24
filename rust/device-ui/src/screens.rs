@@ -124,7 +124,7 @@ fn settings(
                 _ => "",
             }),
         };
-        page.row(146, i as u32, Some(&label), *r == row);
+        page.row(SYSTEM_BODY_TOP, i as u32, Some(&label), *r == row);
     }
     let notice = state.settings_notice;
     if row == SettingsRow::FirmwareSwitch {
@@ -180,7 +180,7 @@ fn settings(
             _ => return,
         };
     }
-    let note_top = 146 + ROWS.len() as i32 * SYSTEM_ROW_PITCH + 26;
+    let note_top = SYSTEM_BODY_TOP + ROWS.len() as i32 * SYSTEM_ROW_PITCH + 26;
     para(page.canvas(), 50, note_top, &note, 21, 428, note_top + 129);
 }
 // Leave room for the longest prefix and all 23 version bytes.
@@ -192,10 +192,11 @@ fn version_label<'a>(line: &'a mut [u8; 34], prefix: &[u8], version: &[u8]) -> &
     &line[..prefix.len() + count]
 }
 const TITLE_PITCH: i32 = 40;
-const WHATS_NEW_TOP: i32 = 146;
 /// "Updated to <version>" on one title line when it fits. A longer test-build
 /// version takes its own line under "Updated to" rather than losing its end;
-/// official versions keep one line, so the notes keep their room.
+/// official versions keep one line, so the notes keep their room. Official
+/// and nightly versions fit that line (nightly dates checked through 2035);
+/// a SemVer version with wide letters or build metadata may still be cut.
 fn updated_title<'a>(line: &'a mut [u8; 34], version: &'a [u8]) -> (&'a [u8], Option<&'a [u8]>) {
     let title = version_label(line, b"Updated to ", version);
     if width(title, 32, true) <= SYSTEM_CONTENT_WIDTH {
@@ -523,7 +524,7 @@ pub fn render_device_ui(
                 },
                 Some(title),
             );
-            let mut top = WHATS_NEW_TOP;
+            let mut top = SYSTEM_BODY_TOP;
             if let Some(version) = version {
                 let line_top = SYSTEM_TITLE_TOP + TITLE_PITCH;
                 text(page.canvas(), SYSTEM_CONTENT_LEFT, line_top, version, 32, true, SYSTEM_CONTENT_WIDTH);

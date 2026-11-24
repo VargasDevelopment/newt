@@ -20,9 +20,10 @@ fn updated_title_shows_the_whole_version() {
         updated_title(&mut line, b"0.4.0"),
         (b"Updated to 0.4.0".as_slice(), None)
     );
-    // The widest test build: tools/nightly.py's form at the 23-character
-    // limit, in 0, the widest digit. Its own line must hold it uncut.
-    let widest = b"0.0.0-dev.20000000.0000";
+    // The widest 23-character nightly (tools/nightly.py) with a date through
+    // 2035 measures exactly the line's 428 px: '4' is the widest digit and
+    // "0." kerns tighter. From 2040, a 4-digit counter may be cut.
+    let widest = b"0.0.4-dev.20300404.4444";
     assert_eq!(updated_title(&mut line, widest), (b"Updated to".as_slice(), Some(widest.as_slice())));
-    assert!(width(widest, 32, true) <= SYSTEM_CONTENT_WIDTH);
+    assert_eq!(width(widest, 32, true), SYSTEM_CONTENT_WIDTH);
 }

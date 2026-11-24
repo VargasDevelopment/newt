@@ -7,7 +7,6 @@ use core::fmt::Write;
 use newt_core::update_card::FILE_BYTES;
 use newt_system_ui::*;
 use newt_ui_canvas::{Frame, folded_name, paragraph_rows, text_width};
-pub(super) const ROWS_TOP: i32 = 146;
 
 /// snprintf's byte-preserving concatenation into the caller's original buffer.
 fn joined(out: &mut [u8], parts: &[&[u8]]) {
@@ -62,11 +61,11 @@ fn render_list<P, S>(view: &UpdateView<'_, P, S>, bar: &SystemBar, frame: Option
     for each in &view.offers {
         if !each.present { continue; }
         offer_label(each, &mut label);
-        page.row(ROWS_TOP, row, Some(&label), row == u32::from(view.focus)); row += 1;
+        page.row(SYSTEM_BODY_TOP, row, Some(&label), row == u32::from(view.focus)); row += 1;
     }
-    page.row(ROWS_TOP, row, Some(if wifi { b"Set up Wi-Fi".as_slice() } else { b"Check GitHub for updates" }), check);
+    page.row(SYSTEM_BODY_TOP, row, Some(if wifi { b"Set up Wi-Fi".as_slice() } else { b"Check GitHub for updates" }), check);
     row += 1;
-    let mut top = ROWS_TOP + row as i32 * SYSTEM_ROW_PITCH + 26;
+    let mut top = SYSTEM_BODY_TOP + row as i32 * SYSTEM_ROW_PITCH + 26;
     let c = page.canvas();
     let mut paragraph = |text: &[u8]| {
         let rows = paragraph_rows(Some(text), 21, SYSTEM_CONTENT_WIDTH);
@@ -94,28 +93,28 @@ fn render_networks<P, S>(view: &UpdateView<'_, P, S>, bar: &SystemBar, frame: Op
         u32::from(view.network_focus), network_rows(view)), Some(b"Wi-Fi networks"));
     let c = page.canvas();
     let mut name = [0; 64]; let mut label = [0; 80]; let mut row = 0;
-    draw_system_row(c, SYSTEM_CONTENT_LEFT, ROWS_TOP, row, SYSTEM_CONTENT_WIDTH, Some(b"Scan again"), view.network_focus == 0);
+    draw_system_row(c, SYSTEM_CONTENT_LEFT, SYSTEM_BODY_TOP, row, SYSTEM_CONTENT_WIDTH, Some(b"Scan again"), view.network_focus == 0);
     for network in view.networks.iter().take(usize::from(view.network_count)) {
         row += 1;
         folded_name(Some(&network.name), b"Unnamed network", &mut name);
-        draw_system_row(c, SYSTEM_CONTENT_LEFT, ROWS_TOP, row, SYSTEM_CONTENT_WIDTH - 96,
+        draw_system_row(c, SYSTEM_CONTENT_LEFT, SYSTEM_BODY_TOP, row, SYSTEM_CONTENT_WIDTH - 96,
             Some(&name), u32::from(view.network_focus) == row);
         let signal = if network.rssi >= -60 { b"Strong".as_slice() } else if network.rssi >= -70 { b"Good" } else { b"Weak" };
         c.text(SYSTEM_CONTENT_LEFT + SYSTEM_CONTENT_WIDTH - text_width(Some(signal), 21, false),
-            ROWS_TOP + row as i32 * SYSTEM_ROW_PITCH + 2, Some(signal), 21, false, 96, true);
+            SYSTEM_BODY_TOP + row as i32 * SYSTEM_ROW_PITCH + 2, Some(signal), 21, false, 96, true);
     }
     if view.saved.saved {
         folded_name(Some(&view.saved.name), b"Unnamed network", &mut name);
         for verb in [b"Test".as_slice(), b"Forget"] {
             row += 1; joined(&mut label, &[verb, b" ", &name]);
-            draw_system_row(c, SYSTEM_CONTENT_LEFT, ROWS_TOP, row, SYSTEM_CONTENT_WIDTH,
+            draw_system_row(c, SYSTEM_CONTENT_LEFT, SYSTEM_BODY_TOP, row, SYSTEM_CONTENT_WIDTH,
                 Some(&label), u32::from(view.network_focus) == row);
         }
     }
     let note = match view.scan { WifiScan::Scanning => Some(b"Looking for networks...".as_slice()),
         WifiScan::Failed => Some(b"Newt could not look for networks.".as_slice()),
         WifiScan::Done if view.network_count == 0 => Some(b"No networks found.".as_slice()), _ => None };
-    if let Some(note) = note { c.paragraph(SYSTEM_CONTENT_LEFT, ROWS_TOP + (row + 1) as i32 * SYSTEM_ROW_PITCH + 26,
+    if let Some(note) = note { c.paragraph(SYSTEM_CONTENT_LEFT, SYSTEM_BODY_TOP + (row + 1) as i32 * SYSTEM_ROW_PITCH + 26,
         Some(note), 21, SYSTEM_CONTENT_WIDTH, 699); }
 }
 fn render_password<P: Password, S>(view: &UpdateView<'_, P, S>, bar: &SystemBar, frame: Option<&mut Frame>) {
@@ -131,7 +130,7 @@ fn render_password<P: Password, S>(view: &UpdateView<'_, P, S>, bar: &SystemBar,
         previous: Some(b"Left"), next: Some(b"Right") }, Some(b"Wi-Fi password"));
     let c = page.canvas(); let mut text = [0; PASSWORD_BYTES + 1];
     folded_name(Some(&view.joining.name), b"Unnamed network", &mut text);
-    c.text(SYSTEM_CONTENT_LEFT, ROWS_TOP, Some(&text), 24, true, SYSTEM_CONTENT_WIDTH, true);
+    c.text(SYSTEM_CONTENT_LEFT, SYSTEM_BODY_TOP, Some(&text), 24, true, SYSTEM_CONTENT_WIDTH, true);
     c.outline(SYSTEM_CONTENT_LEFT, 190, SYSTEM_CONTENT_WIDTH, 52);
     let typed = view.password.size(); text[..typed].fill(b'*'); text[typed] = 0;
     c.text(SYSTEM_CONTENT_LEFT + 12, 203, Some(&text), 24, false, SYSTEM_CONTENT_WIDTH - 24, true);

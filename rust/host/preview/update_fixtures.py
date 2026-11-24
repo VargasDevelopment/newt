@@ -24,8 +24,9 @@ RUNNING = re.search(r'#define NEWT_FIRMWARE_VERSION "([^"]+)"',
 NEWER, OLDER = '9.0.0', '0.0.9'
 # A test build: a GitHub pre-release, offered only with Test builds On.
 TEST_BUILD = f'{NEWER}-dev.20261123.1'
-# The longest version a published update may carry (tools/update_publish.py).
-LONGEST = '0.4.1-dev.20261124.1234'
+# The widest nightly that fits its own Updated to line: 23 characters, exactly
+# the 428 px line (rust/tests/device_ui/version_label.rs).
+LONGEST = '0.0.4-dev.20300404.4444'
 BUILD = '0123456789ab'
 SLOT_BYTES, SECTOR = 0x770000, 4096
 STATE_VALID, STATE_ABORTED = 2, 4
