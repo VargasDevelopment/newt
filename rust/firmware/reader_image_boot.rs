@@ -184,8 +184,8 @@ impl Runtime {
             self.wake.spine = if durable { self.saved.locator.spine } else { boot.record.spine };
             self.wake.character = if durable { self.saved.locator.character } else { boot.record.character };
             if self.wake.book != 0 {
-                let saved = if durable { Some(target.settings) } else { boot.record.reader_view() };
-                self.wake.saved_orientation = saved.map_or(UNAVAILABLE, |settings| settings.orientation as u8);
+                self.wake.saved_orientation = boot.record.wake_orientation(durable.then_some(target.settings))
+                    .map_or(UNAVAILABLE, |orientation| orientation as u8);
             }
         }
         // Frozen reportNvsStorage: the guard's issue and the restored save

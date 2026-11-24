@@ -3,7 +3,7 @@
 #![forbid(unsafe_code)]
 
 use newt_core::app::{AppState, Screen};
-use newt_core::preferences::{PACKED_SETTINGS, ViewSettings};
+use newt_core::preferences::{Orientation, PACKED_SETTINGS, ViewSettings};
 use newt_core::progress::{Locator, Progress};
 
 pub const MAGIC: u32 = 0x4e57_5433;
@@ -106,6 +106,11 @@ impl SleepRecord {
     /// The reader settings in the packed word; bits 2 and 3 are this record's own.
     pub fn reader_view(&self) -> Option<ViewSettings> {
         ViewSettings::unpacked(self.reader_settings)
+    }
+    /// The orientation wake diagnostics report for a reopened book: the
+    /// durable target's when boot used it, else the one packed here.
+    pub fn wake_orientation(&self, durable: Option<ViewSettings>) -> Option<Orientation> {
+        durable.or_else(|| self.reader_view()).map(|settings| settings.orientation)
     }
 }
 
