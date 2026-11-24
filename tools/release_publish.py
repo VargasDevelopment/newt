@@ -58,6 +58,8 @@ NOTICES = 'docs/NOTICES.txt'
 # NOTICES.txt marks each item that still needs the owner's decision with this.
 DRAFT = 'DRAFT: needs owner approval'
 WHATS_NEW = 'rust/device-ui/whats_new_notes.h'
+# Fixes-only updates reuse this line; its text alone cannot identify an old entry.
+STANDARD_NOTE = 'Various smaller enhancements.'
 EMAIL = re.compile(rb'[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}')
 
 
@@ -358,8 +360,12 @@ def plan(image, receipt, bench_receipt=None, prerelease=False, git=None, github=
     # News is what this repository's published notes have not yet shown. Git tags are no guide: the public
     # export put every older tag on one commit, and a first release here (or the hop) has other readers.
     shown = set() if night else announced(github.all_releases(), tag)
-    news = [] if night else list(dict.fromkeys(line for _, lines in whats_new(header) for line in lines
-                                               if line not in shown))
+    news = []
+    if not night:
+        for index, (_, lines) in enumerate(whats_new(header)):
+            current = any(line not in shown for line in lines) or (index == 0 and lines == [STANDARD_NOTE])
+            news.extend(line for line in lines if line not in shown or (line == STANDARD_NOTE and current))
+        news = list(dict.fromkeys(news))
     notes = render_notes(version, commit, build, image, news)
     if main:
         notes = nightly.notes(source, main, git.subject(main), git.version(main)) + '\n' + notes
