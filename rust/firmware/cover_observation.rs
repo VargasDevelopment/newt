@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! Frozen DEV-only cover counters, monitor lease, rows and read-only census.
 #![forbid(unsafe_code)]
-use core::{cell::Cell,fmt::{self,Write}};
+use core::{cell::Cell,fmt::Write};
+use crate::serial_console::Row as Record;
 use newt_native_io::{UiIo,cover::observer as sdk};
 use newt_native_storage::Kind;
 use super::{io::Control,CoverResult as R};
@@ -62,18 +63,6 @@ pub fn collect(clock:fn()->u32,work:impl FnOnce(&Heap<'_>)->R)->(R,Observation){
         let result=work(&heap);monitor.finish();result
     };
     observation.finish_time(clock());(result,observation)
-}
-/// Keep C snprintf's exact bounded capacity and total-length result. Overflow
-/// stays unloggable; no truncation, silent trimming or extra output allocation.
-struct Record<'a>{bytes:&'a mut[u8],length:usize}
-impl<'a> Record<'a>{fn new(bytes:&'a mut[u8])->Self{Self{bytes,length:0}}}
-impl Write for Record<'_>{
-    fn write_str(&mut self,value:&str)->fmt::Result{
-        let room=self.bytes.len().saturating_sub(self.length.saturating_add(1));
-        let take=room.min(value.len());
-        if take!=0{self.bytes[self.length..self.length+take].copy_from_slice(&value.as_bytes()[..take]);}
-        self.length=self.length.saturating_add(value.len());Ok(())
-    }
 }
 fn emit(io:&UiIo,control:&dyn Control,record:Record<'_>)->bool{
     if record.length==0||record.length>=record.bytes.len()||control.stopped()
