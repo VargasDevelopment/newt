@@ -159,12 +159,11 @@ impl Runtime {
         if (report.restored || durable) && (ui.app.screen == Screen::EpubReading
             || retained_recovery != Some(record::Recovery::Ordinary)) {
             self.saves.set_checkpoint_saved(durable || report.checkpoint_saved);
-            let checkpoint = durable.then(|| if target.anchor { DurableCheckpoint::Anchor }
-                else { DurableCheckpoint::PageStart });
             self.recovery = Some(crate::reader_book::PendingRecovery {
                 progress: self.saved,
                 settings: self.settings,
-                policy: boot_restore_policy(checkpoint, retained_recovery),
+                policy: boot_restore_policy(durable.then(|| DurableCheckpoint::of(&target)),
+                    report.restored.then_some(&boot.record), self.settings),
             });
         }
         self.wake.available = true;
