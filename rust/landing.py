@@ -11,6 +11,8 @@ import time
 
 SDK_PIN = 'cd6f5b831c8fad899723b6d406586f00c575f021'
 HOST = 'x86_64-unknown-linux-gnu'
+# Exact count of the workspace's host tests, so a test that stops running fails landing.
+PORTABLE_TESTS = 428
 RV32 = 'riscv32imc-unknown-none-elf'
 FEATURES = 'dev-usb,wifi-update,embedded-sample'
 
@@ -160,7 +162,7 @@ def check(checker, before, snapshot, identity):
         portable = runner.cargo(ws, checker.BUILD/'landing-host-target', 'test', '--workspace',
                                 '--exclude', 'newt-app-image', '--exclude', 'newt-native-input-owner',
                                 '--target', HOST)
-        require_tests(support, portable, 428)
+        require_tests(support, portable, PORTABLE_TESTS)
         with foundation_commands(checker, runner):
             cases, expected, binary = checker.foundation(snapshot, checker.BUILD/'target', portable_done=True)
         support.require(len(cases) == 60368, 'complete foundation corpus')
@@ -202,7 +204,7 @@ def check(checker, before, snapshot, identity):
             'omitted': ['mutation controls', '20-family gate', 'SDK image/link', 'hardware',
                         'landing contract test (own gate phase)'],
             'source_sha256': before, 'toolchain': identity, 'sdk_pin': SDK_PIN,
-            'portable': {'passed_tests': 427, 'excluded': ['newt-app-image', 'newt-native-input-owner']},
+            'portable': {'passed_tests': PORTABLE_TESTS, 'excluded': ['newt-app-image', 'newt-native-input-owner']},
             'foundation': {'comparisons': len(cases), 'independent_checks': True,
                            'host_binary_sha256': checker.digest(binary)},
             'native_forwarding': forwarding,
