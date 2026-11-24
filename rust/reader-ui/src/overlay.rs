@@ -100,7 +100,7 @@ pub fn render_reader_overlay(
                     &mut c,
                     x + 22,
                     row_y + 12,
-                    failure_line.unwrap_or(b"Contents unavailable. Check the SD card."),
+                    failure_line.unwrap_or(b"No chapters available"),
                     21,
                     false,
                     w - 44,
