@@ -163,6 +163,11 @@ pub fn render_sleep_ui(
             HolidayHat::None => (),
             HolidayHat::Witch => witch(&mut c, left, top, selector),
             HolidayHat::Christmas => draw_christmas_hat(&mut c, left, top, selector),
+            HolidayHat::Thanksgiving => {
+                for m in [&kThanksgivingHat, &kThanksgivingScarf, &kThanksgivingPumpkin] {
+                    mark(&mut c, left, top, m, selector);
+                }
+            }
         }
         c.text(
             (w - width(b"Power to wake", 21, false)) / 2,

@@ -203,9 +203,7 @@ impl Runtime {
         let zone = home.clock.zone();
         let mut utc = 0;
         let today = crate::stats_clock::read_stats_session_clock(&mut home.bus.board, zone, Some(&mut utc));
-        ui.info.hat = if newt_core::stats_clock::halloween(today) { newt_device_ui::HolidayHat::Witch }
-            else if newt_core::stats_clock::christmas(today) { newt_device_ui::HolidayHat::Christmas }
-            else { newt_device_ui::HolidayHat::None };
+        ui.info.hat = newt_device_ui::HolidayHat::on(today);
         let mut extras = SleepExtras { progress: choices.progress, ..SleepExtras::default() };
         if choices.week || choices.habit {
             let now = millis();

@@ -312,12 +312,14 @@ def export_preview(binary: Path, name: str, screen: str, telemetry: str = "unkno
                    reader_progress_bar: str | None = None,
                    clock: str | None = None, stats: str | None = None,
                    other_firmware: str | None = None, update: str | None = None,
-                   app_package: str | None = None) -> tuple[Path, Path]:
+                   app_package: str | None = None, date: str | None = None) -> tuple[Path, Path]:
     destination = directory or ROOT / "artifacts"
     destination.mkdir(parents=True, exist_ok=True)
     command = [str(binary), "--screen", screen, "--telemetry", telemetry]
     if clock is not None:
         command.extend(["--clock", clock])
+    if date is not None:
+        command.extend(["--date", date])
     if reader_orientation is not None:
         command.extend(["--reader-orientation", reader_orientation])
     if reader_progress_bar is not None:

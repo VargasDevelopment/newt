@@ -94,12 +94,29 @@ impl FirmwareName {
         }
     }
 }
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+/// The sleeping newt's holiday outfit, chosen from the local date.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum HolidayHat {
     #[default]
     None,
     Witch,
     Christmas,
+    /// A pilgrim hat, a striped scarf and a pumpkin.
+    Thanksgiving,
+}
+impl HolidayHat {
+    pub fn on(today: newt_core::stats_clock::StatsClock) -> Self {
+        use newt_core::stats_clock::{christmas, halloween, thanksgiving};
+        if halloween(today) {
+            Self::Witch
+        } else if thanksgiving(today) {
+            Self::Thanksgiving
+        } else if christmas(today) {
+            Self::Christmas
+        } else {
+            Self::None
+        }
+    }
 }
 /// Borrowed presentation snapshot. Storage and save publication remain owner-controlled.
 pub struct DeviceInfo<'a> {

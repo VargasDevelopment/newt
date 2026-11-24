@@ -58,6 +58,8 @@ def main() -> None:
     for arguments in (("--screen", "nonsense"), ("--telemetry", "live"),
                       ("--actions", "next,,wake"), ("--actions", "sleep,"),
                       ("--actions", "shell"), ("--screen",), ("--clock", "24:00"), ("--clock", "9:41"),
+                      ("--clock", "12:00", "--date", "2026-11-31"), ("--clock", "12:00", "--date", "2126-11-26"),
+                      ("--clock", "12:00", "--date", "1999-11-25"), ("--date", "2026-11-26"),
                       ("--reader-orientation", "landscape"),
                       ("--reader-progress-bar", "yes"), ("--reader-orientation",), ("--stats", "busy"),
                       ("--other-firmware", "maybe"), ("--update", "maybe")):
@@ -161,6 +163,15 @@ def main() -> None:
         png_roundtrip(pbm.read_bytes(), png.read_bytes())
     require((ROOT / "artifacts/device-sleep-screen.pbm").read_bytes() !=
             (ROOT / "artifacts/device-sleep-screen-week-on.pbm").read_bytes(), "Select switches Last 7 days on")
+    # The sleeping newt's Thanksgiving outfit (#117) only on the fourth Thursday of November.
+    sleep_days = {"sleeping-thanksgiving-eve": "2026-11-25", "sleeping-thanksgiving": "2026-11-26",
+                  "sleeping-thanksgiving-after": "2026-11-27"}
+    for name, date in sleep_days.items():
+        pbm, png = export_preview(binary, name, "sleeping", clock="12:00", date=date)
+        png_roundtrip(pbm.read_bytes(), png.read_bytes())
+    sleep = {name: (ROOT / f"artifacts/{name}.pbm").read_bytes() for name in sleep_days}
+    require(sleep["sleeping-thanksgiving-eve"] == sleep["sleeping-thanksgiving-after"]
+            != sleep["sleeping-thanksgiving"], "the newt dresses for Thanksgiving on that day only")
     # About under Diagnostics, with the preview build's own identity (fixed
     # when it compiles); its What's new row and page show the committed notes.
     about = "next,next,next,activate,activate"

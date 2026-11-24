@@ -176,3 +176,51 @@ fn graph_selection_and_axis_vectors() {
     assert_eq!(stats_graph_slot(&g, 101), -1);
     assert_eq!(stats_graph_position(255).view, StatsGraphView::Summary);
 }
+#[test]
+fn the_newt_dresses_for_each_holiday_on_its_dates_only() {
+    use newt_core::{stats_clock::stats_clock, time_zone::ClockTime};
+    let on = |year, month, day| {
+        HolidayHat::on(stats_clock(ClockTime {
+            year,
+            month,
+            day,
+            hour: 9,
+            ..ClockTime::default()
+        }))
+    };
+    assert_eq!(on(2026, 10, 31), HolidayHat::Witch);
+    assert_eq!(on(2026, 11, 26), HolidayHat::Thanksgiving);
+    assert_eq!(on(2030, 11, 28), HolidayHat::Thanksgiving);
+    assert_eq!(on(2026, 12, 25), HolidayHat::Christmas);
+    for (year, month, day) in [(2026, 11, 25), (2026, 11, 27), (2026, 11, 19), (2030, 11, 21)] {
+        assert_eq!(on(year, month, day), HolidayHat::None, "{year}-{month}-{day}");
+    }
+    // The outfit draws in both planes: the gray planes get its exact complement.
+    let draw = |hat, selector| {
+        let mut frame = [if selector { 255 } else { 0 }; FRAME_BYTES];
+        let mut info = DeviceInfo::default();
+        info.hat = hat;
+        render_sleep_ui(&info, Some(&mut frame), portrait(), selector);
+        frame
+    };
+    let dressed = draw(HolidayHat::Thanksgiving, false);
+    for (a, b) in dressed.iter().zip(draw(HolidayHat::Thanksgiving, true)) {
+        assert_eq!(*a, !b);
+    }
+    // Golden for the owner-approved outfit (#117): pixels it changes and the
+    // whole frame. Night is the firmware's full inversion of this same frame.
+    let plain = draw(HolidayHat::None, false);
+    let changed: u32 = dressed
+        .iter()
+        .zip(plain)
+        .map(|(a, b)| (a ^ b).count_ones())
+        .sum();
+    let fnv = dressed.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &b| {
+        (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3)
+    });
+    assert_eq!(
+        (changed, fnv),
+        (6049, 0x82dd_0881_ff64_8c53),
+        "the Thanksgiving outfit differs from the reviewed art"
+    );
+}

@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3972336,
+      "flash_bytes": 3974384,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,10 +28,10 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "195436d2c45879d52edada8fb4bac06804c825c2",
-      "before": 3971984,
-      "after": 3972336,
-      "reason": "+352 B over the 3,971,984 B ceiling (main 20db548f): #38 flushes 64-byte USB_SERIAL_JTAG HWCDC TX tails with a zero-length packet after both the 256-byte TX ring buffer and the 64-byte hardware EP1 IN FIFO drain, keeping pending tail-flush completion separate from session cancellation across Bridge replies and PUT leases (serial_console.cpp, board/dev_usb.rs, serial_console.rs, dev_usb.rs, dev_usb/commands.rs, app_runtime/card_write.rs). Clean regional DEV USB builds: main 20db548f 3,971,984 B; 195436d2 3,972,336 B (56.6% of the 7,016,448 B usable app flash). RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, selected stack frames 0/16/32/48/480 B (within 0/16/32/48/656 B ceilings; 328 frames).",
+      "source_revision": "088ca71f7f63d7809e7e08b72ea53356bd159517",
+      "before": 3972336,
+      "after": 3974384,
+      "reason": "+2,048 B over the 3,972,336 B ceiling (main 6531992b): #117 dresses the sleeping newt for US Thanksgiving. Three static 1-bit run-length Marks in rust/device-ui/src/assets.rs, the Santa hat's format (pilgrim hat 297 B, striped scarf 868 B, pumpkin 737 B of runs and headers), the fourth-Thursday date rule in stats_clock.rs, HolidayHat::Thanksgiving and HolidayHat::on, which the firmware's sleep path now calls. Clean regional DEV USB builds: main 6531992b 3,972,336 B; 088ca71f 3,974,384 B (56.6% of the 7,016,448 B usable app flash). RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, selected stack frames 0/16/32/48/480 B (within 0/16/32/48/656 B ceilings; 328 frames).",
       "reviewer": "Newt Lead (cross-family review: Astra)"
     },
     "ram_bytes": {
