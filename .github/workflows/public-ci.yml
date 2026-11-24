@@ -340,14 +340,15 @@ jobs:
         run: python3 -B tools/docs_lane.py check --base "$BASE"
 
   # One check for branch protection and the release-tag evidence
-  # (tools/release_tag.py). It always runs where public CI runs, so a failed,
-  # cancelled or skipped dependency makes it fail rather than skip. It passes
-  # only when the lane was chosen and that lane's job succeeded: check for full,
-  # docs for docs, with the other skipped.
+  # (tools/release_tag.py). It runs whenever public CI is not cancelled, so a
+  # failed or unexpectedly skipped dependency makes it fail rather than skip,
+  # while a cancelled run concludes cancelled instead of reporting a false
+  # failure. It passes only when the lane was chosen and that lane's job
+  # succeeded: check for full, docs for docs, with the other skipped.
   gate:
     needs: [classify, check, docs]
     if: >-
-      always() && (toJSON(github.event.repository.private) == 'false' ||
+      !cancelled() && (toJSON(github.event.repository.private) == 'false' ||
       (github.event_name == 'schedule' && github.repository_id != '1400798123'))
     runs-on: ubuntu-24.04
     timeout-minutes: 5
