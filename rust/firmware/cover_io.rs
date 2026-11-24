@@ -6,8 +6,9 @@ use newt_native_storage::{Native, Error, Result};
 use newt_core::zip_window::source::BookSource;
 use super::observation::Observation;
 /// One read of a whole-book CRC pass. Each card call has a fixed cost, so
-/// larger reads make a pass faster (#74); beside the raster this block stays
-/// below the staging block, so a pass never sets an attempt's heap peak.
+/// larger reads make a pass faster (#74). Beside the raster this block stays
+/// below the staging block, so a pass never exceeds the planned peak that
+/// admits cover work, even when it sets an attempt's measured peak.
 pub const CRC_BYTES: usize = 8 * 1024;
 /// The largest single card write, for the same fixed per-call cost (#74).
 pub const WRITE_BYTES: usize = 4 * 1024;
