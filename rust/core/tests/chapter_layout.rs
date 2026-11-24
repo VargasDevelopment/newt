@@ -34,10 +34,17 @@ impl LineBreak for OneLine {
         }
     }
 }
-struct NoContainer;
-impl Images for NoContainer {
-    fn resolve(&mut self, _: &[u8], _: &mut [u8], _: &mut [u8]) -> Option<(usize, usize)> {
-        None
+struct FixtureImages;
+impl Images for FixtureImages {
+    fn resolve(&mut self, href: &[u8], path: &mut [u8], fragment: &mut [u8]) -> Option<(usize, usize)> {
+        let split = href.iter().position(|&byte| byte == b'#')?;
+        let (target, hash_fragment) = href.split_at(split);
+        let suffix = &hash_fragment[1..];
+        let path_len = target.len().min(path.len());
+        let fragment_len = suffix.len().min(fragment.len());
+        path[..path_len].copy_from_slice(&target[..path_len]);
+        fragment[..fragment_len].copy_from_slice(&suffix[..fragment_len]);
+        Some((path_len, fragment_len))
     }
     fn probe(&mut self, _: &[u8]) -> Option<(u32, u32)> {
         None
@@ -47,11 +54,17 @@ impl Images for NoContainer {
 struct Capture {
     pages: Vec<(u32, u32, Vec<(Vec<u8>, i16, i16, u16, u8)>)>,
     page_byte_counts: Vec<usize>,
+    links: Vec<(u32, Vec<u8>, Vec<u8>)>,
     stop: bool,
 }
 impl Sink for Capture {
     fn page(&mut self, p: Page<'_>) -> bool {
-        assert!(p.images.is_empty() && p.links.is_empty());
+        assert!(p.images.is_empty());
+        self.links.extend(p.links.iter().map(|link| (
+            p.index,
+            link.target.get(p.bytes).to_vec(),
+            link.fragment.get(p.bytes).to_vec(),
+        )));
         self.page_byte_counts.push(p.bytes.len());
         self.pages.push((
             p.index,
@@ -114,7 +127,7 @@ fn with_text_capacity(backend: &mut dyn Backend, page_cap: usize, text_cap: usiz
         style_text: &mut style,
         paragraph_links: &mut pl,
     };
-    let (mut breaker, mut img) = (OneLine, NoContainer);
+    let (mut breaker, mut img) = (OneLine, FixtureImages);
     let params = Params {
         width: 80,
         height: 32,
@@ -187,6 +200,31 @@ fn run_limit_moves_the_whole_line_and_its_start() {
 fn pool_limit_rolls_back_the_whole_line() {
     // Each run reserves five bytes. Line two starts then runs out of bytes.
     two_lines_on_separate_pages(11, 16);
+}
+
+#[test]
+fn link_pool_limit_moves_the_whole_line_with_its_link() {
+    // Runs use five bytes each. The following page has room for both linked
+    // line runs and both strings, even when the first page fits just the target.
+    for page_cap in [15, 17] {
+        let mut sink = Capture::default();
+        fixture(&mut sink, page_cap, |e| {
+            e.start(b"body", None, None, None, None, None);
+            e.text(b"a");
+            e.flush();
+            e.text(b"b");
+            e.start(b"a", None, None, None, Some(b"p#id"), None);
+            e.text(b"c");
+            e.end(b"a");
+            assert!(e.finish());
+        });
+        assert_eq!(sink.links, [(1, b"p".to_vec(), b"id".to_vec())]);
+        assert_eq!(sink.page_byte_counts, [5, 15]);
+        assert_eq!(sink.pages, [
+            (0, 0, vec![(b"a".to_vec(), 0, 8, 8, 0)]),
+            (1, 1, vec![(b"b".to_vec(), 0, 8, 8, 0), (b"c".to_vec(), 4, 8, 8, 0)]),
+        ]);
+    }
 }
 
 fn two_lines_on_separate_pages(page_cap: usize, run_cap: usize) {
