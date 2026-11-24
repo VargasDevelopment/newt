@@ -68,6 +68,7 @@ pub trait Channel {
     fn connected(&mut self) -> bool;
     fn read_byte(&mut self) -> i32;
     fn write(&mut self, bytes: &[u8]) -> usize;
+    fn flush_tx_tail(&mut self) -> bool { true }
     fn now(&mut self) -> u32;
 }
 

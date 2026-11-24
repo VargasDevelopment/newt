@@ -25,3 +25,10 @@ test = false
 name = "dev_put"
 path = "../tests/dev_put/lease.rs"
 test = false
+
+# Live frame capture over HWCDC's 256-byte ring buffer and 64-byte EP1 IN FIFO;
+# tests/dev_usb_live_capture_test.py runs it with its negative controls.
+[[test]]
+name = "dev_usb_live_capture"
+path = "../tests/dev_usb_live_capture/capture.rs"
+test = false

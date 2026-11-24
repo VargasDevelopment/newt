@@ -53,6 +53,7 @@ pub struct Bridge {
     capture: bool,
     refreshed: bool,
     capture_expired: bool,
+    tx_flush_pending: bool,
 }
 
 impl Bridge {
@@ -65,10 +66,11 @@ impl Bridge {
             lease_activity: 0, session_activity: 0, rx_start: 0, tx_progress: 0,
             rx_size: 0, tx_size: 0, tx_offset: 0, notification: 0,
             overflow: false, consumed: false, rendered: false, capture: false,
-            refreshed: false, capture_expired: false,
+            refreshed: false, capture_expired: false, tx_flush_pending: false,
         }
     }
 
+    #[inline(never)]
     fn cancel(&mut self) {
         self.session = 0;
         self.last_id = 0;
@@ -98,11 +100,13 @@ impl Bridge {
         let _ = write!(tail, " *{checksum:08x}\n");
         self.tx_size = (length + tail.len()) as u16;
         self.tx_offset = 0;
+        self.tx_flush_pending = false;
     }
 
     pub fn consume(&mut self, ticket: u32, connected: bool, now: u32) -> bool {
         if !connected || self.session == 0 || now.wrapping_sub(self.session_activity) >= 60_000 {
             self.cancel();
+            if !connected { self.tx_flush_pending = false; }
             return false;
         }
         if ticket == 0 || ticket != self.pending_ticket || self.consumed {
@@ -136,16 +140,28 @@ impl Bridge {
     pub fn going_to_sleep(&mut self) { self.capture = false; }
     pub fn housekeeping_done(&mut self) { self.capture_expired = false; }
     pub fn capturing(&self) -> bool { self.capture }
-    pub fn output_pending(&self) -> bool { self.tx_size != 0 }
+    pub fn output_pending(&self) -> bool { self.tx_size != 0 || self.tx_flush_pending }
     pub fn request_pending(&self) -> bool { self.pending_ticket != 0 }
     pub fn background_work_ready(&self) -> bool {
-        !self.capture && self.pending_ticket == 0 && self.tx_size == 0 && self.rx_size == 0
+        !self.capture && self.pending_ticket == 0 && self.tx_size == 0
+            && !self.tx_flush_pending && self.rx_size == 0
     }
     pub fn consumption_pending(&self, ticket: u32) -> bool {
         ticket != 0 && ticket == self.pending_ticket && self.consumed && !self.rendered
     }
     pub fn consumption_acknowledged(&self, ticket: u32) -> bool {
-        self.consumption_pending(ticket) && self.notification == 2 && self.tx_size == 0
+        self.consumption_pending(ticket) && self.notification == 2
+            && self.tx_size == 0 && !self.tx_flush_pending
+    }
+
+    fn flush_tx(&mut self, channel: &mut dyn Channel, now: u32) {
+        if !self.tx_flush_pending { return; }
+        if channel.flush_tx_tail() {
+            self.tx_flush_pending = false;
+        } else if now.wrapping_sub(self.tx_progress) >= 1_000 {
+            self.cancel();
+            self.tx_flush_pending = false;
+        }
     }
 
     fn notifications(&mut self) {
@@ -172,6 +188,7 @@ impl Bridge {
         let now = channel.now();
         if !channel.connected() {
             self.cancel();
+            self.tx_flush_pending = false;
             return;
         }
         if self.session != 0 && now.wrapping_sub(self.session_activity) >= 60_000 {
@@ -192,6 +209,7 @@ impl Bridge {
             let sent = channel.write(&self.tx[usize::from(self.tx_offset)..usize::from(self.tx_size)]);
             if sent > remaining {
                 self.cancel();
+                self.tx_flush_pending = false;
                 return;
             }
             if sent != 0 {
@@ -201,19 +219,28 @@ impl Bridge {
             if self.tx_offset == self.tx_size {
                 self.tx_size = 0;
                 self.tx_offset = 0;
+                self.tx_flush_pending = true;
             } else if now.wrapping_sub(self.tx_progress) >= 1_000 {
                 self.cancel();
+                self.tx_flush_pending = false;
             }
             return;
         }
         self.notifications();
-        if self.tx_size != 0 || self.pending_ticket != 0 {
+        if self.tx_size != 0 {
             self.tx_progress = now;
+            return;
+        }
+        if self.pending_ticket != 0 {
+            self.flush_tx(channel, now);
             return;
         }
         for _ in 0..self.rx.len() {
             let next = channel.read_byte();
-            if next < 0 { return; }
+            if next < 0 {
+                self.flush_tx(channel, now);
+                return;
+            }
             if next == i32::from(b'\n') {
                 if answer && self.overflow {
                     self.reply(0, b"ERROR line");
@@ -234,6 +261,7 @@ impl Bridge {
                 self.rx_size += 1;
             }
         }
+        self.flush_tx(channel, now);
     }
 }
 

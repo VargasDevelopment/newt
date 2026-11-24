@@ -40,6 +40,7 @@ SHARD_SECONDS = 'tools/gate-shard-seconds.json'
 RUST_PACKETS = {'slot_vectors_test.py': 'rust/tests/slot_vectors/',
                 'app_store_test.py': 'rust/tests/app_store/',
                 'dev_put_test.py': 'rust/tests/dev_put/',
+                'dev_usb_live_capture_test.py': 'rust/tests/dev_usb_live_capture/',
                 'large_epub_corpus_test.py': 'rust/tests/large_epub_corpus/'}
 # Extra non-tests/ files owned by a specific test packet (not shared by all rust:* families).
 PACKET_INPUTS = {'large_epub_corpus_test.py': ('tools/large_epub_corpus.py',)}

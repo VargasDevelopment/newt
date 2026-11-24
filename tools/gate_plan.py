@@ -123,6 +123,7 @@ def plan(profile: str, fresh_objects: bool, controls=None) -> list[Phase]:
     test("slot_vectors_test.py")
     test("app_store_test.py")
     test("dev_put_test.py")
+    test("dev_usb_live_capture_test.py")
     test("large_epub_corpus_test.py", "--full")
     test("update_publish_test.py")
     test("release_publish_test.py", "--negative-controls")

@@ -80,6 +80,9 @@ impl DevChannel<'_> {
     pub fn write(&mut self, bytes: &[u8]) -> usize {
         newt_c3_board::dev_usb::write(bytes)
     }
+    pub fn flush_tx_tail(&mut self) -> bool {
+        newt_c3_board::dev_usb::flush_tx_tail()
+    }
     pub fn now(&mut self) -> u32 { self.clock.millis() }
 }
 
