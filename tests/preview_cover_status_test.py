@@ -252,6 +252,51 @@ def non_retryable_blank_note(binary):
             return '0-byte-only shelf drew a note'
 
 
+def transient_and_persistent_book_stat(binary):
+    """A retryable book-stat EIO maps to Pending (not Unavailable): on a one-book
+    shelf, a first transient stat error still draws Making cover and triggers the
+    settle repaint once recovery saves CJCM; a persistent stat error settles as
+    retryable and shows 'Cover will be made later'."""
+    book = '/newt-sd/Newt/Books/A Missing.epub'
+    with tempfile.TemporaryDirectory(prefix='newt-48-stat-recover-') as td:
+        d = Path(td)
+        seed_world(binary, d, [('A Missing', None)])
+        # Baseline settled frame with no stat fault (shows 'No cover in this book').
+        clean_settled, _, _, _ = run_once(binary, d, [CONFIRM], {})
+        (d / 'card/Newt/Covers/A Missing.epub.nlc').unlink()
+        # First stat fails with EIO; cover worker recovers and writes CJCM -> settle repaint must fire.
+        making, _, _, _ = run_once(binary, d, [CONFIRM], {'card.stat.once': book, 'freeze': 'cover.work'})
+        if any(note_strip(making)):
+            return 'transient book-stat error drew a bottom note while Making cover'
+        recovered, attempts, gens, _ = run_once(binary, d, [CONFIRM], {'card.stat.once': book, 'freeze': ''})
+        if attempts != [MISSING]:
+            return f'transient stat recovery expected [MISSING], got {attempts}'
+        if gens != [(6, 3)]:
+            return f'transient stat recovery skipped settle repaint: {gens}'
+        if recovered != clean_settled:
+            return 'transient stat recovery frame differed from clean settled Books frame'
+        if slot_box(making, 0) == slot_box(recovered, 0):
+            return 'transient stat error did not draw Making cover before settle'
+
+    with tempfile.TemporaryDirectory(prefix='newt-48-stat-persist-') as td:
+        d = Path(td)
+        seed_world(binary, d, [('A Missing', None)])
+        # Reference deferred note from low-heap Declined on the same one-book shelf.
+        declined, _, _, _ = run_once(binary, d, [CONFIRM], {'cover.heap.free': str(64 * 1024)})
+        deferred_note = note_strip(declined)
+        if not any(deferred_note):
+            return 'reference Declined shelf had blank note'
+        # Persistent book-stat EIO: Making cover -> IoError settle -> 'Cover will be made later'.
+        persisted, attempts, gens, _ = run_once(
+            binary, d, [CONFIRM], {'cover.heap.free': '', 'store.refuse': f'card-stat:{book}'})
+        if attempts != [IO_ERROR]:
+            return f'persistent stat error expected [IO_ERROR], got {attempts}'
+        if gens != [(6, 3)]:
+            return f'persistent stat error skipped settle repaint: {gens}'
+        if note_strip(persisted) != deferred_note:
+            return 'persistent stat error did not show the deferred cover note'
+
+
 def home_quiet_h2_and_retry(binary):
     """Home (H2) adds zero extra grayscale refreshes when a coverless book
     settles, and retries legacy CJB6/CJB7 records to paint art when available."""
@@ -322,6 +367,12 @@ CASES = [
           'self.last_fact = CoverFact::Unavailable;\n        if !valid_library_book_name(filename)',
           'self.last_fact = CoverFact::Pending;\n        if !valid_library_book_name(filename)')],
     ]),
+    (transient_and_persistent_book_stat, [
+        # Collapsing non-Missing stat errors into Unavailable skips Making cover and settle repaint.
+        [('library_covers.rs',
+          'Err(_) => return Learn::Retryable,',
+          'Err(_) => return Learn::Unavailable,')],
+    ]),
     (home_quiet_h2_and_retry, [
         # Violating H2: advancing cover_generation and repainting Home when a coverless book settles.
         [('reader_cover_producer.rs',
@@ -347,8 +398,9 @@ def main():
         return
     for case, controls in CASES:
         for edits in controls:
-            control = rust_preview.build(edits=edits)
-            assert case(control) is not None, f'{case.__name__}: passes with {edits[0][0]} changed'
+            # Fake clocks make these assertions independent of CPU speed.
+            control = rust_preview.control(edits, optimize=False)
+            assert case(control) is not None, f'{case.__name__}: passes with {edits!r}'
     print(f'PASS: {len(CASES)} cover status flows run the firmware; each control fails')
 
 

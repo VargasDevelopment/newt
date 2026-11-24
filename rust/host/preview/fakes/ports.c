@@ -548,6 +548,20 @@ int preview_io_fault(const char *operation, int32_t fd) {
     snprintf(what, sizeof what, "%s:%s", operation, fd >= 0 && fd < 256 ? descriptors[fd] : "");
     return preview_store_fault(what);
 }
+/* "card-stat:PATH" in store.refuse fails every stat; "card.stat.once=TEXT"
+ * fails only the first stat whose path holds TEXT (transient SD read glitch). */
+static int card_stat_once_used;
+int preview_stat_fault(const char *path) {
+    if (!path) return 0;
+    const char *once = preview_conf("card.stat.once");
+    if (!card_stat_once_used && once && *once && strstr(path, once)) {
+        card_stat_once_used = 1;
+        return 1;
+    }
+    char what[4200];
+    snprintf(what, sizeof what, "card-stat:%s", path);
+    return preview_store_fault(what) == 1;
+}
 
 /* Library folders list in name order, so a preview never depends on the host
  * file system's directory order. A refused "card-list:PATH" fails the open.
@@ -644,6 +658,7 @@ static int32_t cover_facts(int status, const struct stat *info, struct cover_fac
     return 0;
 }
 int32_t newt_cover_stat(const char *path, struct cover_facts *out) {
+    if (preview_stat_fault(path)) { errno = EIO; return cover_facts(-1, NULL, out); }
     struct stat info;
     return cover_facts(lstat(fixture_path(path), &info), &info, out);
 }

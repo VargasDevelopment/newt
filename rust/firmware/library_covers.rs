@@ -47,6 +47,13 @@ pub struct CoverBookFacts {
 }
 const _: () = assert!(core::mem::size_of::<CoverBookFacts>() == 16);
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Learn {
+    Known,
+    Unavailable,
+    Retryable,
+}
+
 /// A short read adapter. The mounted card belongs to the enclosing Home scope;
 /// this owner retains only its actual descriptor and streaming CRC scalars.
 pub struct PreparedCovers<'a, N: Native> {
@@ -87,15 +94,19 @@ impl<'a, N: Native> PreparedCovers<'a, N> {
         }
     }
     pub fn any_making(&self) -> bool { self.any_making }
-    fn learn(native: &mut N, filename: &[u8], book: &mut CoverBookFacts, scratch: &mut [u8;192]) -> bool {
-        if !library_book_path(Some(b"/newt-sd/Newt/Books\0"), Some(filename), Some(scratch)) { return false; }
-        let Some(path) = path(scratch) else { return false; };
-        let Ok(info) = native.stat(path, false) else { return false; };
+    fn learn(native: &mut N, filename: &[u8], book: &mut CoverBookFacts, scratch: &mut [u8;192]) -> Learn {
+        if !library_book_path(Some(b"/newt-sd/Newt/Books\0"), Some(filename), Some(scratch)) { return Learn::Unavailable; }
+        let Some(path) = path(scratch) else { return Learn::Unavailable; };
+        let info = match native.stat(path, false) {
+            Ok(info) => info,
+            Err(Error::Missing) => return Learn::Unavailable,
+            Err(_) => return Learn::Retryable,
+        };
         if info.kind != Kind::Regular || info.size <= 0 || info.size > MAX_BOOK_BYTES
-            || info.seconds < 0 || (info.seconds as u64 >> 1) > u64::from(u32::MAX) { return false; }
+            || info.seconds < 0 || (info.seconds as u64 >> 1) > u64::from(u32::MAX) { return Learn::Unavailable; }
         book.size = info.size as u32;
         book.mtime = (info.seconds as u64 >> 1) as u32;
-        true
+        Learn::Known
     }
     fn begin_impl(&mut self, filename: &[u8]) -> bool {
         self.end();
@@ -105,7 +116,13 @@ impl<'a, N: Native> PreparedCovers<'a, N> {
         let mut listed = CoverBookFacts::default();
         let remembered = self.remembered.is_some();
         let book = self.remembered.as_deref_mut().unwrap_or(&mut listed);
-        if !remembered && !Self::learn(self.native, filename, book, &mut scratch) { return false; }
+        if !remembered {
+            match Self::learn(self.native, filename, book, &mut scratch) {
+                Learn::Known => {}
+                Learn::Unavailable => return false,
+                Learn::Retryable => { self.last_fact = CoverFact::Pending; return false; }
+            }
+        }
         if !library_name_file(Some(b"/newt-sd/Newt/Covers\0"), Some(filename), Some(b".nlc\0"), Some(&mut scratch)) { return false; }
         let Some(cover) = path(&scratch) else { return false; };
         self.fd = match self.native.open(cover, Open::SourceReadOnly) {
@@ -126,10 +143,19 @@ impl<'a, N: Native> PreparedCovers<'a, N> {
             if remembered { book.fact = CoverFact::Pending; }
             return self.reject();
         }
-        if book.size == 0 && !Self::learn(self.native, filename, book, &mut scratch) {
-            self.last_fact = CoverFact::Unavailable;
-            if remembered { book.fact = CoverFact::Unavailable; }
-            return self.reject();
+        if book.size == 0 {
+            match Self::learn(self.native, filename, book, &mut scratch) {
+                Learn::Known => {}
+                Learn::Unavailable => {
+                    self.last_fact = CoverFact::Unavailable;
+                    if remembered { book.fact = CoverFact::Unavailable; }
+                    return self.reject();
+                }
+                Learn::Retryable => {
+                    self.last_fact = CoverFact::Pending;
+                    return self.reject();
+                }
+            }
         }
         let mut header = [0;28];
         if self.native.read(self.fd, &mut header) != Ok(header.len()) || header[..8] != HEADER

@@ -56,9 +56,13 @@ def native_io(text: str) -> str:
                         'extern char *fixture_path(const char *);\n'
                         'extern void preview_io_open(int32_t, const char *);\n'
                         'extern void preview_io_list(const char *);\n'
-                        'extern int preview_io_fault(const char *, int32_t);', 1)
+                        'extern int preview_io_fault(const char *, int32_t);\n'
+                        'extern int preview_stat_fault(const char *);', 1)
     text = text.replace('    *out = fd;', '    preview_io_open(fd, path);\n    *out = fd;', 1)
     text = text.replace('    DIR *dir = opendir(path);', '    preview_io_list(path);\n    DIR *dir = opendir(path);', 1)
+    text = text.replace('int32_t newt_io_stat(const char *path, uint32_t no_follow, struct newt_io_stat *out) {',
+                        'int32_t newt_io_stat(const char *path, uint32_t no_follow, struct newt_io_stat *out) {\n'
+                        '    if (preview_stat_fault(path)) return failure(EIO);', 1)
     # A refused read or write moves nothing; a dropped sync reports the medium failed.
     text = text.replace('    const ssize_t result = read(fd, data, bytes);',
                         '    if (preview_io_fault("card-read", fd) == 1) return failure(EIO);\n'
