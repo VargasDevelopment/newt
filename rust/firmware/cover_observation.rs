@@ -155,10 +155,9 @@ impl Pending{
             self.0=Some((result,observation));
         }
     }
-    pub fn publish(&mut self,io:&UiIo,control:&dyn Control)->bool{
-        if !self.ready(control){return !self.is_pending();}
-        let Some((result,observation))=self.0.as_ref()else{return true;};
-        if !report(observation,*result,io,control){return false;}
-        self.0=None;true
+    pub fn publish(&mut self,io:&UiIo,control:&dyn Control){
+        if !self.ready(control){return;}
+        let Some((result,observation))=self.0.as_ref()else{return;};
+        if report(observation,*result,io,control){self.0=None;}
     }
 }

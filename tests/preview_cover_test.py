@@ -535,7 +535,7 @@ def usb_backpressure(binary):
 def absent_card_idle(binary):
     """Idle telemetry with no pending row never retries a failed card mount."""
     counts = []
-    for keys in ((), (7,)):
+    for keys in ((), (RIGHT, 2)):
         with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
             world = World(binary, scratch, **{'card.absent': '1', 'card.mount.trace': '1'})
             world.run(keys)
@@ -678,8 +678,8 @@ CASES = [
         [('cover_session.rs', 'self.commit(&self.header(cover::NO_ART),&[])',
           'self.commit(&self.header(u32::from_le_bytes(*b"CJB3")),&[])')]]),
     (usb_backpressure, [
-        [('cover_observation.rs', 'if !report(observation,*result,io,control){return false;}',
-          'let _=report(observation,*result,io,control);')],
+        [('cover_observation.rs', 'if report(observation,*result,io,control){self.0=None;}',
+          'let _=report(observation,*result,io,control);self.0=None;')],
         [('cover_observation.rs',
           '||newt_c3_board::dev_usb::available_for_write()<record.length as i32', '')],
         [('cover_observation.rs', '<200)', '<0)')],
