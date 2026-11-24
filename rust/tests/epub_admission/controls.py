@@ -12,7 +12,7 @@ def run(protocol, corpus, case, rows):
         if row[0] in ('E','S','D','END','M','P','F','C'):
             altered=copy.deepcopy(rows);altered[i]=altered[i][:-1]
             rejected(altered)
-    for replacement in (['S','11'],['D','-1','0','0','0','0','0'],['R','0','1','2'],['E','11','0','0','0','0','0','0','0']):
+    for replacement in (['S','13'],['D','-1','0','0','0','0','0'],['R','0','1','2'],['E','11','0','0','0','0','0','0','0']):
         rejected([replacement]+copy.deepcopy(rows))
     if 'payload' in case and case['payload']:
         altered=copy.deepcopy(rows)
@@ -22,7 +22,7 @@ def run(protocol, corpus, case, rows):
         try: corpus.check(case,altered)
         except RuntimeError: pass
         else: raise RuntimeError('wrong chapter payload accepted')
-    changed={**case,'status':(case['status']+1)%11}
+    changed={**case,'status':(case['status']+1)%13}
     try: corpus.check(changed,rows)
     except RuntimeError: return
     raise RuntimeError('independent expectation tampering accepted')

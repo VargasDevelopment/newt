@@ -150,6 +150,7 @@ impl Runtime {
                 self.saved = previous_saved;
                 *self.home = previous_home;
                 self.saves = previous_notice;
+                self.publish_notice_image(ui);
                 self.progress_ready = previous_ready;
                 self.settings = previous_settings;
                 self.recovery = previous_recovery;

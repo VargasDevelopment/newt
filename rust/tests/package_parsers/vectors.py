@@ -19,14 +19,17 @@ def trace(xml, passes, short=1048576, fail=-1, buffer=1):
             at+=n
     return rows
 VECTORS=[]
-def case(name, kind, xml, rows=(), status='Ok', passes=2, **kw):
+def case(name, kind, xml, rows=(), status='Ok', passes=2, rust_status=None, **kw):
     wire=request(kind,xml,**kw)
     reads=trace(xml,passes,kw.get('short',1048576),kw.get('fail',-1),kw.get('buffer',1))
-    VECTORS.append(dict(id=name,wire=wire,expected='\n'.join([*reads,'P '+status,*rows,'END'])+'\n'))
+    record = dict(id=name,wire=wire,expected='\n'.join([*reads,'P '+status,*rows,'END'])+'\n')
+    if rust_status is not None:
+        record['rust_expected'] = '\n'.join([*reads,'P '+rust_status,*rows,'END'])+'\n'
+    VECTORS.append(record)
 case('container-first-local','C','<c><rootfile media-type="wrong" full-path="bad"/><x:rootfile xmlns:x="u" x:full-path="OPS/a.opf"/><rootfile full-path="later"/></c>', ['C '+h('OPS/a.opf')],passes=1)
 case('container-empty-first','C','<c><rootfile full-path=""/><rootfile full-path="later"/></c>',['C -'],passes=1)
 case('container-missing','C','<c><rootfile media-type="wrong" full-path="bad"/></c>',status='NotEpub',passes=1)
-case('container-oom','C','<rootfile full-path="x"/>',status='NotEpub',passes=1,cap=0)
+case('container-oom','C','<rootfile full-path="x"/>',status='NotEpub',rust_status='MetadataTooLarge',passes=1,cap=0)
 case('malformed','C','<rootfile full-path="x"></bad>',status='ParseError',passes=1)
 case('missing-buffer','C','<rootfile full-path="x"/>',status='OutOfMemory',passes=0,buffer=0)
 case('io-precedence','C','<rootfile full-path="x"/>',status='IoError',passes=1,fail=0)
@@ -41,7 +44,7 @@ case('ncx-content-outside','X','<ncx><content src="bad"/><navPoint><content src=
 case('package-fields','P','<package><metadata><title> </title><title>First</title><title>Second</title><creator>A</creator><language>en</language><identifier>ID</identifier><meta name="cover" content="a"/></metadata><manifest><item id="a" href="a.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="n" href="n.ncx" media-type="application/x-dtbncx+xml"/><item href="invalid"/></manifest><spine toc="n"><itemref/><itemref idref="missing"/><itemref idref="a"/></spine></package>', ['M '+h('First')+' '+h('A')+' '+h('en')+' '+h('ID'), 'I '+h('a')+' '+h('OPS/a.xhtml')+' '+h('application/xhtml+xml')+' 3826002220 1 1', 'I '+h('n')+' '+h('OPS/n.ncx')+' '+h('application/x-dtbncx+xml')+' 3943445553 0 0','S 0','D 0 1'],directory='OPS')
 case('package-missing-counts','P','<package><manifest/><spine/></package>',status='NotEpub',passes=1)
 case('package-unknown-spine','P','<p><manifest><item id="a" href="a"/></manifest><spine><itemref idref="unknown"/></spine></p>',status='NotEpub')
-case('package-oom','P','<p><metadata><title>A</title></metadata><manifest><item id="a" href="a"/></manifest><spine><itemref idref="a"/></spine></p>',status='OutOfMemory',passes=1,cap=0)
+case('package-oom','P','<p><metadata><title>A</title></metadata><manifest><item id="a" href="a"/></manifest><spine><itemref idref="a"/></spine></p>',status='OutOfMemory',rust_status='MetadataTooLarge',passes=1,cap=0)
 case('short-read','N','<nav epub:type="toc"><a href="a">A</a></nav>',['T '+h('A')+' '+h('a')+' ~ 0'],short=3)
 case('text-cap','X','<n><navPoint><navLabel><text>'+'x'*260+'</text></navLabel><content src="a"/></navPoint></n>',['T '+h('x'*255)+' '+h('a')+' ~ 0'])
 case('bounded-depth','N','<nav epub:type="toc">'+'<ol>'*257+'<a href="a">A</a>'+'</ol>'*257+'</nav>',['T '+h('A')+' '+h('a')+' ~ 254'])
@@ -63,7 +66,7 @@ def resource_case(name, kind, xml, cpp_status='OutOfMemory', rust_status='OutOfM
     VECTORS.append(dict(id=name,wire=wire,expected=cpp,rust_expected=rust))
 resource_case('nav-fill-string-oom','N','<nav epub:type="toc"><a href="a">A</a></nav>')
 resource_case('ncx-fill-string-oom','X','<n><navPoint><content src="a"/></navPoint></n>')
-resource_case('package-fill-string-oom','P','<p><manifest><item id="a" href="a"/></manifest><spine><itemref idref="a"/></spine></p>')
+resource_case('package-fill-string-oom','P','<p><manifest><item id="a" href="a"/></manifest><spine><itemref idref="a"/></spine></p>',rust_status='MetadataTooLarge')
 resource_case('fill-io-precedes-string-oom','N','<nav epub:type="toc"><a href="a">A</a></nav>',rust_status='IoError',fail=1)
 
 

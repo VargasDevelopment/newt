@@ -336,7 +336,8 @@ pub fn open_allocated<'a, 'scratch, 'storage, S: BookSource + ?Sized, B: ParserB
         admission::emit_to(on_yield, observer, WorkKind::CatalogBegin, 0);
     }
     let mut catalog = Catalog::new(source, arena, &mut []);
-    let status = catalog.open_allocated(r.scan, r.sequential, allocate_entries);
+    let status = crate::package_parsers::metadata_capacity_error(
+        catalog.open_allocated(r.scan, r.sequential, allocate_entries));
     if status != Status::Ok {
         if required {
             admission::emit_to(on_yield, observer, WorkKind::CatalogEnd, status as i32);

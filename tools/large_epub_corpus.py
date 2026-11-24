@@ -19,7 +19,7 @@ Axes covered (each case declares target axis and exact expected outcomes):
   expanded-total  64 MiB expanded total cap (zip_record_rules.rs)
   file-size       64 MiB source file cap (EXTERNAL_MAX_BYTES / source_file.rs)
   zip64           ZIP64 EOCD sentinel/locator refusal (zip_container.rs)
-  name-length     511 B member name cap & xml_input MAX_PATH OOM boundary
+  name-length     511 B member name cap & typed xml_input MAX_PATH boundary
   long-ids        Long manifest IDs competing for the 48 KiB metadata arena
   toc-size        Author-supplied nav TOC vs 48 KiB bank exhaustion
   toc-depth       Deeply nested EPUB 2 NCX and EPUB 3 nav hierarchies
@@ -71,6 +71,7 @@ class BookSpec:
     chapter_paragraphs: int = 0
     chapter_anchors: int = 0
     extra_entries: int = 0
+    extra_entry_name_bytes: int = 6
     extra_manifest_items: int = 0
     toc_kind: str = "nav"
     toc_entries: int | None = None
@@ -303,7 +304,7 @@ def build_epub(spec: BookSpec) -> bytes:
     ]
     extras: list[tuple[str, bytes, bool]] = [
         (f"{prefix}{name}", b"note\n", spec.compress) for name in extra_manifest
-    ] + [(f"e/{i:04d}", b"x", False) for i in range(spec.extra_entries)]
+    ] + [(f"e/{i:04d}".ljust(spec.extra_entry_name_bytes, "x"), b"x", False) for i in range(spec.extra_entries)]
 
     chapter_sizes = [spec.chapter_bytes] * spec.chapters
     if spec.first_chapter_bytes > 0:
@@ -342,13 +343,19 @@ CASES: tuple[Case, ...] = (
          BookSpec(chapters=2, extra_entries=MAX_ENTRIES - 6)),
     Case("zip-entries-over", "zip-entries", "fast", "Unsupported", "Unsupported", "admit", "1,025 ZIP entries: one over admission.rs 1,024-entry cap",
          BookSpec(chapters=2, extra_entries=MAX_ENTRIES - 5)),
+    Case("runtime-parser-oom", "metadata-arena", "fast", "Ok", "OutOfMemory", "runtime-oom", "Runtime OPF counter-parser creation failure stays distinct from fixed metadata capacity",
+         BookSpec(chapters=2)),
+    Case("runtime-parser-fill-oom", "metadata-arena", "fast", "Ok", "OutOfMemory", "runtime-fill-oom", "Runtime OPF fill-parser creation failure stays distinct from fixed metadata capacity",
+         BookSpec(chapters=2)),
+    Case("catalog-arena-over", "metadata-arena", "fast", "Ok", "MetadataTooLarge", "admit", "200 unused entries with 256-byte paths exhaust fixed catalog metadata without exceeding admission limits",
+         BookSpec(chapters=2, extra_entries=200, extra_entry_name_bytes=256)),
     Case("parse-spine-fit", "metadata-arena", "fast", "Ok", "Ok", "menu", "240 chapters (244 entries): fits both 48 KiB banks with authored TOC",
          BookSpec(chapters=240), expected_menu_valid=True, expected_authored=True, expected_menu_count=240, expected_fallback="None"),
-    Case("parse-spine-over", "metadata-arena", "fast", "Ok", "OutOfMemory", "admit", "300 chapters (304 entries < 1,024): admission accepts, 48 KiB parse bank spine_hashes OOMs",
+    Case("parse-spine-over", "metadata-arena", "fast", "Ok", "MetadataTooLarge", "admit", "300 chapters (304 entries < 1,024): admission accepts, exceeds the fixed metadata workspace",
          BookSpec(chapters=300)),
     Case("shared-arena-fit", "metadata-arena", "fast", "Ok", "Ok", "admit", "350 extra manifest items (spine=2): fits inside 48 KiB shared metadata arena",
          BookSpec(chapters=2, extra_manifest_items=350, toc_entries=2)),
-    Case("shared-arena-over", "metadata-arena", "fast", "Ok", "OutOfMemory", "admit", "450 extra manifest items (spine=2, 456 entries < 1,024): exhausts 48 KiB shared arena",
+    Case("shared-arena-over", "metadata-arena", "fast", "Ok", "MetadataTooLarge", "admit", "450 extra manifest items (spine=2, 456 entries < 1,024): exhausts 48 KiB shared arena",
          BookSpec(chapters=2, extra_manifest_items=450, toc_entries=2)),
     Case("central-dir-at", "central-dir", "fast", "Ok", "Ok", "admit", "Central directory exactly 1,048,576 B (1 MiB) across 64 entries",
          BookSpec(chapters=2, extra_entries=58, target_cd_bytes=MAX_CD_BYTES)),
@@ -370,13 +377,13 @@ CASES: tuple[Case, ...] = (
          BookSpec(chapters=2, zip64=True)),
     Case("name-len-511-subdir", "name-length", "fast", "Ok", "Ok", "admit", "511 B ZIP name under OEBPS/ (505 B href): at EPUB_MAX_MEMBER_NAME_BYTES",
          BookSpec(chapters=2, path_dir="OEBPS", first_chapter_href_len=505)),
-    Case("name-len-href-512-oom", "name-length", "fast", "OutOfMemory", "OutOfMemory", "admit", "511 B ZIP name with 512 B relative OPF href (sub/../...): xml_input MAX_PATH reports OOM",
+    Case("name-len-href-512-over", "name-length", "fast", "PathTooLong", "PathTooLong", "admit", "511 B ZIP name with 512 B relative OPF href (sub/../...): typed path-policy refusal",
          BookSpec(chapters=2, path_dir="OEBPS", first_chapter_href_len=505, first_chapter_href_prefix="sub/../")),
     Case("name-len-512", "name-length", "fast", "Unsupported", "Unsupported", "admit", "512 B ZIP name under OEBPS/ (506 B href): one over 511 B name cap",
          BookSpec(chapters=2, path_dir="OEBPS", first_chapter_href_len=506)),
     Case("long-ids-fit", "long-ids", "full", "Ok", "Ok", "admit", "16 chapters with 200-byte manifest IDs",
          BookSpec(chapters=16, id_len=200)),
-    Case("long-ids-over", "long-ids", "full", "Ok", "OutOfMemory", "admit", "160 chapters with 200-byte manifest IDs: exhausts 48 KiB shared metadata arena",
+    Case("long-ids-over", "long-ids", "full", "Ok", "MetadataTooLarge", "admit", "160 chapters with 200-byte manifest IDs: exhausts 48 KiB shared metadata arena",
          BookSpec(chapters=160, id_len=200)),
     Case("toc-absent", "toc-size", "fast", "Ok", "Ok", "menu", "No authored Contents: section numbers without an error notice",
          BookSpec(chapters=2, toc_absent=True), expected_menu_valid=True, expected_authored=False, expected_menu_count=2, expected_fallback="None"),
@@ -388,7 +395,7 @@ CASES: tuple[Case, ...] = (
          BookSpec(chapters=249), expected_menu_valid=True, expected_authored=False, expected_menu_count=249, expected_fallback="Capacity"),
     Case("parse-spine-276", "metadata-arena", "fast", "Ok", "Ok", "menu", "Required metadata at the parse-bank boundary",
          BookSpec(chapters=276), expected_menu_valid=True, expected_authored=False, expected_menu_count=276, expected_fallback="Capacity"),
-    Case("parse-spine-277", "metadata-arena", "fast", "Ok", "OutOfMemory", "admit", "Required metadata exceeds the fixed parse bank",
+    Case("parse-spine-277", "metadata-arena", "fast", "Ok", "MetadataTooLarge", "admit", "Required metadata exceeds the fixed parse bank",
          BookSpec(chapters=277)),
     Case("toc-nav-small", "toc-size", "fast", "Ok", "Ok", "menu", "EPUB 3 nav TOC with 32 entries (authored Contents)",
          BookSpec(chapters=32, toc_kind="nav", toc_entries=32), expected_menu_valid=True, expected_authored=True, expected_menu_count=32, expected_fallback="None"),

@@ -443,16 +443,7 @@ impl Runtime {
         else if status == Status::OutOfMemory { ReaderIssue::Memory }
         else if self.restore_failure == newt_reader_ui::RestoreFailure::InvalidCheckpoint { ReaderIssue::InvalidCheckpoint }
         else if malformed { ReaderIssue::InvalidText }
-        else { match status {
-            Status::OutOfMemory => ReaderIssue::Memory,
-            Status::IoError | Status::Stale => ReaderIssue::Io,
-            Status::NotZip | Status::NotEpub => ReaderIssue::NotEpub,
-            Status::Encrypted => ReaderIssue::Encrypted,
-            Status::Truncated => ReaderIssue::Truncated,
-            Status::Unsupported => ReaderIssue::Unsupported,
-            Status::ParseError => ReaderIssue::Parse,
-            Status::NotFound | Status::Ok => ReaderIssue::Unavailable,
-        } };
+        else { ReaderIssue::for_open_failure(status) };
         self.saves.set_reader(issue);
     }
 

@@ -76,9 +76,9 @@ impl BuildLoan for HostLoan<'_> {
     }
 }
 
-struct XmlBackend(Expat);
+struct XmlBackend(Expat, usize, usize);
 impl ParserBackend for XmlBackend {
-    fn create(&mut self) -> bool { self.0.create() }
+    fn create(&mut self) -> bool { self.2 += 1; self.2 != self.1 && self.0.create() }
     fn feed(&mut self, bytes: &[u8], last: bool, h: &mut dyn Handler) -> bool { self.0.feed(bytes, last, h) }
     fn close(&mut self) { self.0.close() }
 }
@@ -154,7 +154,7 @@ impl HostScratch {
             chunk: [0; 2048],
             xml: [0; 2048],
             filter: EntityFilter::new(),
-            backend: XmlBackend(Expat::default()),
+            backend: XmlBackend(Expat::default(), 0, 0),
         }
     }
     fn with_resources<R>(
@@ -303,7 +303,7 @@ fn run_open_phased(path: &Path, mode: &str) -> OpenMetrics {
     let mut native = Box::new(Bank([0u8; BANK_BYTES]));
     let mut storage = PhaseStorage::new(&mut shared.0);
     let mut loan = HostLoan(&mut native);
-    let mut backend = XmlBackend(Expat::default());
+    let mut backend = XmlBackend(Expat::default(), match mode { "runtime-oom" => 2, "runtime-fill-oom" => 3, _ => 0 }, 0);
     let mut selections = [Selection::default(), Selection::default()];
     let mut runs = vec![PlanRun::default(); RUNS];
     let mut text = Box::new(PlanText([0u8; TEXT]));

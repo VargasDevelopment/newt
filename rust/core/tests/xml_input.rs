@@ -180,7 +180,12 @@ fn path_outputs_caps_nuls_and_partial_oom() {
     assert!(resolve_href(&mut a, None, Some(&[b'x'; 511]), None).is_some());
     let used = a.used();
     assert!(resolve_href(&mut a, None, Some(&[b'x'; 512]), None).is_none());
+    assert_eq!(resolve_href_checked(&mut a, None, Some(&[b'x'; 512]), None), Err(HrefError::TooLong));
     assert_eq!(a.used(), used);
+    let mut tiny = [];
+    let mut capacity = Arena::new(&mut tiny);
+    assert_eq!(resolve_href_checked(&mut capacity, None, Some(b"a"), None), Err(HrefError::Capacity));
+    assert_eq!(resolve_href_checked(&mut capacity, None, None, None), Err(HrefError::Missing));
 }
 
 #[test]
@@ -228,6 +233,8 @@ fn intermediate_path_limit_precedes_allocation_even_when_parents_shorten_it() {
     assert!(
         resolve_href(&mut arena, Some(&base), Some(b"abcde/../b#f"), Some(&mut fragment)).is_none()
     );
+    assert_eq!(resolve_href_checked(&mut arena, Some(&base), Some(b"abcde/../b#f"), None), Err(HrefError::TooLong));
+    assert_eq!(resolve_href_checked(&mut arena, Some(&[b'x'; 512]), Some(b"a"), None), Err(HrefError::TooLong));
     assert_eq!(arena.used(), 0);
     assert_eq!(arena.high_water(), 0);
     assert_eq!(arena.failed_alloc_size(), 0);
