@@ -135,17 +135,28 @@ fn report(observation:&Observation,result:R,io:&UiIo,control:&dyn Control)->bool
     true
 }
 
-/// Keep the latest DEV observation through backpressure, like RuntimeLows.
-/// Telemetry never holds up cover generation when the host stops reading.
+/// An attempt survives cached/empty ticks. A stalled host gets only a bounded
+/// drain window before newer attempts can supersede it.
 #[derive(Default)]
 pub struct Pending(Option<(R,Observation)>);
 impl Pending{
+    pub fn is_pending(&self)->bool{self.0.is_some()}
+    pub fn ready(&self,control:&dyn Control)->bool{
+        self.is_pending()&&!control.stopped()&&newt_c3_board::dev_usb::available_for_write()>=200
+    }
+    pub fn draining(&self,now:u32)->bool{
+        // Reuse the completed observation's timestamp; no retry timer or queue.
+        self.0.as_ref().is_some_and(|(result,observation)|*result!=R::Idle
+            &&now.wrapping_sub(observation.started.wrapping_add(observation.elapsed.get()))<200)
+    }
     pub fn record(&mut self,result:R,observation:Observation){
+        if result==R::Idle&&self.0.as_ref().is_some_and(|(pending,_)|*pending!=R::Idle){return;}
         if observation.opens.get()!=0||observation.path_stats.get()!=0||result!=R::Idle{
             self.0=Some((result,observation));
         }
     }
     pub fn publish(&mut self,io:&UiIo,control:&dyn Control)->bool{
+        if !self.ready(control){return !self.is_pending();}
         let Some((result,observation))=self.0.as_ref()else{return true;};
         if !report(observation,*result,io,control){return false;}
         self.0=None;true

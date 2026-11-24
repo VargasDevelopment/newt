@@ -43,7 +43,13 @@ int32_t nb_begin(void *d) {
     if (file) { refreshed = fread(shown, sizeof shown, 1, file) == 1; fclose(file); }
     return NB_OK;
 }
-int32_t nb_mount_sd(void) { return preview_conf_is("card.absent", "1") ? NB_IO : NB_OK; }
+int32_t nb_mount_sd(void) {
+    if (preview_conf_is("card.mount.trace", "1")) {
+        FILE *file = fopen(preview_path("mounts.txt"), "a");
+        if (file) { fputs("mount\n", file); fclose(file); }
+    }
+    return preview_conf_is("card.absent", "1") ? NB_IO : NB_OK;
+}
 int32_t nb_input_begin(void *i) { return i ? NB_OK : NB_NULL; }
 int32_t nb_frame(void *d, struct nb_frame *out) {
     if (!out) return NB_NULL;

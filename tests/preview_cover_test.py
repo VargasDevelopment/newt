@@ -518,17 +518,30 @@ def transient(binary):
 
 
 def usb_backpressure(binary):
-    """A busy USB buffer keeps the latest attempt until the next quiet pass."""
-    for pause in (30, 60000):
+    """Short pressure keeps every row; a stalled host cannot hold up covers."""
+    for pause, cached in ((30, False), (60000, False), (600, True)):
         with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
-            world = World(binary, scratch, **{'cover.usb.pause_ms': str(pause)})
+            records = {book: record(book, CJB6) for book in BOOKS if book != 'Alder'} if cached else None
+            world = World(binary, scratch, records, **{'cover.usb.pause_ms': str(pause)})
             _, results, _ = world.run(SHELF)
-            if pause == 30 and (not results or results != [PRODUCED] * len(results) or len(results) > 4):
+            if results != ([PRODUCED] if cached else [PRODUCED] * 4 if pause == 30 else []):
                 return f'busy USB lost or repeated attempt rows: {results}'
             # A host that never drains USB must not hold up cover generation.
-            for book in shelves()[0]:
+            for book in (['Alder'] if cached else shelves()[0]):
                 if problem := art_problem(world, book):
                     return problem
+
+
+def absent_card_idle(binary):
+    """Idle telemetry with no pending row never retries a failed card mount."""
+    counts = []
+    for keys in ((), (7,)):
+        with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
+            world = World(binary, scratch, **{'card.absent': '1', 'card.mount.trace': '1'})
+            world.run(keys)
+            counts.append(len((world.directory / 'mounts.txt').read_text().splitlines()))
+    if counts[0] != counts[1]:
+        return f'idle time caused repeated mounts without a pending row: {counts}'
 
 
 def low_heap(binary):
@@ -666,7 +679,14 @@ CASES = [
           'self.commit(&self.header(u32::from_le_bytes(*b"CJB3")),&[])')]]),
     (usb_backpressure, [
         [('cover_observation.rs', 'if !report(observation,*result,io,control){return false;}',
-          'let _=report(observation,*result,io,control);')]]),
+          'let _=report(observation,*result,io,control);')],
+        [('cover_observation.rs',
+          '||newt_c3_board::dev_usb::available_for_write()<record.length as i32', '')],
+        [('cover_observation.rs', '<200)', '<0)')],
+        [('cover_observation.rs',
+          '        if result==R::Idle&&self.0.as_ref().is_some_and(|(pending,_)|*pending!=R::Idle){return;}\n', '')]]),
+    (absent_card_idle, [
+        [('reader_cover_producer.rs', 'if self.cover_observation.ready(&poll){', 'if true{')]]),
     (low_heap, [
         # Memory admits a block however little heap would stay free.
         [('cover_memory.rs', ' || self.heap.free_bytes() < charge + RESERVE', '')]]),
