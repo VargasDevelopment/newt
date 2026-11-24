@@ -506,15 +506,29 @@ def transient(binary):
             return f'a read fault ended {results}, left {world.cover(book)!r} and {world.temporaries()}'
     with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
         # Back during its work: Home has no book, so no other cover work runs.
-        # A cancelled attempt logs no row (input is pending), so only Alder's shows.
+        # The cancelled attempt's row waits until Back has been handled.
         world = World(binary, scratch, **{'card.back': stage})
         _, results, _ = world.run(SHELF)
-        if results != [PRODUCED] or world.cover(book) is not None or world.temporaries():
+        if results != [PRODUCED, CANCELLED] or world.cover(book) is not None or world.temporaries():
             return f'Back during cover work ended {results}, left {world.cover(book)!r} and {world.temporaries()}'
         preview_driver.write_conf(world.directory, {'card.back': ''})
         _, results, _ = world.run(SHELF)
         if results != [PRODUCED] * 3 or (problem := art_problem(world, book)):
             return f'the next visit ended {results}: {art_problem(world, book)}'
+
+
+def usb_backpressure(binary):
+    """A busy USB buffer keeps the latest attempt until the next quiet pass."""
+    for pause in (10, 60000):
+        with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
+            world = World(binary, scratch, **{'cover.usb.pause_ms': str(pause)})
+            _, results, _ = world.run(SHELF)
+            if pause == 10 and results != [PRODUCED] * 4:
+                return f'busy USB lost or repeated attempt rows: {results}'
+            # A host that never drains USB must not hold up cover generation.
+            for book in shelves()[0]:
+                if problem := art_problem(world, book):
+                    return problem
 
 
 def low_heap(binary):
@@ -650,6 +664,9 @@ CASES = [
         # A retry records its verdict on the old route, so it retries again.
         [('cover_session.rs', 'self.commit(&self.header(cover::NO_ART),&[])',
           'self.commit(&self.header(u32::from_le_bytes(*b"CJB3")),&[])')]]),
+    (usb_backpressure, [
+        [('cover_observation.rs', 'if !report(observation,*result,io,control){return false;}',
+          'let _=report(observation,*result,io,control);')]]),
     (low_heap, [
         # Memory admits a block however little heap would stay free.
         [('cover_memory.rs', ' || self.heap.free_bytes() < charge + RESERVE', '')]]),

@@ -168,6 +168,8 @@ pub struct Runtime {
     settings: newt_reader_ui::ViewSettings,
     last_progress: core::cell::Cell<u32>,
     idle: cover_idle::CoverIdleState,
+    #[cfg(feature="dev-usb")]
+    cover_observation: cover_producer::observation::Pending,
 }
 
 /// The app owns scalar selection/recovery state; each reader open admits its
@@ -198,7 +200,9 @@ impl Runtime {
             standalone_status: newt_core::zip_container::Status::NotFound,
             restore_failure: newt_reader_ui::RestoreFailure::None, progress_ready: false,
             exit_metadata: None, settings: newt_reader_ui::ViewSettings::default(),
-            last_progress: core::cell::Cell::new(0), idle: cover_idle::CoverIdleState::new() }
+            last_progress: core::cell::Cell::new(0),
+            #[cfg(feature="dev-usb")]
+            cover_observation: cover_producer::observation::Pending::default(), idle: cover_idle::CoverIdleState::new() }
     }
     pub fn book(&self) -> Option<View<'_>> {
         self.memory.external().map(|memory| {
