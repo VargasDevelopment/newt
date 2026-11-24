@@ -72,7 +72,7 @@ fn settings() -> ViewSettings { ViewSettings { orientation: Orientation::Portrai
 #[test]
 fn exact_cache_page_boundary_does_not_wrap_or_expand_segments() {
     let mut selections = [Selection::default(), Selection::default()];
-    let mut reader = PhasedReader::new(&mut selections, None, false);
+    let mut reader = PhasedReader::new(&mut selections, None, PageLayout::PORTRAIT);
     reader.has_page = true;
     reader.info.page_count = MAX_PAGES;
     assert_eq!(Segments::new(MAX_PAGES).count, 32);
@@ -112,7 +112,7 @@ fn settled_oversize_chapters_are_denied_before_cache_io_or_writes() {
         let mut runs = [newt_phased_sink::Run::default(); newt_phased_sink::RUNS];
         let mut text = [0; newt_phased_sink::TEXT];
         let mut plan = Plan::new(&mut runs, &mut text);
-        let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), false);
+        let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), PageLayout::PORTRAIT);
         reader.opened = true;
         reader.has_page = true;
         reader.info.page_count = pages;
@@ -164,7 +164,7 @@ fn known_oversize_chapter_skips_all_cache_queries() {
     let mut runs = [newt_phased_sink::Run::default(); newt_phased_sink::RUNS];
     let mut text = [0; newt_phased_sink::TEXT];
     let mut plan = Plan::new(&mut runs, &mut text);
-    let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), false);
+    let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), PageLayout::PORTRAIT);
     reader.opened = true;
     reader.has_page = true;
     reader.info.page_count = MAX_PAGES + 1;

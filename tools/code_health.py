@@ -114,7 +114,7 @@ def print_warning(path, message):
 def verify_existing_inputs(root):
     subprocess.run([sys.executable, "-E", "-B", str(root / "tools/firmware-build.py"), "--check-config"], check=True, cwd=root)
     for generator in ("make-builtin-app.py", "make-reader-fixture.py", "make-stage-backdrop.py",
-                      "pack-reader-atlas.py"):
+                      "pack-reader-atlas.py", "make-native-reader-sizes.py"):
         subprocess.run([sys.executable, "-E", "-B", str(root / "tools" / generator), "--check"], check=True, cwd=root)
 
 

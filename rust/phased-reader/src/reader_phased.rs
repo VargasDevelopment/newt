@@ -402,7 +402,7 @@ impl PhasedReader<'_, '_> {
                         selected,
                         target,
                         mode,
-                        self.landscape,
+                        self.page_layout,
                         None,
                         self.plan.as_deref_mut(),
                         slot,

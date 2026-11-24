@@ -139,30 +139,32 @@ const _: () = assert!(!core::mem::needs_drop::<bounded::Reader>());
 #[cfg(test)]
 mod tests {
     use super::*;
-    use newt_core::preferences::Orientation;
+    use newt_core::preferences::{Orientation, TextSize};
 
     #[test]
     fn placed_reader_matches_constructor_on_poisoned_storage() {
         for orientation in [Orientation::Portrait, Orientation::LandscapeCcw] {
             for slim_progress_bar in [false, true] {
                 for refresh_pages in [1, 5, 10] {
-                    let settings = ViewSettings { orientation, slim_progress_bar, refresh_pages };
-                    let mut slot = MaybeUninit::<bounded::Reader>::uninit();
-                    // SAFETY: bytes are poisoned while still uninitialized;
-                    // the complete initializer establishes Reader afterwards.
-                    unsafe { write_bytes(slot.as_mut_ptr().cast::<u8>(), 0xa5, size_of::<bounded::Reader>()); }
-                    initialize_reader(&mut slot, settings);
-                    // SAFETY: initialize_reader initialized every typed field.
-                    let actual = unsafe { slot.assume_init() };
-                    let expected = bounded::Reader::new(settings);
-                    assert_eq!(actual.settings(), expected.settings());
-                    assert_eq!(actual.info(), expected.info());
-                    assert_eq!(actual.opened(), expected.opened());
-                    assert_eq!(actual.current_section(), expected.current_section());
-                    let (a, b) = (actual.progress_inputs(), expected.progress_inputs());
-                    assert_eq!((a.before, a.current, a.total, a.index, a.count, a.valid),
-                        (b.before, b.current, b.total, b.index, b.count, b.valid));
-                    assert_eq!(actual.chapter_menu().info(), expected.chapter_menu().info());
+                    for text_size in TextSize::ALL {
+                        let settings = ViewSettings { orientation, slim_progress_bar, refresh_pages, text_size };
+                        let mut slot = MaybeUninit::<bounded::Reader>::uninit();
+                        // SAFETY: bytes are poisoned while still uninitialized;
+                        // the complete initializer establishes Reader afterwards.
+                        unsafe { write_bytes(slot.as_mut_ptr().cast::<u8>(), 0xa5, size_of::<bounded::Reader>()); }
+                        initialize_reader(&mut slot, settings);
+                        // SAFETY: initialize_reader initialized every typed field.
+                        let actual = unsafe { slot.assume_init() };
+                        let expected = bounded::Reader::new(settings);
+                        assert_eq!(actual.settings(), expected.settings());
+                        assert_eq!(actual.info(), expected.info());
+                        assert_eq!(actual.opened(), expected.opened());
+                        assert_eq!(actual.current_section(), expected.current_section());
+                        let (a, b) = (actual.progress_inputs(), expected.progress_inputs());
+                        assert_eq!((a.before, a.current, a.total, a.index, a.count, a.valid),
+                            (b.before, b.current, b.total, b.index, b.count, b.valid));
+                        assert_eq!(actual.chapter_menu().info(), expected.chapter_menu().info());
+                    }
                 }
             }
         }

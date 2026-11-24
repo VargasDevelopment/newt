@@ -18,8 +18,9 @@ use newt_core::{
     css::{CssStylesheetBuilder, TextAlign},
 };
 pub use newt_core::phased_metadata::BookLanguage;
+pub use newt_core::preferences::PageLayout;
 use newt_phased_sink::{Frame, Output, Plan, SelectingSink, Target};
-use newt_reader_atlas::{Geometry, PROFILE_SIZE, ReaderAtlas};
+use newt_reader_atlas::{Geometry, ReaderAtlas};
 use newt_reader_navigation::{MenuInfo, MenuRow, NO_TOC, Navigation, Section, metadata::Metadata};
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
@@ -124,7 +125,7 @@ pub struct PhasedReader<'a, 'p> {
     plan: Option<&'a mut Plan<'p>>,
     active: usize,
     source_bytes: u64,
-    landscape: bool,
+    page_layout: PageLayout,
     opened: bool,
     has_page: bool,
     info: PageInfo,
@@ -140,14 +141,14 @@ impl<'a, 'p> PhasedReader<'a, 'p> {
     pub fn new(
         selections: &'a mut [Selection; 2],
         plan: Option<&'a mut Plan<'p>>,
-        landscape: bool,
+        page_layout: PageLayout,
     ) -> Self {
-        ReaderState::new(landscape).lend(selections, plan)
+        ReaderState::new(page_layout).lend(selections, plan)
     }
     /// Owner closes/checkpoints before a confirmed settings reflow.
-    pub fn set_closed_orientation(&mut self, landscape: bool) {
+    pub fn set_closed_layout(&mut self, page_layout: PageLayout) {
         if !self.opened {
-            self.landscape = landscape;
+            self.page_layout = page_layout;
         }
     }
     pub fn info(&self) -> PageInfo {
@@ -563,7 +564,7 @@ impl<'a, 'p> PhasedReader<'a, 'p> {
                 selected,
                 target,
                 mode,
-                self.landscape,
+                self.page_layout,
                 frame.as_deref_mut(),
                 self.plan.as_deref_mut(),
                 slot,
@@ -673,7 +674,7 @@ impl<'a, 'p> PhasedReader<'a, 'p> {
             return self.failed(status);
         }
         if let Some(plan) = self.plan.as_deref() {
-            plan.paint(frame, self.landscape, &ReaderAtlas, &mut ReaderAtlas);
+            plan.paint(frame, self.page_layout.landscape, &ReaderAtlas, &mut ReaderAtlas);
         }
         let status = self.validate(source);
         if status != Status::Ok {
@@ -741,7 +742,7 @@ impl<'a, 'p> PhasedReader<'a, 'p> {
             return self.failed(status);
         }
         if let Some(plan) = self.plan.as_deref() {
-            plan.paint(frame, self.landscape, &ReaderAtlas, &mut ReaderAtlas);
+            plan.paint(frame, self.page_layout.landscape, &ReaderAtlas, &mut ReaderAtlas);
         }
         let status = self.validate(source);
         if status != Status::Ok {
@@ -979,7 +980,7 @@ fn pass<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     selected: &mut Selection,
     target: u32,
     mode: Target,
-    landscape: bool,
+    page_layout: PageLayout,
     frame: Option<&mut Frame>,
     plan: Option<&mut Plan<'_>>,
     slot: &Slot<'_>,
@@ -995,7 +996,7 @@ fn pass<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
         filter: r.filter.as_deref_mut(),
     };
     pass_stream(
-        source, selected, target, mode, landscape, frame, plan, slot, lr, &mut io, reuse, on_yield,
+        source, selected, target, mode, page_layout, frame, plan, slot, lr, &mut io, reuse, on_yield,
     )
 }
 
@@ -1005,7 +1006,7 @@ fn pass_stream<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     selected: &mut Selection,
     target: u32,
     mode: Target,
-    landscape: bool,
+    page_layout: PageLayout,
     frame: Option<&mut Frame>,
     plan: Option<&mut Plan<'_>>,
     slot: &Slot<'_>,
@@ -1033,14 +1034,14 @@ fn pass_stream<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     let mut sink = SelectingSink::new(
         target,
         mode,
-        landscape,
+        page_layout.landscape,
         &mut metrics,
         &atlas,
         output,
         Some(&mut selected.navigation),
     )
     .map_err(|_| Status::Unsupported)?;
-    let params = reader_parameters(landscape, Some(slot), selected.language);
+    let params = reader_parameters(page_layout, Some(slot), selected.language);
     let (status, pages, chars, complete) = {
         let reached = core::cell::Cell::new(false);
         let settled = core::cell::Cell::new(watch.settled());
@@ -1481,8 +1482,8 @@ impl PhasedReader<'_, '_> {
 
 include!("reader_semantic.rs");
 
-pub(crate) fn reader_parameters<'s>(landscape: bool, slot: Option<&'s Slot<'_>>, language: BookLanguage) -> Params<'s> {
-    let g = Geometry::reader(landscape);
+pub(crate) fn reader_parameters<'s>(page_layout: PageLayout, slot: Option<&'s Slot<'_>>, language: BookLanguage) -> Params<'s> {
+    let g = Geometry::reader(page_layout.landscape);
     Params {
         width: g.width as i16,
         height: g.height as i16,
@@ -1490,7 +1491,7 @@ pub(crate) fn reader_parameters<'s>(landscape: bool, slot: Option<&'s Slot<'_>>,
         right: g.margin as i16,
         top: g.margin as i16,
         bottom: (g.height - g.content_bottom) as i16,
-        base_size: PROFILE_SIZE,
+        base_size: page_layout.text_size.px(),
         align: TextAlign::Justify,
         embedded_styles: false,
         language: Some(language.tag()),
@@ -1590,7 +1591,7 @@ impl PhasedReader<'_, '_> {
     pub fn restore_retained_frame(&self, frame: &mut Frame) -> Status {
         if !self.has_page || !self.proofs.plan { return Status::Unsupported; }
         let Some(plan) = self.plan.as_deref() else { return Status::Unsupported; };
-        plan.paint(frame, self.landscape, &ReaderAtlas, &mut ReaderAtlas);
+        plan.paint(frame, self.page_layout.landscape, &ReaderAtlas, &mut ReaderAtlas);
         Status::Ok
     }
 }

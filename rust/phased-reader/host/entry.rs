@@ -184,7 +184,7 @@ fn menu_receipt(op: &str, status: Status, reader: &PhasedReader<'_, '_>) {
 }
 /// Called serially with host/fixtures.py files. Each case drives actual reader
 /// operations; backend callbacks and source reads are never simulated success.
-pub fn run(path: &Path, case: Case, landscape: bool) {
+pub fn run(path: &Path, case: Case, page_layout: PageLayout) {
     assert!(!LIVE.load(SeqCst) && !HELD.load(SeqCst));
     let mut source = Source {
         bytes: std::fs::read(path).unwrap(),
@@ -205,7 +205,7 @@ pub fn run(path: &Path, case: Case, landscape: bool) {
         runs.as_mut_slice().try_into().unwrap(),
         text.as_mut_slice().try_into().unwrap(),
     );
-    let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), landscape);
+    let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), page_layout);
     METADATA_PHASE.store(false, SeqCst);
     if matches!(case, Case::OptionalLiveFault) {
         reader.work = Some(observe_metadata);

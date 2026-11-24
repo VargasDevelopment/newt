@@ -68,7 +68,7 @@ impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::Pro
             crate::phase_storage::with_style_watch(backing, &mut chapter, slot.state, |watch| {
                 let raw = Entry::raw(selected.entry.uncompressed_size);
                 let mut images = lr.images.for_chapter(&selected.href);
-                let mut engine = match EngineState::new(reader_parameters(reader.landscape, Some(slot), selected.language),
+                let mut engine = match EngineState::new(reader_parameters(reader.page_layout, Some(slot), selected.language),
                     resources::storage(&mut lr.storage), lr.breaker, &mut images, None,
                     CssStylesheetBuilder::default()) {
                     Ok(engine) => engine,

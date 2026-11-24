@@ -1,6 +1,6 @@
 //! Frozen resume-picture header and panel mark from firmware/resume_picture.h.
 use crate::frame::Frame;
-use crate::preferences::{Orientation, ViewSettings};
+use crate::preferences::{Orientation, TextSize, ViewSettings};
 use crate::progress::Locator;
 use crate::wire::{crc32, get32, put32};
 
@@ -110,6 +110,8 @@ impl Record {
         bytes[80] = self.binding.settings.orientation as u8;
         bytes[81] = u8::from(self.binding.settings.slim_progress_bar);
         bytes[82] = self.binding.settings.refresh_pages;
+        // 0 for the default size, so default pictures keep their old bytes.
+        bytes[83] = self.binding.settings.text_size.byte();
         put32(bytes, 84, self.footer.spine);
         put32(bytes, 88, self.footer.page);
         put32(bytes, 92, self.footer.pages);
@@ -126,13 +128,12 @@ impl Record {
     /// Damaged, foreign, or newer headers leave the complete record unchanged.
     pub fn decode(&mut self, bytes: &[u8; HEADER_BYTES]) -> bool {
         let length = usize::from(u16::from_le_bytes([bytes[98], bytes[99]]));
-        let Some(orientation) = Orientation::from_byte(bytes[80]) else {
+        let (Some(orientation), Some(text_size)) = (Orientation::from_byte(bytes[80]), TextSize::from_byte(bytes[83])) else {
             return false;
         };
         if get32(bytes, 0) != Self::MAGIC
             || get32(bytes, 4) != Self::VERSION
             || get32(bytes, 508) != Self::crc(&bytes[..508])
-            || bytes[83] != 0
             || bytes[81] > 1
             || bytes[96] > 1
             || length >= LABEL_BYTES
@@ -153,6 +154,7 @@ impl Record {
         self.binding.settings.orientation = orientation;
         self.binding.settings.slim_progress_bar = bytes[81] != 0;
         self.binding.settings.refresh_pages = bytes[82];
+        self.binding.settings.text_size = text_size;
         self.footer.spine = get32(bytes, 84);
         self.footer.page = get32(bytes, 88);
         self.footer.pages = get32(bytes, 92);

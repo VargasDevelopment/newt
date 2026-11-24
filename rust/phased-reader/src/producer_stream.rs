@@ -103,7 +103,7 @@ impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::Pro
             else { reader.selection() };
         phase.layout(backend, breaker, |slot, lr, io| {
             let _work = WorkScope::new_scoped(reader.on_yield, reader.work, WorkPhase::Layout);
-            let params = reader_parameters(reader.landscape, Some(slot), selected.language);
+            let params = reader_parameters(reader.page_layout, Some(slot), selected.language);
             self.begin_stream();
             let mut scheduled = ScheduledSource::new(&mut *self.source, reader.on_yield, Some(cancellation));
             let mut chapter = match ChapterSource::open(&mut scheduled, &selected.entry,

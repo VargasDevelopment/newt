@@ -45,7 +45,8 @@ QUICK_START = {'portrait': [CONFIRM, CONFIRM, DOWN, CONFIRM, DOWN, CONFIRM, CONF
                'landscape-ccw': [CONFIRM, DOWN, CONFIRM, DOWN, CONFIRM, DOWN, CONFIRM, CONFIRM, CONFIRM],
                'landscape-cw': [CONFIRM, DOWN, DOWN, CONFIRM, DOWN, CONFIRM, DOWN, CONFIRM, CONFIRM, CONFIRM]}
 # From Home: the sample's Reading settings, its slim bar switched off, saved.
-BAR_OFF = [BACK, CONFIRM, RIGHT, RIGHT, CONFIRM, RIGHT, CONFIRM, RIGHT, RIGHT, CONFIRM, BACK]
+# Rows: Orientation, Text size, Slim bar, Refresh, Save, Cancel.
+BAR_OFF = [BACK, CONFIRM, RIGHT, RIGHT, CONFIRM, RIGHT, RIGHT, CONFIRM, RIGHT, RIGHT, CONFIRM, BACK]
 TELEMETRY = ('unknown', 'sample')
 STATS = ('ready', 'counting', 'undated', 'unavailable', 'newer', 'crossink', 'crossink-undated')
 LIBRARIES = ('healthy', 'four', 'no-covers', 'cover-fault', 'shelf', 'sparse', 'long-title', 'loading',

@@ -753,7 +753,7 @@ impl ExternalOwner {
         settings: ViewSettings,
     ) {
         self.close(reader);
-        reader.set_closed_orientation(settings.orientation.is_landscape());
+        reader.set_closed_layout(settings.page_layout());
     }
     /// Session has no retained operation, but the revision still owns source
     /// authority. Reset that authority explicitly before releasing its backing.

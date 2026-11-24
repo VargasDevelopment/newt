@@ -198,8 +198,9 @@ impl<B: ParserBackend + ?Sized, C: CacheStorage + CachePresence>
         spine: u32,
         r: &mut OperationReader<'_, '_, '_, '_, '_, '_, B>,
     ) -> session::Build {
-        // Reader currently carries orientation only. Refuse unsupported view
-        // choices instead of routing pages under settings it never received.
+        // The cache must match the reader's page layout (orientation and text
+        // size). Refuse other view choices instead of routing pages under
+        // settings the reader never received.
         if !reader_settings_match(r.reader, self.settings) {
             return session::Build::Failed(Status::Unsupported);
         }
@@ -271,7 +272,7 @@ pub(super) fn identity(
     identity_at_generation(settings, digest, spine, hash, generation).map(|name| (name, generation))
 }
 fn identity_generation(settings: ViewSettings, language: BookLanguage) -> u32 {
-    let params = reader_parameters(settings.orientation.is_landscape(), None, language);
+    let params = reader_parameters(settings.page_layout(), None, language);
     let mix = |h: u32, v: u32| (h ^ v).wrapping_mul(16777619);
     let engine = CACHE_ENGINE_REVISION;
     let mut generation = layout_generation_hash(&params, newt_reader_atlas::IDENTITY, false);
@@ -326,7 +327,7 @@ pub trait CachePresence {
 
 pub(super) fn reader_settings_match(reader: &PhasedReader<'_, '_>, settings: ViewSettings) -> bool {
     let defaults = ViewSettings::default();
-    reader.landscape == settings.orientation.is_landscape()
+    reader.page_layout == settings.page_layout()
         && settings.slim_progress_bar == defaults.slim_progress_bar
         && settings.refresh_pages == defaults.refresh_pages
 }

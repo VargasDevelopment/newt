@@ -56,7 +56,8 @@ fn intent(saved: &Progress) -> SleepResumeIntent {
     SleepResumeIntent { book: saved.book, checkpoint: progress_checkpoint(saved), settings: 0x0a0f }
 }
 fn settings() -> ViewSettings {
-    ViewSettings { orientation: Orientation::Portrait, slim_progress_bar: false, refresh_pages: 1 }
+    ViewSettings { orientation: Orientation::Portrait, slim_progress_bar: false, refresh_pages: 1,
+        ..ViewSettings::default() }
 }
 
 #[test]

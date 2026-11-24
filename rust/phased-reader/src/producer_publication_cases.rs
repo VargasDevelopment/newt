@@ -71,7 +71,7 @@ fn publication(id: u32, b: &[u8]) -> (Output, u32) {
     let mut storage = Storage::new(&mut shared);
     let mut selections = [Selection::default(), Selection::default()];
     selections[0].entry = Entry::raw(b.len() as u32);
-    let mut reader = PhasedReader::new(&mut selections, None, false);
+    let mut reader = PhasedReader::new(&mut selections, None, PageLayout::PORTRAIT);
     reader.source_bytes = b.len() as u64;
     reader.work = Some(work);
     reader.info.page_count = if id == 29 { 2 } else { 1 };

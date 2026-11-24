@@ -30,7 +30,7 @@ pub use lifecycle::*;
 pub use newt_core::{
     app::Action,
     frame::Frame,
-    preferences::{Orientation, ViewSettings},
+    preferences::{Orientation, TextSize, ViewSettings},
 };
 use newt_ui_canvas::UiCanvas;
 pub use overlay::*;

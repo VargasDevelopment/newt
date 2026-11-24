@@ -23,7 +23,8 @@ pub fn render_reader_overlay(
         return render_statistics_panel(ui, settings, title, progress, ready, Some(frame), book);
     }
     let g = newt_core::preferences::geometry(settings);
-    let mut c = UiCanvas::new(Some(frame), g.width.into(), g.height.into());
+    let mut c = UiCanvas::new(Some(&mut *frame), g.width.into(), g.height.into());
+    let mut sample = None;
     let OverlayGeometry {
         x,
         y,
@@ -183,65 +184,31 @@ pub fn render_reader_overlay(
                 ui.draft.refresh_pages,
                 if ui.draft.refresh_pages == 1 { "" } else { "s" }
             );
-            let labels: [&[u8]; 5] = [
-                &orientation,
-                if ui.draft.slim_progress_bar {
-                    b"Slim progress bar: On"
-                } else {
-                    b"Slim progress bar: Off"
-                },
-                &refresh,
-                if ui.preferences_writable {
-                    b"Save and return"
-                } else {
-                    b"Save unavailable"
-                },
-                b"Cancel",
-            ];
-            for (i, label) in labels.into_iter().enumerate() {
-                c.focus(
-                    x + 18,
-                    row_y + i as i32 * 43,
-                    w - 40,
-                    Some(label),
-                    i as u32 == ui.selected.min(4),
-                );
+            let focus = SettingsRow::at(ui.selected);
+            for (i, row) in SettingsRow::ALL.into_iter().enumerate() {
+                let label: &[u8] = match row {
+                    SettingsRow::Orientation => &orientation,
+                    SettingsRow::TextSize => match ui.draft.text_size {
+                        TextSize::Px22 => b"Text size: Extra small",
+                        TextSize::Px24 => b"Text size: Small",
+                        TextSize::Px27 => b"Text size: Medium",
+                        TextSize::Px30 => b"Text size: Large",
+                        TextSize::Px34 => b"Text size: Extra large",
+                    },
+                    SettingsRow::SlimProgressBar if ui.draft.slim_progress_bar => b"Slim progress bar: On",
+                    SettingsRow::SlimProgressBar => b"Slim progress bar: Off",
+                    SettingsRow::Refresh => &refresh,
+                    SettingsRow::Save if ui.preferences_writable => b"Save and return",
+                    SettingsRow::Save => b"Save unavailable",
+                    SettingsRow::Cancel => b"Cancel",
+                };
+                let top = row_y + i as i32 * 43;
+                c.focus(x + 18, top, w - 40, Some(label), row == focus);
+                if row == SettingsRow::TextSize {
+                    // Right-aligned in the row, on a baseline above the focus underline.
+                    sample = Some((x + w - 30, top + 30));
+                }
             }
-            if !ui.preferences_writable {
-                text(
-                    &mut c,
-                    x + 22,
-                    y + h - 91,
-                    b"Settings storage unavailable",
-                    21,
-                    false,
-                    w - 44,
-                );
-            } else if ui.notice == ReaderUiNotice::SaveFailed {
-                text(
-                    &mut c,
-                    x + 22,
-                    y + h - 91,
-                    b"Could not verify save. Draft kept.",
-                    21,
-                    false,
-                    w - 44,
-                );
-            }
-            text(
-                &mut c,
-                x + 22,
-                y + h - 63,
-                // The row's "right" and "left" name where the buttons end up.
-                match ui.draft.orientation {
-                    Orientation::Portrait => b"Book only. Home stays portrait.",
-                    Orientation::LandscapeCcw => b"Buttons on the right. Home stays portrait.",
-                    Orientation::LandscapeCw => b"Buttons on the left. Home stays portrait.",
-                },
-                21,
-                false,
-                w - 44,
-            );
         }
         _ => {}
     }
@@ -253,16 +220,54 @@ pub fn render_reader_overlay(
         (ReaderPanel::Menu, ReaderUiNotice::FinishOpening) => {
             b"Still opening this book. Try again soon."
         }
-        _ => b"Prev/Next: choose / Select / Back",
+        (ReaderPanel::Settings, _) => settings_note(ui),
+        _ => CHOOSE_HINT,
     };
     text(&mut c, x + 22, y + h - 32, hint, 17, false, w - 44);
+    drop(c);
+    if let Some((right, baseline)) = sample {
+        draw_size_sample(frame, settings, right, baseline, ui.draft.text_size);
+    }
+}
+
+const CHOOSE_HINT: &[u8] = b"Prev/Next: choose / Select / Back";
+
+/// Reading settings' hint line: storage and save problems first, then a note
+/// on the focused row.
+fn settings_note(ui: &ReaderUiState) -> &'static [u8] {
+    match (ui.preferences_writable, ui.notice, SettingsRow::at(ui.selected)) {
+        (false, _, _) => b"Settings storage unavailable",
+        (true, ReaderUiNotice::SaveFailed, _) => b"Could not verify save. Draft kept.",
+        // "Right" and "left" name where the buttons end up.
+        (true, _, SettingsRow::Orientation) => match ui.draft.orientation {
+            Orientation::Portrait => b"Book only. Home stays portrait.",
+            Orientation::LandscapeCcw => b"Buttons on the right. Home stays portrait.",
+            Orientation::LandscapeCw => b"Buttons on the left. Home stays portrait.",
+        },
+        (true, _, SettingsRow::TextSize) => b"Book text only. Pages reflow when saved.",
+        _ => CHOOSE_HINT,
+    }
+}
+
+/// "Aa" in the reading font at the draft size, right-aligned at `right`, so
+/// the row previews the choice. Placed right to left: "a" ends at `right`.
+fn draw_size_sample(frame: &mut Frame, settings: ViewSettings, right: i32, baseline: i32, size: TextSize) {
+    use newt_core::page_renderer::Font;
+    let mut atlas = newt_reader_atlas::ReaderAtlas;
+    let (px, geometry) = (size.px(), newt_reader_atlas::Geometry::reader(settings.orientation.is_landscape()));
+    let (upper, lower) = (u32::from(b'A'), u32::from(b'a'));
+    let lower_at = right - i32::from(atlas.advance(lower, px, 0));
+    let upper_at = lower_at - i32::from(atlas.advance(upper, px, 0) + atlas.kerning(upper, lower, px, 0));
+    // The frame and geometry match by construction, so drawing cannot fail.
+    let _ = atlas.draw(frame, geometry, upper_at, baseline, upper, px, 0);
+    let _ = atlas.draw(frame, geometry, lower_at, baseline, lower, px, 0);
 }
 
 #[cfg(test)]
 mod tests {
     extern crate std;
     use super::*;
-    use newt_phased_reader::{ContentsFallback, PhasedReader, Selection};
+    use newt_phased_reader::{ContentsFallback, PageLayout, PhasedReader, Selection};
     use newt_reader_navigation::{Section, metadata::Metadata};
     use newt_core::{package_parsers::{ManifestItem, PackageResult, TocEntry}, zip_window::arena::Arena};
     use std::boxed::Box;
@@ -295,7 +300,7 @@ mod tests {
             let mut selections = [Selection::default(), Selection::default()];
             assert!(selections[1].navigation.bind_menu(&book, Section::default(), 0, &mut [0]));
             selections[1].navigation.set_contents_fallback(fallback);
-            let reader = PhasedReader::new(&mut selections, None, false);
+            let reader = PhasedReader::new(&mut selections, None, PageLayout::PORTRAIT);
             assert!(reader.chapter_menu().info().valid);
             assert_eq!(reader.chapter_menu().info().authored, authored);
             let mut actual = Box::new([0; newt_core::frame::FRAME_BYTES]);

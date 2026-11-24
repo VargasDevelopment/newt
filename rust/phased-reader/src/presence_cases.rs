@@ -1,7 +1,7 @@
 // Static independent fixture data: see vectors.json and NOTES.md. Not observations.
 use super::*;
 use crate::imported_revision::RevisionHasher;
-use newt_core::preferences::Orientation;
+use newt_core::preferences::{Orientation, TextSize};
 struct Vector {
     settings: ViewSettings,
     spine: u32,
@@ -20,6 +20,7 @@ const VECTORS: &[Vector] = &[
             orientation: Orientation::Portrait,
             slim_progress_bar: false,
             refresh_pages: 1,
+            text_size: TextSize::Px30,
         },
         spine: 7,
         digest: [
@@ -57,6 +58,7 @@ const VECTORS: &[Vector] = &[
             orientation: Orientation::Portrait,
             slim_progress_bar: false,
             refresh_pages: 5,
+            text_size: TextSize::Px30,
         },
         spine: 16909060,
         digest: [
@@ -94,6 +96,7 @@ const VECTORS: &[Vector] = &[
             orientation: Orientation::Portrait,
             slim_progress_bar: false,
             refresh_pages: 10,
+            text_size: TextSize::Px30,
         },
         spine: 7,
         digest: [
@@ -131,6 +134,7 @@ const VECTORS: &[Vector] = &[
             orientation: Orientation::Portrait,
             slim_progress_bar: true,
             refresh_pages: 1,
+            text_size: TextSize::Px30,
         },
         spine: 16909060,
         digest: [
@@ -168,6 +172,7 @@ const VECTORS: &[Vector] = &[
             orientation: Orientation::Portrait,
             slim_progress_bar: true,
             refresh_pages: 5,
+            text_size: TextSize::Px30,
         },
         spine: 0,
         digest: [
@@ -205,6 +210,7 @@ const VECTORS: &[Vector] = &[
             orientation: Orientation::Portrait,
             slim_progress_bar: true,
             refresh_pages: 10,
+            text_size: TextSize::Px30,
         },
         spine: 16909060,
         digest: [
@@ -242,6 +248,7 @@ const VECTORS: &[Vector] = &[
             orientation: Orientation::LandscapeCcw,
             slim_progress_bar: false,
             refresh_pages: 1,
+            text_size: TextSize::Px30,
         },
         spine: 7,
         digest: [
@@ -279,6 +286,7 @@ const VECTORS: &[Vector] = &[
             orientation: Orientation::LandscapeCcw,
             slim_progress_bar: false,
             refresh_pages: 5,
+            text_size: TextSize::Px30,
         },
         spine: 16909060,
         digest: [
@@ -316,6 +324,7 @@ const VECTORS: &[Vector] = &[
             orientation: Orientation::LandscapeCcw,
             slim_progress_bar: false,
             refresh_pages: 10,
+            text_size: TextSize::Px30,
         },
         spine: 7,
         digest: [
@@ -353,6 +362,7 @@ const VECTORS: &[Vector] = &[
             orientation: Orientation::LandscapeCcw,
             slim_progress_bar: true,
             refresh_pages: 1,
+            text_size: TextSize::Px30,
         },
         spine: 16909060,
         digest: [
@@ -390,6 +400,7 @@ const VECTORS: &[Vector] = &[
             orientation: Orientation::LandscapeCcw,
             slim_progress_bar: true,
             refresh_pages: 5,
+            text_size: TextSize::Px30,
         },
         spine: 0,
         digest: [
@@ -427,6 +438,7 @@ const VECTORS: &[Vector] = &[
             orientation: Orientation::LandscapeCcw,
             slim_progress_bar: true,
             refresh_pages: 10,
+            text_size: TextSize::Px30,
         },
         spine: 16909060,
         digest: [
@@ -498,6 +510,17 @@ fn independent_identity_presence_and_failures() {
         for (index, generation) in generations.iter().enumerate() {
             assert!(!generations[..index].contains(generation));
         }
+    }
+    // Each text size lays out its own pages, so it names its own caches. The
+    // pinned VECTORS below keep the 30 px names unchanged.
+    let mut sized = [0; 2 * TextSize::ALL.len()];
+    for (index, slot) in sized.iter_mut().enumerate() {
+        let orientation = if index % 2 == 0 { Orientation::Portrait } else { Orientation::LandscapeCcw };
+        let text_size = TextSize::ALL[index / 2];
+        *slot = identity_generation(ViewSettings { orientation, text_size, ..ViewSettings::default() }, BookLanguage::default());
+    }
+    for (index, generation) in sized.iter().enumerate() {
+        assert!(!sized[..index].contains(generation), "text size {index} shares a cache generation");
     }
     for v in VECTORS {
         let mut h = Hash {
@@ -583,7 +606,7 @@ pub fn actual_reader_cases<B: ParserBackend + ?Sized>(
             panic!("write")
         }
     }
-    let old_landscape = r.reader.landscape;
+    let old_layout = r.reader.page_layout;
     let old_page = r.reader.has_page;
     let old_opened = r.reader.opened;
     r.reader.opened = false;
@@ -591,7 +614,7 @@ pub fn actual_reader_cases<B: ParserBackend + ?Sized>(
         .iter()
         .filter(|v| v.settings.slim_progress_bar && v.settings.refresh_pages == 5)
     {
-        r.reader.landscape = v.settings.orientation == Orientation::LandscapeCcw;
+        r.reader.page_layout = v.settings.page_layout();
         for page in [false, true] {
             r.reader.has_page = page;
             let mut store = Store {
@@ -629,7 +652,7 @@ pub fn actual_reader_cases<B: ParserBackend + ?Sized>(
             assert_eq!((hash.calls, store.calls, store.opening), (1, 1, !page));
             for bad in [
                 ViewSettings {
-                    orientation: if r.reader.landscape {
+                    orientation: if r.reader.page_layout.landscape {
                         Orientation::Portrait
                     } else {
                         Orientation::LandscapeCcw
@@ -656,7 +679,7 @@ pub fn actual_reader_cases<B: ParserBackend + ?Sized>(
             assert_eq!((hash.calls, store.calls), (1, 1));
         }
     }
-    r.reader.landscape = old_landscape;
+    r.reader.page_layout = old_layout;
     r.reader.has_page = old_page;
     r.reader.opened = old_opened;
 }

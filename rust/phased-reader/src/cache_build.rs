@@ -199,7 +199,7 @@ impl PhasedReader<'_, '_> {
             cache_pass(
                 source,
                 selected,
-                self.landscape,
+                self.page_layout,
                 slot,
                 lr,
                 r,
@@ -244,7 +244,7 @@ impl PhasedReader<'_, '_> {
 fn cache_pass<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     source: &mut S,
     selected: &Selection,
-    landscape: bool,
+    page_layout: PageLayout,
     slot: &Slot<'_>,
     lr: &mut LayoutResources<'_>,
     r: &mut canonical::Resources<'_, B>,
@@ -269,7 +269,7 @@ fn cache_pass<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
         };
         let mut images = lr.images.for_chapter(&selected.href);
         let mut engine = Engine::new(
-            reader_parameters(landscape, Some(slot), selected.language),
+            reader_parameters(page_layout, Some(slot), selected.language),
             resources::storage(&mut lr.storage),
             &mut backend,
             lr.breaker,
@@ -430,7 +430,7 @@ impl CacheBuild<'_> {
                     let result = {
                         let _work = WorkScope::new_scoped(reader.on_yield, reader.work, WorkPhase::Layout);
                         phase.layout(backend, breaker, |slot, lr, io| {
-                            physical_cache_pass(source, selected, reader.landscape, slot,
+                            physical_cache_pass(source, selected, reader.page_layout, slot,
                                 lr, io, &mut writer, reader.on_yield)
                         })??
                     };
@@ -487,7 +487,7 @@ impl CacheBuild<'_> {
 fn physical_cache_pass<S: BookSource + ?Sized, B: ParserBackend + ?Sized, C: CacheStorage>(
     source: &mut S,
     selected: &Selection,
-    landscape: bool,
+    page_layout: PageLayout,
     slot: &Slot<'_>,
     lr: &mut LayoutResources<'_>,
     io: &mut crate::phase_storage::ParseResources<'_, B>,
@@ -504,7 +504,7 @@ fn physical_cache_pass<S: BookSource + ?Sized, B: ParserBackend + ?Sized, C: Cac
     let raw = Entry::raw(selected.entry.uncompressed_size);
     let (mut status, pages, chars, complete) = {
         let mut images = lr.images.for_chapter(&selected.href);
-        let mut engine = EngineState::new(reader_parameters(landscape, Some(slot), selected.language),
+        let mut engine = EngineState::new(reader_parameters(page_layout, Some(slot), selected.language),
             resources::storage(&mut lr.storage), lr.breaker, &mut images, None,
             CssStylesheetBuilder::default()).map_err(|_| Status::OutOfMemory)?;
         let stream = XmlStream::new(&mut watch, None, io.backend);

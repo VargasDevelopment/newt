@@ -336,7 +336,7 @@ def main() -> None:
         ("reader-settings", "activate,next,next,activate"),
         ("reader-statistics", "activate,next,next,next,activate"),
         ("reader-chapter-two", "activate,next,activate,next,activate"),
-        ("reader-settings-saved", "activate,next,next,activate,activate,next,activate,next,next,activate"),
+        ("reader-settings-saved", "activate,next,next,activate,activate,next,next,activate,next,next,activate"),
         ("reader-settings-cancelled", "activate,next,next,activate,activate,back,back"),
         ("reader-menu-resumed", "activate,sleep,wake"),
     ]
@@ -349,14 +349,16 @@ def main() -> None:
             == (ROOT / "artifacts/epub.pbm").read_bytes(), "Sleep from menu resumes reading page")
     require((ROOT / "artifacts/reader-chapter-two.pbm").read_bytes()
             != (ROOT / "artifacts/epub.pbm").read_bytes(), "Real chapter navigation changes book content")
-    save_actions = "activate,next,next,activate,activate,next,activate,next,next,activate"
-    saved = phase_run([str(binary), "--screen", "epub", "--actions", save_actions],
-                           check=True, capture_output=True)
-    require(saved.stdout != (ROOT / "artifacts/epub.pbm").read_bytes(), "Saved reading settings change the page")
-    for suffix in (",sleep,wake", ",back,read"):
-        reopened = phase_run([str(binary), "--screen", "epub", "--actions", save_actions + suffix],
-                                  check=True, capture_output=True)
-        require(reopened.stdout == saved.stdout, "Verified preferences survive Home and a sleep's wake")
+    # Settings rows: Orientation, Text size, Slim bar, Refresh, Save, Cancel.
+    for save_actions in ("activate,next,next,activate,activate,next,next,activate,next,next,activate",
+                         "activate,next,next,activate,next,activate,next,next,next,activate"):
+        saved = phase_run([str(binary), "--screen", "epub", "--actions", save_actions],
+                          check=True, capture_output=True)
+        require(saved.stdout != (ROOT / "artifacts/epub.pbm").read_bytes(), "Saved reading settings change the page")
+        for suffix in (",sleep,wake", ",back,read"):
+            reopened = phase_run([str(binary), "--screen", "epub", "--actions", save_actions + suffix],
+                                 check=True, capture_output=True)
+            require(reopened.stdout == saved.stdout, "Verified preferences survive Home and a sleep's wake")
     # Quick Start's Skip keeps the upright book with its slim bar.
     upright = phase_run([str(binary), "--screen", "epub", "--reader-orientation", "portrait",
                          "--reader-progress-bar", "on"], check=True, capture_output=True)

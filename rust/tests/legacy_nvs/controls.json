@@ -56,6 +56,14 @@
     "witness": "durable preferences must win over a stale resume target"
   },
   {
+    "name": "startup-text-size-misread",
+    "file": "core/src/preferences.rs",
+    "old": "        let Some(text_size) = bytes.get(15).copied()",
+    "new": "        let Some(text_size) = bytes.get(16).copied()",
+    "kind": "startup-crate",
+    "witness": "durable text size choice must survive a cold reset"
+  },
+  {
     "name": "start-failure-returns",
     "file": "firmware/app_startup.rs",
     "old": "Err(_) => stop(&mut log, Some((&mut board, logical)), \"storage unavailable\"),",

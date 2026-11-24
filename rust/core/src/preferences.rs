@@ -1,4 +1,4 @@
-//! Reader view settings and NWTP v1/v2/v3 compatibility.
+//! Reader view settings and NWTP v1-v4 compatibility.
 use crate::wire::{crc32, get32, put32};
 
 pub const BYTES: usize = 24;
@@ -46,11 +46,53 @@ impl Orientation {
     }
 }
 
+/// Reading text size, named by its ascent in pixels. 30 px was the only size
+/// before the choice existed, so it stays the default.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[repr(u8)]
+pub enum TextSize {
+    Px22 = 22,
+    Px24 = 24,
+    Px27 = 27,
+    #[default]
+    Px30 = 30,
+    Px34 = 34,
+}
+
+impl TextSize {
+    pub const ALL: [Self; 5] = [Self::Px22, Self::Px24, Self::Px27, Self::Px30, Self::Px34];
+
+    pub const fn px(self) -> u16 {
+        self as u16
+    }
+
+    /// Stored byte: 0 for the default, so a default record or word stays
+    /// byte-identical to one written before sizes existed.
+    pub const fn byte(self) -> u8 {
+        match self {
+            Self::Px30 => 0,
+            other => other as u8,
+        }
+    }
+
+    pub const fn from_byte(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Px30),
+            22 => Some(Self::Px22),
+            24 => Some(Self::Px24),
+            27 => Some(Self::Px27),
+            34 => Some(Self::Px34),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ViewSettings {
     pub orientation: Orientation,
     pub slim_progress_bar: bool,
     pub refresh_pages: u8,
+    pub text_size: TextSize,
 }
 
 impl Default for ViewSettings {
@@ -59,8 +101,22 @@ impl Default for ViewSettings {
             orientation: Orientation::LandscapeCcw,
             slim_progress_bar: true,
             refresh_pages: 5,
+            text_size: TextSize::Px30,
         }
     }
+}
+
+/// What a page's layout depends on: the layout class and the text size. The
+/// half turn, slim bar and refresh cadence change no page.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PageLayout {
+    pub landscape: bool,
+    pub text_size: TextSize,
+}
+
+impl PageLayout {
+    pub const PORTRAIT: Self = Self { landscape: false, text_size: TextSize::Px30 };
+    pub const LANDSCAPE: Self = Self { landscape: true, text_size: TextSize::Px30 };
 }
 
 pub fn valid_refresh_pages(value: u32) -> bool {
@@ -68,19 +124,27 @@ pub fn valid_refresh_pages(value: u32) -> bool {
 }
 
 /// Packed settings words (RTC record, resume intent): bit 0 is the layout
-/// class, bit 4 the half turn, bit 1 the slim bar and bits 8..16 the refresh
-/// cadence. Bits 2 and 3 belong to each record. Builds before the clockwise
-/// choice reject bit 4 as reserved, so they never misread it.
-pub const PACKED_SETTINGS: u32 = 0xff13;
+/// class, bit 4 the half turn, bit 1 the slim bar, bits 8..16 the refresh
+/// cadence and bits 16..24 the text size byte. Bits 2 and 3 belong to each
+/// record. Older builds reject bits 4 and 16..24 as reserved, so they never
+/// misread a clockwise or resized word.
+pub const PACKED_SETTINGS: u32 = 0xff_ff13;
 
 impl ViewSettings {
+    pub const fn page_layout(self) -> PageLayout {
+        PageLayout { landscape: self.orientation.is_landscape(), text_size: self.text_size }
+    }
+
     pub const fn packed(self) -> u32 {
         let orientation = match self.orientation {
             Orientation::Portrait => 0,
             Orientation::LandscapeCcw => 1,
             Orientation::LandscapeCw => 0x11,
         };
-        orientation | ((self.slim_progress_bar as u32) << 1) | ((self.refresh_pages as u32) << 8)
+        orientation
+            | ((self.slim_progress_bar as u32) << 1)
+            | ((self.refresh_pages as u32) << 8)
+            | ((self.text_size.byte() as u32) << 16)
     }
 
     /// Reads only the shared bits; the caller checks its own bits 2 and 3.
@@ -92,10 +156,12 @@ impl ViewSettings {
             _ => return None,
         };
         let refresh = word >> 8 & 0xff;
+        let text_size = TextSize::from_byte((word >> 16 & 0xff) as u8)?;
         valid_refresh_pages(refresh).then_some(Self {
             orientation,
             slim_progress_bar: word & 2 != 0,
             refresh_pages: refresh as u8,
+            text_size,
         })
     }
 }
@@ -119,14 +185,22 @@ impl Preferences {
         }
         let mut bytes = [0; BYTES];
         bytes[..4].copy_from_slice(b"NWTP");
-        // Only the clockwise choice needs v3. Every other value stays v2, so
-        // an older build keeps reading it; v3 makes it refuse, not misread.
-        let version = if self.settings.orientation == Orientation::LandscapeCw { 3 } else { 2 };
+        // Each record takes the lowest version that can hold it: v4 for a
+        // size other than 30 px, v3 for clockwise, else v2. An older build
+        // keeps reading what it understands and refuses the rest unread.
+        let version = if self.settings.text_size != TextSize::Px30 {
+            4
+        } else if self.settings.orientation == Orientation::LandscapeCw {
+            3
+        } else {
+            2
+        };
         put32(&mut bytes, 4, version);
         put32(&mut bytes, 8, self.sequence);
         bytes[12] = self.settings.orientation as u8;
         bytes[13] = u8::from(self.settings.slim_progress_bar);
         bytes[14] = self.settings.refresh_pages;
+        bytes[15] = self.settings.text_size.byte();
         let checksum = crc32(&bytes[..20]);
         put32(&mut bytes, 20, checksum);
         Some(bytes)
@@ -137,11 +211,17 @@ impl Preferences {
             return Err(DecodeError::Corrupt);
         }
         let version = get32(bytes, 4);
-        if !(1..=3).contains(&version) {
+        if !(1..=4).contains(&version) {
             return Err(DecodeError::Unsupported);
         }
         let Some(orientation) = bytes.get(12).copied().and_then(Orientation::from_byte)
-            .filter(|&o| o != Orientation::LandscapeCw || version == 3)
+            .filter(|&o| o != Orientation::LandscapeCw || version >= 3)
+        else {
+            return Err(DecodeError::Corrupt);
+        };
+        let Some(text_size) = bytes.get(15).copied()
+            .filter(|&byte| byte == 0 || version == 4)
+            .and_then(TextSize::from_byte)
         else {
             return Err(DecodeError::Corrupt);
         };
@@ -150,7 +230,7 @@ impl Preferences {
             || get32(bytes, 20) != crc32(&bytes[..20])
             || (version == 1 && bytes[14] != 0)
             || (version > 1 && !valid_refresh_pages(u32::from(bytes[14])))
-            || bytes[15..20].iter().any(|&byte| byte != 0)
+            || bytes[16..20].iter().any(|&byte| byte != 0)
         {
             return Err(DecodeError::Corrupt);
         }
@@ -160,6 +240,7 @@ impl Preferences {
                 orientation,
                 slim_progress_bar: bytes[13] == 1,
                 refresh_pages: if version == 1 { 5 } else { bytes[14] },
+                text_size,
             },
         })
     }

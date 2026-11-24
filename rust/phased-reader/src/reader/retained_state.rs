@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Retain scalar reader state between operation-scoped backing loans.
 use super::{Observer, PageInfo, PhasedReader, Proofs, Section, Selection};
+use newt_core::preferences::PageLayout;
 use newt_phased_sink::Plan;
 
 /// Opaque reader state with no borrowed backing or operation callback.
@@ -10,7 +11,7 @@ pub struct ReaderState {
     pending_undeclared: Option<bool>,
     active: usize,
     source_bytes: u64,
-    landscape: bool,
+    page_layout: PageLayout,
     opened: bool,
     has_page: bool,
     info: PageInfo,
@@ -29,14 +30,14 @@ pub struct ReaderView<'a> {
 }
 
 impl ReaderState {
-    pub fn new(landscape: bool) -> Self {
+    pub fn new(page_layout: PageLayout) -> Self {
         Self {
             pending: None,
             pending_cached: false,
             pending_undeclared: None,
             active: 0,
             source_bytes: 0,
-            landscape,
+            page_layout,
             opened: false,
             has_page: false,
             info: PageInfo::default(),
@@ -57,12 +58,12 @@ impl ReaderState {
     ) -> PhasedReader<'a, 'p> {
         let Self {
             pending, pending_cached, pending_undeclared, active, source_bytes,
-            landscape, opened, has_page, info, proofs, styles_ready,
+            page_layout, opened, has_page, info, proofs, styles_ready,
             undeclared_styles, malformed_utf8, empty_chapter, work,
         } = self;
         PhasedReader {
             pending, pending_cached, pending_undeclared, selections, plan,
-            active, source_bytes, landscape, opened, has_page, info, proofs,
+            active, source_bytes, page_layout, opened, has_page, info, proofs,
             styles_ready, undeclared_styles, malformed_utf8, empty_chapter,
             on_yield: None,
             work,
@@ -79,13 +80,13 @@ impl PhasedReader<'_, '_> {
     pub fn into_state(self) -> ReaderState {
         let Self {
             pending, pending_cached, pending_undeclared, selections: _, plan: _,
-            active, source_bytes, landscape, opened, has_page, info, proofs,
+            active, source_bytes, page_layout, opened, has_page, info, proofs,
             styles_ready, undeclared_styles, malformed_utf8, empty_chapter,
             on_yield: _, work,
         } = self;
         ReaderState {
             pending, pending_cached, pending_undeclared, active, source_bytes,
-            landscape, opened, has_page, info, proofs, styles_ready,
+            page_layout, opened, has_page, info, proofs, styles_ready,
             undeclared_styles, malformed_utf8, empty_chapter, work,
         }
     }

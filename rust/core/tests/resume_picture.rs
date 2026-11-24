@@ -1,5 +1,5 @@
 use newt_core::frame::{FRAME_BYTES, Frame};
-use newt_core::preferences::{Orientation, ViewSettings};
+use newt_core::preferences::{Orientation, TextSize, ViewSettings};
 use newt_core::resume_picture::*;
 use newt_core::wire::{get32, put32};
 
@@ -17,16 +17,19 @@ fn fixture(variant: usize) -> Record {
             orientation: Orientation::Portrait,
             slim_progress_bar: true,
             refresh_pages: 10,
+            ..ViewSettings::default()
         },
         ViewSettings {
             orientation: Orientation::LandscapeCcw,
             slim_progress_bar: false,
             refresh_pages: 1,
+            ..ViewSettings::default()
         },
         ViewSettings {
             orientation: Orientation::Portrait,
             slim_progress_bar: false,
             refresh_pages: 5,
+            ..ViewSettings::default()
         },
     ][variant % 3];
     let long = [b'w'; 255];
@@ -134,6 +137,7 @@ fn valid_checksum_does_not_bypass_header_field_checks() {
         (81, 2),
         (81, 255),
         (83, 1),
+        (83, 30),
         (96, 2),
         (96, 255),
         (120, 0),
@@ -156,6 +160,14 @@ fn valid_checksum_does_not_bypass_header_field_checks() {
     let mut output = Record::default();
     assert!(output.decode(&bytes));
     assert_eq!(output.binding.settings.orientation, Orientation::LandscapeCw);
+    // A text size binds the picture to pages laid out at that size.
+    let mut resized = fixture(3);
+    resized.binding.settings.text_size = TextSize::Px22;
+    resized.encode(&mut bytes);
+    assert_eq!(bytes[83], 22);
+    let mut output = Record::default();
+    assert!(output.decode(&bytes));
+    assert!(output.binding == resized.binding);
     // Every unused label/tail byte must be zero, excluding the frame CRC.
     fixture(0).encode(&mut clean);
     for at in (100..356).chain(360..508) {

@@ -9,6 +9,7 @@ newt-core = { path = "../core" }
 newt-ui-canvas = { path = "../ui-canvas" }
 newt-system-ui = { path = "../system-ui" }
 newt-phased-reader = { path = "../phased-reader" }
+newt-reader-atlas = { path = "../reader-atlas" }
 newt-reader-navigation = { path = "../reader-navigation" }
 newt-device-ui = { path = "../device-ui" }
 

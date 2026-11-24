@@ -16,7 +16,9 @@ scaling, clipping and orientations. Canonical Rust must satisfy the checked-in
 metrics/status/frame outputs captured from C++; no reference compiles at test
 time. Fourteen fresh semantic
 mutants must compile, execute without diagnostics and produce valid protocol
-before their designated metric or frame change counts as detection. Rejection
+before their designated metric or frame change counts as detection. The corpus draws only at 30 px, so native-size mutants live in
+`unit_controls.json`: each compiles cleanly, then must fail its named unit
+test with its witness. Rejection
 fixtures and response-schema controls are separate from semantic kills.
 
 Run `gate.py --root "$PWD" --output "$PWD/.build/rust/atlas-canonical-UNIQUE"`

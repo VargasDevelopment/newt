@@ -92,7 +92,7 @@ fn segmented_and_whole_cache_reads_use_the_actual_opening_state() {
     for has_page in [false, true] {
         for located in [None, Some(SegmentAnchor::default())] {
             let mut selections = [Selection::default(), Selection::default()];
-            let mut reader = PhasedReader::new(&mut selections, None, false);
+            let mut reader = PhasedReader::new(&mut selections, None, PageLayout::PORTRAIT);
             reader.has_page = has_page;
             let mut shared = Box::new(Bank([0; crate::phase_storage::BANK_BYTES]));
             let mut storage = Storage::new(&mut shared.0);

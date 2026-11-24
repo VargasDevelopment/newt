@@ -617,5 +617,42 @@
     "path": "source/reader_font_data.inc.zlib",
     "encoding": "zlib",
     "sha256": "d06c02a0d9fddb7c3ea78ef4e1fa15d03538c3e9c54185f87491567a9bd022bc"
+  },
+  "native_sizes": {
+    "generator": "tools/make-native-reader-sizes.py",
+    "sizes": [
+      22,
+      24,
+      27,
+      34
+    ],
+    "glyphs_per_face": 341,
+    "render": "pinned rasterizer profile at 14 pt; DPI = 150 * px / 30; 30 px reproduced byte for byte",
+    "storage": "1-bit rows, (width + 7) / 8 bytes each, high bit first; ink where 2-bit coverage >= 2",
+    "sources": {
+      "Regular": "crossink-lexend-regular",
+      "Bold": "crossink-lexend-bold",
+      "Italic": "crossink-lexend-italic",
+      "BoldItalic": "crossink-lexend-bolditalic"
+    },
+    "native_rs_sha256": "f66900a3f28383fb8e40bdb5224fbc0048747ea201a1c1c093b840d34a291120",
+    "bitmaps": {
+      "22px.bin": {
+        "bytes": 42668,
+        "sha256": "6074fda398b094d7a75e4b1770414cd39b658e27a90a49eb45203a2ffdcf4627"
+      },
+      "24px.bin": {
+        "bytes": 49466,
+        "sha256": "7fc0d46e7cb16f43ada542725cfa938a3ac578c914e912a81e3b1d2973dc3e65"
+      },
+      "27px.bin": {
+        "bytes": 61690,
+        "sha256": "726cb1878b79b8ee6064f9ae5bb09c25a938db77a6b0a3eb403e7adffcd019f8"
+      },
+      "34px.bin": {
+        "bytes": 94077,
+        "sha256": "bdc520db2800081ec6d64bf5f967dcf0e6c12106e8d449578e3ef5b01a5928b5"
+      }
+    }
   }
 }

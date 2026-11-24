@@ -43,7 +43,7 @@ impl<B: ParserBackend + ?Sized> Chapters for Work<'_, B> {
         let directory = directory(href);
         let language = BookLanguage::from_opf(book.package.metadata.language
             .and_then(|h| book.arena.c_string(h)));
-        let params = reader_parameters(settings.orientation.is_landscape(), None, language);
+        let params = reader_parameters(settings.page_layout(), None, language);
         // The raw detector precedes the optional table allocation, as in the
         // SDK. Failed optional work leaves inline probes to the main pass.
         if mentions(self.epub, &entry, self.parse) {

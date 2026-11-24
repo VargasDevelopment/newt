@@ -45,6 +45,24 @@ pub enum ReaderFinishRow {
     Mark,
     Undo,
 }
+/// Reading settings rows, top to bottom; `ReaderUiState::selected` indexes them.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SettingsRow {
+    Orientation,
+    TextSize,
+    SlimProgressBar,
+    Refresh,
+    Save,
+    Cancel,
+}
+impl SettingsRow {
+    pub const ALL: [Self; 6] =
+        [Self::Orientation, Self::TextSize, Self::SlimProgressBar, Self::Refresh, Self::Save, Self::Cancel];
+    /// Out-of-range selections land on Cancel, the safe row.
+    pub fn at(selected: u32) -> Self {
+        Self::ALL.get(selected as usize).copied().unwrap_or(Self::Cancel)
+    }
+}
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ReaderUiState {
     pub panel: ReaderPanel,
@@ -180,7 +198,7 @@ pub fn dispatch_reader_ui(
     let count = match ui.panel {
         P::Menu => 6,
         P::Chapters => chapter_count,
-        P::Settings => 5,
+        P::Settings => SettingsRow::ALL.len() as u32,
         _ => 0,
     };
     let old = ui.selected;
@@ -246,29 +264,38 @@ pub fn dispatch_reader_ui(
         return I::Repaint;
     }
     if ui.panel == P::Settings {
-        match ui.selected {
-            0 => {
+        match SettingsRow::at(ui.selected) {
+            SettingsRow::Orientation => {
                 ui.draft.orientation = match ui.draft.orientation {
                     Orientation::Portrait => Orientation::LandscapeCcw,
                     Orientation::LandscapeCcw => Orientation::LandscapeCw,
                     Orientation::LandscapeCw => Orientation::Portrait,
                 }
             }
-            1 => ui.draft.slim_progress_bar = !ui.draft.slim_progress_bar,
-            2 => {
+            SettingsRow::TextSize => {
+                ui.draft.text_size = match ui.draft.text_size {
+                    TextSize::Px22 => TextSize::Px24,
+                    TextSize::Px24 => TextSize::Px27,
+                    TextSize::Px27 => TextSize::Px30,
+                    TextSize::Px30 => TextSize::Px34,
+                    TextSize::Px34 => TextSize::Px22,
+                }
+            }
+            SettingsRow::SlimProgressBar => ui.draft.slim_progress_bar = !ui.draft.slim_progress_bar,
+            SettingsRow::Refresh => {
                 ui.draft.refresh_pages = match ui.draft.refresh_pages {
                     1 => 5,
                     5 => 10,
                     _ => 1,
                 }
             }
-            3 => {
+            SettingsRow::Save => {
                 if ui.preferences_writable {
                     return I::SaveSettings;
                 }
                 ui.notice = N::SaveFailed;
             }
-            _ => {
+            SettingsRow::Cancel => {
                 ui.panel = P::Menu;
                 ui.selected = 0;
                 ui.notice = N::None;
@@ -317,7 +344,7 @@ mod unavailable_cases {
     #[test]
     fn unavailable_settings_preserves_save_contract_and_cancels_to_page() {
         let settings = ViewSettings::default();
-        let mut ui = ReaderUiState { panel: ReaderPanel::Settings, selected: 3, ..ReaderUiState::default() };
+        let mut ui = ReaderUiState { panel: ReaderPanel::Settings, selected: SettingsRow::Save as u32, ..ReaderUiState::default() };
         ui.draft.slim_progress_bar = !settings.slim_progress_bar;
         let draft = ui.draft;
         assert_eq!(dispatch_unavailable_reader_ui(&mut ui, settings, Action::Activate), ReaderUiIntent::SaveSettings);
@@ -325,7 +352,7 @@ mod unavailable_cases {
         ui.preferences_writable = false;
         assert_eq!(dispatch_unavailable_reader_ui(&mut ui, settings, Action::Activate), ReaderUiIntent::Repaint);
         assert_eq!((ui.panel, ui.draft, ui.notice), (ReaderPanel::Settings, draft, ReaderUiNotice::SaveFailed));
-        ui.selected = 4;
+        ui.selected = SettingsRow::Cancel as u32;
         assert_eq!(dispatch_unavailable_reader_ui(&mut ui, settings, Action::Activate), ReaderUiIntent::Repaint);
         assert_eq!(ui.panel, ReaderPanel::Page);
     }

@@ -119,7 +119,7 @@ class ProcedureCacheTests(unittest.TestCase):
         altered = original[:16] + marshal.dumps(compile("MARKER = 'cache'\n", str(source), "exec"))
         cache.write_bytes(altered)
         children = ("firmware-build.py", "make-builtin-app.py", "make-reader-fixture.py",
-                    "make-stage-backdrop.py", "pack-reader-atlas.py")
+                    "make-stage-backdrop.py", "pack-reader-atlas.py", "make-native-reader-sizes.py")
         for name in children:
             (self.root / "tools" / name).write_text("import newt_package\nprint(newt_package.MARKER)\n")
         current = Path(__file__).resolve().parents[1] / "tools/code_health.py"

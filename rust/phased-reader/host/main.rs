@@ -4,6 +4,7 @@ mod entry;
 mod language;
 mod physical;
 mod run_budget;
+use newt_phased_reader::PageLayout;
 fn main() -> std::io::Result<()> {
     use entry::Case::*;
     let args: Vec<_> = std::env::args_os().collect();
@@ -29,7 +30,7 @@ fn main() -> std::io::Result<()> {
             } else {
                 Oracle
             },
-            args.iter().any(|a| a == "--landscape"),
+            if args.iter().any(|a| a == "--landscape") { PageLayout::LANDSCAPE } else { PageLayout::PORTRAIT },
         );
         return Ok(());
     }
@@ -48,7 +49,7 @@ fn main() -> std::io::Result<()> {
         ("collision", Collision),
         ("prefix-anchor", PrefixAnchor),
     ] {
-        entry::run(&root.join(format!("{name}.epub")), case, false);
+        entry::run(&root.join(format!("{name}.epub")), case, PageLayout::PORTRAIT);
         println!("{name}: operation assertions passed");
     }
     Ok(())

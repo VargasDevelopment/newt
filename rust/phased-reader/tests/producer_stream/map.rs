@@ -52,7 +52,7 @@ fn rust_map(id: u32, bytes: &[u8]) -> (ResultData, [u32; 2]) {
     let mut base = MapStore { base: PassStore { t: &t, card: &card, id: 0 }, id, map_after: &map_after, map_bytes: &map_bytes };
     let mut selections = [Selection::default(), Selection::default()];
     selections[0].entry = Entry::raw(bytes.len() as u32);
-    let mut reader = PhasedReader::new(&mut selections, None, false);
+    let mut reader = PhasedReader::new(&mut selections, None, PageLayout::PORTRAIT);
     reader.source_bytes = bytes.len() as u64; reader.info.page_count = 257; reader.info.total_chars = 2570;
     let mut shared = [0; BANK_BYTES]; let mut native = vec![0xa5; newt_phased_sink::FRAME_BYTES];
     let signal = Signals::default(); let mut loan = Loan { bytes: &mut native, signal: &signal, returns: 0 };

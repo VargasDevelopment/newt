@@ -368,7 +368,7 @@ fn prepare_cached(
     let mut sink = match SelectingSink::new(
         page.index,
         Target::Page,
-        reader.landscape,
+        reader.page_layout.landscape,
         &mut metrics,
         &ReaderAtlas,
         Output::Plan(reader.plan.as_deref_mut().unwrap()),

@@ -401,6 +401,8 @@ fn preferences_store_command(fields: &[&str]) -> String {
             },
             slim_progress_bar: number(fields[8]) != 0,
             refresh_pages: number(fields[9]) as u8,
+            // The C++ parity protocol predates text sizes; it speaks only 30 px.
+            text_size: TextSize::Px30,
         },
     };
     let mut store = preferences_store::PreferencesStore::new(&mut memory);
@@ -498,6 +500,8 @@ fn run(fields: &[&str]) -> String {
                     orientation,
                     slim_progress_bar: number(fields[3]) != 0,
                     refresh_pages: number(fields[4]) as u8,
+                    // The C++ parity protocol predates text sizes; it speaks only 30 px.
+                    text_size: TextSize::Px30,
                 },
             }
             .encode()

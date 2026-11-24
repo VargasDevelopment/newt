@@ -12,7 +12,8 @@ fn progress(character: u32) -> Progress {
         forward_pages: 8, qualified_sessions: 3, session_milliseconds: 0 }
 }
 fn settings() -> ViewSettings {
-    ViewSettings { orientation: Orientation::LandscapeCcw, slim_progress_bar: true, refresh_pages: 10 }
+    ViewSettings { orientation: Orientation::LandscapeCcw, slim_progress_bar: true, refresh_pages: 10,
+        ..ViewSettings::default() }
 }
 fn checkpoint(acknowledged: Progress) -> ReaderCheckpoint {
     let mut checkpoint = ReaderCheckpoint::new(CheckpointRestore::Latest);
@@ -161,7 +162,7 @@ fn settings_reflow_keeps_the_attempts_position_and_new_geometry() {
     for saved in [false, true] {
         for orientation in [Orientation::Portrait, Orientation::LandscapeCcw] {
             let proposed = ViewSettings { orientation, refresh_pages: 10,
-                slim_progress_bar: false };
+                slim_progress_bar: false, ..ViewSettings::default() };
             let pending = PendingRecovery::for_reflow(live, acknowledged, proposed, saved);
             assert_eq!(*pending.progress(), if saved { acknowledged } else { live });
             assert_eq!(pending.settings(), proposed);

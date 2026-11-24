@@ -170,6 +170,12 @@ only a Lexend Deca copy of CrossInk's generated header, as the owner chose.
   `rust/ui-canvas/src/data.rs` and `rust/system-ui/src/data.rs`) are pinned
   literals converted from those verified outputs (`tools/pack-reader-atlas.py --check`
   verifies the packed reading atlas against `rust/reader-atlas/source/reader_font_data.inc`).
+- The native Latin-core shapes at 22, 24, 27 and 34 px
+  (`rust/reader-atlas/native/`, `src/native.rs`) are rendered from the pinned
+  Lexend Deca TTFs by `tools/make-native-reader-sizes.py` with the pinned
+  FreeType 2.14.2 profile; the same pipeline reproduces the pinned 30 px
+  bitmaps byte for byte. `--check` verifies them against
+  `rust/reader-atlas/provenance.json` (see `assets/fonts/README.md`).
 - NewtReadingAtlas's original 341 regular glyphs (printable ASCII, Latin-1,
   Latin Extended-A and common punctuation) were imported from the original
   header and are Lexend Deca. `NOTICES.txt` carries CrossInk's MIT notice for
