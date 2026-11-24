@@ -36,28 +36,45 @@ def test_binary(run, workspace, target):
     return outputs[0]
 
 
-def startup(run, workspace, support):
+def startup_graph(run, workspace, support, target):
     clock = load('legacy_clock', workspace / 'tests/board/clock/recipe.py')
     board = load('legacy_board', workspace / 'tests/board/recipe.py')
     checkpoint = load('legacy_checkpoint', workspace / 'tests/reader_checkpoint/recipe.py')
+    return checkpoint.graph(run, workspace, run.output / target, clock, board, support.require)
+
+
+def startup_natives(run, workspace, support):
+    """(board fake, other link inputs): no control mutates these sources."""
+    clock = load('legacy_clock', workspace / 'tests/board/clock/recipe.py')
     home = load('legacy_home', workspace / 'tests/home_startup/recipe.py')
     build = load('legacy_build', workspace / 'tests/phased_reader/physical/build.py')
     build.storage_host(run, workspace, support, workspace / 'tests/phased_reader/physical')
-    graph = checkpoint.graph(run, workspace, run.output / 'startup-target', clock, board, support.require)
     fake = run.output / 'startup-board.o'
     run.run([run.tools['clang++'], '--no-default-config', '-x', 'c', '-std=c11', '-Wall',
              '-Wextra', '-Werror', '-O1', '-g', '-I', workspace / 'salamander/board/native',
              '-c', workspace / 'tests/reader_statistics/board_fake.c', '-o', fake], workspace)
     hashing, _ = home.sha(run, ROOT)
-    objects = [home.native_io(run, workspace),
-               *(run.output / (name + '.o') for name in clock.NATIVE_LINK),
-               '-fsanitize=address,undefined', '-fno-sanitize-recover=all', *hashing, '-lstdc++']
+    return fake, [home.native_io(run, workspace),
+                  *(run.output / (name + '.o') for name in clock.NATIVE_LINK),
+                  '-fsanitize=address,undefined', '-fno-sanitize-recover=all', *hashing, '-lstdc++']
+
+
+def link_flags(build, run, graph, inputs, *, control):
+    """rustc flags for a program over `graph`. A control only has to reach its
+    runtime assertion, so it skips LTO and optimization: most of the compile
+    CPU, and no change in behavior."""
     flags = [str(arg).replace('-Clink-arg=-fuse-ld=', '-Clink-arg=--ld-path=')
-             for arg in build.host_link_args(run, graph, [fake, *objects])]
-    executable = run.output / 'startup'
-    run.run([*flags, '-Dwarnings', '--cfg', 'feature="dev-usb"', '-Copt-level=s',
-             '--crate-name=legacy_startup', workspace / 'tests/legacy_nvs/startup.rs', '-o', executable], workspace)
-    return executable, graph, objects
+             for arg in build.host_link_args(run, graph, inputs)]
+    return [arg for arg in flags if arg != '-Clto=fat'] + ['-Copt-level=0'] if control else flags
+
+
+def startup(run, workspace, graph, inputs, label, *, control=False):
+    build = load('legacy_build', workspace / 'tests/phased_reader/physical/build.py')
+    executable = run.output / label
+    run.run([*link_flags(build, run, graph, inputs, control=control), *([] if control else ['-Copt-level=s']),
+             '-Dwarnings', '--cfg', 'feature="dev-usb"', '--crate-name=legacy_startup',
+             workspace / 'tests/legacy_nvs/startup.rs', '-o', executable], workspace)
+    return executable
 
 
 def reader_recovery(run, workspace, graph, objects, support, *, controls):
@@ -72,12 +89,10 @@ def reader_recovery(run, workspace, graph, objects, support, *, controls):
              '-I', workspace / 'salamander/board/native',
              '-c', workspace / 'tests/reader_checkpoint/board_fake.c', '-o', fake], workspace)
     # The startup graph and parser objects already cover this firmware fixture.
-    flags = [str(arg).replace('-Clink-arg=-fuse-ld=', '-Clink-arg=--ld-path=')
-             for arg in build.host_link_args(run, graph, [fake, *objects])
-             if arg not in ('-Dwarnings', '-Clto=fat')]
-    flags.append('-Copt-level=1')
+    flags = [arg for arg in link_flags(build, run, graph, [fake, *objects], control=True) if arg != '-Dwarnings']
     executable = out / 'positive'
-    run.run([*flags, here / 'host.rs', '-o', executable], workspace)
+    # Its runs open many pages, so the positive keeps opt 1 (rustc takes the last opt-level).
+    run.run([*flags, '-Copt-level=1', here / 'host.rs', '-o', executable], workspace)
 
     def recorded(command, *, witness=None):
         if witness is None:
@@ -107,19 +122,17 @@ def start_failure_graph(run, workspace, support):
     return clock.rlibs(target / 'x86_64-unknown-linux-gnu/release/deps', support.require)
 
 
-def start_failure(run, workspace, graph, label):
+def start_failure(run, workspace, graph, label, *, control=False):
     build = load('failure_build', workspace / 'tests/phased_reader/physical/build.py')
     fake = run.output / (label + '-board.o')
     run.run([run.tools['clang++'], '--no-default-config', '-x', 'c', '-std=c11', '-Wall',
              '-Wextra', '-Werror', '-O1', '-g', '-I', workspace / 'salamander/board/native',
              '-c', workspace / 'tests/reader_statistics/board_fake.c', '-o', fake], workspace)
     objects = [fake, '-fsanitize=address,undefined', '-fno-sanitize-recover=all', '-lstdc++']
-    flags = [str(arg).replace('-Clink-arg=-fuse-ld=', '-Clink-arg=--ld-path=')
-             for arg in build.host_link_args(run, graph, objects)]
     executable = run.output / label
-    run.run([*flags, '-Dwarnings', '--cfg', 'feature="dev-usb"', '-Copt-level=s',
-             '--crate-name=start_failure', workspace / 'tests/legacy_nvs/start_failure.rs',
-             '-o', executable], workspace)
+    run.run([*link_flags(build, run, graph, objects, control=control), *([] if control else ['-Copt-level=s']),
+             '-Dwarnings', '--cfg', 'feature="dev-usb"', '--crate-name=start_failure',
+             workspace / 'tests/legacy_nvs/start_failure.rs', '-o', executable], workspace)
     return executable
 
 
@@ -128,8 +141,9 @@ def prove(run, workspace, support):
     binary = test_binary(run, workspace, run.output / 'tests-target')
     observations = run.run([binary, '--nocapture'], workspace)
     support.require('test result: ok.' in observations, 'complete positive test run')
-    program, graph, objects = startup(run, workspace, support)
-    run.run([program], workspace)
+    graph = startup_graph(run, workspace, support, 'startup-target')
+    fake, objects = startup_natives(run, workspace, support)
+    run.run([startup(run, workspace, graph, [fake, *objects], 'startup')], workspace)
     controls = gate_tier.negative_controls(__file__)
     reader_recovery(run, workspace, graph, objects, support, controls=controls)
     failures = start_failure_graph(run, workspace, support)
@@ -139,7 +153,8 @@ def prove(run, workspace, support):
     killed = []
     if controls:
         for control in json.loads((workspace / 'tests/legacy_nvs/controls.json').read_text()):
-            mutant = run.output / control['name'] / 'rust'
+            name = control['name']
+            mutant = run.output / name / 'rust'
             shutil.copytree(workspace, mutant)
             source = mutant / control['file']
             text = source.read_text()
@@ -148,14 +163,21 @@ def prove(run, workspace, support):
             # Compilation must succeed separately; only the asserted runtime
             # witness may kill a mutation, never a compiler or transport error.
             kind = control.get('kind')
-            wiring = kind in ('startup', 'start-failure')
-            # A start-failure mutation touches only the program's own sources,
-            # so it reuses the unmutated crate graph.
-            program = (startup(run, mutant, support)[0] if kind == 'startup' else
-                       start_failure(run, mutant, failures, 'start-failure-' + control['name'])
-                       if kind == 'start-failure' else
-                       test_binary(run, mutant, run.output / ('target-' + control['name'])))
-            arguments = ([program] if kind == 'startup' else [program, control['case']] if wiring
+            wiring = kind in ('startup', 'startup-crate', 'start-failure')
+            # A startup or start-failure mutation touches only the program's own
+            # sources, so it reuses the unmutated crate graph. A startup-crate
+            # mutation rebuilds the graph in its own target, so the shared one
+            # stays unmutated (rlib names do not depend on the tree's path).
+            if kind == 'startup':
+                program = startup(run, mutant, graph, [fake, *objects], 'startup-' + name, control=True)
+            elif kind == 'startup-crate':
+                program = startup(run, mutant, startup_graph(run, mutant, support, name + '-target'),
+                                  [fake, *objects], 'startup-' + name, control=True)
+            elif kind == 'start-failure':
+                program = start_failure(run, mutant, failures, 'start-failure-' + name, control=True)
+            else:
+                program = test_binary(run, mutant, run.output / ('target-' + name))
+            arguments = ([program, control['case']] if kind == 'start-failure' else [program] if wiring
                          else [program, control['test'], '--exact', '--nocapture'])
             number = len(run.commands)
             try:
@@ -166,9 +188,9 @@ def prove(run, workspace, support):
                 support.require((wiring or 'test result: FAILED.' in stdout) and 'panicked at ' in stderr
                                 and control['witness'] in stderr,
                                 'runtime assertion required for mutation kill')
-                killed.append(control['name'])
+                killed.append(name)
             else:
-                raise RuntimeError('mutation survived: ' + control['name'])
+                raise RuntimeError('mutation survived: ' + name)
     return dict(host_startup=True, hardware=False, controls=killed)
 
 

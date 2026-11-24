@@ -60,7 +60,7 @@
     "file": "core/src/preferences.rs",
     "old": "        let Some(text_size) = bytes.get(15).copied()",
     "new": "        let Some(text_size) = bytes.get(16).copied()",
-    "kind": "startup",
+    "kind": "startup-crate",
     "witness": "durable text size choice must survive a cold reset"
   },
   {
