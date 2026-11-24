@@ -46,11 +46,13 @@ impl Images for NoContainer {
 #[derive(Default)]
 struct Capture {
     pages: Vec<(u32, u32, Vec<(Vec<u8>, i16, i16, u16, u8)>)>,
+    page_byte_counts: Vec<usize>,
     stop: bool,
 }
 impl Sink for Capture {
     fn page(&mut self, p: Page<'_>) -> bool {
         assert!(p.images.is_empty() && p.links.is_empty());
+        self.page_byte_counts.push(p.bytes.len());
         self.pages.push((
             p.index,
             p.char_start,
@@ -204,6 +206,7 @@ fn two_lines_on_separate_pages(page_cap: usize, run_cap: usize) {
         (0, 0, vec![(b"a".to_vec(), 0, 8, 8, 0)]),
         (1, 1, vec![(b"b".to_vec(), 0, 8, 8, 0), (b"c".to_vec(), 4, 8, 8, BOLD)]),
     ]);
+    assert_eq!(sink.page_byte_counts, [5, 10]);
 }
 
 #[test]

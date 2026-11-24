@@ -28,8 +28,6 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--tool-root', type=Path, default=ROOT)
     parser.add_argument('--target-dir', type=Path)
-    parser.add_argument('--recovery-only', action='store_true')
-    parser.add_argument('--positives-only', action='store_true')
     args = parser.parse_args()
     root = args.tool_root.resolve()
     workspace = HERE.parents[1]
@@ -104,9 +102,8 @@ def main():
     command += ['-Clink-arg=-fsanitize=address,undefined', '-Clink-arg=-fno-sanitize-recover=all',
                 *['-Clink-arg=' + arg for arg in crypto_flags()[2:]]]
     run([*command, HERE / 'host.rs', '-o', out / 'positive'])
-    if not args.recovery_only:
-        result = run([out / 'positive', epub])
-        assert result.stdout.startswith('PASS actual short open/action/finished')
+    result = run([out / 'positive', epub])
+    assert result.stdout.startswith('PASS actual short open/action/finished')
 
     def run_recovery(command, *, witness=None):
         result = run(command, succeeds=witness is None)
@@ -114,10 +111,8 @@ def main():
             assert result.returncode == 101 and witness in result.stderr, result.stderr
         return result.stdout
 
-    check_recovery(run_recovery, command, workspace, out, out / 'positive',
-                   controls=not args.positives_only)
-    if not args.recovery_only and not args.positives_only:
-        composition_controls(run, command, epub, workspace, out)
+    check_recovery(run_recovery, command, workspace, out, out / 'positive', controls=True)
+    composition_controls(run, command, epub, workspace, out)
 
 
 def check_recovery(run, command, workspace, out, positive, *, controls):
