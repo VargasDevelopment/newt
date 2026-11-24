@@ -31,7 +31,7 @@ fn open(panel: &mut newt_c3_board::ReaderPanel<'_, '_>, io: &UiIo, card: &mut ca
     let mut runs = [Run::default(); RUNS];
     let mut text = [0; TEXT];
     let mut plan = Plan::new(&mut runs, &mut text);
-    let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), settings.orientation.is_landscape());
+    let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), settings.page_layout());
     let mut authorize = |raw: &mut dyn BookSource, expected: &[u8; 32], _: &mut [u8], allowed: &dyn Fn() -> bool| {
         let mut bytes = vec![0; raw.size() as usize];
         let mut actual = [0; 32];

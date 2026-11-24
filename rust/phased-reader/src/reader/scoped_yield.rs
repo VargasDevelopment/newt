@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Reborrow the same reader buffers while moving its scalar operation state.
 use super::{Observer, PageInfo, PhasedReader, Proofs};
+use newt_core::preferences::PageLayout;
 use core::mem::take;
 use crate::admission::{ScopedWork, WorkEvent, WorkYield};
 
@@ -13,7 +14,7 @@ struct Returned<'op, 'p> {
     pending_undeclared: &'op mut Option<bool>,
     active: &'op mut usize,
     source_bytes: &'op mut u64,
-    landscape: &'op mut bool,
+    page_layout: &'op mut PageLayout,
     opened: &'op mut bool,
     has_page: &'op mut bool,
     info: &'op mut PageInfo,
@@ -31,7 +32,7 @@ impl Drop for Returned<'_, '_> {
         *self.pending_undeclared = self.reader.pending_undeclared.take();
         *self.active = take(&mut self.reader.active);
         *self.source_bytes = take(&mut self.reader.source_bytes);
-        *self.landscape = take(&mut self.reader.landscape);
+        *self.page_layout = self.reader.page_layout;
         *self.opened = take(&mut self.reader.opened);
         *self.has_page = take(&mut self.reader.has_page);
         *self.info = take(&mut self.reader.info);
@@ -82,7 +83,7 @@ impl<'m, 'p> PhasedReader<'m, 'p> {
         // cannot invoke a callback before the return guard is fully installed.
         let PhasedReader {
             pending, pending_cached, pending_undeclared, selections, plan,
-            active, source_bytes, landscape, opened, has_page, info, proofs,
+            active, source_bytes, page_layout, opened, has_page, info, proofs,
             styles_ready, undeclared_styles, malformed_utf8, empty_chapter,
             on_yield: _, work: observer,
         } = self;
@@ -94,7 +95,7 @@ impl<'m, 'p> PhasedReader<'m, 'p> {
             plan: plan.as_deref_mut(),
             active: take(active),
             source_bytes: take(source_bytes),
-            landscape: take(landscape),
+            page_layout: *page_layout,
             opened: take(opened),
             has_page: take(has_page),
             info: take(info),
@@ -108,7 +109,7 @@ impl<'m, 'p> PhasedReader<'m, 'p> {
         };
         let mut returned = Returned {
             reader, pending, pending_cached, pending_undeclared, active,
-            source_bytes, landscape, opened, has_page, info, proofs,
+            source_bytes, page_layout, opened, has_page, info, proofs,
             styles_ready, undeclared_styles, malformed_utf8, empty_chapter,
             work: observer,
         };

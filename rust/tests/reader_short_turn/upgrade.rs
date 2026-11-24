@@ -99,7 +99,7 @@ fn resume_from(bytes: Vec<u8>, old_version: u32) {
         let mut runs = [Run::default(); RUNS];
         let mut text = [0; TEXT];
         let mut plan = Plan::new(&mut runs, &mut text);
-        let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), false);
+        let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), PageLayout::PORTRAIT);
         let mut frame = [0; FRAME_BYTES];
 
         assert_eq!(reader.open_phased(&mut source, &mut storage, panel, &mut parser), Status::Ok);

@@ -72,7 +72,7 @@ fn current_and_staged_segments_use_the_book_language() {
     let mut runs = [Run::default(); RUNS];
     let mut text = [0; TEXT];
     let mut plan = Plan::new(&mut runs, &mut text);
-    let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), false);
+    let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), PageLayout::PORTRAIT);
     let mut shared = [0; BANK_BYTES];
     let mut native = vec![0; FRAME_BYTES];
     let context = Context::default();

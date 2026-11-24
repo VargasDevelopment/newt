@@ -235,7 +235,7 @@ fn measure_cache(path: &Path) -> (bool, u32, u32, usize, f64) {
     let mut runs = vec![PlanRun::default(); RUNS];
     let mut text = Box::new(PlanText([0u8; TEXT]));
     let mut plan = Plan::new(runs.as_mut_slice().try_into().unwrap(), &mut text.0);
-    let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), false);
+    let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), PageLayout::PORTRAIT);
     let mut sr = StyleResources {
         directory: &mut directory, paths: &mut paths,
         build: Some(styles::BuildScratch {
@@ -308,7 +308,7 @@ fn run_open_phased(path: &Path, mode: &str) -> OpenMetrics {
     let mut runs = vec![PlanRun::default(); RUNS];
     let mut text = Box::new(PlanText([0u8; TEXT]));
     let mut plan = Plan::new(runs.as_mut_slice().try_into().unwrap(), &mut text.0);
-    let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), false);
+    let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), PageLayout::PORTRAIT);
     let t0 = Instant::now();
     let status = reader.open_phased(&mut source, &mut storage, &mut loan, &mut backend);
     m.open_ms = t0.elapsed().as_secs_f64() * 1000.0;
@@ -392,7 +392,7 @@ fn run_open_phased(path: &Path, mode: &str) -> OpenMetrics {
                 let restored = newt_core::progress::Progress::decode(&saved.encode().unwrap()).unwrap();
                 drop(reader);
                 for selection in &mut selections { *selection = Selection::default(); }
-                let mut cold = PhasedReader::new(&mut selections, Some(&mut plan), false);
+                let mut cold = PhasedReader::new(&mut selections, Some(&mut plan), PageLayout::PORTRAIT);
                 let mut source = FileSource::open(path);
                 let opened = cold.open_phased(&mut source, &mut storage, &mut loan, &mut backend);
                 assert!(!cold.has_page(), "cold restore must not reuse published totals");

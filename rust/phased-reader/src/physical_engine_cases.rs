@@ -149,7 +149,7 @@ fn run(root: &Path, name: &str, fault: Fault, hash: &mut dyn crate::hash_provide
     let mut runs = [PlanRun::default(); RUNS];
     let mut text = [0; TEXT];
     let mut plan = Plan::new(&mut runs, &mut text);
-    let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), true);
+    let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), PageLayout::LANDSCAPE);
     assert_eq!(reader.open_phased(&mut source, &mut storage, &mut loan, &mut parser), Status::Ok);
     let original_active = reader.active;
     let original_info = reader.info;
@@ -241,7 +241,7 @@ pub fn actual_staged_cache_case(
     let mut runs = [PlanRun::default(); RUNS];
     let mut text = [0; TEXT];
     let mut plan = Plan::new(&mut runs, &mut text);
-    let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), true);
+    let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), PageLayout::LANDSCAPE);
     let mut store = Store { file: vec![0x77], name: Vec::new(), signals: &signals,
         fault: Fault::None, begins: 0, writes: 0, ends: 0, removes: 0,
         footers: 0, page_after_final_feed: false };
@@ -350,7 +350,7 @@ fn index_loan_uses_original_plan_and_restores_no_metadata(breaker: &mut dyn Line
             let mut font = ReaderAtlas;
             let mut backend = SplitBackend { font: &mut font, sink: &mut sink };
             let mut images = lr.images.for_chapter(b"chapter.xhtml");
-            let mut engine = Engine::new(reader_parameters(true, Some(slot), BookLanguage::default()),
+            let mut engine = Engine::new(reader_parameters(PageLayout::LANDSCAPE, Some(slot), BookLanguage::default()),
                 resources::storage(&mut lr.storage), &mut backend, lr.breaker,
                 &mut images, None, CssStylesheetBuilder::default()).ok().unwrap();
             engine.start(b"body", None, None, None, None, None);

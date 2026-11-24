@@ -178,6 +178,7 @@ dependencies = [
  "newt-device-ui",
  "newt-phased-reader",
  "newt-phased-sink",
+ "newt-reader-atlas",
  "newt-reader-navigation",
  "newt-system-ui",
  "newt-target-expat",

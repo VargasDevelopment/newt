@@ -85,7 +85,7 @@ fn scenario(bytes: Vec<u8>, finished: bool) {
         let mut selections = [Selection::default(), Selection::default()];
         let mut runs = [Run::default(); RUNS]; let mut text = [0; TEXT];
         let mut plan = Plan::new(&mut runs, &mut text);
-        let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), false);
+        let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), PageLayout::PORTRAIT);
         let mut owner = ExternalOwner::default(); let mut ui = ReaderUiState::default();
         let settings = ViewSettings::default();
         let mut resources = Resources { panel, pages: &mut pages, storage: &mut Storage::new(&mut bank),

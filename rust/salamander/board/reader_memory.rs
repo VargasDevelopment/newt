@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! The four frozen ExternalStorage allocations, owned between short loans.
 use core::{mem::{ManuallyDrop, MaybeUninit, align_of, size_of}, ptr::{addr_of_mut, drop_in_place, write_bytes}};
-use newt_phased_reader::{PhasedReader, ReaderState, ReaderView, Selection,
+use newt_phased_reader::{PageLayout, PhasedReader, ReaderState, ReaderView, Selection,
     phase_storage::{BANK_BYTES, Storage, StorageState}};
 use newt_phased_sink::{Plan, PlanState, Run, RUNS, TEXT};
 use newt_reader_ui::{ExternalOwner, ReaderUiState};
@@ -15,7 +15,7 @@ pub struct Runtime<'m, 'p> {
 }
 impl<'m, 'p> Runtime<'m, 'p> {
     pub fn new(selections: &'m mut [Selection; 2], plan: &'m mut Plan<'p>) -> Self {
-        Self { reader: PhasedReader::new(selections, Some(plan), false),
+        Self { reader: PhasedReader::new(selections, Some(plan), PageLayout::PORTRAIT),
             owner: ExternalOwner::default(), ui: ReaderUiState::default() }
     }
 }
@@ -115,7 +115,7 @@ impl ReaderMemory {
             super::selection_init::initialize(&mut *slots);
             super::selection_init::initialize(&mut *slots.add(1));
             raw.add(VALUE_AT).cast::<Retained>().write(Retained {
-                reader: ReaderState::new(false), owner: ExternalOwner::default(),
+                reader: ReaderState::new(PageLayout::PORTRAIT), owner: ExternalOwner::default(),
                 ui: ReaderUiState::default(), plan: PlanState::new(), storage: StorageState::new(),
             });
         }

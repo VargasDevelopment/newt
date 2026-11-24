@@ -2,7 +2,7 @@
 use crate::{entry::linebreak::NativeBreak, physical::{Bank, Key, Source, Store}};
 use core::ffi::CStr;
 use newt_core::{chapter_layout::types::LineBreak, preferences::ViewSettings, zip_container::Status};
-use newt_phased_reader::{CacheRequest, OperationPhased, PhasedChapterCache, PhasedReader, Selection,
+use newt_phased_reader::{CacheRequest, OperationPhased, PageLayout, PhasedChapterCache, PhasedReader, Selection,
     imported_revision::session::{Build, Cache}, phase_storage::{BANK_BYTES, Storage}};
 use newt_phased_sink::{Plan, RUNS, Run, TEXT, Target};
 use std::path::Path;
@@ -31,7 +31,7 @@ pub fn run(root: &Path) -> std::io::Result<()> {
     let mut runs = [Run::default(); RUNS];
     let mut text = [0; TEXT];
     let mut plan = Plan::new(&mut runs, &mut text);
-    let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), true);
+    let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), PageLayout::LANDSCAPE);
     let mut store = Store::default();
     let mut english = Store::default();
     // Hold the digest fixed to isolate language as the only cache-key input.

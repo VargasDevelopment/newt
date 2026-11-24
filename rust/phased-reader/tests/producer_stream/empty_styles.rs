@@ -23,7 +23,7 @@ fn empty_case(id: u32, bytes: &[u8]) -> Output {
     let mut storage = Storage::new(&mut shared);
     let mut selections = [Selection::default(), Selection::default()];
     selections[0].entry = Entry::raw(bytes.len() as u32);
-    let mut reader = PhasedReader::new(&mut selections, None, false);
+    let mut reader = PhasedReader::new(&mut selections, None, PageLayout::PORTRAIT);
     reader.source_bytes = bytes.len() as u64;
     reader.info.page_count = 1;
     reader.info.total_chars = 1;

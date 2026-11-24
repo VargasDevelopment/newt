@@ -77,7 +77,7 @@ fn input() -> Vec<u8> {
 fn rust_case(id:u32,b:&[u8])->ResultData {
     let mut t=Trace::new(1000+id);t.extended=Some(RefCell::new(Vec::new()));let card=RefCell::new(Card::default());
     let mut source=PassInput{base:Input{t:&t,bytes:b},card:&card,id};let mut base=PassStore{t:&t,card:&card,id};
-    let mut selections=[Selection::default(),Selection::default()];selections[0].entry=Entry::raw(b.len() as u32);let mut reader=PhasedReader::new(&mut selections,None,false);reader.source_bytes=b.len() as u64;reader.info.page_count=257;reader.info.total_chars=2570;
+    let mut selections=[Selection::default(),Selection::default()];selections[0].entry=Entry::raw(b.len() as u32);let mut reader=PhasedReader::new(&mut selections,None,PageLayout::PORTRAIT);reader.source_bytes=b.len() as u64;reader.info.page_count=257;reader.info.total_chars=2570;
     let mut shared=[0;BANK_BYTES];let mut native=vec![0xa5;newt_phased_sink::FRAME_BYTES];let signal=Signals::default();let mut loan=Loan{bytes:&mut native,signal:&signal,returns:0};let mut storage=Storage::new(&mut shared);
     let mut parser=Native{t:&t,xml:Expat::default()};let mut breaker=linebreak::NativeBreak;let mut hash=PassHash(&t);let mut route=Route{settings:newt_core::preferences::ViewSettings{orientation:newt_core::preferences::Orientation::Portrait,..Default::default()},digest:&[0;32],info:reader.info,hash:&mut hash};
     let(mut seen,mut next,mut skipped,mut used,mut starts)=(0,0,0,0,[0;32]);let mut interruptions=0;let mut calls=0;

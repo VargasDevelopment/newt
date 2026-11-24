@@ -55,7 +55,7 @@ fn one(label:&str){
   _=>b"<html><body><p>A</p></body></html>".to_vec()
  };
  let mut selections=[Selection::default(),Selection::default()];selections[0].entry=Entry::raw(input.len() as u32);
- let mut reader=PhasedReader::new(&mut selections,None,false);reader.info.page_count=if label=="pages"{2}else{1};reader.info.total_chars=if label=="chars"{2}else{1};
+ let mut reader=PhasedReader::new(&mut selections,None,PageLayout::PORTRAIT);reader.info.page_count=if label=="pages"{2}else{1};reader.info.total_chars=if label=="chars"{2}else{1};
  let info=reader.info;let mut hash=Hash;let mut route=Route{settings:newt_core::preferences::ViewSettings{orientation:newt_core::preferences::Orientation::Portrait,..Default::default()},digest:&[0;32],info,hash:&mut hash};
  let context=Context{cancel_pause:label=="cancel",..Default::default()};let cancellation=Cancellation::new(Hooks{context:&context,stop:Some(stopped),yield_now:None,pause:Some(paused)});
  let mut native=vec![0xa5;newt_phased_sink::FRAME_BYTES];let mut loan=Loan{bytes:&mut native,signal:&context.signal,returns:0};let mut shared=[0;BANK_BYTES];let mut storage=Storage::new(&mut shared);

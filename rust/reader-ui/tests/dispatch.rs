@@ -70,15 +70,15 @@ fn dispatch_boundaries_and_storage_intents() {
         ),
         (
             ReaderPanel::Settings,
-            3,
+            SettingsRow::Save as u32,
             Action::Activate,
             ReaderPanel::Settings,
-            3,
+            SettingsRow::Save as u32,
             ReaderUiIntent::SaveSettings,
         ),
         (
             ReaderPanel::Settings,
-            4,
+            SettingsRow::Cancel as u32,
             Action::Activate,
             ReaderPanel::Menu,
             0,
@@ -139,7 +139,7 @@ fn finish_visibility_and_unwritable_settings() {
     }
     let mut ui = ReaderUiState {
         panel: ReaderPanel::Settings,
-        selected: 3,
+        selected: SettingsRow::Save as u32,
         preferences_writable: false,
         ..ReaderUiState::default()
     };
@@ -198,6 +198,29 @@ fn chapter_next_preserves_requested_focus_for_preparation() {
     assert_eq!(ui.selected, 2);
     // Actual OperationReader preparation must now request 2 before paint;
     // immutable composition cannot replace it with the old menu focus of 1.
+}
+
+#[test]
+fn text_size_row_cycles_every_size_without_saving() {
+    let settings = ViewSettings::default();
+    let mut ui = ReaderUiState {
+        panel: ReaderPanel::Settings,
+        selected: SettingsRow::TextSize as u32,
+        draft: settings,
+        ..ReaderUiState::default()
+    };
+    for expected in [TextSize::Px34, TextSize::Px22, TextSize::Px24, TextSize::Px27, TextSize::Px30] {
+        assert_eq!(dispatch_reader_ui(&mut ui, settings, Action::Activate, 0), ReaderUiIntent::Repaint);
+        assert_eq!(ui.draft.text_size, expected);
+    }
+    // Cancel drops the draft: reopening shows the committed size again.
+    ui.draft.text_size = TextSize::Px22;
+    ui.selected = SettingsRow::Cancel as u32;
+    assert_eq!(dispatch_reader_ui(&mut ui, settings, Action::Activate, 0), ReaderUiIntent::Repaint);
+    assert_eq!(ui.panel, ReaderPanel::Menu);
+    ui.selected = 2;
+    assert_eq!(dispatch_reader_ui(&mut ui, settings, Action::Activate, 0), ReaderUiIntent::Repaint);
+    assert_eq!((ui.panel, ui.draft.text_size), (ReaderPanel::Settings, TextSize::Px30));
 }
 
 #[test]
