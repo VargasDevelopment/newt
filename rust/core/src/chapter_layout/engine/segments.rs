@@ -17,21 +17,20 @@ pub(super) struct Segment {
     pub(super) extra: u8,
 }
 
-pub(super) struct LineSegments<'a> {
-    pub(super) segments: &'a [Segment; MAX_SEGMENTS],
+pub(super) struct LineSegments {
     pub(super) count: usize,
     pub(super) next_start: Option<usize>,
 }
 
 impl EngineState<'_> {
-    pub(super) fn segment_line<'a>(
+    pub(super) fn segment_line(
         &mut self,
         backend: &mut dyn Backend,
         line: Line,
         justify: bool,
-        segments: &'a mut [Segment; MAX_SEGMENTS],
-    ) -> LineSegments<'a> {
-        let hs = line.spaces == 0;
+        justify_hangul: bool,
+        segments: &mut [Segment; MAX_SEGMENTS],
+    ) -> LineSegments {
         let mut used = 0;
         let mut segment = Segment {
             start: line.start,
@@ -68,7 +67,7 @@ impl EngineState<'_> {
                 && justify
                 && cjk(previous)
                 && cjk(codepoint)
-                && (hs || !(hangul(previous) && hangul(codepoint)));
+                && (justify_hangul || !(hangul(previous) && hangul(codepoint)));
             let mixed = previous != 0 && crosses(previous, codepoint);
             if span != segment.span || level != segment.level || extra != segment.extra || cjk_gap || mixed || compress
             {
@@ -97,7 +96,7 @@ impl EngineState<'_> {
             }
             Some(start)
         };
-        LineSegments { segments, count: used, next_start }
+        LineSegments { count: used, next_start }
     }
 }
 

@@ -841,13 +841,14 @@ impl<'a> EngineState<'a> {
             - i32::from(self.paragraph.indent)
             - indent;
         let mut left = max - r.width;
-        let mut gaps = justification_gaps(r);
+        let justify_hangul = r.spaces == 0;
+        let mut gaps = justification_gaps(r, justify_hangul);
         let justify =
             self.paragraph.align == TextAlign::Justify && r.flags & 1 == 0 && gaps > 0 && left > 0;
         let baseline = self.y.wrapping_add(backend.ascent(size));
-        let mut segments = [Segment::default(); MAX_SEGMENTS];
-        let LineSegments { segments: segs, count: n, next_start } =
-            self.segment_line(backend, r, justify, &mut segments);
+        let mut segs = [Segment::default(); MAX_SEGMENTS];
+        let LineSegments { count: n, next_start } =
+            self.segment_line(backend, r, justify, justify_hangul, &mut segs);
         if n == 0 {
             self.y = self.y.wrapping_add(lh);
             return LinePlacement::Placed(None);
@@ -855,13 +856,15 @@ impl<'a> EngineState<'a> {
         if n > self.storage.runs.len() - self.run_count {
             return self.refused_line();
         }
-        let rest = next_start.map(|start| {
+        let rest = if let Some(start) = next_start {
             let (end, flags) = (r.end, r.flags);
             r = self.line_metrics(backend, r.start, segs[n - 1].end, flags & !2);
             left = max - r.width;
-            gaps = justification_gaps(r);
-            self.line_metrics(backend, start, end, flags | 1)
-        });
+            gaps = justification_gaps(r, justify_hangul);
+            Some(self.line_metrics(backend, start, end, flags | 1))
+        } else {
+            None
+        };
         let justify = justify && gaps > 0 && left > 0;
         let per = if justify { left / gaps } else { 0 };
         let mut remainder = if justify { left % gaps } else { 0 };
@@ -1130,7 +1133,7 @@ enum LinePlacement {
     NextPage,
     TooLarge,
 }
-fn justification_gaps(line: Line) -> i32 {
+fn justification_gaps(line: Line, justify_hangul: bool) -> i32 {
     i32::from(line.spaces) + i32::from(line.cjk)
-        + if line.spaces == 0 { i32::from(line.hangul) } else { 0 }
+        + if justify_hangul { i32::from(line.hangul) } else { 0 }
 }

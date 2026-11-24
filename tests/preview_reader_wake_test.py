@@ -132,13 +132,7 @@ def durable_slot(path, magic):
 
 
 def write_slot(path, data, at):
-    # The NRS2 slot's outer CRC-32C covers the header and payload.
-    crc = 0xffffffff
-    for byte in data[at:at + 252]:
-        crc ^= byte
-        for _ in range(8):
-            crc = (crc >> 1) ^ (0x82f63b78 if crc & 1 else 0)
-    struct.pack_into('<I', data, at + 252, crc ^ 0xffffffff)
+    struct.pack_into('<I', data, at + 252, preview_driver.crc32c(data[at:at + 252]))
     path.write_bytes(data)
 
 

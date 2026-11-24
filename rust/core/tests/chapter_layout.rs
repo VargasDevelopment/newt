@@ -303,6 +303,37 @@ fn justified_cjk_forces_a_line_break_after_64_segments() {
         assert_eq!(laid_out, text.as_bytes());
     }
 }
+
+#[test]
+fn a_space_after_the_segment_break_keeps_hangul_gaps_excluded() {
+    struct WideTail;
+    impl Font for WideTail {
+        fn covers(&mut self, _: u32) -> bool { true }
+        fn advance(&mut self, cp: u32, _: u16, _: u8) -> i16 {
+            if cp == u32::from(b'W') { 100 } else { 4 }
+        }
+        fn line_height(&mut self, _: u16) -> i16 { 8 }
+        fn ascent(&mut self, _: u16) -> i16 { 8 }
+    }
+    let mut sink = Capture::default();
+    let mut font = WideTail;
+    let mut backend = SplitBackend { font: &mut font, sink: &mut sink };
+    let width = 350;
+    let text = format!("한한{} aaW", "日".repeat(64));
+    with_text_capacity(&mut backend, 1024, 256, |e| {
+        e.params.width = width;
+        e.params.height = 8;
+        e.start(b"body", None, None, None, None, None);
+        e.start(b"p", None, Some(b"text-align:justify"), None, None, None);
+        e.text(text.as_bytes());
+        e.end(b"p");
+        assert!(e.finish());
+    });
+    let runs = &sink.pages[0].2;
+    assert_eq!(runs.len(), 64);
+    assert_eq!(runs[0].0, "한한".as_bytes());
+    assert_eq!(runs[63].1 + 4, width);
+}
 #[test]
 fn private_decoder_and_visual_reverse() {
     let bytes = [0xf0, 0x90, b'!'];

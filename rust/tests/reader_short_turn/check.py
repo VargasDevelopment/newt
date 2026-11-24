@@ -107,20 +107,34 @@ def main():
     if not args.recovery_only:
         result = run([out / 'positive', epub])
         assert result.stdout.startswith('PASS actual short open/action/finished')
-    result = run([out / 'positive', '--restore-policy'])
-    assert 'PASS firmware boot and pending checkpoint policies' in result.stdout
-    layout_fixtures = native_pins.load('short_turn_layout_fixtures', workspace / 'phased-reader/host/fixtures.py')
-    dense = out/'fixtures/dense.epub'
-    layout_fixtures.write_run_budget(dense)
-    result = run([out/'positive', dense, '--cache-upgrade'])
-    assert 'PASS old Pages data misses, saved content resumes, and only Pages rebuilds' in result.stdout
-    print(result.stdout, end='')
 
-    if args.positives_only:
-        return
-    if not args.recovery_only:
+    def run_recovery(command, *, witness=None):
+        result = run(command, succeeds=witness is None)
+        if witness is not None:
+            assert result.returncode == 101 and witness in result.stderr, result.stderr
+        return result.stdout
+
+    check_recovery(run_recovery, command, workspace, out, out / 'positive',
+                   controls=not args.positives_only)
+    if not args.recovery_only and not args.positives_only:
         composition_controls(run, command, epub, workspace, out)
-    recovery_controls(run, command, dense, workspace, out)
+
+
+def check_recovery(run, command, workspace, out, positive, *, controls):
+    policy = run([positive, '--restore-policy'])
+    assert 'PASS firmware boot and pending checkpoint policies' in policy
+    spec = importlib.util.spec_from_file_location('short_turn_layout_fixtures',
+                                                  workspace / 'phased-reader/host/fixtures.py')
+    fixtures = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fixtures)
+    dense = out / 'fixtures/dense.epub'
+    dense.parent.mkdir(exist_ok=True)
+    fixtures.write_run_budget(dense)
+    upgrade = run([positive, dense, '--cache-upgrade'])
+    assert 'PASS old Pages data misses, saved content resumes, and only Pages rebuilds' in upgrade
+    print(policy + upgrade, end='')
+    if controls:
+        recovery_controls(run, command, dense, workspace, out)
 
 
 def composition_controls(run, command, epub, workspace, out):
@@ -182,8 +196,7 @@ def recovery_controls(run, command, dense, workspace, out):
         host = child / 'host.rs'
         host.write_text(paths((HERE / 'host.rs').read_text(), HERE, {target: replacement}))
         run([*command, host, '-o', child / 'program'])
-        result = run([child / 'program', *arguments], succeeds=False)
-        assert result.returncode == 101 and witness in result.stderr, result.stderr
+        run([child / 'program', *arguments], witness=witness)
     print('PASS compiled restore policy and old Pages producer controls rejected')
 
 
