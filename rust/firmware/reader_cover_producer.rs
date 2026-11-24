@@ -92,8 +92,9 @@ impl Runtime{
             if self.cover_observation.ready(&poll){
                 let _=home.with_storage_io(|_,io|self.cover_observation.publish(io,&poll));
             }
-            if self.cover_observation.draining(){
-                crate::app_power::delay_ms(10);return false;
+            match self.cover_observation.draining(&poll){
+                observation::Drain::Done=>{},observation::Drain::Stopped=>return false,
+                observation::Drain::Wait=>{crate::app_power::delay_ms(10);return false;}
             }
         }
         let mut home_eligible=false;

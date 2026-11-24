@@ -321,7 +321,7 @@ def books():
     return folder
 
 
-def record(book, route):
+def record(book, route=CJB7):
     """A bare cover record for `book` on the `route` (CJB3, CJB5, CJB6 or CJB7)."""
     return SIGNATURE + struct.pack('<QQ', (books() / f'{book}.epub').stat().st_size, MTIME) + route
 
@@ -522,7 +522,7 @@ def usb_backpressure(binary):
     for pause, cached, input_during_prepare in ((30, False, False), (60000, False, False),
                                                 (1000, True, False), (1000, True, True)):
         with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
-            records = {book: record(book, CJB6) for book in BOOKS if book != 'Alder'} if cached else None
+            records = {book: record(book) for book in BOOKS if book != 'Alder'} if cached else None
             world = World(binary, scratch, records, **{'cover.usb.pause_ms': str(pause), 'cover.usb.free': '210',
                          'cover.prepare.input': str(int(input_during_prepare))})
             _, results, _ = world.run(SHELF)
@@ -538,6 +538,37 @@ def usb_backpressure(binary):
             for book in (['Alder'] if cached else shelves()[0]):
                 if problem := art_problem(world, book):
                     return problem
+
+
+def usb_write_failures(binary):
+    """A zero/short return after the space gate is final, never a retry."""
+    for result in ('zero', 'short'):
+        with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
+            world = World(binary, scratch, **{'cover.usb.write_result': result})
+            _, _, log = world.run(SHELF)
+            writes = (world.directory / 'cover-writes.txt').read_text().splitlines()
+            if len(writes) != 4 or 'COVER_CACHE ' in log:
+                return f'{result} send retried or ran a census: writes={len(writes)}'
+            for book in shelves()[0]:
+                if problem := art_problem(world, book):
+                    return problem
+
+
+def usb_input_drain(binary):
+    """Pending DEV input neither sleeps nor spends the cover drain budget."""
+    with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
+        world = World(binary, scratch, **{'cover.usb.pause_ms': '570',
+                      'cover.usb.free': '210', 'cover.drain.input_ms': '12'})
+        _, results, _ = world.run(SHELF)
+        if results != [PRODUCED] * 4:
+            return f'pending input spent the quiet drain budget: {results}'
+        if not (world.directory / 'cover-input.txt').exists():
+            return 'the pending-input injection did not run'
+        if (world.directory / 'cover-input-delay.txt').exists():
+            return 'cover draining slept with pending input'
+        for book in shelves()[0]:
+            if problem := art_problem(world, book):
+                return problem
 
 
 def absent_card_idle(binary):
@@ -686,7 +717,7 @@ CASES = [
         [('cover_session.rs', 'self.commit(&self.header(cover::NO_ART),&[])',
           'self.commit(&self.header(u32::from_le_bytes(*b"CJB3")),&[])')]]),
     (usb_backpressure, [
-        [('cover_observation.rs', 'Some(needed)=>attempt.needed=needed,',
+        [('cover_observation.rs', 'Some(needed)=>attempt.needed=attempt.needed.max(needed),',
           'Some(_)=>self.0=None,')],
         [('cover_observation.rs',
           '||newt_c3_board::dev_usb::available_for_write()<record.length as i32', '')],
@@ -697,6 +728,12 @@ CASES = [
           'attempt.drain_ticks==0||super::millis().wrapping_sub(attempt.observation.started.wrapping_add(attempt.observation.elapsed.get()))>=200')],
         [('cover_observation.rs',
           '        if result==R::Idle&&self.0.as_ref().is_some_and(|pending|pending.result!=R::Idle){return;}\n', '')]]),
+    (usb_write_failures, [
+        [('cover_observation.rs', 'Some(false)=>return None', 'Some(false)=>return Some(needed)')]]),
+    (usb_input_drain, [
+        [('cover_observation.rs', '        if control.stopped(){return Drain::Stopped;}\n', '')],
+        [('cover_observation.rs', 'if control.stopped(){return Drain::Stopped;}',
+          'if control.stopped(){attempt.drain_ticks-=1;return Drain::Stopped;}')]]),
     (absent_card_idle, [
         [('reader_cover_producer.rs', 'if self.cover_observation.ready(&poll){', 'if true{')]]),
     (low_heap, [
