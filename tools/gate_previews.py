@@ -379,7 +379,9 @@ def main() -> None:
             != (ROOT / "artifacts/epub-landscape-bar.pbm").read_bytes(),
             "Configurable bar visibly changes reader chrome")
     # Clockwise is the same page turned half a turn on the panel, so its
-    # logical frame matches counterclockwise; its buttons swap, so Left turns on.
+    # logical frame matches counterclockwise; its four front buttons mirror
+    # counterclockwise (Back/Confirm/Left/Right -> Next/Previous/Menu/Back),
+    # while side Up/Down keep their half-turn swap (Up -> Next, Down -> Previous).
     def book(orientation, actions=None):
         command = [str(binary), "--screen", "epub", "--reader-orientation", orientation]
         return phase_run(command + (["--actions", actions] if actions else []),
@@ -387,12 +389,23 @@ def main() -> None:
     require(book("landscape-cw") == (ROOT / "artifacts/epub-landscape-bar.pbm").read_bytes(),
             "Clockwise landscape shows the counterclockwise page")
     forward = book("landscape-ccw", "next")
-    require(forward != book("landscape-ccw") and book("landscape-cw", "previous") == forward
+    menu = book("landscape-ccw", "activate")
+    require(forward != book("landscape-ccw") and book("landscape-cw", "back") == forward
+            and book("landscape-cw", "back+back") == book("landscape-ccw", "next+next") != forward
+            and book("landscape-cw", "back,activate") == book("landscape-cw"),
+            "Clockwise mirrors front 1 and 2 to Page forward and Page back")
+    require(menu != book("landscape-ccw") and book("landscape-cw", "previous") == menu
+            and book("landscape-cw", "previous,back") == book("landscape-ccw", "activate,next")
             and book("landscape-cw", "previous,next") == book("landscape-cw"),
-            "Clockwise swaps the page buttons, so forward stays on the same side of the text")
-    # Back then Next in one input drain: Home gets the second press before its
-    # first repaint, while the clockwise book frame is still on the panel.
-    require(book("landscape-cw", "back+next") == book("landscape-ccw", "back+next") != book("landscape-cw", "back"),
+            "Clockwise mirrors front 3 and 4 to Menu and Back, inside the reader menu too")
+    require(book("landscape-cw", "next") == book("landscape-ccw", "back"),
+            "Clockwise front 4 leaves the book for Home")
+    require(book("landscape-cw", "up") == forward and book("landscape-cw", "up,down") == book("landscape-cw"),
+            "Clockwise side Up and Down keep their half-turn page swap and never open Menu or Back")
+    # Leave the book (front 4 = Right) then Next (front 4 = Right) in one input
+    # drain: Home gets the second press before its first repaint, while the
+    # clockwise book frame is still on the panel, so Apps is focused.
+    require(book("landscape-cw", "next+next") == book("landscape-ccw", "back+next") != book("landscape-cw", "next"),
             "Presses queued after leaving a clockwise book use Home's buttons")
     require((ROOT / "artifacts/home-reader-portrait.pbm").read_bytes()
             == (ROOT / "artifacts/home.pbm").read_bytes(), "Reader flags preserve portrait Home")

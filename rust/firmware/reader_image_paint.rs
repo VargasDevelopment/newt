@@ -38,7 +38,7 @@ impl Runtime {
         } }
         let orientation = self.settings.orientation;
         let full = force || !ui.displayed.valid || ui.displayed.grayscale
-            || ui.displayed.orientation != orientation
+            || ui.displayed.orientation() != orientation
             || self.reading_refresh.needs_full(u32::from(self.settings.refresh_pages));
         let native = home.bus.board.frame()?.try_into().map_err(|_| Error::Length)?;
         frame::to_native_frame(logical, native, orientation);
@@ -53,7 +53,7 @@ impl Runtime {
             if inverse { display::drive_from_inverse(&mut home.bus.board)?; }
             panel_binary(home, ui, if full && !inverse { Refresh::Full } else { Refresh::Fast }, "reader")?;
         }
-        ui.displayed.completed(&mut home.bus.board, orientation, false, false, started);
+        ui.displayed.completed(&mut home.bus.board, orientation, false, false, started, events.control);
         if ui.press == PressState::Accepted {
             ui.press = if full || inverse { PressState::AnsweredCleanup } else { PressState::AnsweredFast };
         } else if !covered { self.reading_refresh.painted(full || inverse); }
@@ -112,7 +112,7 @@ impl Runtime {
             panel_binary(home, ui, Refresh::Full, "sleep-fallback")?;
         }
         let orientation = self.sleep_orientation(ui);
-        ui.displayed.completed(&mut home.bus.board, orientation, gray, false, started);
+        ui.displayed.completed(&mut home.bus.board, orientation, gray, false, started, events.control);
         ui.ui_refresh.painted(true);
         ui.home_refresh.invalidate();
         Ok(true)

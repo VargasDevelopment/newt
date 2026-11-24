@@ -62,7 +62,7 @@ impl Runtime {
                 self.defer_exit_metadata();
                 if self.session.as_ref().is_some_and(|s| s.verification.state()
                     == crate::reader_verification::Verification::Pending) {
-                    self.acknowledge_work_image(home, ui, logical, newt_reader_ui::SlowWork::Saving, events.action);
+                    self.acknowledge_work_image(home, ui, logical, newt_reader_ui::SlowWork::Saving, events.control, events.action);
                 }
                 if self.has_progress() {
                     if self.memory.has_sample() { self.update_home_image(home, events.action); }
@@ -117,7 +117,7 @@ impl Runtime {
         if boundary { return; }
         {
             let _verification = events.action.scope(crate::reader_action::ActionStage::SourceSelect);
-            self.acknowledge_work_image(home, ui, logical, newt_reader_ui::SlowWork::Loading, events.action);
+            self.acknowledge_work_image(home, ui, logical, newt_reader_ui::SlowWork::Loading, events.control, events.action);
             if !self.finish_verification_image(home, ui, logical, events, true) {
                 self.publish_notice_image(ui);
                 return;

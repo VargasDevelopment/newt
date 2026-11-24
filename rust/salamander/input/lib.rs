@@ -11,6 +11,10 @@ pub use counter::NativeAtomicU32;
 pub mod native;
 const OPENING: u32 = 0x8000_0000;
 const TIMED_OUT: u32 = 0x4000_0000;
+// Bit 28 (not bit 29) so !(OPENING | CLOCKWISE) is 0x6fff_ffff rather than
+// 0x5fff_ffff (which RISC-V materializes via lui 0x60000, the UART0 base).
+const CLOCKWISE: u32 = 0x1000_0000;
+const FLAGS: u32 = OPENING | TIMED_OUT | CLOCKWISE;
 const CANCEL_BACK: u8 = 0x80;
 pub const OPEN_BUDGET_MS: u32 = 20_000;
 pub const POLL_MS: u32 = 15;
@@ -183,10 +187,10 @@ impl Producer<'_> {
             if !io.was_pressed(button) || (button == Button::Power && !self.power_ready) {
                 continue;
             }
-            let event = self.queue_input(button);
+            let (event, priority) = self.queue_input(button);
             io.observe_physical();
             if !io.try_send_tail(&event) {
-                if button == Button::Back || button == Button::Power {
+                if priority {
                     while !io.send_front_wait(&event) {}
                 } else {
                     self.shared.dropped.fetch_add(1, SeqCst);
@@ -201,25 +205,34 @@ impl Producer<'_> {
             self.poll_once(io);
         }
     }
-    fn queue_input(&self, button: Button) -> PhysicalEvent {
+    fn queue_input(&self, button: Button) -> (PhysicalEvent, bool) {
         if button == Button::Power {
             self.shared.state.fetch_add(1, SeqCst);
+            return (PhysicalEvent { code: button as u8 }, true);
         }
-        if button == Button::Back {
-            let mut state = self.shared.state.load(SeqCst);
-            while state & OPENING != 0 {
-                match self.shared.state.compare_exchange_weak(
-                    state,
-                    state.wrapping_add(1),
-                    SeqCst,
-                    SeqCst,
-                ) {
-                    Ok(_) => return PhysicalEvent { code: CANCEL_BACK },
-                    Err(current) => state = current,
-                }
+        let mut state = self.shared.state.load(SeqCst);
+        loop {
+            let back = if state & CLOCKWISE != 0 {
+                Button::Right
+            } else {
+                Button::Back
+            };
+            if button != back {
+                return (PhysicalEvent { code: button as u8 }, false);
+            }
+            if state & OPENING == 0 {
+                return (PhysicalEvent { code: button as u8 }, true);
+            }
+            match self.shared.state.compare_exchange_weak(
+                state,
+                state.wrapping_add(1),
+                SeqCst,
+                SeqCst,
+            ) {
+                Ok(_) => return (PhysicalEvent { code: CANCEL_BACK }, true),
+                Err(current) => state = current,
             }
         }
-        PhysicalEvent { code: button as u8 }
     }
 }
 
@@ -272,9 +285,24 @@ impl UiControl<'_> {
             0
         }
     }
+    /// Match which front button acts as Back (Right in clockwise book screens, Back elsewhere).
+    pub fn set_clockwise_back(&self, clockwise: bool) {
+        if clockwise {
+            self.shared.state.fetch_or(CLOCKWISE, SeqCst);
+        } else {
+            self.shared.state.fetch_and(!CLOCKWISE, SeqCst);
+        }
+    }
+    pub fn back_button(&self) -> Button {
+        if self.shared.state.load(SeqCst) & CLOCKWISE != 0 {
+            Button::Right
+        } else {
+            Button::Back
+        }
+    }
     pub fn cancelled(&self) -> bool {
         let state = self.shared.state.load(SeqCst);
-        state & OPENING != 0 && state & !OPENING != 0
+        state & OPENING != 0 && state & !(OPENING | CLOCKWISE) != 0
     }
     pub fn cancelled_at(&self, now: u32) -> bool {
         if self.active() && self.elapsed(now) >= OPEN_BUDGET_MS {
@@ -292,7 +320,7 @@ impl UiControl<'_> {
         Snapshot {
             elapsed,
             active: true,
-            reason: u8::from(state & !(OPENING | TIMED_OUT) != 0)
+            reason: u8::from(state & !FLAGS != 0)
                 | (u8::from(state & TIMED_OUT != 0 || elapsed >= OPEN_BUDGET_MS) << 1),
         }
     }
@@ -367,5 +395,106 @@ impl ReaderCadence {
         }
         self.service(clock(), wait, clock);
         !stopped()
+    }
+}
+
+#[cfg(test)]
+mod clockwise_back_tests {
+    use super::{Action, Button, CANCEL_BACK, Consumption, InputIo, PhysicalEvent, Screen, Shared};
+
+    struct FakeIo {
+        pressed: Option<Button>,
+        full: bool,
+        tail: Option<u8>,
+        front: Option<u8>,
+    }
+    impl FakeIo {
+        fn new(pressed: Button, full: bool) -> Self {
+            Self { pressed: Some(pressed), full, tail: None, front: None }
+        }
+    }
+    impl InputIo for FakeIo {
+        fn update(&mut self) {}
+        fn power_physically_pressed(&mut self) -> bool { false }
+        fn power_logically_pressed(&mut self) -> bool { false }
+        fn was_pressed(&mut self, button: Button) -> bool { self.pressed == Some(button) }
+        fn observe_physical(&mut self) {}
+        fn try_send_tail(&mut self, event: &PhysicalEvent) -> bool {
+            if self.full { return false; }
+            self.tail = Some(event.queue_code());
+            true
+        }
+        fn send_front_wait(&mut self, event: &PhysicalEvent) -> bool {
+            self.front = Some(event.queue_code());
+            true
+        }
+        fn delay_ms(&mut self, _ms: u32) {}
+    }
+
+    #[test]
+    fn clockwise_back_cancels_on_right_and_never_on_front_one() {
+        let mut shared = Shared::new();
+        let (mut producer, mut control) = shared.split();
+
+        // Clockwise book screen: front 4 (Right) is Back; front 1 (Back) is Page forward.
+        control.set_clockwise_back(true);
+        assert_eq!(control.back_button(), Button::Right);
+        let cancel_code = control.with_open(100, |control, _| {
+            assert!(!control.cancelled());
+            assert_eq!(control.snapshot(110).reason, 0);
+
+            // Pressing front 1 (Button::Back) while open does not cancel and queues normally.
+            let mut page_next = FakeIo::new(Button::Back, false);
+            producer.poll_once(&mut page_next);
+            assert_eq!(page_next.tail, Some(Button::Back as u8));
+            assert!(!control.cancelled());
+            assert_eq!(control.snapshot(120).reason, 0);
+
+            // When the queue is full, front 1 is dropped rather than preempting the front.
+            let mut page_full = FakeIo::new(Button::Back, true);
+            producer.poll_once(&mut page_full);
+            assert_eq!(page_full.front, None);
+            assert_eq!(control.take_dropped(), 1);
+            assert!(!control.cancelled());
+
+            // Pressing front 4 (Button::Right) cancels the open and takes priority on a full queue.
+            let mut cw_back = FakeIo::new(Button::Right, true);
+            producer.poll_once(&mut cw_back);
+            assert_eq!(cw_back.front, Some(CANCEL_BACK));
+            assert!(control.cancelled());
+            assert_eq!(control.snapshot(130).reason, 1);
+            cw_back.front.unwrap()
+        });
+        assert_eq!(
+            control.consume_physical(PhysicalEvent { code: cancel_code }, Screen::EpubReading),
+            Consumption::CancelBack { dispatch_back: true }
+        );
+        // After retirement, clockwise stays active and a new open starts uncancelled.
+        assert_eq!(control.back_button(), Button::Right);
+        control.with_open(200, |control, _| assert!(!control.cancelled()));
+
+        // Leaving clockwise restores front 1 (Button::Back) as the cancel button.
+        control.set_clockwise_back(false);
+        assert_eq!(control.back_button(), Button::Back);
+        let portrait_cancel = control.with_open(300, |control, _| {
+            let mut right = FakeIo::new(Button::Right, false);
+            producer.poll_once(&mut right);
+            assert_eq!(right.tail, Some(Button::Right as u8));
+            assert!(!control.cancelled());
+
+            let mut back = FakeIo::new(Button::Back, false);
+            producer.poll_once(&mut back);
+            assert_eq!(back.tail, Some(CANCEL_BACK));
+            assert!(control.cancelled());
+            back.tail.unwrap()
+        });
+        assert_eq!(
+            control.consume_physical(PhysicalEvent { code: portrait_cancel }, Screen::Home),
+            Consumption::CancelBack { dispatch_back: false }
+        );
+        assert_eq!(
+            control.consume_physical(PhysicalEvent { code: Button::Back as u8 }, Screen::EpubReading),
+            Consumption::Action(Action::Back)
+        );
     }
 }

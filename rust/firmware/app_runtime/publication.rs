@@ -41,7 +41,7 @@ impl Published<'_, '_> {
         let facts = reader.facts();
         let free_heap = self.hardware.free_heap_bytes()?;
         let largest = self.hardware.largest_heap_block_bytes()?;
-        let orientation = if self.displayed.valid { self.displayed.orientation } else { Orientation::Portrait };
+        let orientation = if self.displayed.valid { self.displayed.orientation() } else { Orientation::Portrait };
         let landscape = orientation.is_landscape();
         let status = Status { generation: self.displayed.generation, refresh_ms: self.displayed.refresh_ms,
             free_heap, dropped: events.control.dropped(), screen: self.facts.screen as u32,

@@ -117,11 +117,12 @@ pub fn loop_body<'sdk>(home: &mut Home<'sdk>, ui: &mut Application<'sdk>, reader
         while let Some(item) = events.queue.try_receive() {
             // Frozen noteCoverInput precedes ticket admission and navigation.
             reader.note_input(home.bus.board.millis());
-            #[cfg(feature = "dev-usb")]
-            let (physical, button) = match &item {
-                QueueItem::Physical(event) => (true, event.queue_code()),
-                QueueItem::Synthetic { button, .. } => (false, *button),
+            let button = match &item {
+                QueueItem::Physical(event) => event.queue_code(),
+                QueueItem::Synthetic { button, .. } => *button,
             };
+            #[cfg(feature = "dev-usb")]
+            let physical = matches!(&item, QueueItem::Physical(_));
             #[cfg(feature = "dev-usb")]
             let mut cancellation = false;
             let action = match item {
@@ -168,9 +169,12 @@ pub fn loop_body<'sdk>(home: &mut Home<'sdk>, ui: &mut Application<'sdk>, reader
             };
             let Some(action) = action else { continue; };
             // Book screens follow the frame on the panel, so a clockwise book's
-            // pages and menus turn the natural way. Other screens never swap,
-            // even before their first repaint after leaving the book.
-            let action = app::facing(core_action(action), ui.app.screen, ui.displayed.orientation);
+            // four front buttons (Back..=Right, 0..=3) mirror counterclockwise
+            // while side page buttons keep their half-turn swap and CancelBack
+            // (0x80) stays Back. Other screens never remap, even before their
+            // first repaint after leaving the book.
+            let front = button <= input::Button::Right as u8;
+            let action = app::facing(core_action(action), front, ui.app.screen, ui.displayed.orientation());
             #[cfg(feature = "dev-usb")]
             let before = (ui.app.screen, reader.facts().opened, home.bus.board.millis());
             events.action.begin();
@@ -183,6 +187,7 @@ pub fn loop_body<'sdk>(home: &mut Home<'sdk>, ui: &mut Application<'sdk>, reader
             };
             if zone_move { moved |= dispatched.changed; } else { changed |= dispatched.changed; }
             changed |= work_changed || ui.press_answered();
+            sync_back_button(ui, events.control);
             #[cfg(feature = "dev-usb")]
             if !cancellation {
                 reader.consumed_input(physical, button, action, before.2, before.0, ui.app.screen, before.1);
@@ -257,12 +262,12 @@ pub fn paint(home: &mut Home<'_>, ui: &mut Application<'_>, reader: &mut impl Re
     let result = match ui.app.screen {
         Screen::Home => {
             let mut result = Ok(None);
-            reader.visit_home(&mut |view| result = ui.paint_home(home, view, logical, force, status_only, events.action));
+            reader.visit_home(&mut |view| result = ui.paint_home(home, view, logical, force, status_only, events.control, events.action));
             result
         }
         Screen::Library => {
             let shelf_state = reader.library_cover_state();
-            if let Some(painted) = ui.paint_library(home, logical, force, super::display::Composition::new(events.action), shelf_state)? {
+            if let Some(painted) = ui.paint_library(home, logical, force, super::display::Composition::new(events.action), shelf_state, events.control)? {
                 if painted.includes_cover {
                     reader.note_library_paint(painted.view, painted.any_making, home.bus.board.millis());
                 } else {
@@ -273,10 +278,10 @@ pub fn paint(home: &mut Home<'_>, ui: &mut Application<'_>, reader: &mut impl Re
             }
             return Ok(());
         }
-        Screen::Reading => ui.paint_sample(home, logical, force, events.action).map(|painted| painted.then_some(true)),
+        Screen::Reading => ui.paint_sample(home, logical, force, events.control, events.action).map(|painted| painted.then_some(true)),
         Screen::EpubReading | Screen::Sleeping => reader.paint(home, ui, logical, events, force)
             .map(|painted| painted.then_some(true)),
-        _ => ui.paint_system(home, logical, crate::app_dev::build_identity(), force, events.action).map(|painted| painted.then_some(true)),
+        _ => ui.paint_system(home, logical, crate::app_dev::build_identity(), force, events.control, events.action).map(|painted| painted.then_some(true)),
     };
     if let Some(includes_cover) = result? {
         reader.note_paint(ui.app.screen, ui.displayed.generation, includes_cover, home.bus.board.millis());
@@ -284,6 +289,10 @@ pub fn paint(home: &mut Home<'_>, ui: &mut Application<'_>, reader: &mut impl Re
         reader.completed_paint(ui.app.screen, ui.displayed.generation);
     }
     Ok(())
+}
+
+fn sync_back_button(ui: &Application<'_>, control: &input::UiControl<'_>) {
+    control.set_clockwise_back(app::clockwise_book(ui.app.screen, ui.displayed.orientation()));
 }
 
 fn finish_first_paint(home: &mut Home<'_>, ui: &mut Application<'_>, reader: &mut impl Reader,
@@ -300,7 +309,7 @@ fn finish_first_paint(home: &mut Home<'_>, ui: &mut Application<'_>, reader: &mu
     if matches!(loaded, newt_core::durable::Load::Loaded(_)) {
         ui.app.screen = Screen::Device;
         ui.app.about = app::AboutView::Updated;
-        if ui.paint_system(home, logical, crate::app_dev::build_identity(), true, events.action)? {
+        if ui.paint_system(home, logical, crate::app_dev::build_identity(), true, events.control, events.action)? {
             reader.note_paint(ui.app.screen, ui.displayed.generation, true, home.bus.board.millis());
         }
     }

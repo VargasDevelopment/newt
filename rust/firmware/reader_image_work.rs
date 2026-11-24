@@ -23,7 +23,7 @@ impl Runtime {
             Work::EnterLibrary => {
                 // Frozen openLibrary: browse, scan, then note the card.
                 if self.close_runtime(home).is_err() { crate::app_power::stop(); }
-                if ui.scan_library(home, self, logical, events.action).is_err() { crate::app_power::stop(); }
+                if ui.scan_library(home, self, logical, events.control, events.action).is_err() { crate::app_power::stop(); }
                 self.note_books_image(home, ui, events.action);
                 if self.recovery.is_some() { ui.library.message = Some(RECOVERY_PENDING); }
                 true
@@ -110,7 +110,7 @@ impl Runtime {
         self.selection.begin_selection();
         let work = if self.receipt_present_image(home, filename) { newt_reader_ui::SlowWork::Opening }
             else { newt_reader_ui::SlowWork::FirstOpen };
-        self.acknowledge_work_image(home, ui, logical, work, events.action);
+        self.acknowledge_work_image(home, ui, logical, work, events.control, events.action);
         super::profile::with_profile(|profile| {
             let selected = self.prepare_image(home, ui, logical, events, filename, None, profile).is_ok_and(|digest| {
                 self.selection.publish_candidate(filename, digest, &mut || {}, &mut || {})
@@ -138,7 +138,7 @@ impl Runtime {
                 self.selection.reset(&mut || {}, &mut || {});
                 // select released the catalog before reader admission. A
                 // rejected transaction restores browsing through its real scan.
-                if ui.scan_library(home, self, logical, events.action).is_err() { crate::app_power::stop(); }
+                if ui.scan_library(home, self, logical, events.control, events.action).is_err() { crate::app_power::stop(); }
                 if previous_flags & flag::ACTIVE != 0 {
                     self.selection.restore_identity(&previous_identity, &mut || {}, &mut || {});
                 }

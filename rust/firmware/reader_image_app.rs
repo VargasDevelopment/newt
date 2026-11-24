@@ -202,9 +202,10 @@ impl Reader for Runtime {
 impl Runtime {
     /// All actual working-frame call sites share one notification boundary.
     pub(super) fn acknowledge_work_image(&mut self, home: &mut Home<'_>, ui: &mut Application<'_>,
-        logical: &mut Frame, work: newt_reader_ui::SlowWork, trace: crate::reader_action::Trace<'_>,
+        logical: &mut Frame, work: newt_reader_ui::SlowWork,
+        control: &newt_input_policy::UiControl<'_>, trace: crate::reader_action::Trace<'_>,
     ) -> bool {
-        let painted = match ui.acknowledge_reader_work(home, work, self.settings, logical, trace) {
+        let painted = match ui.acknowledge_reader_work(home, work, self.settings, logical, control, trace) {
             Ok(painted) => painted,
             Err(_) => crate::app_power::stop(),
         };

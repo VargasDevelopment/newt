@@ -94,8 +94,9 @@ impl Runtime {
             let allowed = || {
                 if duty.cancelled() { return false; }
                 if !sleeping && queue_turns {
+                    let back = events.control.back_button() as u8;
                     let stop = events.queue.peek_button().is_some_and(|button|
-                        button == newt_input_policy::Button::Back as u8
+                        button == back
                         || button == newt_input_policy::Button::Power as u8 || button == 0x80);
                     if stop { return false; }
                 } else if !sleeping && events.queue.pending() { return false; }

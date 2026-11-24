@@ -248,7 +248,7 @@ impl Runtime {
                 if self.receipt_present_image(home, name) { newt_reader_ui::SlowWork::Opening }
                 else { newt_reader_ui::SlowWork::FirstOpen }
             } else { newt_reader_ui::SlowWork::Opening };
-            self.acknowledge_work_image(home, ui, logical, work, events.action);
+            self.acknowledge_work_image(home, ui, logical, work, events.control, events.action);
             events.control.restart(millis());
         }
         if !was_active {

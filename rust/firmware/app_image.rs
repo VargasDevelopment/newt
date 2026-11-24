@@ -212,7 +212,7 @@ impl<'sdk> Application<'sdk> {
     /// One press answers once. Refresh credit remains owed until settle_press,
     /// after the real open has reset its destination's existing budget.
     pub fn acknowledge_reader_work(&mut self, home: &mut Home<'_>, work: newt_reader_ui::SlowWork,
-        settings: ViewSettings, logical: &mut Frame, trace: Trace<'_>,
+        settings: ViewSettings, logical: &mut Frame, control: &UiControl<'_>, trace: Trace<'_>,
     ) -> Result<bool, Error> {
         if !matches!(self.press, PressState::Accepted | PressState::Deferred) { return Ok(false); }
         let started = display::refresh_start(&mut home.bus.board);
@@ -228,7 +228,7 @@ impl<'sdk> Application<'sdk> {
         #[cfg(not(feature = "dev-usb"))]
         let panels = None;
         let cleanup = display::working(&mut home.bus.board, &mut self.displayed,
-            work, &bar, settings, logical, panels, started, trace)?;
+            work, &bar, settings, logical, panels, started, control, trace)?;
         self.press = if cleanup { PressState::AnsweredCleanup } else { PressState::AnsweredFast };
         Ok(true)
     }
@@ -291,7 +291,9 @@ impl<'sdk> Application<'sdk> {
         Ok(result)
     }
 
-    pub fn paint_sample(&mut self, home: &mut Home<'_>, logical: &mut Frame, force: bool, trace: Trace<'_>) -> Result<bool, Error> {
+    pub fn paint_sample(&mut self, home: &mut Home<'_>, logical: &mut Frame, force: bool,
+        control: &UiControl<'_>, trace: Trace<'_>,
+    ) -> Result<bool, Error> {
         if self.app.screen != Screen::Reading { return Ok(false); }
         let started = display::refresh_start(&mut home.bus.board);
         self.home_refresh.invalidate();
@@ -302,14 +304,14 @@ impl<'sdk> Application<'sdk> {
         let panels = Some(&mut *self.panels);
         #[cfg(not(feature = "dev-usb"))]
         let panels = None;
-        self.displayed.binary(&mut home.bus.board, logical, &mut self.ui_refresh, panels, force, started, composition)?;
+        self.displayed.binary(&mut home.bus.board, logical, &mut self.ui_refresh, panels, force, started, composition, control)?;
         #[cfg(feature = "dev-usb")]
         self.runtime_lows.painted(self.app.screen);
         Ok(true)
     }
 
     pub fn paint_system(&mut self, home: &mut Home<'_>, logical: &mut Frame,
-        build: BuildIdentity<'_>, force: bool, trace: Trace<'_>,
+        build: BuildIdentity<'_>, force: bool, control: &UiControl<'_>, trace: Trace<'_>,
     ) -> Result<bool, Error> {
         let started = display::refresh_start(&mut home.bus.board);
         let Self { app, library, tiny, pause, installed, prompt, quick_start, info, displayed,
@@ -336,7 +338,7 @@ impl<'sdk> Application<'sdk> {
             let panels = Some(&mut *self.panels);
             #[cfg(not(feature = "dev-usb"))]
             let panels = None;
-            displayed.binary(&mut home.bus.board, logical, ui_refresh, panels, force, started, composition)?;
+            displayed.binary(&mut home.bus.board, logical, ui_refresh, panels, force, started, composition, control)?;
             #[cfg(feature = "dev-usb")]
             self.runtime_lows.painted(self.app.screen);
         }
@@ -345,7 +347,7 @@ impl<'sdk> Application<'sdk> {
 
     /// Some reports a completed display and whether its cover region was painted.
     pub fn paint_home(&mut self, home: &mut Home<'_>, mut view: HomeView<'_>, logical: &mut Frame,
-        force: bool, status_only: bool, trace: Trace<'_>,
+        force: bool, status_only: bool, control: &UiControl<'_>, trace: Trace<'_>,
     ) -> Result<Option<bool>, Error> {
         let _action = trace.scope(ActionStage::HOME_PAINT);
         let book = view.identity.map_or(0, SdResumeRecord::book_id);
@@ -361,7 +363,7 @@ impl<'sdk> Application<'sdk> {
         #[cfg(not(feature = "dev-usb"))]
         let panels = None;
         let Some(painted) = display::home(&runtime, home, home_refresh, ui_refresh, displayed,
-            &header, view.data, logical, &HomeStyle::default(), home_cover, view.identity, force, status_only, panels)? else {
+            &header, view.data, logical, &HomeStyle::default(), home_cover, view.identity, force, status_only, panels, control)? else {
             return Ok(None);
         };
         #[cfg(feature = "dev-usb")]

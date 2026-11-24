@@ -8,18 +8,28 @@ pub enum HomeSection { #[default] Books, Apps, Settings }
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action { Previous, Next, Activate, Back, Sleep, Read }
+/// Whether `screen` currently shows a clockwise book frame on the panel.
+pub fn clockwise_book(screen: Screen, shown: crate::preferences::Orientation) -> bool {
+    matches!(screen, Screen::EpubReading | Screen::Reading)
+        && shown == crate::preferences::Orientation::LandscapeCw
+}
 /// A press as the reader sees it. Clockwise landscape holds the X3 half a turn
-/// from counterclockwise, so on a book screen each button pair sits on the
-/// other side of the text; swapping previous and next keeps "forward" there.
-/// Book screens follow the frame on the panel (`shown`). Every other screen is
-/// portrait, even while a book's frame is still shown: presses queued after
-/// Back reach Home before its first repaint.
-pub fn facing(action: Action, screen: Screen, shown: crate::preferences::Orientation) -> Action {
-    let turned = matches!(screen, Screen::EpubReading | Screen::Reading)
-        && shown == crate::preferences::Orientation::LandscapeCw;
-    match (action, turned) {
-        (Action::Previous, true) => Action::Next,
-        (Action::Next, true) => Action::Previous,
+/// from counterclockwise, so on a book screen the four front buttons mirror
+/// (Back <-> Next, Activate <-> Previous — keeping Page forward at the top, as
+/// in counterclockwise) while the two side page buttons keep their half-turn
+/// swap (Previous <-> Next). Book screens follow the frame on the panel
+/// (`shown`). Every other screen is portrait, even while a book's frame is
+/// still shown: presses queued after leaving a book reach Home before its
+/// first repaint.
+pub fn facing(action: Action, front: bool, screen: Screen, shown: crate::preferences::Orientation) -> Action {
+    if !clockwise_book(screen, shown) { return action; }
+    match (action, front) {
+        (Action::Back, true) => Action::Next,
+        (Action::Activate, true) => Action::Previous,
+        (Action::Previous, true) => Action::Activate,
+        (Action::Next, true) => Action::Back,
+        (Action::Previous, false) => Action::Next,
+        (Action::Next, false) => Action::Previous,
         _ => action,
     }
 }
@@ -283,16 +293,24 @@ mod facing_tests {
         Screen::EpubReading, Screen::TinyApp, Screen::Library, Screen::QuickStart];
 
     #[test]
-    fn only_clockwise_book_screens_swap_and_only_page_buttons() {
+    fn only_clockwise_book_screens_mirror_front_and_swap_side_page_buttons() {
         for screen in SCREENS {
             for shown in [Orientation::Portrait, Orientation::LandscapeCcw] {
-                for action in ALL { assert_eq!(facing(action, screen, shown), action); }
+                for front in [true, false] {
+                    for action in ALL { assert_eq!(facing(action, front, screen, shown), action); }
+                }
             }
-            let turned = ALL.map(|action| facing(action, screen, Orientation::LandscapeCw));
+            let front_turned = ALL.map(|action| facing(action, true, screen, Orientation::LandscapeCw));
+            let side_turned = ALL.map(|action| facing(action, false, screen, Orientation::LandscapeCw));
             let book = matches!(screen, Screen::EpubReading | Screen::Reading);
-            assert_eq!(turned == [Action::Next, Action::Previous, Action::Activate, Action::Back, Action::Sleep, Action::Read],
+            // Front buttons 1-4 (Back, Activate, Previous, Next) mirror to Next, Previous, Activate, Back.
+            assert_eq!(front_turned == [Action::Activate, Action::Back, Action::Previous, Action::Next, Action::Sleep, Action::Read],
                 book, "{screen:?}");
-            assert_eq!(turned == ALL, !book, "{screen:?}");
+            // Side buttons keep their Previous <-> Next swap and never become Activate or Back;
+            // CancelBack (Action::Back with front=false) stays Action::Back.
+            assert_eq!(side_turned == [Action::Next, Action::Previous, Action::Activate, Action::Back, Action::Sleep, Action::Read],
+                book, "{screen:?}");
+            assert_eq!(front_turned == ALL && side_turned == ALL, !book, "{screen:?}");
         }
     }
 }
