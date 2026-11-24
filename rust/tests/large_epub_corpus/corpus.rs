@@ -266,6 +266,7 @@ struct OpenMetrics {
     menu_authored: Option<bool>,
     menu_count: Option<u32>,
     menu_fallback: Option<ContentsFallback>,
+    menu_rows_valid: Option<bool>,
     pages_seen: u32,
     anchors_stored: u32,
     sync_6chunk_ok: Option<bool>,
@@ -315,7 +316,13 @@ fn run_open_phased(path: &Path, mode: &str) -> OpenMetrics {
         m.menu_valid = Some(menu.valid);
         m.menu_authored = Some(menu.authored);
         m.menu_count = Some(menu.count);
-        m.menu_fallback = Some(reader.chapter_menu().fallback());
+        let view = reader.chapter_menu();
+        m.menu_fallback = Some(view.fallback());
+        m.menu_rows_valid = Some(menu.valid && menu.visible > 0
+            && (0..u32::from(menu.visible)).all(|offset| {
+                let row = view.row(menu.first + offset);
+                row.valid && !row.label.is_empty() && row.index == menu.first + offset
+            }));
     } else if mode == "anchors" {
         let (ok, p, stored, bytes, ms) = measure_cache(path);
         assert!(ok, "anchor policy cache build must succeed");
@@ -398,6 +405,9 @@ fn large_epub_corpus_boundaries() {
         }
         if let Some(expected) = want_menu_valid && open.menu_valid != Some(expected) {
             failures.push(format!("{name}: menu_valid got {:?}, expected {expected}", open.menu_valid));
+        }
+        if want_menu_valid == Some(true) && open.menu_rows_valid != Some(true) {
+            failures.push(format!("{name}: Contents has no usable visible rows"));
         }
         if let Some(expected) = want_authored && open.menu_authored != Some(expected) {
             failures.push(format!("{name}: menu_authored got {:?}, expected {expected}", open.menu_authored));
