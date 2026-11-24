@@ -49,7 +49,7 @@ fn render_inner(input:&mut dyn Input,b:Buffers<'_>,width:u16,height:u16,sink:&mu
     let mut s=Stream{input,buf:b.input,pos:0,len:0,bits:0,value:0,marker:0,io:false};
     if s.word().map_err(err)?!=0xffd8{return Err(err(Parse))}
     b.tables[..4].fill(Huffman::default());
-    let(mut w,mut h,mut restart)=(0usize,0usize,0usize);let mut quant=[1u16;4];let mut comps=[Comp::default();4];let mut nc=0usize;let mut scan=[0usize;4];let ns;let al;
+    let(mut w,mut h,mut restart)=(0usize,0usize,0usize);let mut quant=[1u16;4];let mut comps=[Comp::default();4];let mut nc=0usize;let mut scan=[0usize;4];let mut adobe=0xffu8;let mut seen=0u8;let ns;let al;
     loop {
         let mut m=s.byte().map_err(|_|err(s.entropy_error()))?;while m==255{m=s.byte().map_err(|_|err(s.entropy_error()))?;}
         if m==0xd8||(0xd0..=0xd7).contains(&m)||m==1{continue}
@@ -62,24 +62,50 @@ fn render_inner(input:&mut dyn Input,b:Buffers<'_>,width:u16,height:u16,sink:&mu
             0xc2=>{s.byte().map_err(err)?;h=usize::from(s.word().map_err(err)?);w=usize::from(s.word().map_err(err)?);nc=usize::from(s.byte().map_err(err)?);if nc==0||nc>4||left!=6+nc*3{return Err(err(Parse))}for c in &mut comps[..nc] {c.id=s.byte().map_err(err)?;let hv=s.byte().map_err(err)?;c.h=usize::from(hv>>4);c.v=usize::from(hv&15);c.tq=usize::from(s.byte().map_err(err)?&3);if c.h==0||c.v==0{return Err(err(Parse))}}},
             0xc0|0xc1|0xd9=>return Err(err(Parse)),
             0xdd=>{if left!=2{return Err(err(Parse))}restart=usize::from(s.word().map_err(err)?);},
-            0xda=>{ns=usize::from(s.byte().map_err(err)?);if ns==0||ns>4||left!=1+ns*2+3{return Err(err(Parse))}for slot in &mut scan[..ns] {let id=s.byte().map_err(err)?;let td=s.byte().map_err(err)?>>4;*slot=comps[..nc].iter().rposition(|c|c.id==id).ok_or(err(Parse))?;comps[*slot].td=usize::from(td);}let ss=s.byte().map_err(err)?;let se=s.byte().map_err(err)?;let aa=s.byte().map_err(err)?;if ss!=0||se!=0||aa>>4!=0{return Err(err(Unsupported))}al=aa&15;break;},
+            0xee=>{if left>=12{let mut tag=[0u8;12];for byte in &mut tag{*byte=s.byte().map_err(err)?;}if &tag[..5]==b"Adobe"{adobe=tag[11];}left-=12;}s.skip(left).map_err(err)?;},
+            0xda=>{ns=usize::from(s.byte().map_err(err)?);if ns==0||ns>4||left!=1+ns*2+3{return Err(err(Parse))}for slot in &mut scan[..ns] {let id=s.byte().map_err(err)?;let td=s.byte().map_err(err)?>>4;*slot=comps[..nc].iter().rposition(|c|c.id==id).ok_or(err(Parse))?;seen|=1<<*slot;comps[*slot].td=usize::from(td);}let ss=s.byte().map_err(err)?;let se=s.byte().map_err(err)?;let aa=s.byte().map_err(err)?;if ss!=0||se!=0||aa>>4!=0{return Err(err(Unsupported))}al=aa&15;break;},
             _=>s.skip(left).map_err(err)?,
         }
     }
     if w==0||h==0{return Err(err(Parse))}
+    let rgb=if nc==3&&adobe!=0xff{if adobe>1{return Err(err(Unsupported))}adobe==0}else{false};
     let hm=comps[..nc].iter().map(|c|c.h).max().unwrap_or(1);let vm=comps[..nc].iter().map(|c|c.v).max().unwrap_or(1);let y=comps[0];let inter=ns>1;
+    let rgb_ok=ns==3&&seen&7==7&&y.h*y.v<=4
+        &&((comps[1].h,comps[1].v)==(1,1)||(comps[1].h,comps[1].v)==(y.h,y.v))
+        &&((comps[2].h,comps[2].v)==(1,1)||(comps[2].h,comps[2].v)==(y.h,y.v));
     // Only Y's DC draws greys, so a first scan without Y has nothing to show.
-    if y.h!=hm||y.v!=vm||!scan[..ns].contains(&0){return Err(err(Unsupported))}
+    // Adobe RGB needs all three channels in the first DC scan within this single-MCU-row grid.
+    if y.h!=hm||y.v!=vm||seen&1==0||(rgb&&!rgb_ok){return Err(err(Unsupported))}
     let bw=(w+7)/8;let bh=(h+7)/8;let mx=(w+8*hm-1)/(8*hm);let my=(h+8*vm-1)/(8*vm);let pad=if inter{mx*y.h}else{bw};let dw=usize::from(width);let dh=usize::from(height);
     if dw==0||dh==0{return Err(err(Parse))}if b.grid.len()<pad*y.v||b.previous.len()<dw||b.current.len()<dw||b.output.len()<dw{return Err(err(OutOfMemory))}
     b.grid[..pad*y.v].fill(0);
     let mut rs=Scale{sw:bw,sh:bh,dw,dh,previous:b.previous,current:b.current,output:b.output,next:0,seen:false};let mut pred=[0i32;4];let mut since=0;let mut emitted=0;
+    let (g_same,b_same)=(comps[1].h==y.h&&comps[1].v==y.v,comps[2].h==y.h&&comps[2].v==y.v);
     for _r in 0..if inter{my}else{bh} {for c in 0..if inter{mx}else{bw} {
         if restart!=0&&since==restart {s.bits=0;let mut mk=s.marker;s.marker=0;if mk==0{mk=s.byte().map_err(err)?;while mk==255{mk=s.byte().map_err(err)?;}}if !(0xd0..=0xd7).contains(&mk){return Err(err(Parse))}pred=[0;4];since=0;}
+        let mut mcu=[[0u8;4];3];
         for &ci in &scan[..if inter{ns}else{1}] {let comp=comps[ci];let table=b.tables.get(comp.td).filter(|t|t.ready).ok_or(err(Parse))?;for by in 0..if inter{comp.v}else{1} {for bx in 0..if inter{comp.h}else{1} {
             let t=s.symbol(table).map_err(|_|err(s.entropy_error()))?;if t>15{return Err(err(s.entropy_error()))}let diff=s.difference(t).map_err(|_|err(s.entropy_error()))?;pred[ci]=pred[ci].checked_add(diff).ok_or(err(Parse))?;
-            if ci==0 {let dc=pred[ci].checked_mul(1<<al).and_then(|v|v.checked_mul(i32::from(quant[y.tq]))).ok_or(err(Parse))?;let gray=(128+dc/8).clamp(0,255)as u8;let px=if inter{c*y.h+bx}else{c};if px<pad{b.grid[by*pad+px]=gray;}}
+            if ci==0||rgb {
+                let q=if ci==0{quant[y.tq]}else{quant[comp.tq&3]};
+                let dc=pred[ci].checked_mul(1<<al).and_then(|v|v.checked_mul(i32::from(q))).ok_or(err(Parse))?;
+                let sample=(128+dc/8).clamp(0,255)as u8;
+                if rgb {if ci<3{mcu[ci][(by*comp.h+bx)&3]=sample;}}
+                else {let px=if inter{c*y.h+bx}else{c};if px<pad{if let Some(cell)=b.grid.get_mut(by*pad+px){*cell=sample;}}}
+            }
         }}}
+        if rgb {
+            for by in 0..y.v {for bx in 0..y.h {
+                let px=c*y.h+bx;
+                let i=(by*y.h+bx)&3;
+                if px<pad {
+                    if let Some(cell)=b.grid.get_mut(by*pad+px) {
+                        *cell=super::rgb_to_gray(i16::from(mcu[0][i]),
+                            i16::from(mcu[1][if g_same{i}else{0}]),i16::from(mcu[2][if b_same{i}else{0}]));
+                    }
+                }
+            }}
+        }
         since+=1;
     }for by in 0..if inter{y.v}else{1} {if emitted>=bh{break}if !rs.feed(&b.grid[by*pad..by*pad+bw],emitted,sink)?{return Ok(())}emitted+=1;}}
     rs.finish(sink)

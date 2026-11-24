@@ -28,8 +28,14 @@ pub struct Workspace<'a> {
 }
 pub struct Decoder<'a> {
     w:Workspace<'a>, pub width:u16,pub height:u16,
-    mx:usize,my:usize,ncomp:usize,qt:[usize;3],qset:[bool;4],hset:[bool;4],
+    mx:usize,my:usize,ncomp:usize,qt:[usize;3],cid:[u8;3],ht:[u8;3],scan:[u8;3],
+    qset:[bool;4],hset:[bool;4],adobe:u8,rgb:bool,
     restart:u16,dc:[i16;3],pos:usize,end:usize,offset:usize,reg:u32,bits:u8,marker:u8,
+}
+#[inline(never)]
+pub(crate) fn rgb_to_gray(r:i16,g:i16,b:i16)->u8 {
+    let (r,g,b)=(r.clamp(0,255) as u32,g.clamp(0,255) as u32,b.clamp(0,255) as u32);
+    ((r*299+g*587+b*114)/1000) as u8
 }
 fn exact(input:&mut dyn Input,dst:&mut[u8])->Result<()> {
     // ImageRenderer's jpegInput coalesces short reads and treats errors as fatal.
@@ -41,7 +47,7 @@ fn word(s:&[u8],i:usize)->u16 {u16::from_be_bytes([s[i],s[i+1]])}
 impl<'a> Decoder<'a> {
     pub fn prepare(w:Workspace<'a>,input:&mut dyn Input)->Result<Self> {
         if w.input.len()<512||w.segment.len()<512||w.quant.len()<256||w.huffman.len()<1088||w.block.len()<64||w.mcu.len()<384||w.pixels.len()<256{return Err(Error::Memory)}
-        let mut d=Self{w,width:0,height:0,mx:0,my:0,ncomp:0,qt:[0;3],qset:[false;4],hset:[false;4],restart:0,dc:[0;3],pos:0,end:0,offset:0,reg:0,bits:0,marker:0};
+        let mut d=Self{w,width:0,height:0,mx:0,my:0,ncomp:0,qt:[0;3],cid:[0;3],ht:[0,0x11,0x11],scan:[0,1,2],qset:[false;4],hset:[false;4],adobe:0xff,rgb:false,restart:0,dc:[0;3],pos:0,end:0,offset:0,reg:0,bits:0,marker:0};
         let mut mark=0u16;
         while mark!=0xffd8 {exact(input,&mut d.w.segment[..1])?;d.offset=d.offset.wrapping_add(1);mark=(mark<<8)|u16::from(d.w.segment[0]);}
         loop {
@@ -51,7 +57,13 @@ impl<'a> Decoder<'a> {
             let len=len-2;d.offset=d.offset.wrapping_add(len+4);
             if !matches!(m,0xffc0|0xffc4|0xffdb|0xffdd|0xffda) {
                 if matches!(m&255,0xc1..=0xc3|0xc5..=0xc7|0xc9..=0xcb|0xcd..=0xcf|0xd9){return Err(Error::Unsupported)}
-                let mut left=len;while left>0 {let n=left.min(512);exact(input,&mut d.w.segment[..n])?;left-=n;}continue
+                let mut left=len;
+                if m==0xffee&&left>=12 {
+                    exact(input,&mut d.w.segment[..12])?;
+                    if &d.w.segment[..5]==b"Adobe" {d.adobe=d.w.segment[11];}
+                    left-=12;
+                }
+                while left>0 {let n=left.min(512);exact(input,&mut d.w.segment[..n])?;left-=n;}continue
             }
             if len>512{return Err(Error::Segment)}
             exact(input,&mut d.w.segment[..len])?;
@@ -64,6 +76,7 @@ impl<'a> Decoder<'a> {
                     if len!=6+3*d.ncomp{return Err(Error::Format)}
                     // Past native's 11/21/22, Y 12 and 41 still fit six MCU blocks and 256 pixels.
                     for i in 0..d.ncomp {
+                        d.cid[i]=s[6+3*i];
                         let b=s[7+3*i];
                         if i==0 {if !matches!(b,0x11|0x12|0x21|0x22|0x41){return Err(Error::Unsupported)}d.mx=usize::from(b>>4);d.my=usize::from(b&15);}
                         else if b!=0x11{return Err(Error::Unsupported)}
@@ -93,13 +106,30 @@ impl<'a> Decoder<'a> {
                 0xda=>{
                     if d.width==0||d.height==0{return Err(Error::Format)}
                     // Native reads only the count and each component's table byte.
-                    if len<1+2*d.ncomp{return Err(Error::Format)}
+                    if len<1||len<1+2*usize::from(s[0]){return Err(Error::Format)}
                     if usize::from(s[0])!=d.ncomp{return Err(Error::Unsupported)}
-                    for i in 0..d.ncomp {
-                        if !matches!(s[2+2*i],0|0x11){return Err(Error::Unsupported)}
-                        let id=if i==0{0}else{2};
-                        if !d.hset[id]||!d.hset[id+1]||!d.qset[d.qt[i]]{return Err(Error::Format)}
+                    if d.ncomp==3&&d.adobe!=0xff {
+                        if d.adobe>1{return Err(Error::Unsupported)}
+                        d.rgb=d.adobe==0;
                     }
+                    let mut seen=0u8;
+                    for i in 0..d.ncomp.min(3) {
+                        let tbl=s[2+2*i];
+                        let (ci,tbl)=if d.rgb {
+                            if tbl&0xee!=0{return Err(Error::Unsupported)}
+                            let mut ci=3;
+                            for k in 0..3 {if d.cid[k]==s[1+2*i]{ci=k;break}}
+                            if ci==3||seen&(1<<ci)!=0{return Err(Error::Format)}
+                            seen|=1<<ci;d.scan[i]=ci as u8;d.ht[ci]=tbl;
+                            (ci,tbl)
+                        } else {
+                            if !matches!(tbl,0|0x11){return Err(Error::Unsupported)}
+                            (i,if i==0{0}else{0x11})
+                        };
+                        let (dc_id,ac_id)=(usize::from(tbl>>4)*2,usize::from(tbl&1)*2+1);
+                        if !d.hset[dc_id&3]||!d.hset[ac_id&3]||!d.qset[d.qt[ci]&3]{return Err(Error::Format)}
+                    }
+                    if d.rgb&&(d.mx!=1||d.my!=1)&&d.scan[0]!=0{return Err(Error::Unsupported)}
                     // Native ignores the spectral/approximation bytes and any trailing bytes.
                     let start=d.offset%512;
                     if start!=0 {d.end=input.read(&mut d.w.input[start..512])?;if d.end>512-start{return Err(Error::Input)}d.pos=start;d.end+=start;}
@@ -136,23 +166,43 @@ impl<'a> Decoder<'a> {
     fn load(&mut self,input:&mut dyn Input,scale:u8)->Result<()> {
         let ny=self.mx*self.my;
         for b in 0..ny+2 {
-            let cmp=if b<ny{0}else{b-ny+1};
-            if cmp!=0&&self.ncomp==1 {self.w.mcu[b*64..b*64+64].fill(128);continue}
-            let id=if cmp==0{0}else{2};let n=self.huff(input,id)?;
+            let slot=if b<ny{0}else{(b-ny+1).min(2)};
+            if slot!=0&&self.ncomp==1 {self.w.mcu[b*64..b*64+64].fill(128);continue}
+            let cmp=usize::from(self.scan[slot]).min(2);
+            let tbl=self.ht[cmp];
+            let (dc_id,ac_id)=(usize::from(tbl>>4)*2,usize::from(tbl&1)*2+1);
+            let dst=if cmp==0{if ny==1{0}else{b}}else{ny+cmp-1};
+            let n=self.huff(input,dc_id)?;
             let dc=i32::from(self.dc[cmp])+self.value(input,n)?;
             // TJpgDec narrows only the stored predictor (two's complement); this block keeps the full value.
             self.dc[cmp]=dc as i16;
             self.w.block[..64].fill(0);
             self.w.block[0]=dequant(dc,self.w.quant[self.qt[cmp]*64])?;
             let mut z=1;
-            while z<64 {let h=self.huff(input,id+1)?;if h==0{break}z+=usize::from(h>>4);if z>=64{return Err(Error::Format)}
+            while z<64 {let h=self.huff(input,ac_id)?;if h==0{break}z+=usize::from(h>>4);if z>=64{return Err(Error::Format)}
                 let n=h&15;if n!=0 {let v=self.value(input,n)?;let i=ZIG[z];self.w.block[i]=dequant(v,self.w.quant[self.qt[cmp]*64+i])?;}z+=1;
             }
-            if cmp==0 {
-                if z==1||scale==3 {let v=(self.w.block[0]/256+128) as i16;self.w.mcu[b*64..b*64+64].fill(v);}
-                else {idct(self.w.block,&mut self.w.mcu[b*64..b*64+64])?;}
+            if cmp==0||self.rgb {
+                if z==1||scale==3 {let v=(self.w.block[0]/256+128) as i16;self.w.mcu[dst*64..dst*64+64].fill(v);}
+                else {idct(self.w.block,&mut self.w.mcu[dst*64..dst*64+64])?;}
             }
-        }Ok(())
+        }
+        if self.rgb {
+            let (sx,sy)=(self.mx>>1,self.my>>1);
+            let (g0,b0)=(ny*64,(ny+1)*64);
+            for py in 0..self.my*8 {
+                let cy=(py>>sy)*8;let by=(py>>3)*self.mx;let ry=(py&7)*8;
+                for px in 0..self.mx*8 {
+                    let ri=(by+(px>>3))*64+ry+(px&7);let ci=cy+(px>>sx);
+                    if let (Some(&g),Some(&bl))=(self.w.mcu.get(g0+ci),self.w.mcu.get(b0+ci)) {
+                        if let Some(slot)=self.w.mcu.get_mut(ri) {
+                            *slot=i16::from(rgb_to_gray(*slot,g,bl));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
     /// Decode the scan once. Output false is JDR_INTR; no further MCU is loaded.
     pub fn decode(&mut self,input:&mut dyn Input,out:&mut dyn Output,scale:u8)->Result<()> {

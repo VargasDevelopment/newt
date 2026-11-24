@@ -27,9 +27,9 @@ impl Output for Band<'_,'_> {
 #[derive(Debug)]
 pub enum RenderError { Status(BookStatus),Safety(SafetyError) }
 /// Input errors must retain IoError externally when adapting a ZipEntryReader;
-/// this entry point maps decoder errors to the original baseline parse status.
+/// this entry point maps unsupported headers to Unsupported and other decoder errors to ParseError.
 pub fn render(input:&mut dyn Input,w:Workspace<'_>,rows:Rows<'_>,width:u16,height:u16,sink:&mut dyn ImageRows)->core::result::Result<(),RenderError> {
-    let mut d=Decoder::prepare(w,input).map_err(|_|RenderError::Status(BookStatus::ParseError))?;
+    let mut d=Decoder::prepare(w,input).map_err(|e|RenderError::Status(if e==Error::Unsupported{BookStatus::Unsupported}else{BookStatus::ParseError}))?;
     let mut scale=0;
     while scale<3&&(d.width>>(scale+1))>=width&&(d.height>>(scale+1))>=height{scale+=1;}
     let sw=d.width>>scale;let sh=d.height>>scale;

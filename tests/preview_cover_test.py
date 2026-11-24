@@ -53,7 +53,7 @@ SIGNATURE = b'NLC2\x90\0\xbc\0'
 WIDTH, HEIGHT, ROW_BYTES = 144, 188, 18
 ART, NO_ART = 28 + ROW_BYTES * HEIGHT, 28
 # Routes as the card holds them (little-endian rust/core/src/cover.rs NO_ART words).
-CJB6, CJB5, CJB3 = b'CJB6', b'CJB5', b'CJB3'
+CJB7, CJB6, CJB5, CJB3 = b'CJB7', b'CJB6', b'CJB5', b'CJB3'
 MTIME = 1790812800
 # Book name: how its cover is declared and stored (epub() forms), and its
 # image (picture() kinds, a JPEG by default).
@@ -71,7 +71,11 @@ SUPPORTED = {
     'Kapok': {'form': 'meta-cover-file', 'deflated': True},
     'Larch': {'form': 'spine-page'},
     'Magnolia': {'form': 'epub3', 'image': 'png-grey'},
+    # Adobe APP14 transform 0 RGB JPEGs (component IDs R/G/B, green/blue-heavy):
+    # baseline and progressive interleaved DC first scan.
+    'Maple': {'form': 'epub3', 'image': 'jpeg-rgb'},
     'Nutmeg': {'form': 'epub2', 'image': 'png-rgb', 'deflated': True},
+    'Poplar': {'form': 'epub3', 'image': 'jpeg-rgb', 'deflated': True, 'frame': 0xc2},
     'Rowan': {'form': 'epub3', 'image': 'png-wide'},
     # YCbCr with Y sampled 1x2 and 4x1, past the decoder's native 11, 21 and 22.
     'Oak': {'form': 'epub2', 'sampling': 0x12},
@@ -87,6 +91,8 @@ NO_COVER = {
     'Willow': ({'form': 'subset-page'}, UNSUPPORTED),
     'Teak': ({'form': 'epub3', 'image': 'png-too-wide'}, UNSUPPORTED),
     'Tupelo': ({'form': 'epub3', 'image': 'png-interlaced'}, UNSUPPORTED),
+    # Non-interleaved progressive Adobe RGB (R-only first scan): refused, never red-only art.
+    'Walnut': ({'form': 'epub3', 'image': 'jpeg-rgb-split', 'frame': 0xc2}, UNSUPPORTED),
     # Arithmetic coding (SOF9): the decoders take Huffman frames only.
     'Yew': ({'form': 'epub3', 'frame': 0xc9}, UNSUPPORTED),
 }
@@ -110,6 +116,20 @@ def entropy(bits):
         if data[-1] == 0xff:
             data.append(0)
     return bytes(data)
+
+
+def encode_units(units, progressive):
+    """Huffman-encode `(component, dc_value)` blocks with all-zero AC."""
+    bits, previous = [], [0, 0, 0]
+    for component, value in units:
+        value >>= progressive
+        diff, previous[component] = value - previous[component], value
+        category = abs(diff).bit_length()
+        for val, length in ((category, 4), (diff + (1 << category) - 1 if diff < 0 else diff, category)):
+            bits += [val >> i & 1 for i in reversed(range(length))]
+        if not progressive:
+            bits += [0, 0]
+    return entropy(bits)
 
 
 def jpeg(width, height, dc, frame=0xc0, sampling=None):
@@ -140,16 +160,7 @@ def jpeg(width, height, dc, frame=0xc0, sampling=None):
             units += [(0, dc(x, y) if x < columns and y < rows else 0)
                       for y in range(row * v, row * v + v) for x in range(column * h, column * h + h)]
             units += [(1, 0), (2, 0)] if sampling else []
-    bits, previous = [], [0, 0, 0]
-    for component, value in units:
-        value >>= progressive
-        diff, previous[component] = value - previous[component], value
-        category = abs(diff).bit_length()
-        for value, length in ((category, 4), (diff + (1 << category) - 1 if diff < 0 else diff, category)):
-            bits += [value >> i & 1 for i in reversed(range(length))]
-        if not progressive:
-            bits += [0, 0]
-    out += entropy(bits)
+    out += encode_units(units, progressive)
     if progressive:
         # Every block's AC band ends at once.
         out += segment(0xda, bytes([1, 1, 0x00, 1, 63, 0])) + entropy([0, 0] * (columns * rows))
@@ -161,6 +172,35 @@ def grey(seed, x, y):
     fall smoothly, so a cover scaled up from block greys stays close."""
     step = (x * 8 + y * 4 + seed * 48) % 512
     return min(step, 511 - step)
+
+
+def rgb_for_grey(level):
+    """RGB with BT.601 grey `level`, keeping R=0 up to 178 so R-only draws mostly black."""
+    g = min(255, round(level * 1000 / 587))
+    b = min(255, round(max(0, level * 1000 - g * 587) / 114))
+    r = min(255, round(max(0, level * 1000 - g * 587 - b * 114) / 299))
+    return r, g, b
+
+
+def jpeg_rgb(width, height, level, frame=0xc0, split=False):
+    """Adobe APP14 transform-0 RGB JPEG (IDs R/G/B, shared Huffman table 0)."""
+    progressive, cids = frame == 0xc2, b'RGB'
+    dc_counts, ac_counts = [0, 0, 0, 12] + [0] * 12, [0, 1] + [0] * 14
+    scan_comps = cids[:1] if split else cids
+    columns, rows = -(-width // 8), -(-height // 8)
+    units = [(ci, (rgb_for_grey(level(x, y))[ci] - 128) * 8)
+             for y in range(rows) for x in range(columns) for ci in range(len(scan_comps))]
+    out = (b'\xff\xd8' + segment(0xee, b'Adobe\x00\x64\x00\x00\x00\x00\x00')
+           + segment(0xdb, bytes(1) + bytes([1] * 64))
+           + segment(frame, bytes([8]) + struct.pack('>HHB', height, width, 3)
+                     + b''.join(bytes([cid, 0x11, 0]) for cid in cids))
+           + segment(0xc4, bytes([0, *dc_counts, *range(12), 0x10, *ac_counts, 0]))
+           + segment(0xda, bytes([len(scan_comps)]) + b''.join(bytes([cid, 0]) for cid in scan_comps)
+                     + bytes([0, 0, 1] if progressive else [0, 63, 0]))
+           + encode_units(units, progressive))
+    if progressive:
+        out += segment(0xda, bytes([1, cids[0], 0, 1, 63, 0])) + entropy([0, 0] * (columns * rows))
+    return out + b'\xff\xd9'
 
 
 def art(seed, frame=0xc0, sampling=None):
@@ -190,6 +230,8 @@ def picture(kind, seed, frame=0xc0, sampling=None):
     PNG at (png-wide) or past (png-too-wide) the row cap."""
     bands = lambda y: bytes(grey(seed, x // 8, y // 8) for x in range(288))
     return {'jpeg': lambda: art(seed, frame, sampling),
+            'jpeg-rgb': lambda: jpeg_rgb(288, 376, lambda x, y: grey(seed, x, y), frame),
+            'jpeg-rgb-split': lambda: jpeg_rgb(288, 376, lambda x, y: grey(seed, x, y), frame, split=True),
             'png-grey': lambda: png(288, 376, bands),
             'png-rgb': lambda: png(288, 376, bands, colour=2),
             'png-interlaced': lambda: png(288, 376, bands, interlace=1),
@@ -273,14 +315,14 @@ def books():
     for name, seed, form in forms + [(name, 0, form) for name, (form, _) in NO_COVER.items()]:
         form = dict(form)
         kind = form.pop('image', 'jpeg')
-        if kind != 'jpeg':
+        if kind.startswith('png'):
             form['media'] = 'image/png'
         epub(folder / f'{name}.epub', name, picture(kind, seed, form.pop('frame', 0xc0), form.pop('sampling', None)), **form)
     return folder
 
 
 def record(book, route):
-    """A bare cover record for `book` on the `route` (CJB3, CJB5 or CJB6)."""
+    """A bare cover record for `book` on the `route` (CJB3, CJB5, CJB6 or CJB7)."""
     return SIGNATURE + struct.pack('<QQ', (books() / f'{book}.epub').stat().st_size, MTIME) + route
 
 
@@ -392,8 +434,8 @@ def books_shelf(binary):
             for index, book in enumerate(names):
                 shown[book] = slot(frame, index)
                 if book in NO_COVER:
-                    if world.cover(book) != record(book, CJB6):
-                        return f'{book} has {world.cover(book)!r}, not a bare CJB6 record'
+                    if world.cover(book) != record(book, CJB7):
+                        return f'{book} has {world.cover(book)!r}, not a bare CJB7 record'
                 elif problem := art_problem(world, book):
                     return problem
                 elif shown[book] != world.cover(book)[28:]:
@@ -425,25 +467,25 @@ def home(binary):
 
 
 def old_records(binary):
-    """Bare records from older decoders (CJB5 as v0.3.0 wrote it, and the
-    oldest, CJB3) are retried once and then never again; a current CJB6 one,
+    """Bare records from older decoders (CJB6 as v0.4.1 wrote it, and the
+    oldest, CJB3) are retried once and then never again; a current CJB7 one,
     and art an older firmware made, are used as they are."""
     # Past the first shelf only the gap is retried: the books the walk to it
     # passes, and its shelf's other books, are current.
     gap_shelf = shelves()[-1]
     kept = prepared('Dogwood', bytes(range(256)) * 13 + bytes(56))
-    records = {**{book: record(book, CJB6) for book in BOOKS[4:]}, 'Alder': record('Alder', CJB5),
-               'Birch': record('Birch', CJB6), 'Cedar': record('Cedar', CJB3), 'Dogwood': kept, GAP: record(GAP, CJB3)}
+    records = {**{book: record(book, CJB7) for book in BOOKS[4:]}, 'Alder': record('Alder', CJB6),
+               'Birch': record('Birch', CJB7), 'Cedar': record('Cedar', CJB3), 'Dogwood': kept, GAP: record(GAP, CJB3)}
     with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
         world = World(binary, scratch, records)
         _, results, _ = world.run(SHELF)
-        for book, route in (('Alder', 'CJB5'), ('Cedar', 'CJB3')):
+        for book, route in (('Alder', 'CJB6'), ('Cedar', 'CJB3')):
             if problem := art_problem(world, book):
                 return f'the {route} record was not retried: {problem}'
-        if world.cover('Birch') != record('Birch', CJB6) or world.cover('Dogwood') != kept or results != [PRODUCED] * 2:
-            return f'the CJB6 record or the older art was not kept as it is (attempts {results})'
+        if world.cover('Birch') != record('Birch', CJB7) or world.cover('Dogwood') != kept or results != [PRODUCED] * 2:
+            return f'the CJB7 record or the older art was not kept as it is (attempts {results})'
         _, results, _ = world.run(to_book(gap_shelf[0]))
-        if results != [UNSUPPORTED] or world.cover(GAP) != record(GAP, CJB6):
+        if results != [UNSUPPORTED] or world.cover(GAP) != record(GAP, CJB7):
             return f'the unsupported book\'s CJB3 retry ended {results} with {world.cover(GAP)!r}'
         _, results, _ = world.run(to_book(gap_shelf[0]))
         if results:
@@ -481,7 +523,7 @@ def low_heap(binary):
     heap back makes its cover."""
     shelf = next(names for names in shelves() if WIDE in names)
     # Only the wide PNG's shelf has cover work; the walk passes current books.
-    records = {book: record(book, CJB6) for book in BOOKS if book not in shelf}
+    records = {book: record(book, CJB7) for book in BOOKS if book not in shelf}
     # Room for 64 KiB kept free and 53 KiB more: enough to admit cover work
     # (its planned peak includes the staging write block) and for every other
     # book's blocks, too little for the wide PNG's block, a little over 53 KiB.
@@ -504,7 +546,7 @@ def commit_heap_drop(binary):
     """An admitted CRC block survives a later heap dip during the pending open,
     for both artwork and a no-art record."""
     for book, result in (('Alder', PRODUCED), (GAP, UNSUPPORTED)):
-        records = {name: record(name, CJB6) for name in BOOKS if name != book}
+        records = {name: record(name, CJB7) for name in BOOKS if name != book}
         with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
             world = World(binary, scratch, records, **{'cover.heap.drop.on': '.nlc.tmp'})
             _, results, _ = world.run(to_book(book))
@@ -514,7 +556,7 @@ def commit_heap_drop(binary):
             if book in SUPPORTED:
                 if problem := art_problem(world, book):
                     return problem
-            elif world.cover(book) != record(book, CJB6):
+            elif world.cover(book) != record(book, CJB7):
                 return 'commit heap dip lost the no-art record'
 
 
@@ -593,10 +635,10 @@ CASES = [
         [('app_runtime/home_cover.rs', 'prepare_home_cover(&mut covers, Some(&identity.filename), pixels)',
           'prepare_home_cover(&mut covers, newt_core::library_name::name_bytes(&identity.filename), pixels)')]]),
     (old_records, [
-        # A CJB5 bare record reads as current.
+        # A CJB6 bare record reads as current.
         [('cover_probe.rs', 'match cover::record((payload!=0).then_some(crc^u32::MAX),le32(&header[24..])){',
           'match cover::record((payload!=0).then_some(crc^u32::MAX),'
-          'if le32(&header[24..])==u32::from_le_bytes(*b"CJB5"){cover::NO_ART}else{le32(&header[24..])}){')],
+          'if le32(&header[24..])==u32::from_le_bytes(*b"CJB6"){cover::NO_ART}else{le32(&header[24..])}){')],
         # A CJB3 bare record reads as current, as its old flag-migration walk
         # kept it.
         [('cover_probe.rs', 'match cover::record((payload!=0).then_some(crc^u32::MAX),le32(&header[24..])){',

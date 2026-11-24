@@ -61,12 +61,13 @@ pub fn version_key(name: &[u8], size: u64, mtime: u64) -> u32 {
 }
 pub const SIGNATURE: [u8; 8] = *b"NLC2\x90\0\xbc\0";
 pub const PIXELS: usize = 3384;
-/// A bare record's route ("CJB6"). Change it whenever a verdict can change, so
-/// every older negative is read once more. #46 added cover forms.
-pub const NO_ART: u32 = 0x3642_4a43;
-/// Negatives from older decoders: "CJB3", "CJB4" (before #316) and "CJB5"
-/// (before #46). Each is generated once more; Home shows no cover until then.
-pub const RETRIED_NO_ART: [u32; 3] = [0x3342_4a43, 0x3442_4a43, 0x3542_4a43];
+/// A bare record's route ("CJB7"). Change it whenever a verdict can change, so
+/// every older negative is read once more. #50 added Adobe RGB JPEG support.
+pub const NO_ART: u32 = 0x3742_4a43;
+/// Negatives from older decoders: "CJB3", "CJB4" (before #316), "CJB5"
+/// (before #46) and "CJB6" (before #50). Each is generated once more; Home
+/// shows no cover until then.
+pub const RETRIED_NO_ART: [u32; 4] = [0x3342_4a43, 0x3442_4a43, 0x3542_4a43, 0x3642_4a43];
 /// What a cover record bound to its book's size and mtime means.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Record { Current, Generate }
