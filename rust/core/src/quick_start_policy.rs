@@ -46,13 +46,14 @@ pub fn enter_step(state: &mut State, facts: &Facts, step: Step) {
     *state = State {
         step,
         from_settings: state.from_settings,
-        focus: u8::from(step == Step::Reading && facts.orientation == Orientation::LandscapeCcw),
+        // The Reading step's cards follow the orientation's stored byte.
+        focus: if step == Step::Reading { facts.orientation as u8 } else { 0 },
         ..State::default()
     };
 }
 
 pub fn orientation(state: &State) -> Orientation {
-    if state.focus == 1 { Orientation::LandscapeCcw } else { Orientation::Portrait }
+    Orientation::from_byte(state.focus).unwrap_or(Orientation::Portrait)
 }
 
 fn advance(state: &mut State, facts: &Facts) -> Intent {
@@ -94,7 +95,7 @@ pub fn dispatch(state: &mut State, facts: &Facts, action: Action) -> Intent {
         };
     }
     let count = match state.step {
-        Step::Reading => 3,
+        Step::Reading => 4,
         Step::Books | Step::Done => 1,
         _ => 2,
     };
@@ -120,7 +121,7 @@ pub fn dispatch(state: &mut State, facts: &Facts, action: Action) -> Intent {
     match state.step {
         Step::Welcome if row == 1 => Intent::Finish,
         Step::Welcome | Step::Books => advance(state, facts),
-        Step::Reading if row < 2 => Intent::SaveOrientation,
+        Step::Reading if row < 3 => Intent::SaveOrientation,
         Step::Reading => advance(state, facts),
         Step::TimeZone if row == 0 => {
             state.zone_list_open = true;

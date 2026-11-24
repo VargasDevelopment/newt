@@ -5,7 +5,7 @@
 use newt_core::{
     durable::{Admission, Backend, Commit, Load},
     external_progress_store::ExternalProgressStore,
-    preferences::{Orientation, ViewSettings},
+    preferences::ViewSettings,
     progress::Progress,
     progress_store::PeerLocators,
     selected_book::SelectedBookStore,
@@ -178,10 +178,7 @@ impl ReaderCheckpoint {
         SleepResumeIntent {
             book: saved.book,
             checkpoint: progress_checkpoint(saved),
-            settings: (u32::from(settings.orientation == Orientation::LandscapeCcw))
-                | (u32::from(settings.slim_progress_bar) << 1)
-                | 4
-                | (u32::from(settings.refresh_pages) << 8),
+            settings: settings.packed() | 4,
         }
     }
 

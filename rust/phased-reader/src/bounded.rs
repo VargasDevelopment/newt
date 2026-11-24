@@ -2,7 +2,7 @@
 //! Frozen src/reader.cpp's bounded stored-EPUB engine. Metadata and the three
 //! banks belong to the sample owner; every parser/source/frame loan is short.
 use crate::{PageInfo, zip_container::Status};
-use newt_core::{chapter_layout::types::Sink, preferences::{Orientation, ViewSettings}};
+use newt_core::{chapter_layout::types::Sink, preferences::ViewSettings};
 use newt_phased_sink::{Frame, Target};
 use newt_reader_navigation::{BookView, Navigation, Section, NO_TOC};
 pub use newt_reader_navigation::metadata::Metadata;
@@ -168,7 +168,7 @@ impl Reader {
         if !navigation.bind(book, spine) { return Status::OutOfMemory; }
         navigation.begin_anchors();
         let mut sink = sink::Selecting::new(target, mode,
-            self.settings.orientation == Orientation::LandscapeCcw, frame, navigation);
+            self.settings.orientation.is_landscape(), frame, navigation);
         let result = chapters.layout(book, spine, self.settings, &mut sink);
         let (found, page, character) = (sink.found, sink.selected_page, sink.selected_char);
         drop(sink);

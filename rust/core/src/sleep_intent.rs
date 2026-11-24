@@ -1,6 +1,7 @@
 //! NWBR v1 durable intent codec from firmware/sleep_resume_store.h (MIT).
 //! This module does not implement sleep lifecycle, RTC, or startup wiring.
 use crate::durable::{Codec, RecordStore};
+use crate::preferences::{PACKED_SETTINGS, ViewSettings};
 use crate::progress::Progress;
 use crate::wire::{fnv1a, get32, put32};
 
@@ -18,8 +19,9 @@ impl SleepResumeIntent {
         if self.book == 0 {
             return self.checkpoint == 0 && self.settings == 0;
         }
-        let refresh = self.settings >> 8;
-        (self.settings & 4) != 0 && (self.settings & !0xff0f) == 0 && matches!(refresh, 1 | 5 | 10)
+        // Bit 2 marks a reading intent and bit 3 its page anchor.
+        (self.settings & 4) != 0 && (self.settings & !(PACKED_SETTINGS | 0xc)) == 0
+            && ViewSettings::unpacked(self.settings).is_some()
     }
 }
 

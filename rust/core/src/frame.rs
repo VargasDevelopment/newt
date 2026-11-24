@@ -98,10 +98,7 @@ pub fn restore_native_frame_prefix(
     if bytes > FRAME_BYTES {
         return false;
     }
-    if orientation == Orientation::LandscapeCcw {
-        for (dst, &src) in native[..bytes].iter_mut().zip(&logical[..bytes]) {
-            *dst = !src;
-        }
+    if landscape(logical, &mut native[..bytes], orientation, |byte| !byte) {
         return true;
     }
     const LOGICAL_ROW_BYTES: usize = WIDTH / 8;
@@ -126,10 +123,30 @@ pub fn restore_native_frame_prefix(
     true
 }
 
+/// Landscape frames are whole native rows: counterclockwise is the native
+/// raster and clockwise is that raster turned half a turn, which reverses
+/// both the byte order and the bits in each byte. Fills a native prefix of
+/// any length. False for portrait, which the caller turns a quarter.
+fn landscape(logical: &Frame, native: &mut [u8], orientation: Orientation, ink: impl Fn(u8) -> u8) -> bool {
+    match orientation {
+        Orientation::Portrait => return false,
+        Orientation::LandscapeCcw => {
+            for (output, &input) in native.iter_mut().zip(logical) {
+                *output = ink(input);
+            }
+        }
+        Orientation::LandscapeCw => {
+            for (output, &input) in native.iter_mut().zip(logical.iter().rev()) {
+                *output = ink(input.reverse_bits());
+            }
+        }
+    }
+    true
+}
+
 /// Rotate gray selector bits without changing their polarity.
 pub fn to_native_selectors(logical: &Frame, native: &mut Frame, orientation: Orientation) {
-    if orientation == Orientation::LandscapeCcw {
-        native.copy_from_slice(logical);
+    if landscape(logical, native, orientation, |byte| byte) {
         return;
     }
     native.fill(0);
@@ -207,10 +224,7 @@ pub fn to_native_selector_regions<const COUNT: usize>(
 /// to_native_frame(&pixels, &mut pixels, Orientation::Portrait);
 /// ```
 pub fn to_native_frame(logical: &Frame, native: &mut Frame, orientation: Orientation) {
-    if orientation == Orientation::LandscapeCcw {
-        for (output, input) in native.iter_mut().zip(logical) {
-            *output = !*input;
-        }
+    if landscape(logical, native, orientation, |byte| !byte) {
         return;
     }
     native.fill(0xff);

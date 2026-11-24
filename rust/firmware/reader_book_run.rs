@@ -35,7 +35,7 @@ where
     checkpoint.checkpoint.begin_operation();
     let (mut reader, mut owner, mut ui) = (reader, owner, ui);
     if initialize {
-        reader.set_closed_orientation(resources.settings.orientation == Orientation::LandscapeCcw);
+        reader.set_closed_orientation(resources.settings.orientation.is_landscape());
     }
     ui.preferences_writable = preferences.writable();
     resources.recovery = *recovery;

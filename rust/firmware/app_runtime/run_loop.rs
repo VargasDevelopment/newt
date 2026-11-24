@@ -167,7 +167,9 @@ pub fn loop_body<'sdk>(home: &mut Home<'sdk>, ui: &mut Application<'sdk>, reader
                 }
             };
             let Some(action) = action else { continue; };
-            let action = core_action(action);
+            // Buttons follow the frame on the panel, so a clockwise book's pages
+            // and menus turn the natural way while Home keeps its mapping.
+            let action = app::facing(core_action(action), ui.displayed.orientation);
             #[cfg(feature = "dev-usb")]
             let before = (ui.app.screen, reader.facts().opened, home.bus.board.millis());
             events.action.begin();

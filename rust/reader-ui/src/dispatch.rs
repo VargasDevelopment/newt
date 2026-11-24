@@ -248,10 +248,10 @@ pub fn dispatch_reader_ui(
     if ui.panel == P::Settings {
         match ui.selected {
             0 => {
-                ui.draft.orientation = if ui.draft.orientation == Orientation::Portrait {
-                    Orientation::LandscapeCcw
-                } else {
-                    Orientation::Portrait
+                ui.draft.orientation = match ui.draft.orientation {
+                    Orientation::Portrait => Orientation::LandscapeCcw,
+                    Orientation::LandscapeCcw => Orientation::LandscapeCw,
+                    Orientation::LandscapeCw => Orientation::Portrait,
                 }
             }
             1 => ui.draft.slim_progress_bar = !ui.draft.slim_progress_bar,

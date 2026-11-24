@@ -48,7 +48,7 @@ use newt_phased_reader::phase_storage::BuildLoan;
 use newt_phased_reader::{PhasedChapterCache, PhasedReader};
 pub use newt_c3_board::reader_memory::Runtime as BookRuntime;
 use newt_reader_ui::{
-    Action, DeviceInfo, ExternalOwner, Orientation, PhysicalOpen, PhysicalOwner, ReaderFinishRow,
+    Action, DeviceInfo, ExternalOwner, PhysicalOpen, PhysicalOwner, ReaderFinishRow,
     ReaderUiIntent, ReaderUiNotice, ReaderUiState, ReaderUiWork, RestorePolicy, ViewSettings,
 };
 #[cfg(feature = "checkpoint-fixture")]

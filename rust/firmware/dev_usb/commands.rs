@@ -216,7 +216,7 @@ impl Bridge {
         let mut body = Text::new(&mut bytes);
         let _ = write!(body, "FRAME gen={} width={} height={} bytes={} format=pbm1 polarity=one-black orientation={} crc={checksum:08x} chunk={} refresh_ms={}",
             status.generation, status.width, status.height, FRAME_BYTES,
-            if status.landscape { "landscape-ccw" } else { "portrait" }, CHUNK_BYTES, status.refresh_ms);
+            status.orientation.name(), CHUNK_BYTES, status.refresh_ms);
         self.reply(id, body.written());
     }
 

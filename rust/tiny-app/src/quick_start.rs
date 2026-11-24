@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! Quick Start screen rendering over Core's typed policy.
 //! No AppState, dispatch or refresh authority.
-use newt_core::{quick_start::{Facts, Notice, ORDER, State, Step}, time_zone::{TIME_ZONE_LABELS, time_zone_label}};
+use newt_core::{preferences::Orientation, quick_start::{Facts, Notice, ORDER, State, Step},
+    time_zone::{TIME_ZONE_LABELS, time_zone_label}};
 use newt_system_ui::{
     SystemBar, SystemPage, SYSTEM_CARD, SYSTEM_CONTENT_LEFT as LEFT,
     SYSTEM_CONTENT_WIDTH as WIDTH, SYSTEM_BODY_TOP, SYSTEM_ROW_PITCH, SYSTEM_TITLE_TOP,
@@ -16,14 +17,17 @@ const BRAND_WIDTH: i32 = 304;
 const BRAND_HEIGHT: i32 = 416;
 const OPTION_HEIGHT: i32 = 116;
 const OPTION_GAP: i32 = 14;
+/// The Reading step's first rows are one card per orientation.
+const CARDS: usize = Orientation::ALL.len();
 
 // Presentation choices only; all enter/dispatch/saved policy remains in Core.
 #[derive(Clone, Copy)]
-enum Row { Start, SkipAll, Upright, Sideways, Zone, SetUpWifi, ChangeWifi, Next, Skip, Home }
+enum Row { Start, SkipAll, Card(Orientation), Zone, SetUpWifi, ChangeWifi, Next, Skip, Home }
 fn rows(step: Step, facts: &Facts) -> &'static [Row] {
     match step {
         Step::Welcome => &[Row::Start, Row::SkipAll],
-        Step::Reading => &[Row::Upright, Row::Sideways, Row::Skip],
+        Step::Reading => &[Row::Card(Orientation::Portrait), Row::Card(Orientation::LandscapeCcw),
+            Row::Card(Orientation::LandscapeCw), Row::Skip],
         Step::TimeZone => &[Row::Zone, Row::Skip],
         Step::Wifi if facts.wifi_saved => &[Row::Next, Row::ChangeWifi],
         Step::Wifi => &[Row::SetUpWifi, Row::Skip],
@@ -52,8 +56,7 @@ fn label<'a>(row: Row, facts: &Facts, scratch: &'a mut [u8; 48]) -> &'a [u8] {
     match row {
         Row::Start => b"Start",
         Row::SkipAll => b"Skip quick start",
-        Row::Upright => b"Upright",
-        Row::Sideways => b"Sideways",
+        Row::Card(orientation) => card(orientation).0,
         Row::Zone => parts(scratch, &[b"Time zone: ", time_zone_label(facts.zone).as_bytes()]),
         Row::SetUpWifi => b"Set up Wi-Fi",
         Row::ChangeWifi => b"Change Wi-Fi",
@@ -66,7 +69,7 @@ fn action(row: Row) -> &'static [u8] {
     match row {
         Row::Start => b"Start",
         Row::SkipAll | Row::Skip => b"Skip",
-        Row::Upright | Row::Sideways | Row::Zone => b"Select",
+        Row::Card(_) | Row::Zone => b"Select",
         Row::SetUpWifi | Row::ChangeWifi => b"Open",
         Row::Next => b"Next",
         Row::Home => b"Done",
@@ -81,9 +84,24 @@ fn counter(c: &mut UiCanvas<'_>, step: Step) {
     c.text(LEFT + WIDTH - text_width(Some(&text), 17, false), SYSTEM_TITLE_TOP + 12,
         Some(&text), 17, false, 0, true);
 }
-fn page_preview(c: &mut UiCanvas<'_>, center_x: i32, center_y: i32, sideways: bool) {
-    let (w, h) = if sideways { (92, 64) } else { (64, 92) };
+/// Title and line for one orientation's card. "Right" and "left" name where
+/// the front buttons end up, which is what a reader holding it notices.
+fn card(orientation: Orientation) -> (&'static [u8], &'static [u8]) {
+    match orientation {
+        Orientation::Portrait => (b"Upright", b"Tall pages, held like a book."),
+        Orientation::LandscapeCcw => (b"Sideways, buttons right", b"Wide pages, X3 on its side."),
+        Orientation::LandscapeCw => (b"Sideways, buttons left", b"Wide pages, X3 on its side."),
+    }
+}
+/// A small page, with a bar on the side where the front buttons sit.
+fn page_preview(c: &mut UiCanvas<'_>, center_x: i32, center_y: i32, orientation: Orientation) {
+    let (w, h) = if orientation.is_landscape() { (92, 64) } else { (64, 92) };
     let (x, y) = (center_x - w / 2, center_y - h / 2);
+    match orientation {
+        Orientation::Portrait => c.rect(x + 14, y + h + 4, w - 28, 4, true),
+        Orientation::LandscapeCcw => c.rect(x + w + 4, y + 14, 4, h - 28, true),
+        Orientation::LandscapeCw => c.rect(x - 8, y + 14, 4, h - 28, true),
+    }
     c.rect(x, y, w, 3, true);
     c.rect(x, y + h - 3, w, 3, true);
     c.rect(x, y, 3, h, true);
@@ -96,18 +114,16 @@ fn page_preview(c: &mut UiCanvas<'_>, center_x: i32, center_y: i32, sideways: bo
         line += 1;
     }
 }
-fn option(c: &mut UiCanvas<'_>, top: i32, sideways: bool, focused: bool) {
+fn option(c: &mut UiCanvas<'_>, top: i32, orientation: Orientation, focused: bool) {
     let border = if focused { 4 } else { 1 };
     c.rect(LEFT, top, WIDTH, border, true);
     c.rect(LEFT, top + OPTION_HEIGHT - border, WIDTH, border, true);
     c.rect(LEFT, top, border, OPTION_HEIGHT, true);
     c.rect(LEFT + WIDTH - border, top, border, OPTION_HEIGHT, true);
-    page_preview(c, LEFT + 66, top + OPTION_HEIGHT / 2, sideways);
-    c.text(LEFT + 132, top + 22, Some(if sideways { b"Sideways" } else { b"Upright" }),
-        24, true, WIDTH - 148, true);
-    c.paragraph(LEFT + 132, top + 56,
-        Some(if sideways { b"Wide pages, X3 on its side." } else { b"Tall pages, held like a book." }),
-        21, WIDTH - 148, top + OPTION_HEIGHT - 4);
+    let (title, line) = card(orientation);
+    page_preview(c, LEFT + 66, top + OPTION_HEIGHT / 2, orientation);
+    c.text(LEFT + 132, top + 22, Some(title), 24, true, WIDTH - 148, true);
+    c.paragraph(LEFT + 132, top + 56, Some(line), 21, WIDTH - 148, top + OPTION_HEIGHT - 4);
 }
 fn step_text(c: &mut UiCanvas<'_>, state: &State, facts: &Facts) -> i32 {
     match state.step {
@@ -121,9 +137,12 @@ fn step_text(c: &mut UiCanvas<'_>, state: &State, facts: &Facts) -> i32 {
         }
         Step::Reading => {
             let next = paragraph(c, SYSTEM_BODY_TOP, b"Only books turn; Home stays upright.") + 16;
-            option(c, next, false, state.focus == 0);
-            option(c, next + OPTION_HEIGHT + OPTION_GAP, true, state.focus == 1);
-            next + 2 * (OPTION_HEIGHT + OPTION_GAP) + 4
+            let mut top = next;
+            for orientation in Orientation::ALL {
+                option(c, top, orientation, state.focus == orientation as u8);
+                top += OPTION_HEIGHT + OPTION_GAP;
+            }
+            top + 4
         }
         Step::TimeZone => paragraph(c, SYSTEM_BODY_TOP,
             b"Newt shows the time in this zone.") + 20,
@@ -156,7 +175,7 @@ fn note<'a>(state: &State, facts: &Facts, row: Row, scratch: &'a mut [u8; 128]) 
         return (state.step != Step::Welcome).then_some(text);
     }
     match row {
-        Row::Upright | Row::Sideways => Some(b"Change it later in a book's menu."),
+        Row::Card(_) => Some(b"Change it later in a book's menu."),
         Row::SetUpWifi | Row::ChangeWifi => Some(b"Newt restarts to set up Wi-Fi, then comes back here."),
         Row::Skip if state.step == Step::Wifi => Some(b"Set it up later in Settings, Wi-Fi."),
         _ => None,
@@ -183,7 +202,7 @@ fn render_step(state: &State, facts: &Facts, bar: &SystemBar, frame: Option<&mut
     let mut top = step_text(page.canvas(), state, facts);
     let mut label_scratch = [0; 48];
     let mut note_scratch = [0; 128];
-    let first = if state.step == Step::Reading { 2 } else { 0 };
+    let first = if state.step == Step::Reading { CARDS } else { 0 };
     for (index, &row) in rows.iter().enumerate().skip(first) {
         page.row(top, (index - first) as u32, Some(label(row, facts, &mut label_scratch)), index == focus);
     }

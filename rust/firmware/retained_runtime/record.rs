@@ -3,7 +3,7 @@
 #![forbid(unsafe_code)]
 
 use newt_core::app::{AppState, Screen};
-use newt_core::preferences::{Orientation, ViewSettings};
+use newt_core::preferences::{PACKED_SETTINGS, ViewSettings};
 use newt_core::progress::{Locator, Progress};
 
 pub const MAGIC: u32 = 0x4e57_5433;
@@ -209,10 +209,7 @@ pub fn make_record(
             record.book_high = (progress.book >> 32) as u32;
             record.spine = progress.locator.spine;
             record.character = progress.locator.character;
-            record.reader_settings = settings.orientation as u32
-                | (u32::from(settings.slim_progress_bar) << 1)
-                | (u32::from(sd_source) << 2)
-                | (u32::from(settings.refresh_pages) << 8);
+            record.reader_settings = settings.packed() | (u32::from(sd_source) << 2);
             record.sequence = progress.sequence;
             record.active_low = progress.active_milliseconds as u32;
             record.active_high = (progress.active_milliseconds >> 32) as u32;
@@ -271,8 +268,10 @@ pub fn validate(record: &SleepRecord, expected_book: u64, expected_sd_source: bo
         {
             return Status::BookIdentity;
         }
-        let refresh = record.reader_settings >> 8;
-        if record.reader_settings & !0xff07 != 0 || !matches!(refresh, 1 | 5 | 10) {
+        // Bit 2 is the SD source; the rest are the shared packed settings.
+        if record.reader_settings & !(PACKED_SETTINGS | 4) != 0
+            || ViewSettings::unpacked(record.reader_settings).is_none()
+        {
             return Status::SettingsRange;
         }
     }
@@ -294,7 +293,8 @@ pub fn restore(
     let book = record.resume_screen == Screen::EpubReading as u32
         || record.recovery_kind() != Some(Recovery::Ordinary);
     if book {
-        let (Some(progress), Some(settings)) = (progress, settings) else {
+        let (Some(progress), Some(settings), Some(view)) =
+            (progress, settings, ViewSettings::unpacked(record.reader_settings)) else {
             return false;
         };
         *progress = Progress {
@@ -309,15 +309,7 @@ pub fn restore(
             forward_pages: record.forward_pages,
             qualified_sessions: record.qualified_sessions,
         };
-        *settings = ViewSettings {
-            orientation: if record.reader_settings & 1 == 0 {
-                Orientation::Portrait
-            } else {
-                Orientation::LandscapeCcw
-            },
-            slim_progress_bar: record.reader_settings & 2 != 0,
-            refresh_pages: (record.reader_settings >> 8) as u8,
-        };
+        *settings = view;
     }
     let screen = if record.resume_screen == Screen::Home as u32 {
         Screen::Home

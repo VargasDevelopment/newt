@@ -76,13 +76,23 @@ static void write_file(const char *name, const void *data, size_t length) {
 /* frame.pbm: the panel as the firmware's logical frame (one is black), in
  * the orientation its last DEV FRAME reply named; portrait when the run ended
  * without one (sleep, restart, freeze), as every system screen is. */
-static int landscape;
+enum { PORTRAIT, LANDSCAPE_CCW, LANDSCAPE_CW };
+static int shown = PORTRAIT;
+static uint8_t reversed_bits(uint8_t byte) {
+    uint8_t out = 0;
+    for (int bit = 0; bit < 8; ++bit) if (byte & (1u << bit)) out |= (uint8_t)(0x80u >> bit);
+    return out;
+}
 static void write_frame(const uint8_t *panel) {
     static uint8_t logical[99 * 528];
     const char *header;
-    if (landscape) {
+    if (shown == LANDSCAPE_CCW) {
         header = "P4\n792 528\n";
         for (size_t i = 0; i < sizeof logical; ++i) logical[i] = (uint8_t)~panel[i];
+    } else if (shown == LANDSCAPE_CW) {
+        /* frame.rs: clockwise is the native raster turned half a turn. */
+        header = "P4\n792 528\n";
+        for (size_t i = 0; i < sizeof logical; ++i) logical[i] = (uint8_t)~reversed_bits(panel[sizeof logical - 1 - i]);
     } else {
         header = "P4\n528 792\n";
         memset(logical, 0, sizeof logical);
@@ -237,7 +247,9 @@ static void reply(const char *text) {
     } else if (dev_step == 0 || id != (unsigned long)dev_step) {
         return;
     }
-    if (strncmp(text + body, "FRAME ", 6) == 0) landscape = strstr(text + body, "orientation=landscape-ccw") != NULL;
+    if (strncmp(text + body, "FRAME ", 6) == 0)
+        shown = strstr(text + body, "orientation=landscape-ccw ") ? LANDSCAPE_CCW
+                  : strstr(text + body, "orientation=landscape-cw ") ? LANDSCAPE_CW : PORTRAIT;
     if (dev_step < 3) {
         char next[96];
         snprintf(next, sizeof next, "N1 %lu %lu %d %s", dev_boot, dev_session, dev_step + 1, asks[dev_step]);

@@ -45,8 +45,7 @@ fn skipped_run_and_settings_exit_keep_distinct_intents() {
     dispatch(&mut state, &facts, Action::Next);
     assert_eq!(dispatch(&mut state, &facts, Action::Activate), Intent::Finish);
     enter_step(&mut state, &facts, Step::Reading);
-    dispatch(&mut state, &facts, Action::Next);
-    dispatch(&mut state, &facts, Action::Next);
+    for _ in 0..3 { dispatch(&mut state, &facts, Action::Next); }
     assert_eq!(dispatch(&mut state, &facts, Action::Activate), Intent::Moved);
     assert_eq!(state.step, Step::TimeZone);
     dispatch(&mut state, &facts, Action::Next);
@@ -57,4 +56,18 @@ fn skipped_run_and_settings_exit_keep_distinct_intents() {
     assert_eq!(dispatch(&mut state, &facts, Action::Activate), Intent::Moved);
     assert_eq!(dispatch(&mut state, &facts, Action::Activate), Intent::Finish);
     assert_eq!(state.step, Step::Done);
+}
+
+#[test]
+fn reading_cards_choose_each_orientation_and_reopen_on_the_saved_one() {
+    for (row, chosen) in Orientation::ALL.into_iter().enumerate() {
+        let mut state = State::default();
+        enter_step(&mut state, &Facts::default(), Step::Reading);
+        for _ in 0..row { dispatch(&mut state, &Facts::default(), Action::Next); }
+        assert_eq!(dispatch(&mut state, &Facts::default(), Action::Activate), Intent::SaveOrientation);
+        assert_eq!(orientation(&state), chosen);
+        let facts = Facts { orientation: chosen, ..Facts::default() };
+        enter_step(&mut state, &facts, Step::Reading);
+        assert_eq!(usize::from(state.focus), row);
+    }
 }

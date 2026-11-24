@@ -7,7 +7,7 @@ use crate::{bounded::{self, Chapters, LaidOut, LAYOUT_BYTES, PARSE_BYTES},
     xml_session::{self, ParserBackend, XmlStream}, zip_container::{Entry, Reader, Status}, bounded::source::Source};
 use newt_core::{chapter_layout::{images::{self, BookImages, Catalog, Collector, Probed},
     types::{self, LineBreak, Sink}}, css::{CssRule, CssStylesheetBuilder, MAX_RULES},
-    preferences::{Orientation, ViewSettings}};
+    preferences::ViewSettings};
 use newt_reader_navigation::{BookView, metadata::Metadata};
 
 /// One sample-memory loan. The two source views below borrow these same
@@ -43,7 +43,7 @@ impl<B: ParserBackend + ?Sized> Chapters for Work<'_, B> {
         let directory = directory(href);
         let language = BookLanguage::from_opf(book.package.metadata.language
             .and_then(|h| book.arena.c_string(h)));
-        let params = reader_parameters(settings.orientation == Orientation::LandscapeCcw, None, language);
+        let params = reader_parameters(settings.orientation.is_landscape(), None, language);
         // The raw detector precedes the optional table allocation, as in the
         // SDK. Failed optional work leaves inline probes to the main pass.
         if mentions(self.epub, &entry, self.parse) {

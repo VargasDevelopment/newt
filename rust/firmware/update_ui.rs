@@ -254,7 +254,7 @@ impl Parts<'_, '_> {
             // constructed in this boot. Update never introduces a DEV screen.
             let status = Status { generation: self.displayed.generation, refresh_ms: self.displayed.refresh_ms,
                 free_heap, dropped: events.control.dropped(), screen: 0, width: frame::WIDTH as u32, height: frame::HEIGHT as u32,
-                ready: self.displayed.valid, landscape: false, monochrome: true };
+                ready: self.displayed.valid, orientation: Orientation::Portrait, monochrome: true };
             let diagnostics = Diagnostics { record: 255, requested: 255,
                 reader_status: newt_core::zip_container::Status::NotFound as u32,
                 free_heap, largest_block: largest, opening: events.control.active(),

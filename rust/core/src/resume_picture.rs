@@ -126,11 +126,13 @@ impl Record {
     /// Damaged, foreign, or newer headers leave the complete record unchanged.
     pub fn decode(&mut self, bytes: &[u8; HEADER_BYTES]) -> bool {
         let length = usize::from(u16::from_le_bytes([bytes[98], bytes[99]]));
+        let Some(orientation) = Orientation::from_byte(bytes[80]) else {
+            return false;
+        };
         if get32(bytes, 0) != Self::MAGIC
             || get32(bytes, 4) != Self::VERSION
             || get32(bytes, 508) != Self::crc(&bytes[..508])
             || bytes[83] != 0
-            || bytes[80] > 1
             || bytes[81] > 1
             || bytes[96] > 1
             || length >= LABEL_BYTES
@@ -148,11 +150,7 @@ impl Record {
         self.binding.book.copy_from_slice(&bytes[40..72]);
         self.binding.anchor.spine = get32(bytes, 72);
         self.binding.anchor.character = get32(bytes, 76);
-        self.binding.settings.orientation = if bytes[80] == 0 {
-            Orientation::Portrait
-        } else {
-            Orientation::LandscapeCcw
-        };
+        self.binding.settings.orientation = orientation;
         self.binding.settings.slim_progress_bar = bytes[81] != 0;
         self.binding.settings.refresh_pages = bytes[82];
         self.footer.spine = get32(bytes, 84);

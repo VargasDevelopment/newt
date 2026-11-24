@@ -16,7 +16,8 @@ def preferences_cases(prefs, hx):
     valid = prefs(sequence=9)
     damaged = bytearray(prefs(sequence=10)); damaged[-1] ^= 1
     legacy = prefs(sequence=9, version=1, cadence=0)
-    future = prefs(sequence=10, version=3)
+    # Version 3 holds the clockwise landscape; 4 is the first unknown version.
+    future = prefs(sequence=10, version=4)
     variants = [
         '-', '_', hx(valid), hx(prefs(sequence=10, orientation=0)),
         hx(prefs(sequence=9, orientation=0)), hx(prefs(sequence=0x80000009)),

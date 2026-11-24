@@ -171,10 +171,10 @@ pub fn render_reader_overlay(
             let _ = write!(
                 Buffer::new(&mut orientation),
                 "Orientation: {}",
-                if ui.draft.orientation == Orientation::LandscapeCcw {
-                    "Landscape CCW"
-                } else {
-                    "Portrait"
+                match ui.draft.orientation {
+                    Orientation::Portrait => "Portrait",
+                    Orientation::LandscapeCcw => "Landscape right",
+                    Orientation::LandscapeCw => "Landscape left",
                 }
             );
             let _ = write!(
@@ -232,7 +232,12 @@ pub fn render_reader_overlay(
                 &mut c,
                 x + 22,
                 y + h - 63,
-                b"Book only. Home stays portrait.",
+                // The row's "right" and "left" name where the buttons end up.
+                match ui.draft.orientation {
+                    Orientation::Portrait => b"Book only. Home stays portrait.",
+                    Orientation::LandscapeCcw => b"Buttons on the right. Home stays portrait.",
+                    Orientation::LandscapeCw => b"Buttons on the left. Home stays portrait.",
+                },
                 21,
                 false,
                 w - 44,

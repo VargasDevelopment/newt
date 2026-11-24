@@ -41,12 +41,13 @@ impl Published<'_, '_> {
         let facts = reader.facts();
         let free_heap = self.hardware.free_heap_bytes()?;
         let largest = self.hardware.largest_heap_block_bytes()?;
-        let landscape = self.displayed.valid && self.displayed.orientation == Orientation::LandscapeCcw;
+        let orientation = if self.displayed.valid { self.displayed.orientation } else { Orientation::Portrait };
+        let landscape = orientation.is_landscape();
         let status = Status { generation: self.displayed.generation, refresh_ms: self.displayed.refresh_ms,
             free_heap, dropped: events.control.dropped(), screen: self.facts.screen as u32,
             width: (if landscape { frame::HEIGHT } else { frame::WIDTH }) as u32,
             height: (if landscape { frame::WIDTH } else { frame::HEIGHT }) as u32,
-            ready: self.displayed.valid, landscape, monochrome: !self.displayed.grayscale };
+            ready: self.displayed.valid, orientation, monochrome: !self.displayed.grayscale };
         let mut diagnostics = Diagnostics::default();
         reader.diagnostics(&mut diagnostics);
         diagnostics.reader_status = facts.status;

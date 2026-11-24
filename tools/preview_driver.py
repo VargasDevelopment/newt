@@ -42,7 +42,8 @@ SCREENS = {'home': [], 'library': [CONFIRM], 'app': [RIGHT, CONFIRM], 'device': 
 # (reading orientation, then skip the time zone and Wi-Fi, then Next, Done).
 SKIP_QUICK_START = [RIGHT, CONFIRM]
 QUICK_START = {'portrait': [CONFIRM, CONFIRM, DOWN, CONFIRM, DOWN, CONFIRM, CONFIRM, CONFIRM],
-               'landscape-ccw': [CONFIRM, DOWN, CONFIRM, DOWN, CONFIRM, DOWN, CONFIRM, CONFIRM, CONFIRM]}
+               'landscape-ccw': [CONFIRM, DOWN, CONFIRM, DOWN, CONFIRM, DOWN, CONFIRM, CONFIRM, CONFIRM],
+               'landscape-cw': [CONFIRM, DOWN, DOWN, CONFIRM, DOWN, CONFIRM, DOWN, CONFIRM, CONFIRM, CONFIRM]}
 # From Home: the sample's Reading settings, its slim bar switched off, saved.
 BAR_OFF = [BACK, CONFIRM, RIGHT, RIGHT, CONFIRM, RIGHT, CONFIRM, RIGHT, RIGHT, CONFIRM, BACK]
 TELEMETRY = ('unknown', 'sample')
@@ -136,7 +137,7 @@ def parse(arguments):
         keys=keys,
         telemetry=choice('--telemetry', last('--telemetry', 'unknown'), TELEMETRY),
         clock=clock_value(last('--clock')) if '--clock' in flags else None,
-        orientation=choice('--reader-orientation', last('--reader-orientation'), (None, 'portrait', 'landscape-ccw')),
+        orientation=choice('--reader-orientation', last('--reader-orientation'), (None, *QUICK_START)),
         bar=choice('--reader-progress-bar', last('--reader-progress-bar', 'on'), ('on', 'off')),
         stats=choice('--stats', last('--stats'), (None, *STATS)),
         library=choice('--library-fixture', last('--library-fixture', 'healthy'), LIBRARIES),

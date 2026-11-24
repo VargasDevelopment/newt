@@ -8,6 +8,17 @@ pub enum HomeSection { #[default] Books, Apps, Settings }
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action { Previous, Next, Activate, Back, Sleep, Read }
+/// A press as the reader sees it on the shown frame. Clockwise landscape holds
+/// the X3 half a turn from counterclockwise, so each button pair sits on the
+/// other side of the text; swapping previous and next keeps "forward" there.
+pub fn facing(action: Action, shown: crate::preferences::Orientation) -> Action {
+    use crate::preferences::Orientation::LandscapeCw;
+    match (action, shown) {
+        (Action::Previous, LandscapeCw) => Action::Next,
+        (Action::Next, LandscapeCw) => Action::Previous,
+        _ => action,
+    }
+}
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Screen { #[default] Home, Reading, Device, Sleeping, EpubReading, TinyApp, Library, QuickStart }
@@ -256,4 +267,20 @@ pub fn leave_quick_start(state: &mut AppState, to_settings: bool) {
     state.screen = Screen::Home;
     state.selected = 0;
     close_device(state);
+}
+
+#[cfg(test)]
+mod facing_tests {
+    use super::{Action, facing};
+    use crate::preferences::Orientation;
+
+    #[test]
+    fn only_clockwise_landscape_swaps_and_only_page_buttons() {
+        let all = [Action::Previous, Action::Next, Action::Activate, Action::Back, Action::Sleep, Action::Read];
+        for shown in [Orientation::Portrait, Orientation::LandscapeCcw] {
+            for action in all { assert_eq!(facing(action, shown), action); }
+        }
+        let turned = all.map(|action| facing(action, Orientation::LandscapeCw));
+        assert_eq!(turned, [Action::Next, Action::Previous, Action::Activate, Action::Back, Action::Sleep, Action::Read]);
+    }
 }

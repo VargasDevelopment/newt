@@ -365,6 +365,18 @@ def main() -> None:
     require((ROOT / "artifacts/epub-landscape.pbm").read_bytes()
             != (ROOT / "artifacts/epub-landscape-bar.pbm").read_bytes(),
             "Configurable bar visibly changes reader chrome")
+    # Clockwise is the same page turned half a turn on the panel, so its
+    # logical frame matches counterclockwise; its buttons swap, so Left turns on.
+    def book(orientation, actions=None):
+        command = [str(binary), "--screen", "epub", "--reader-orientation", orientation]
+        return phase_run(command + (["--actions", actions] if actions else []),
+                         check=True, capture_output=True).stdout
+    require(book("landscape-cw") == (ROOT / "artifacts/epub-landscape-bar.pbm").read_bytes(),
+            "Clockwise landscape shows the counterclockwise page")
+    forward = book("landscape-ccw", "next")
+    require(forward != book("landscape-ccw") and book("landscape-cw", "previous") == forward
+            and book("landscape-cw", "previous,next") == book("landscape-cw"),
+            "Clockwise swaps the page buttons, so forward stays on the same side of the text")
     require((ROOT / "artifacts/home-reader-portrait.pbm").read_bytes()
             == (ROOT / "artifacts/home.pbm").read_bytes(), "Reader flags preserve portrait Home")
     require((ROOT / "artifacts/device-reader-landscape.pbm").read_bytes()
