@@ -508,7 +508,8 @@ def commit_heap_drop(binary):
         with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
             world = World(binary, scratch, records, **{'cover.heap.drop.on': '.nlc.tmp'})
             _, results, _ = world.run(to_book(book))
-            if results != [result] or world.temporaries():
+            # The dip may decline a later job's admission; this commit must finish.
+            if results[:1] != [result] or world.temporaries():
                 return f'commit heap dip ended {results}, left {world.temporaries()}'
             if book in SUPPORTED:
                 if problem := art_problem(world, book):
