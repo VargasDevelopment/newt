@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3683744,
+      "flash_bytes": 3684224,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "73f430571c9a293f92a0c27e472039b0186d7f38",
-      "before": 3683584,
-      "after": 3683744,
-      "reason": "+160 B: #78 moves a long test-build version onto its own line under Updated to, so What's new no longer cuts it off; official versions keep one title line. Clean regional DEV USB builds measure main 2f01d80e at 3,683,584 B, and both 072f35f5 and 73f43057 at 3,683,744 B. RAM 124,096 -> 124,096 B, lent Wi-Fi RAM 22,528 -> 22,528 B, RTC 300 -> 300 B, selected stack frames within their existing ceilings.",
-      "reviewer": "Lead (Claude Opus) after an independent Opus xhigh review of fc78b249 and Codex (no findings); fixes since are tests, comments, fixtures and one value-identical shared constant (SYSTEM_BODY_TOP), and the clean rebuild of 73f43057 measures the same flash, RAM and RTC."
+      "source_revision": "c09d32257e05b30b8b0320e4bdd26a9e729a588d",
+      "before": 3683744,
+      "after": 3684224,
+      "reason": "#75 keeps UTF-8 characters whole across text buffer flushes by carrying the incomplete character and its style span into the next fill. Clean regional DEV USB flash 3,683,744 → 3,684,224 B (+480 B against main 27e6f909). RAM 124,096 → 124,096 B, RTC 300 → 300 B, Wi-Fi lend 22,528 → 22,528 B. Measured stack entries match main.",
+      "reviewer": "Lead (Claude Opus) after an independent Opus xhigh review of b2d19400 and Codex (no findings)"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
