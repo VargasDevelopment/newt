@@ -846,6 +846,7 @@ impl<'a> EngineState<'a> {
         let mut gaps = justification_gaps(r);
         let justify =
             self.paragraph.align == TextAlign::Justify && r.flags & 1 == 0 && gaps > 0 && left > 0;
+        let baseline = self.y.wrapping_add(backend.ascent(size));
         let mut segs = [Segment::default(); MAX_SEGMENTS];
         let (n, rest) = self.segment_line(backend, r, justify, &mut segs);
         if rest.is_some() {
@@ -879,7 +880,6 @@ impl<'a> EngineState<'a> {
         } else if align == TextAlign::Center {
             x += left / 2
         }
-        let baseline = self.y.wrapping_add(backend.ascent(size));
         // Match frozen placeLine's byte indices for at most 64 segments.
         let mut order = [0u8; MAX_SEGMENTS];
         let (mut high, mut odd) = (0, 255);
