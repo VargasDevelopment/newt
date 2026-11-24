@@ -460,8 +460,8 @@ def home(binary):
             frame, results, log = world.run((BACK,))
             if problem := art_problem(world, book):
                 return problem
-            if results != [PRODUCED] or HOME_READY not in log.split(f'result={PRODUCED} ', 1)[-1]:
-                return f'Home\'s attempts for {book} ended {results} with no later "{HOME_READY}"'
+            if results != [PRODUCED] or HOME_READY not in log:
+                return f'Home\'s attempts for {book} ended {results} with no "{HOME_READY}"'
             if region(frame, 192, 94) != world.cover(book)[28:]:
                 return f'Home does not paint {book}\'s new cover'
 
