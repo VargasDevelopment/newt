@@ -287,6 +287,9 @@ fn binding_equality_includes_the_book_locator_and_every_setting_field() {
     changed = binding.clone();
     changed.settings.refresh_pages = 10;
     assert_ne!(changed, binding);
+    changed = binding.clone();
+    changed.settings.text_size = TextSize::Px22;
+    assert_ne!(changed, binding);
     // C++ footer equality also compares bytes beyond its first NUL.
     let footer = Footer::default();
     let mut changed = footer.clone();
