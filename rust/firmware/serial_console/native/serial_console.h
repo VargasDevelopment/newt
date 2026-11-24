@@ -30,7 +30,7 @@ uint8_t nsc_connected(void);
 int nsc_available(void);
 int nsc_read_byte(void);
 int nsc_available_for_write(void);
-void nsc_wake_transmitter(void);
+uint8_t nsc_wake_transmitter(void);
 #endif
 #ifdef __cplusplus
 }

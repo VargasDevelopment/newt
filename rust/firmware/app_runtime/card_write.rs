@@ -21,7 +21,7 @@ pub fn lease(bridge: &mut Bridge, home: &mut Home<'_>, events: &mut Events<'_, '
     let mut ended = None;
     let mounted = home.with_storage_io(|home, io| {
         let BoardBus { board, log } = &mut home.bus;
-        let mut wire = LeaseWire { channel: log.dev_channel(board.monotonic_clock()), events };
+        let mut wire = LeaseWire { channel: log.dev_channel(board.monotonic_clock()), events, tx_flush_pending: false };
         let mut card = DevCard(io.port());
         // A failed hash scope leaves `ended` empty: the lease never began.
         let _ = board.with_sha256(|hash| ended = Some(dev_put::run(session, memory, &mut wire, &mut card, hash)));
@@ -37,11 +37,22 @@ pub fn lease(bridge: &mut Bridge, home: &mut Home<'_>, events: &mut Events<'_, '
 struct LeaseWire<'a, 'events, 'task> {
     channel: DevChannel<'a>,
     events: &'a mut Events<'events, 'task>,
+    tx_flush_pending: bool,
 }
 impl Wire for LeaseWire<'_, '_, '_> {
     fn connected(&mut self) -> bool { self.channel.connected() }
-    fn read_byte(&mut self) -> i32 { self.channel.read_byte() }
-    fn write(&mut self, bytes: &[u8]) -> usize { self.channel.write(bytes) }
+    fn read_byte(&mut self) -> i32 {
+        let byte = self.channel.read_byte();
+        if byte < 0 && self.tx_flush_pending && self.channel.flush_tx_tail() {
+            self.tx_flush_pending = false;
+        }
+        byte
+    }
+    fn write(&mut self, bytes: &[u8]) -> usize {
+        let sent = self.channel.write(bytes);
+        if sent != 0 { self.tx_flush_pending = true; }
+        sent
+    }
     fn now(&mut self) -> u32 { self.channel.now() }
     /// Takes the gate's pending press, as Bridge::drain_pending does.
     fn physical_input(&mut self) -> bool { self.events.task.gate().with_pending(core::mem::take) }

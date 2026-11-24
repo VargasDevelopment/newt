@@ -263,7 +263,7 @@ static FILE *serial_log;
 void nsc_begin(void) { serial_log = fopen(preview_path("serial.log"), "ab"); }
 void nsc_set_tx_timeout_ms(uint32_t ms) { (void)ms; }
 void nsc_flush(void) { if (serial_log) fflush(serial_log); }
-void nsc_wake_transmitter(void) {}
+uint8_t nsc_wake_transmitter(void) { return 1; }
 static uint32_t cover_usb_resume;
 static int cover_usb_work, cover_monitor_active;
 static size_t cover_usb_used;

@@ -118,6 +118,8 @@ impl Bridge {
             newt_core::dev_put::End::Kept { last_id } => {
                 self.last_id = last_id;
                 self.session_activity = now;
+                self.tx_progress = now;
+                self.tx_flush_pending = true;
             }
             newt_core::dev_put::End::Cancelled => self.cancel(),
             newt_core::dev_put::End::Hello => self.hello(build, now),

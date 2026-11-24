@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! Frozen UsbChannel's SDK calls, with no held buffer, task or protocol policy.
 
+/// Arduino HWCDC's default TX ring buffer size (HWCDC::begin).
+const HWCDC_TX_RING_BYTES: i32 = 256;
+
 // SAFETY: linked native entries forward synchronous SDK Serial observations,
 // one bounded write, or the existing nonblocking HAL transmit-tail wake pair.
 unsafe extern "C" {
@@ -8,9 +11,15 @@ unsafe extern "C" {
     fn nsc_available() -> i32;
     fn nsc_read_byte() -> i32;
     fn nsc_available_for_write() -> i32;
-    fn nsc_wake_transmitter();
+    fn nsc_wake_transmitter() -> u8;
     fn nsc_write(data: *const u8, len: usize) -> usize;
     fn nsc_flush();
+}
+
+fn wake_transmitter() -> bool {
+    // SAFETY: nonblocking HAL transmit-tail wake; it neither waits nor
+    // discards queued bytes, and reports whether the HW TX FIFO had room.
+    unsafe { nsc_wake_transmitter() != 0 }
 }
 
 pub fn connected() -> bool {
@@ -36,21 +45,29 @@ pub fn read_byte() -> i32 {
 
 pub fn write(bytes: &[u8]) -> usize {
     if !connected() { return 0; }
-    // SAFETY: same nonblocking HAL wake that frozen UsbChannel performs before
-    // querying room; it neither waits nor discards queued bytes.
-    unsafe { nsc_wake_transmitter(); }
-    // SAFETY: scalar SDK queue-space observation, retaining no state or pointer.
-    let space = unsafe { nsc_available_for_write() };
+    let _ = wake_transmitter();
+    let space = available_for_write();
     if space <= 0 { return 0; }
     let count = bytes.len().min(space as usize);
     // SAFETY: the prefix lives through this one synchronous SDK write. Its
     // reported count is passed back unchanged; it is not a delivery promise.
     let written = unsafe { nsc_write(bytes.as_ptr(), count) };
     if written != 0 {
-        // SAFETY: the same post-enqueue transmit-tail wake, with no retry.
-        unsafe { nsc_wake_transmitter(); }
+        let _ = wake_transmitter();
     }
     written
+}
+
+/// Flushes a trailing 64-byte USB full-packet boundary once HWCDC's TX ring
+/// buffer is empty and the hardware EP1 IN FIFO has room to send a zero-length
+/// packet. Returns true once accepted or disconnected.
+pub fn flush_tx_tail() -> bool {
+    if !connected() { return true; }
+    if available_for_write() < HWCDC_TX_RING_BYTES {
+        let _ = wake_transmitter();
+        return false;
+    }
+    wake_transmitter()
 }
 
 /// Existing SDK transmit room, with no write or wake side effect.

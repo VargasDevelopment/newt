@@ -26,11 +26,14 @@ uint8_t nsc_connected(void) { return nsc_port_connected(Serial); }
 int nsc_available(void) { return nsc_port_available(Serial); }
 int nsc_read_byte(void) { return nsc_port_read_byte(Serial); }
 int nsc_available_for_write(void) { return nsc_port_available_for_write(Serial); }
-// Same nonblocking transmit-tail wake as firmware/dev_usb_channel.h. No wait,
-// retry, queue or app decision is hidden in this native hardware operation.
-void __attribute__((noinline)) nsc_wake_transmitter(void) {
+// Nonblocking transmit-tail wake over USB_SERIAL_JTAG. Reports whether the
+// hardware EP1 IN FIFO had room so callers can send a trailing zero-length
+// packet only after a full 64-byte packet has left the FIFO.
+uint8_t __attribute__((noinline)) nsc_wake_transmitter(void) {
+    const uint8_t writable = usb_serial_jtag_ll_txfifo_writable() ? 1 : 0;
     usb_serial_jtag_ll_txfifo_flush();
     usb_serial_jtag_ll_ena_intr_mask(USB_SERIAL_JTAG_INTR_SERIAL_IN_EMPTY);
+    return writable;
 }
 #endif
 
