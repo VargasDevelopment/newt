@@ -708,7 +708,6 @@ void *newt_cover_heap_allocate(size_t bytes) {
     if (newt_cover_heap_charged(block) > bytes + 128) { free(block); return NULL; }
     return block;
 }
-void nb_running_image_digest(uint8_t *out) { for (size_t i = 0; i < 32; i++) out[i] = (uint8_t)(0x51u + i); }
 /* The DEV heap report's walk: this host heap has no blocks to visit. */
 void newt_wifi_memory_report_walk(void *context, void (*visit)(void *, size_t, size_t, size_t, size_t, uint8_t)) {
     (void)context;
