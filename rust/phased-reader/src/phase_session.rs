@@ -376,7 +376,7 @@ fn prepare_cached(
         Err(_) => return reader.failed(Status::Unsupported),
     };
     sink.page(page);
-    let error = if sink.state.exceeded || !sink.state.found {
+    let error = if !sink.state.found {
         Some(Status::Stale)
     } else if sink.state.overflow {
         Some(Status::OutOfMemory)

@@ -1112,9 +1112,6 @@ fn pass_stream<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     let verdict = watch.verdict();
     drop(watch);
     let mut status = status;
-    if state.exceeded {
-        status = Status::Unsupported;
-    }
     if state.overflow {
         status = Status::OutOfMemory;
     }
