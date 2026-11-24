@@ -188,6 +188,45 @@ pub fn halloween(today: StatsClock) -> bool {
 pub fn christmas(today: StatsClock) -> bool {
     today.trusted() && today.month % 12 == 11 && matches!(today.day_of_month, 24 | 25)
 }
+/// US Thanksgiving: November's fourth Thursday always falls on the 22nd to the 28th.
+/// Day 0 (2000-01-01) was a Saturday, so Thursdays are the days 5 mod 7.
+pub fn thanksgiving(today: StatsClock) -> bool {
+    today.trusted()
+        && today.month % 12 == 10
+        && (22..=28).contains(&today.day_of_month)
+        && today.day % 7 == 5
+}
+
+#[cfg(test)]
+mod thanksgiving_tests {
+    use super::*;
+
+    fn on(year: u16, month: u8, day: u8) -> bool {
+        thanksgiving(stats_clock(ClockTime {
+            year,
+            month,
+            day,
+            hour: 12,
+            ..ClockTime::default()
+        }))
+    }
+
+    #[test]
+    fn fourth_thursday_of_november_only() {
+        // 2029 has the earliest date and 2030 the latest.
+        for (year, day) in [(2026, 26), (2027, 25), (2028, 23), (2029, 22), (2030, 28), (2099, 26)] {
+            assert!(on(year, 11, day), "{year}-11-{day}");
+            assert!(!on(year, 11, day - 1), "the Wednesday before {year}-11-{day}");
+            assert!(!on(year, 11, day + 1), "the Friday after {year}-11-{day}");
+            assert!(!on(year, 11, day - 7), "the third Thursday of {year}");
+            assert!(!on(year, 10, day), "October {year}");
+        }
+        // 2029's fifth Thursday is not Thanksgiving; neither is a Thursday outside November.
+        assert!(!on(2029, 11, 29));
+        assert!(!on(2026, 12, 24));
+        assert!(!thanksgiving(StatsClock::default()), "an untrusted clock has no holiday");
+    }
+}
 
 #[cfg(test)]
 mod rtc_session_tests {
