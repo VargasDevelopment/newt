@@ -71,6 +71,7 @@ class BookSpec:
     chapter_paragraphs: int = 0
     chapter_anchors: int = 0
     extra_entries: int = 0
+    extra_entry_name_bytes: int = 6
     extra_manifest_items: int = 0
     toc_kind: str = "nav"
     toc_entries: int | None = None
@@ -303,7 +304,7 @@ def build_epub(spec: BookSpec) -> bytes:
     ]
     extras: list[tuple[str, bytes, bool]] = [
         (f"{prefix}{name}", b"note\n", spec.compress) for name in extra_manifest
-    ] + [(f"e/{i:04d}", b"x", False) for i in range(spec.extra_entries)]
+    ] + [(f"e/{i:04d}".ljust(spec.extra_entry_name_bytes, "x"), b"x", False) for i in range(spec.extra_entries)]
 
     chapter_sizes = [spec.chapter_bytes] * spec.chapters
     if spec.first_chapter_bytes > 0:
@@ -342,8 +343,12 @@ CASES: tuple[Case, ...] = (
          BookSpec(chapters=2, extra_entries=MAX_ENTRIES - 6)),
     Case("zip-entries-over", "zip-entries", "fast", "Unsupported", "Unsupported", "admit", "1,025 ZIP entries: one over admission.rs 1,024-entry cap",
          BookSpec(chapters=2, extra_entries=MAX_ENTRIES - 5)),
-    Case("runtime-parser-oom", "metadata-arena", "fast", "Ok", "OutOfMemory", "runtime-oom", "Runtime parser creation failure stays distinct from fixed metadata capacity",
+    Case("runtime-parser-oom", "metadata-arena", "fast", "Ok", "OutOfMemory", "runtime-oom", "Runtime OPF counter-parser creation failure stays distinct from fixed metadata capacity",
          BookSpec(chapters=2)),
+    Case("runtime-parser-fill-oom", "metadata-arena", "fast", "Ok", "OutOfMemory", "runtime-fill-oom", "Runtime OPF fill-parser creation failure stays distinct from fixed metadata capacity",
+         BookSpec(chapters=2)),
+    Case("catalog-arena-over", "metadata-arena", "fast", "Ok", "MetadataTooLarge", "admit", "200 unused entries with 256-byte paths exhaust fixed catalog metadata without exceeding admission limits",
+         BookSpec(chapters=2, extra_entries=200, extra_entry_name_bytes=256)),
     Case("parse-spine-fit", "metadata-arena", "fast", "Ok", "Ok", "menu", "240 chapters (244 entries): fits both 48 KiB banks with authored TOC",
          BookSpec(chapters=240), expected_menu_valid=True, expected_authored=True, expected_menu_count=240, expected_fallback="None"),
     Case("parse-spine-over", "metadata-arena", "fast", "Ok", "MetadataTooLarge", "admit", "300 chapters (304 entries < 1,024): admission accepts, exceeds the fixed metadata workspace",

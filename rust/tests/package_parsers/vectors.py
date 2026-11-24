@@ -29,7 +29,7 @@ def case(name, kind, xml, rows=(), status='Ok', passes=2, rust_status=None, **kw
 case('container-first-local','C','<c><rootfile media-type="wrong" full-path="bad"/><x:rootfile xmlns:x="u" x:full-path="OPS/a.opf"/><rootfile full-path="later"/></c>', ['C '+h('OPS/a.opf')],passes=1)
 case('container-empty-first','C','<c><rootfile full-path=""/><rootfile full-path="later"/></c>',['C -'],passes=1)
 case('container-missing','C','<c><rootfile media-type="wrong" full-path="bad"/></c>',status='NotEpub',passes=1)
-case('container-oom','C','<rootfile full-path="x"/>',status='NotEpub',passes=1,cap=0)
+case('container-oom','C','<rootfile full-path="x"/>',status='NotEpub',rust_status='MetadataTooLarge',passes=1,cap=0)
 case('malformed','C','<rootfile full-path="x"></bad>',status='ParseError',passes=1)
 case('missing-buffer','C','<rootfile full-path="x"/>',status='OutOfMemory',passes=0,buffer=0)
 case('io-precedence','C','<rootfile full-path="x"/>',status='IoError',passes=1,fail=0)

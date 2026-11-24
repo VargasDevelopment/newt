@@ -98,10 +98,11 @@ pub(crate) fn metadata_capacity_error(status: Status) -> Status {
 struct Container<'a, 'b> {
     arena: &'a mut Arena<'b>,
     path: Option<CStringRef>,
+    error: Status,
 }
 impl Handler for Container<'_, '_> {
     fn start_element(&mut self, name: &[u8], atts: &mut dyn Attributes) {
-        if self.path.is_some() || !local_is(name, b"rootfile") {
+        if self.path.is_some() || self.error != Status::Ok || !local_is(name, b"rootfile") {
             return;
         }
         if atts
@@ -112,6 +113,7 @@ impl Handler for Container<'_, '_> {
         }
         if let Some(path) = atts.local(b"full-path") {
             self.path = self.arena.copy_nul_ref(Some(path));
+            if self.path.is_none() { self.error = Status::MetadataTooLarge; }
         }
     }
 }
@@ -121,11 +123,12 @@ pub fn parse_container<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     arena: &mut Arena<'_>,
     out: &mut Option<CStringRef>,
 ) -> Status {
-    let mut handler = Container { arena, path: None };
+    let mut handler = Container { arena, path: None, error: Status::Ok };
     let status = workflow.pass(entry, &mut handler);
     if status != Status::Ok {
         return status;
     }
+    if handler.error != Status::Ok { return handler.error; }
     if handler.path.is_none() {
         return Status::NotEpub;
     }

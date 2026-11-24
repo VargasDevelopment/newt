@@ -233,3 +233,29 @@ fn typed_admission_boundaries_preserve_publication_and_pass_order() {
         assert_eq!(count, if cap == 0 { 77 } else { 1 });
     }
 }
+
+#[test]
+fn container_capacity_failure_keeps_the_first_rootfile_decision() {
+    let xml = b"<c><rootfile full-path='long'/><rootfile full-path='x'/></c>";
+    for capacity in [2, 5] {
+        let mut source = BorrowedSource(xml);
+        let mut backend = expat::Expat::default();
+        let mut buffer = [0; 2048];
+        let mut memory = [0; 5];
+        let mut arena = Arena::new(&mut memory[..capacity]);
+        let mut path = None;
+        let status = parse_container(&mut Workflow {
+            policy: None, source: &mut source, backend: &mut backend,
+            decoder: None, buffer: Some(&mut buffer), filter: None,
+        }, &Entry::raw(xml.len() as u32), &mut arena, &mut path);
+        if capacity == 2 {
+            assert_eq!(status, Status::MetadataTooLarge);
+            assert_eq!(path, None);
+            assert_eq!(arena.used(), 0, "the shorter later rootfile must not be allocated");
+        } else {
+            assert_eq!(status, Status::Ok);
+            assert!(arena.c_string_eq(path.unwrap(), b"long"));
+            assert_eq!(arena.used(), 5);
+        }
+    }
+}

@@ -36,7 +36,7 @@ def response(text, wire):
             for value in row[1:]: num(value, -1)
     need(len(rows) >= 3 and [r[0] for r in rows[-3:]] == ['S','D','END'], 'terminal order')
     for tag in ('S','D','END'): need(sum(r[0] == tag for r in rows) == 1, 'duplicate terminal')
-    status = num(rows[-3][1], 0, 10)
+    status = num(rows[-3][1], 0, 12)
     d = list(map(int, rows[-2][1:]))
     for i, cap in ((0,int(p[3])),(3,int(p[4]))):
         need(0 <= d[i] <= d[i+1] <= cap and 0 <= d[i+2] <= 2**32-1, 'arena invariants')
@@ -73,7 +73,7 @@ def response(text, wire):
                 need(stack and stack[-1][0] == begin, 'unpaired event')
                 _, fields = stack.pop()
                 need(fields == row[2:6]+row[7:9], 'pair fields')
-                if k in (2,4,10): need(0 <= result <= 10, 'status event')
+                if k in (2,4,10): need(0 <= result <= 12, 'status event')
                 if k == 2: inspected = True
                 if k == 4: catalogued = result == 0
                 if k == 9: need(-1 <= result <= 2048, 'stream count')

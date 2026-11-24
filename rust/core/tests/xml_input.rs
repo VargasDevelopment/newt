@@ -233,6 +233,8 @@ fn intermediate_path_limit_precedes_allocation_even_when_parents_shorten_it() {
     assert!(
         resolve_href(&mut arena, Some(&base), Some(b"abcde/../b#f"), Some(&mut fragment)).is_none()
     );
+    assert_eq!(resolve_href_checked(&mut arena, Some(&base), Some(b"abcde/../b#f"), None), Err(HrefError::TooLong));
+    assert_eq!(resolve_href_checked(&mut arena, Some(&[b'x'; 512]), Some(b"a"), None), Err(HrefError::TooLong));
     assert_eq!(arena.used(), 0);
     assert_eq!(arena.high_water(), 0);
     assert_eq!(arena.failed_alloc_size(), 0);

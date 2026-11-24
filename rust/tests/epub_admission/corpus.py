@@ -1,6 +1,6 @@
 """Independent byte cases extending the sealed candidate vectors."""
 import struct
-STATUS = dict(zip(('Ok','IoError','NotZip','NotEpub','Encrypted','Truncated','Unsupported','OutOfMemory','ParseError','NotFound','Stale'), range(11)))
+STATUS = dict(zip(('Ok','IoError','NotZip','NotEpub','Encrypted','Truncated','Unsupported','OutOfMemory','ParseError','NotFound','Stale','MetadataTooLarge','PathTooLong'), range(13)))
 
 def cases(v):
     result = []
@@ -24,13 +24,13 @@ def cases(v):
     add('local_mismatch_precedes_encryption',bytes(data),6)
     data = bytearray(base); data[30] = ord('X')
     add('every_member_name_must_match',bytes(data),6)
-    add('catalog-name-oom',base,7,cat_bytes=0,domain='typed names versus C++ catalog struct allocation; distinct phase diagnostics')
+    add('catalog-name-oom',base,11,cat_bytes=0,domain='typed names versus C++ catalog struct allocation; distinct phase diagnostics')
     for n in (1,64,2047):
         add('low-parse-'+str(n),base,0,parse_bytes=n,domain='Rust caller typed XML/decoder buffers; C++ byte XML scratch OOM, expect C++ OutOfMemory')
     for typed in ('no-entries','no-manifest','no-spine','no-chunk','no-xml','no-filter','fail-backend','no-decoder'):
         data = base
         if typed=='no-decoder': data=v.archive([('META-INF/container.xml',b'\x03\x00',8,1,0)]+v.BASE[1:])
-        add('typed-'+typed,data,0 if typed=='no-filter' else 7,typed=typed,domain='Independent typed Rust resource case, no C++ equivalence',member_begins=[] if typed=='no-entries' else [0,1] if typed in ('no-manifest','no-spine') else [0,1,3] if typed=='no-filter' else [0])
+        add('typed-'+typed,data,0 if typed=='no-filter' else 11 if typed in ('no-entries','no-manifest','no-spine') else 7,typed=typed,domain='Independent typed Rust resource case, no C++ equivalence',member_begins=[] if typed=='no-entries' else [0,1] if typed in ('no-manifest','no-spine') else [0,1,3] if typed=='no-filter' else [0])
     return result
 
 def wire(case):
@@ -39,7 +39,7 @@ def wire(case):
 def check(case, rows, cpp=False):
     def need(ok, why):
         if not ok: raise RuntimeError(case['id']+': '+why)
-    expected = case['status']
+    expected = 7 if cpp and case['id']=='catalog-name-oom' else case['status']
     if cpp and case['id'].startswith(('low-parse-','no-byte-scratch')): expected=7
     need(int(rows[-3][1]) == expected,'independent status '+str(expected))
     if case.get('op','A')=='A': need(rows[-2][1] == rows[-2][4] == '0','unconditional arena reset')
