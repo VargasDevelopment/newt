@@ -2,7 +2,7 @@
 #![no_std]
 #![forbid(unsafe_code)]
 use core::fmt::{self, Write};
-pub use newt_core::{app::Action, frame::Frame};
+pub use newt_core::{app::Action, cover::NoCoverReason, frame::Frame};
 pub use newt_library_current::{Catalog, LibraryStatus};
 use newt_library_current::{library_base_name, library_name::FILENAME_BYTES, list::Files};
 pub use newt_system_ui::SystemBar;
@@ -14,6 +14,25 @@ pub const SHELF_BOOKS: usize = 4;
 pub const COVER_WIDTH: i32 = 144;
 pub const COVER_HEIGHT: i32 = 188;
 pub const COVER_ROW_BYTES: usize = 18;
+/// What a cover slot without ready artwork shows on Books.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum CoverSlotStatus {
+    #[default]
+    NoCover,
+    Making,
+    Reason(NoCoverReason),
+    Deferred,
+}
+impl CoverSlotStatus {
+    pub const fn note(self) -> Option<&'static [u8]> {
+        match self {
+            Self::Reason(reason) => Some(reason.note()),
+            Self::Deferred => Some(b"Cover will be made later"),
+            Self::NoCover | Self::Making => None,
+        }
+    }
+}
 /// A scanline and file view are borrowed only for one synchronous call.
 /// Sources retain handles, never Files/frame/scratch loans. No callback may
 /// reenter this UI. End runs even when begin fails (including a null name).
@@ -21,6 +40,13 @@ pub trait LibraryCoverSource {
     fn begin(&mut self, files: &mut dyn Files, filename: Option<&[u8]>) -> bool;
     fn read_row(&mut self, files: &mut dyn Files, row: &mut [u8; COVER_ROW_BYTES]) -> bool;
     fn end(&mut self, files: &mut dyn Files);
+    fn slot_status(&self, _slot: usize) -> CoverSlotStatus {
+        CoverSlotStatus::NoCover
+    }
+    fn inspect(&mut self, _files: &mut dyn Files, _filename: Option<&[u8]>, _slot: usize) -> CoverSlotStatus {
+        CoverSlotStatus::NoCover
+    }
+    fn shelf_painted(&mut self, _any_making: bool) {}
 }
 #[derive(Default, Debug, PartialEq, Eq)]
 pub struct LibraryUiState<'a> {
@@ -170,17 +196,37 @@ fn cover_slot(
     title: &[u8],
     slot: usize,
     focused: bool,
-    source: Option<&mut dyn LibraryCoverSource>,
-) {
+    mut source: Option<&mut dyn LibraryCoverSource>,
+) -> CoverSlotStatus {
     let (x, y) = origin(slot);
-    let complete = draw_cover(frame, files, x, y, filename, source);
+    let complete = draw_cover(
+        frame,
+        files,
+        x,
+        y,
+        filename,
+        match source {
+            Some(ref mut s) => Some(&mut **s as &mut dyn LibraryCoverSource),
+            None => None,
+        },
+    );
+    let status = if complete {
+        CoverSlotStatus::NoCover
+    } else {
+        source.map_or(CoverSlotStatus::NoCover, |s| s.slot_status(slot))
+    };
     let c = &mut shelf_canvas(frame);
     if !complete {
         c.panel(x, y, COVER_WIDTH, COVER_HEIGHT);
         c.text(x + 16, y + 32, Some(title), 21, false, 112, true);
-        c.text(x + 16, y + 139, Some(b"No cover"), 21, false, 112, true);
+        if status == CoverSlotStatus::Making {
+            c.text(x + 12, y + 139, Some(b"Making cover"), 18, false, 120, true);
+        } else {
+            c.text(x + 16, y + 139, Some(b"No cover"), 21, false, 112, true);
+        }
     }
     cover_focus(c, title, slot, focused);
+    status
 }
 struct Counter {
     bytes: [u8; 48],
@@ -279,6 +325,8 @@ pub fn render(
     // Release the page's canvas before the first filesystem or cover callback.
     drop(SystemPage::new(Some(frame), bar, buttons(catalog.as_deref(), state), Some(b"Books")));
     let count = catalog.as_deref().map_or(0, Catalog::size);
+    let mut selected_cover_note = None;
+    let mut any_making = false;
     if let Some(catalog) = catalog.as_deref_mut() {
         let selected = state.selected.min(count - 1);
         shelf_counter(&mut shelf_canvas(frame), selected, count);
@@ -291,14 +339,24 @@ pub fn render(
                 Some(ref mut source) => Some(&mut **source as &mut dyn LibraryCoverSource),
                 None => None,
             };
-            cover_slot(frame, files, filename, &title, slot, first + slot == selected, source);
+            let status = cover_slot(frame, files, filename, &title, slot, first + slot == selected, source);
+            if status == CoverSlotStatus::Making {
+                any_making = true;
+            }
+            if first + slot == selected {
+                selected_cover_note = status.note();
+            }
+        }
+        if let Some(ref mut source) = covers {
+            source.shelf_painted(any_making);
         }
         shelf_canvas(frame).rect(50, 604, 428, 1, true);
-        let bottom = if note(Some(catalog), state).is_some() { 673 } else { 704 };
+        let line = note(Some(catalog), state).or(selected_cover_note);
+        let bottom = if line.is_some() { 673 } else { 704 };
         let filename = catalog.filename(files, selected);
         selected_title(&mut shelf_canvas(frame), filename, bottom);
     }
-    if let Some(note) = note(catalog.as_deref(), state) {
+    if let Some(note) = note(catalog.as_deref(), state).or(selected_cover_note) {
         shelf_canvas(frame).text(50, 679, Some(note), 18, false, 428, true);
     }
 }
@@ -319,6 +377,7 @@ fn paint_focus(
     state: &LibraryUiState<'_>,
     frame: &mut Frame,
     bar: &SystemBar,
+    covers: Option<&mut dyn LibraryCoverSource>,
 ) {
     draw_frosted_system_header(bar, HomePlane::Monochrome, Some(frame));
     let slot = state.selected % SHELF_BOOKS;
@@ -330,10 +389,12 @@ fn paint_focus(
     }
     shelf_counter(&mut UiCanvas::portrait(Some(frame)), state.selected, catalog.size());
     UiCanvas::portrait(Some(frame)).rect(50, 616, 428, 89, false);
-    let note = note(Some(catalog), state);
+    let system_note = note(Some(catalog), state);
     let filename = catalog.filename(files, state.selected);
-    selected_title(&mut UiCanvas::portrait(Some(frame)), filename, if note.is_some() {673} else {704});
-    if let Some(note) = note {
+    let line = system_note
+        .or_else(|| covers.and_then(|c| c.inspect(files, filename, slot).note()));
+    selected_title(&mut UiCanvas::portrait(Some(frame)), filename, if line.is_some() {673} else {704});
+    if let Some(note) = line {
         UiCanvas::portrait(Some(frame)).text(50, 679, Some(note), 18, false, 428, true);
     }
     draw_system_footer(Some(frame), buttons(Some(catalog), state), HomePlane::Monochrome);
@@ -362,7 +423,7 @@ pub fn paint(
         && state.painted_focus <= SHELF_BOOKS as u8;
     if focus {
         if let Some(catalog) = catalog.as_deref_mut() {
-            paint_focus(catalog, files, state, frame, bar);
+            paint_focus(catalog, files, state, frame, bar, covers);
         }
     } else {
         render(catalog, files, state, Some(frame), bar, covers);

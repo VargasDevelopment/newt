@@ -1,7 +1,7 @@
 //! #316: the cover decoder accepts what the frozen C++ (TJpgDec) drew, and old
 //! Rust no-art records are read once more. Payload CRCs below are the frozen
 //! C++ cover session's rasters for these exact bytes (stored in an EPUB).
-use newt_core::cover::{self, Record, png, jpeg::{Layout, Status, validate, dither_row, placement}};
+use newt_core::cover::{self, BareRecord, NoCoverReason, Record, png, jpeg::{Layout, Status, validate, dither_row, placement}};
 use newt_core::jpeg::{Error, Input, Workspace, progressive, renderer::{RenderError, Rows, render}};
 use newt_core::page_renderer::BookStatus;
 use newt_core::page_renderer::{ImageRows, SafetyError};
@@ -413,22 +413,38 @@ fn y_sampling_12_and_41_draw_the_grey_frame() {
 
 #[test]
 fn old_no_art_records_retry_once() {
-    // Older decoders wrote CJB3, CJB4 (before #316), CJB5 (before #46) and
-    // CJB6 (before #50): generate once more, show no cover meanwhile.
-    for route in [*b"CJB3", *b"CJB4", *b"CJB5", *b"CJB6"].map(u32::from_le_bytes) {
+    // Legacy unreasoned negatives (CJB3..=CJB7) retry once so Books learns a reason.
+    for route in [*b"CJB3", *b"CJB4", *b"CJB5", *b"CJB6", *b"CJB7"].map(u32::from_le_bytes) {
         assert_eq!(cover::record(None, route), Record::Generate);
-        assert!(cover::no_art(route));
+        assert_eq!(cover::bare_record(route), BareRecord::Retry);
     }
-    assert_eq!(cover::NO_ART, u32::from_le_bytes(*b"CJB7"));
-    // The record a new attempt writes settles: no repeat.
-    let header = cover::header(1234, 5678, cover::NO_ART);
-    let written = u32::from_le_bytes(header[24..].try_into().unwrap());
-    assert_eq!(cover::record(None, written), Record::Current);
-    assert!(cover::no_art(written));
-    // A route value is never a picture, and art stays valid across routes.
-    assert_eq!(cover::record(Some(BASE), cover::NO_ART), Record::Generate);
+    // Current versioned routes (`CJ` + version + reason) settle with their exact copy.
+    let cases = [
+        (NoCoverReason::Missing, *b"CJCM", b"No cover in this book".as_slice()),
+        (NoCoverReason::Unsupported, *b"CJCU", b"Cover format not supported".as_slice()),
+        (NoCoverReason::Incomplete, *b"CJCI", b"Cover file is incomplete".as_slice()),
+        (NoCoverReason::Invalid, *b"CJCX", b"Cover file is damaged".as_slice()),
+    ];
+    for (reason, tag, note) in cases {
+        let route = cover::no_art_route(reason);
+        assert_eq!(route, u32::from_le_bytes(tag));
+        assert_eq!(reason.note(), note);
+        let header = cover::header(1234, 5678, route);
+        let written = u32::from_le_bytes(header[24..].try_into().unwrap());
+        assert_eq!(cover::record(None, written), Record::Current);
+        assert_eq!(cover::bare_record(written), BareRecord::Current(reason));
+        // Bumping the version byte retries every prior reasoned record without a static list.
+        assert_eq!(cover::bare_record_at(written, cover::NO_ART_VERSION + 1), BareRecord::Retry);
+        // A route value is never a picture, and art whose CRC equals a route word stays valid.
+        assert_eq!(cover::record(Some(BASE), route), Record::Generate);
+        assert_eq!(cover::record(Some(route), route), Record::Current);
+    }
+    // Unknown reason bytes, future versions, and non-CJ words are rejected as Other.
+    for bad in [*b"CJCZ", *b"CJDM", *b"CJB8", *b"XXXX"].map(u32::from_le_bytes) {
+        assert_eq!(cover::bare_record(bad), BareRecord::Other);
+        assert_eq!(cover::record(None, bad), Record::Generate);
+    }
     assert_eq!(cover::record(Some(BASE), BASE), Record::Current);
-    // Art whose CRC happens to equal a route word is still current art.
     for route in [*b"CJB3", *b"CJB4", *b"CJB5", *b"CJB6", *b"CJB7"].map(u32::from_le_bytes) {
         assert_eq!(cover::record(Some(route), route), Record::Current);
     }

@@ -61,26 +61,90 @@ pub fn version_key(name: &[u8], size: u64, mtime: u64) -> u32 {
 }
 pub const SIGNATURE: [u8; 8] = *b"NLC2\x90\0\xbc\0";
 pub const PIXELS: usize = 3384;
-/// A bare record's route ("CJB7"). Change it whenever a verdict can change, so
-/// every older negative is read once more. #50 added Adobe RGB JPEG support.
-pub const NO_ART: u32 = 0x3742_4a43;
-/// Negatives from older decoders: "CJB3", "CJB4" (before #316), "CJB5"
-/// (before #46) and "CJB6" (before #50). Each is generated once more; Home
-/// shows no cover until then.
-pub const RETRIED_NO_ART: [u32; 4] = [0x3342_4a43, 0x3442_4a43, 0x3542_4a43, 0x3642_4a43];
+/// Why a book settled with no cover art, stored in the 4th byte of a bare NLC2 route.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum NoCoverReason {
+    Missing = 1,
+    Unsupported = 2,
+    Incomplete = 3,
+    Invalid = 4,
+}
+impl NoCoverReason {
+    pub const fn byte(self) -> u8 {
+        match self {
+            Self::Missing => b'M',
+            Self::Unsupported => b'U',
+            Self::Incomplete => b'I',
+            Self::Invalid => b'X',
+        }
+    }
+    pub const fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            b'M' => Some(Self::Missing),
+            b'U' => Some(Self::Unsupported),
+            b'I' => Some(Self::Incomplete),
+            b'X' => Some(Self::Invalid),
+            _ => None,
+        }
+    }
+    pub const fn note(self) -> &'static [u8] {
+        match self {
+            Self::Missing => b"No cover in this book",
+            Self::Unsupported => b"Cover format not supported",
+            Self::Incomplete => b"Cover file is incomplete",
+            Self::Invalid => b"Cover file is damaged",
+        }
+    }
+}
+/// Bare record version byte: `CJ` + version + reason (`CJCM`, `CJCU`, `CJCI`, `CJCX`).
+/// Bump this byte when a decoder change can turn an older negative into art;
+/// every older version retries once without a growing legacy list.
+pub const NO_ART_VERSION: u8 = b'C';
+pub const fn no_art_route(reason: NoCoverReason) -> u32 {
+    u32::from_le_bytes([b'C', b'J', NO_ART_VERSION, reason.byte()])
+}
+/// What a 28-byte bare NLC2 route word means for cover display and generation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BareRecord {
+    Current(NoCoverReason),
+    Retry,
+    Other,
+}
+/// Classify a bare route word against `version` (`NO_ART_VERSION` in production).
+pub const fn bare_record_at(recorded: u32, version: u8) -> BareRecord {
+    let bytes = recorded.to_le_bytes();
+    if bytes[0] != b'C' || bytes[1] != b'J' {
+        return BareRecord::Other;
+    }
+    if bytes[2] == version {
+        return match NoCoverReason::from_byte(bytes[3]) {
+            Some(reason) => BareRecord::Current(reason),
+            None => BareRecord::Other,
+        };
+    }
+    // Legacy unreasoned negatives (CJB3..=CJB7) and earlier versioned negatives retry once.
+    if (bytes[2] == b'B' && matches!(bytes[3], b'3'..=b'7'))
+        || (bytes[2] >= b'C' && bytes[2] < version && NoCoverReason::from_byte(bytes[3]).is_some())
+    {
+        return BareRecord::Retry;
+    }
+    BareRecord::Other
+}
+pub const fn bare_record(recorded: u32) -> BareRecord {
+    bare_record_at(recorded, NO_ART_VERSION)
+}
 /// What a cover record bound to its book's size and mtime means.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Record { Current, Generate }
-/// `pixels` is the payload CRC, or None for a bare record. Art stays valid across routes.
+/// `pixels` is the payload CRC, or None for a bare record. Art stays valid across versions.
 pub fn record(pixels: Option<u32>, recorded: u32) -> Record {
     match pixels {
-        None if recorded == NO_ART => Record::Current,
+        None if matches!(bare_record(recorded), BareRecord::Current(_)) => Record::Current,
         Some(crc) if crc == recorded => Record::Current,
         _ => Record::Generate,
     }
 }
-/// A bare record Home shows as "no cover", including routes awaiting their retry.
-pub fn no_art(recorded: u32) -> bool { recorded == NO_ART || RETRIED_NO_ART.contains(&recorded) }
 pub fn header(size: u64, mtime: u64, check: u32) -> [u8; 28] {
     let mut out = [0; 28];
     out[..8].copy_from_slice(&SIGNATURE);

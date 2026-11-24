@@ -260,7 +260,19 @@ pub fn paint(home: &mut Home<'_>, ui: &mut Application<'_>, reader: &mut impl Re
             reader.visit_home(&mut |view| result = ui.paint_home(home, view, logical, force, status_only, events.action));
             result
         }
-        Screen::Library => ui.paint_library(home, logical, force, super::display::Composition::new(events.action)),
+        Screen::Library => {
+            let shelf_state = reader.library_cover_state();
+            if let Some(painted) = ui.paint_library(home, logical, force, super::display::Composition::new(events.action), shelf_state)? {
+                if painted.includes_cover {
+                    reader.note_library_paint(painted.view, painted.any_making, home.bus.board.millis());
+                } else {
+                    reader.note_paint(ui.app.screen, ui.displayed.generation, false, home.bus.board.millis());
+                }
+                #[cfg(feature = "dev-usb")]
+                reader.completed_paint(ui.app.screen, ui.displayed.generation);
+            }
+            return Ok(());
+        }
         Screen::Reading => ui.paint_sample(home, logical, force, events.action).map(|painted| painted.then_some(true)),
         Screen::EpubReading | Screen::Sleeping => reader.paint(home, ui, logical, events, force)
             .map(|painted| painted.then_some(true)),

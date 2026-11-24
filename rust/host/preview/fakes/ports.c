@@ -336,7 +336,13 @@ void nb_delay_ms(uint32_t ms) {
     if (script_next < script_count) {
         step_at = nb_millis();
         /* The reader keeps reading time across an idle minute, as on a device. */
-        if (script[script_next] == WAIT_MINUTE) { ++script_next; preview_advance(60000); step_at = nb_millis(); return; }
+        if (script[script_next] == WAIT_MINUTE) {
+            ++script_next;
+            preview_advance(60000);
+            step_at = nb_millis();
+            if (script_next == script_count || script[script_next] != WAIT_MINUTE) settled = 0;
+            return;
+        }
         if (!task_started || task_suspended) { fputs("no input task for a scripted press\n", stderr); preview_finish(72, "no-input"); }
         settled = 0;
         press(script[script_next++]);
@@ -670,6 +676,7 @@ _Bool newt_cover_heap_supported(void) { return 1; }
 /* "cover.heap.free=BYTES": the free heap cover work sees, so a test can make
  * Memory's live check refuse a large block. */
 size_t newt_cover_heap_free_bytes(void) {
+    preview_freeze_at("cover.work");
     /* A card open consumes heap after commit has begun, above the guard floor
      * but with too little spare room to admit another CRC block. */
     if (cover_heap_dropped) return 68 * 1024;

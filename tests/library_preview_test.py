@@ -99,8 +99,10 @@ def main():
         rejected = subprocess.run([str(binary), *arguments], capture_output=True)
         assert rejected.returncode == 2 and not rejected.stdout
     four, fields = preview(fixture="four")
-    assert fields["library_count"] == "4" and four != preview(fixture="no-covers")[0]
-    assert preview(fixture="cover-fault")[0] == preview(fixture="no-covers")[0]
+    no_covers = preview(fixture="no-covers")[0]
+    cover_fault = preview(fixture="cover-fault")[0]
+    assert fields["library_count"] == "4" and four != no_covers and four != cover_fault
+    assert cover_fault != no_covers
     for fixture, count in (("four", 4), ("sparse", 5)):
         focused, fields = preview(fixture=fixture, actions=",".join(["next"] * (count + 3)))
         assert int(fields["library_selected"]) == count - 1
