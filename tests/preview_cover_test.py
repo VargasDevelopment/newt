@@ -774,7 +774,8 @@ def main():
             return
         for case, controls in CASES:
             for edits in controls:
-                control = rust_preview.build(edits=edits)
+                # Fake clocks make these assertions independent of CPU speed.
+                control = rust_preview.control(edits, optimize=False)
                 assert case(control) is not None, f'{case.__name__}: passes with {edits!r}'
         print(f'PASS: {len(CASES)} cover flows run the firmware; each control fails')
     finally:

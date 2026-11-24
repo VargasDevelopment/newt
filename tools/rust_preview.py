@@ -121,12 +121,19 @@ def cli(firmware: Path, path: Path | None = None) -> Path:
     return path
 
 
-def control(edits) -> Path:
+def control(edits, *, optimize: bool = True) -> Path:
     """Relink the last build over a private copy of its generated sources, so
-    parallel controls never see each other's edits."""
+    parallel controls never see each other's edits. Timing-independent suites
+    may skip root optimization; the positive preview stays optimized."""
     link = json.loads(LINK.read_text())
+    command = link['command']
+    if not optimize:
+        assert command.count('-Copt-level=1') == 1
+        command = ['-Copt-level=0' if arg == '-Copt-level=1' else arg for arg in command]
+        # Match the optimized root's policies; only optimization changes.
+        command += ['-Cdebug-assertions=no', '-Coverflow-checks=no']
     source = WORK / 'source'
-    key = '%08x' % zlib.crc32(json.dumps(edits).encode())
+    key = '%08x' % zlib.crc32(json.dumps((edits, optimize)).encode())
     out = WORK / 'controls' / key
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
@@ -154,7 +161,7 @@ def control(edits) -> Path:
     host.write_text(rewire((WORK / 'host.rs').read_text()))
     env = {**os.environ, **link['environment']}
     program = out / 'firmware'
-    subprocess.run([*link['command'], host, '-o', program], cwd=ROOT, env=env, check=True,
+    subprocess.run([*command, host, '-o', program], cwd=ROOT, env=env, check=True,
                    capture_output=True, text=True, timeout=900)
     return program
 
