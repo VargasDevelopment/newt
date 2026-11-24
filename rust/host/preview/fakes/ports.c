@@ -21,6 +21,7 @@
 #include <dirent.h>
 #include <malloc.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -417,10 +418,31 @@ static void change_file(const char *path) {
     }
     fclose(file);
 }
+/* "card.edit=PATH" with "card.edit.on=TEXT": the first open of a card path
+ * holding TEXT flips the middle byte of PATH and keeps its size and times, as
+ * a same-size copy within one FAT time step would. */
+static int edit_used;
+static void edit_file(const char *path) {
+    const char *target = preview_conf("card.edit"), *on = preview_conf("card.edit.on");
+    if (edit_used || !target || !*target || !on || !*on || !strstr(path, on)) return;
+    edit_used = 1;
+    const char *host = fixture_path(target);
+    struct stat before;
+    FILE *file = stat(host, &before) == 0 ? fopen(host, "r+b") : NULL;
+    if (!file) return;
+    if (fseek(file, before.st_size / 2, SEEK_SET) == 0) {
+        int middle = fgetc(file);
+        fseek(file, before.st_size / 2, SEEK_SET);
+        fputc(middle ^ 1, file);
+    }
+    fclose(file);
+    utimensat(AT_FDCWD, host, (struct timespec[2]){before.st_atim, before.st_mtim}, 0);
+}
 void preview_io_open(int32_t fd, const char *path) {
     if (fd >= 0 && fd < 256) snprintf(descriptors[fd], sizeof descriptors[fd], "%s", path);
     trace_card("open", path);
     change_file(path);
+    edit_file(path);
 }
 /* "open.back=TEXT", "open.eio=TEXT" or "open.slow=TEXT": once a wake has
  * refreshed the panel (its picture or working page), the first card read of a

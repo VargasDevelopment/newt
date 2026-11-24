@@ -36,7 +36,7 @@ impl Drop for SessionDrop<'_>{fn drop(&mut self){
     unsafe{ptr::drop_in_place(self.0);}
 }}
 pub const fn reservation()->usize{size_of::<Job<'_>>()+size_of::<CoverResume>()+2*ALLOWANCE}
-pub fn planned_peak()->usize{reservation()+Memory::charge(session::bytes())+Memory::charge(super::member::INFLATE_BYTES)}
+pub fn planned_peak()->usize{reservation()+Memory::charge(session::bytes())+Memory::charge(super::member::STAGE_BYTES)}
 impl Job<'_>{
     pub fn service(&mut self,targets:&Targets<'_>,settled:u8)->Outcome{
         let mut out=Outcome::default();

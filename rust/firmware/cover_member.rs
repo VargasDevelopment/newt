@@ -5,15 +5,20 @@ use core::{ffi::CStr,mem::{size_of,align_of}};
 use newt_core::{cover::{Member,crc},inflate::{State,BitBuffer},
     zip_container::{Reader,InflateScratch,Status},zip_window::source::BookSource};
 pub const INFLATE_BYTES: usize = 44*1024;
+/// A deflated member's staging block: the inflater, then one write of output.
+pub const STAGE_BYTES: usize = INFLATE_BYTES+io::WRITE_BYTES;
 pub fn stage(source:&mut Source<'_>,member:&Member,destination:&CStr,
     files:&Files<'_>,control:&dyn Control,memory:&Memory<'_>)->R {
-    let Some(mut block)=memory.block(if member.entry.method==8 {INFLATE_BYTES}else{1}) else { return R::Declined; };
-    let scratch=if member.entry.method==8 {
+    let inflating=member.entry.method==8;
+    let Some(mut block)=memory.block(if inflating {STAGE_BYTES}else{io::WRITE_BYTES}) else { return R::Declined; };
+    let (inflater,chunk)=block.as_mut().split_at_mut(if inflating {INFLATE_BYTES}else{0});
+    let scratch=if inflating {
         if size_of::<State>()+32768+2048>INFLATE_BYTES || align_of::<State>()>16 { return R::Declined; }
-        let pointer=block.pointer();
-        // SAFETY: exact max-aligned transient inflater block. State is initialized
-        // in its own prefix; dictionary/input are initialized disjoint byte tails.
-        // Reader and all scratch loans die before this single block is released.
+        let pointer=inflater.as_mut_ptr();
+        // SAFETY: the block's max-aligned INFLATE_BYTES prefix, exclusively
+        // borrowed. State is initialized in its own prefix; dictionary/input
+        // are initialized disjoint byte tails. Reader and all scratch loans die
+        // before this block is released.
         unsafe {
             let state=pointer.cast::<State>();
             let bytes=core::slice::from_raw_parts_mut(pointer,size_of::<State>());
@@ -32,10 +37,10 @@ pub fn stage(source:&mut Source<'_>,member:&Member,destination:&CStr,
     let fd=match files.open(destination,true) {
         Ok(fd)=>fd,Err(_)=>{io::remove_temporary(files,destination,None);return R::IoError;}
     };
-    let mut chunk=[0;1024]; let(mut total,mut check,mut result)=(0u64,u32::MAX,R::Ready);
+    let(mut total,mut check,mut result)=(0u64,u32::MAX,R::Ready);
     loop {
         if !control.poll() {result=R::Cancelled;break;}
-        let got=reader.read(&mut chunk);
+        let got=reader.read(chunk);
         if got<0 {result=R::Invalid;break;} if got==0 {break;}
         if got as usize>chunk.len() || total+got as u64>u64::from(member.entry.uncompressed_size) {result=R::Invalid;break;}
         check=crc(check,&chunk[..got as usize]);total+=got as u64;

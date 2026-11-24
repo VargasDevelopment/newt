@@ -82,8 +82,9 @@ impl<'a> Session<'a>{
             if rejected&&result==R::Unsupported{self.temporaries|=EARLY;return result;}
         }
         if self.resume.step==Step::Empty{
-            if !io::source_crc(&mut self.source,&mut self.source_crc){return self.cancelled(R::IoError);}
-            self.resume.source_crc=self.source_crc;self.resume.step=Step::Read;
+            let Some(mut block)=self.memory.block(io::CRC_BYTES)else{return R::Declined;};
+            let Some(crc)=self.source.crc(block.as_mut())else{return self.cancelled(R::IoError);};
+            self.resume.source_crc=crc;self.resume.step=Step::Read;
         }
         self.source_crc=self.resume.source_crc;
         if self.resume.step==Step::Decided{return self.resume.verdict;}
@@ -193,20 +194,20 @@ impl<'a> Session<'a>{
             &&(payload.is_empty()||io::write(self.files,self.control,fd,payload))&&self.control.poll()&&self.files.sync(fd);
         if !self.files.close(fd){valid=false;}
         if !valid||!self.verify_pending(header,payload)||!self.source.still_bound(path!(&self.book,R::IoError))||!self.control.poll(){return self.cancelled(R::IoError);}
-        let mut after=0;
-        if !io::source_crc(&mut self.source,&mut after)||after!=self.source_crc||!self.source.still_bound(path!(&self.book,R::IoError)){return self.cancelled(R::Invalid);}
-        if !self.current_path_matches(){return self.cancelled(R::Invalid);}
+        let Some(mut block)=self.memory.block(io::CRC_BYTES)else{return R::Declined;};
+        if self.source.crc(block.as_mut())!=Some(self.source_crc)||!self.source.still_bound(path!(&self.book,R::IoError)){return self.cancelled(R::Invalid);}
+        if !self.current_path_matches(block.as_mut()){return self.cancelled(R::Invalid);}
         if !self.prepare_final(){return self.cancelled(R::IoError);}
         if !self.source.still_bound(path!(&self.book,R::IoError)){return self.cancelled(R::Invalid);}
         if !self.control.poll(){return R::Cancelled;}
         if !self.files.rename(path!(&self.pending,R::IoError),path!(&self.final_path,R::IoError)){return R::IoError;}
         self.temporaries&=!PENDING;R::Produced
     }
-    fn current_path_matches(&self)->bool{
+    fn current_path_matches(&self,block:&mut[u8])->bool{
         if self.files.complete_handle_metadata(){return true;}
-        let mut current=Source::new(self.files,self.control);let mut crc=0;
+        let mut current=Source::new(self.files,self.control);
         let matches=current.open(path!(&self.book,false),64*1024*1024)&&self.source.binding().same(current.binding())
-            &&io::source_crc(&mut current,&mut crc)&&crc==self.source_crc&&current.still_bound(path!(&self.book,false));
+            &&current.crc(block)==Some(self.source_crc)&&current.still_bound(path!(&self.book,false));
         current.close()&&matches
     }
     fn prepare_final(&self)->bool{
@@ -248,3 +249,5 @@ impl Drop for Session<'_>{
     }
 }
 pub const fn bytes()->usize{size_of::<Session<'_>>()}
+// The commit's CRC block, beside the raster, stays below the staging block.
+const _:()=assert!(Memory::charge(cover::PIXELS)+Memory::charge(io::CRC_BYTES)<=Memory::charge(member::STAGE_BYTES));
