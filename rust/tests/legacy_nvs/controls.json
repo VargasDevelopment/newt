@@ -48,6 +48,14 @@
     "witness": "durable clockwise choice must survive a cold reset"
   },
   {
+    "name": "startup-resume-target-settings-win",
+    "file": "firmware/home_startup/boot_resume.rs",
+    "old": "        self.anchor = intent.settings & 8 != 0 || saved_under != self.settings;",
+    "new": "        self.anchor = intent.settings & 8 != 0;\n        self.settings = saved_under;",
+    "kind": "startup",
+    "witness": "durable preferences must win over a stale resume target"
+  },
+  {
     "name": "start-failure-returns",
     "file": "firmware/app_startup.rs",
     "old": "Err(_) => stop(&mut log, Some((&mut board, logical)), \"storage unavailable\"),",

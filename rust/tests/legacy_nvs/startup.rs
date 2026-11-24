@@ -14,7 +14,8 @@ use home_startup::HomeRuntime;
 use newt_c3_board::Board;
 use newt_core::{preferences::{Orientation, Preferences, ViewSettings}, wire::{crc32, put32},
     progress::{Progress, Locator}, external_progress_store::ExternalProgressStore,
-    durable::{Backend, Load, StorageOpen}};
+    durable::{Backend, Commit, Load, StorageOpen}, save_notice::ReadingSaveNotice,
+    sleep_intent::{SleepResumeIntent, SleepResumeStore, progress_checkpoint}};
 use std::collections::BTreeMap;
 use transport::Card;
 
@@ -82,8 +83,82 @@ fn clockwise(tokens: &mut [u8; 2]) {
         }
     }
 }
+/// #107: the durable preferences win over a resume target saved under other
+/// settings (a save with no page turn after it), which then reopens at its
+/// anchor. Each row cold-boots from durable bytes alone.
+fn resume_target(tokens: &mut [u8; 2]) {
+    let landscape = ViewSettings::default();
+    let portrait = ViewSettings { orientation: Orientation::Portrait, ..landscape };
+    let clockwise = ViewSettings { orientation: Orientation::LandscapeCw, ..landscape };
+    let digest = [17; 32];
+    for case in ["same", "stale", "explicit-fallback", "failed-commit", "prefs-missing",
+        "prefs-corrupt", "target-missing", "target-corrupt"] {
+        // The page was saved under `under`, then `chosen` was saved with no page turn.
+        let (under, chosen) = match case {
+            "stale" | "failed-commit" => (landscape, portrait),
+            "explicit-fallback" => (portrait, clockwise),
+            _ => (portrait, portrait),
+        };
+        let mut home = start(tokens, Flash { free_entries: 32, ..Flash::default() }, Card::new(), true);
+        assert!(home.preferences.save(&mut home.nvs, under));
+        let mut saved = Progress { book: u64::from_le_bytes(digest[..8].try_into().unwrap()),
+            locator: Locator { spine: 2, character: 21 }, ..Progress::default() };
+        home.with_state_store(|_, store| {
+            assert_eq!(ExternalProgressStore::new(store, Some(&digest)).save(&mut saved, None, None, false, None), Commit::Saved);
+            if case != "target-missing" {
+                let intent = SleepResumeIntent { book: saved.book, checkpoint: progress_checkpoint(&saved),
+                    settings: under.packed() | 4 };
+                assert_eq!(SleepResumeStore::new(store).save(intent), Commit::Saved);
+            }
+        });
+        home.nvs.fail_commit = case == "failed-commit";
+        if chosen != under { assert_eq!(home.preferences.save(&mut home.nvs, chosen), case != "failed-commit"); }
+        let mut flash = core::mem::take(&mut home.nvs);
+        flash.fail_commit = false;
+        let card = home.card.clone();
+        match case {
+            "prefs-missing" => { flash.spaces.remove("newt_prefs"); }
+            "prefs-corrupt" => for bytes in flash.spaces.get_mut("newt_prefs").expect("NVS preferences").values_mut() {
+                bytes[8] ^= 1;
+            },
+            // The resume target routes to SD.
+            "target-corrupt" => {
+                let mut model = card.0.borrow_mut();
+                let mut records = model.files.iter_mut().filter(|(path, _)| path.ends_with("/newt-resume.nrs")).peekable();
+                assert!(records.peek().is_some(), "SD resume target");
+                for (_, file) in records { file.durable[8] ^= 1; }
+            }
+            _ => {}
+        }
+        drop(home);
+        card.0.borrow_mut().power();
+        let mut home = start(tokens, flash, card, true);
+        let durable = home.preferences.settings();
+        let mut target = home.load_boot_resume(true, &mut ReadingSaveNotice::default());
+        let reopened = home.with_state_store(|_, store| {
+            let mut progress = Progress::default();
+            let ready = ExternalProgressStore::new(store, Some(&digest)).load(&mut progress) == Load::Loaded(());
+            target.load_committed(store, true, true, &mut progress, ready, true,
+                |store, out, at| ExternalProgressStore::new(store, Some(&digest)).load_checkpoint(out, at))
+                .map(|target| (target.settings, target.anchor, progress.locator))
+        });
+        let expected = match case {
+            "prefs-missing" | "prefs-corrupt" => landscape,
+            "failed-commit" => durable,
+            _ => chosen,
+        };
+        assert_eq!(durable, expected, "{case}: cold preferences");
+        if case == "failed-commit" { assert!([under, chosen].contains(&durable)); }
+        match case {
+            "target-missing" | "target-corrupt" => assert_eq!(reopened, None, "{case}: no resume target"),
+            _ => assert_eq!(reopened, Some((durable, durable != under, saved.locator)),
+                "{case}: durable preferences must win over a stale resume target"),
+        }
+    }
+}
 fn main() {
     clockwise(&mut [0; 2]);
+    resume_target(&mut [0; 2]);
     // One row per startup invariant: no cross-product of unrelated faults.
     for case in ["first-write", "full", "near-full", "failed-commit", "missing", "corrupt", "sd-absent", "sd-readonly", "sd-sync"] {
         let mut flash = Flash { free_entries: usize::from(case == "near-full"), ..Flash::default() };

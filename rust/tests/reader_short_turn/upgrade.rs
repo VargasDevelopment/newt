@@ -19,8 +19,9 @@ mod flash;
 type FixtureState<'s, 'io> = ReadingStateRouter<'s, nvs::NvsBlobBackend<'s, flash::Flash>,
     card::Port<'io>, MountedStateMedium<'s, 's, 's, 'io, card::Port<'io>>>;
 
-fn with_state<R>(card: &mut card::Card, io: &UiIo, digest: &[u8; 32],
-    work: impl FnOnce(&mut ExternalProgressStore<'_, FixtureState<'_, '_>>) -> R,
+/// The firmware's State router over this card; its NVS side starts empty each call.
+pub(super) fn with_router<R>(card: &mut card::Card, io: &UiIo,
+    work: impl FnOnce(&mut FixtureState<'_, '_>) -> R,
 ) -> R {
     let mut flash = flash::Flash::default();
     let mut state = StateFacts::default();
@@ -28,10 +29,16 @@ fn with_state<R>(card: &mut card::Card, io: &UiIo, digest: &[u8; 32],
     let mut native = card.port(io);
     let mut store = ReadingStateRouter::new(nvs::NvsBlobBackend::new(&mut flash),
         &mut state, &mut medium, &mut native);
-    work(&mut ExternalProgressStore::new(&mut store, Some(digest)))
+    work(&mut store)
 }
 
-fn with_pages(card: &mut card::Card, io: &UiIo, route: &Route<'_>,
+fn with_state<R>(card: &mut card::Card, io: &UiIo, digest: &[u8; 32],
+    work: impl FnOnce(&mut ExternalProgressStore<'_, FixtureState<'_, '_>>) -> R,
+) -> R {
+    with_router(card, io, |store| work(&mut ExternalProgressStore::new(store, Some(digest))))
+}
+
+pub(super) fn with_pages(card: &mut card::Card, io: &UiIo, route: &Route<'_>,
     work: impl FnOnce(&mut reader_pages::ReaderPages<'_, card::Port<'_>>),
 ) {
     let mut native = card.port(io);
@@ -139,7 +146,7 @@ fn resume_from(bytes: Vec<u8>, old_version: u32) {
                 RestorePolicy::ExactPage, now(), &mut ports));
             assert_eq!(owner.restore_failure, RestoreFailure::InvalidCheckpoint);
             let cold = reader_restore_policy::boot_restore_policy(
-                Some(reader_restore_policy::DurableCheckpoint::PageStart), None);
+                Some(reader_restore_policy::DurableCheckpoint::PageStart), None, settings);
             for policy in [RestorePolicy::Validated, cold] {
                 assert!(owner.open_physical(&mut reader, &mut source, book, restored, policy, now(), &mut ports));
                 assert_eq!(reader.page_plan().unwrap().text(), expected_text);

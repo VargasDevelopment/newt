@@ -149,8 +149,8 @@ impl Runtime {
             report.restored && ui.app.screen != Screen::EpubReading,
             report.restored && self.saved.book != 0 && !report.checkpoint_saved);
         self.checkpoint.restore_uncertainty(self.saves.page_unconfirmed(), self.saves.destination_unconfirmed());
-        // Exact-page recovery uses its saved geometry; Home retains its own
-        // independently committed preference after an interrupted reflow.
+        // The target carries the durable preferences; a page saved under other
+        // settings reopens at its anchor (#107), so Home and reader agree.
         if durable {
             self.settings = target.settings;
             self.reader_ui.draft = self.settings;
@@ -159,12 +159,11 @@ impl Runtime {
         if (report.restored || durable) && (ui.app.screen == Screen::EpubReading
             || retained_recovery != Some(record::Recovery::Ordinary)) {
             self.saves.set_checkpoint_saved(durable || report.checkpoint_saved);
-            let checkpoint = durable.then(|| if target.anchor { DurableCheckpoint::Anchor }
-                else { DurableCheckpoint::PageStart });
             self.recovery = Some(crate::reader_book::PendingRecovery {
                 progress: self.saved,
                 settings: self.settings,
-                policy: boot_restore_policy(checkpoint, retained_recovery),
+                policy: boot_restore_policy(durable.then(|| DurableCheckpoint::of(&target)),
+                    report.restored.then_some(&boot.record), self.settings),
             });
         }
         self.wake.available = true;

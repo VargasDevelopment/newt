@@ -127,7 +127,9 @@ def check_recovery(run, command, workspace, out, positive, *, controls):
     fixtures.write_run_budget(dense)
     upgrade = run([positive, dense, '--cache-upgrade'])
     assert 'PASS old Pages data misses, saved content resumes, and only Pages rebuilds' in upgrade
-    print(policy + upgrade, end='')
+    resume = run([positive, dense, '--boot-resume'])
+    assert 'PASS boot restore policy reopens sleep and power-on pages under the durable settings' in resume
+    print(policy + upgrade + resume, end='')
     if controls:
         recovery_controls(run, command, dense, workspace, out)
 
@@ -178,6 +180,17 @@ def recovery_controls(run, command, dense, workspace, out):
          'RestorePolicy::Validated => Recovery::PendingAnchor,\n'
          '        RestorePolicy::ColdCheckpoint => Recovery::PendingExact,',
          ['--restore-policy'], 'interrupted ColdCheckpoint open'),
+        # #107: a sleep page start saved under other settings kept ExactPage.
+        (policy, 'warm-stale-exact',
+         '        (None, Some((_, saved_under))) if saved_under != Some(settings) => RestorePolicy::ColdCheckpoint,\n',
+         '',
+         [dense, '--boot-resume'], 'warm lost-ack: a sleep page start reopens under the durable settings'),
+        # #107: boot ignores the resume target's anchor and asks for its exact page.
+        (policy, 'durable-anchor-exact',
+         '(Some(DurableCheckpoint::Anchor), _) | (None, Some((Some(Recovery::PendingAnchor), _))) => RestorePolicy::Validated,',
+         '(Some(DurableCheckpoint::Anchor), _) => RestorePolicy::ExactPage,\n'
+         '        (None, Some((Some(Recovery::PendingAnchor), _))) => RestorePolicy::Validated,',
+         [dense, '--boot-resume'], 'power-on stale: the resume target reopens under the durable settings'),
         (pages, 'presence-by-name',
          'if resolved { return hint; }',
          'if resolved || hint == MissingProbe::Complete { return hint; }',
@@ -199,7 +212,7 @@ def recovery_controls(run, command, dense, workspace, out):
         host.write_text(paths((HERE / 'host.rs').read_text(), HERE, {target: replacement}))
         run([*command, host, '-o', child / 'program'])
         run([child / 'program', *arguments], witness=witness)
-    print('PASS compiled restore policy, wake orientation and old Pages producer controls rejected')
+    print('PASS compiled restore policy, boot resume, wake orientation and old Pages producer controls rejected')
 
 
 if __name__ == '__main__':
