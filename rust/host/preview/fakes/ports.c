@@ -265,7 +265,7 @@ void nsc_set_tx_timeout_ms(uint32_t ms) { (void)ms; }
 void nsc_flush(void) { if (serial_log) fflush(serial_log); }
 void nsc_wake_transmitter(void) {}
 static uint32_t cover_usb_resume;
-static int cover_usb_work;
+static int cover_usb_work, cover_monitor_active;
 static size_t cover_usb_used;
 static uint32_t cover_usb_drain;
 int32_t nsc_available_for_write(void) {
@@ -275,7 +275,12 @@ int32_t nsc_available_for_write(void) {
     return (int32_t)(256 - cover_usb_used);
 }
 uint8_t nsc_connected(void) { return (uint8_t)connected; }
-int32_t nsc_available(void) { return (int32_t)(request_length - request_next); }
+int32_t nsc_available(void) {
+    /* Input arriving inside prepare, before any cover handle opens. */
+    if (preview_conf_long("cover.prepare.input", 0) && cover_monitor_active && !cover_usb_work
+        && nb_millis() < cover_usb_resume) return 1;
+    return (int32_t)(request_length - request_next);
+}
 int32_t nsc_read_byte(void) { return request_next < request_length ? (uint8_t)request[request_next++] : -1; }
 size_t nsc_write(const uint8_t *data, size_t length) {
     if (preview_conf_long("cover.usb.pause_ms", 0)) {
@@ -629,8 +634,9 @@ int32_t newt_cover_fstat(int32_t fd, struct cover_facts *out) {
 }
 _Bool newt_cover_complete_handle_metadata(void) { return 1; }
 _Bool newt_cover_rename_replaces_destination(void) { return 1; }
-int32_t newt_cover_heap_monitor_start(void) { cover_usb_work = 0; return 0; }
+int32_t newt_cover_heap_monitor_start(void) { cover_usb_work = 0; cover_monitor_active = 1; return 0; }
 int32_t newt_cover_heap_monitor_stop(void) {
+    cover_monitor_active = 0;
     /* A busy CDC send buffer after cover work; it drains on later UI passes. */
     if (cover_usb_work) cover_usb_resume = nb_millis() + (uint32_t)preview_conf_long("cover.usb.pause_ms", 0);
     return 0;

@@ -519,13 +519,15 @@ def transient(binary):
 
 def usb_backpressure(binary):
     """Short pressure keeps every row; a stalled host cannot hold up covers."""
-    for pause, cached in ((30, False), (60000, False), (1000, True)):
+    for pause, cached, input_during_prepare in ((30, False, False), (60000, False, False),
+                                                (1000, True, False), (1000, True, True)):
         with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
             records = {book: record(book, CJB6) for book in BOOKS if book != 'Alder'} if cached else None
-            world = World(binary, scratch, records, **{'cover.usb.pause_ms': str(pause), 'cover.usb.free': '210'})
+            world = World(binary, scratch, records, **{'cover.usb.pause_ms': str(pause), 'cover.usb.free': '210',
+                         'cover.prepare.input': str(int(input_during_prepare))})
             _, results, _ = world.run(SHELF)
             if results != ([PRODUCED] if cached else [PRODUCED] * 4 if pause == 30 else []):
-                return f'USB pause={pause}, cached={cached} lost or repeated attempt rows: {results}'
+                return f'USB pause={pause}, cached={cached}, input={input_during_prepare} lost or repeated attempt rows: {results}'
             blocked = world.directory / 'cover-blocked.txt'
             if blocked.exists() and blocked.read_text():
                 return 'a cover row entered the USB write with too little space'
@@ -690,6 +692,7 @@ CASES = [
           '||newt_c3_board::dev_usb::available_for_write()<record.length as i32', '')],
         [('cover_observation.rs', 'i32::from(attempt.needed)', '200')],
         [('cover_observation.rs', 'attempt.drain_ticks-=1;', '')],
+        [('cover_observation.rs', '        if result==R::Cancelled&&no_work{return;}\n', '')],
         [('cover_observation.rs', 'attempt.drain_ticks==0',
           'attempt.drain_ticks==0||super::millis().wrapping_sub(attempt.observation.started.wrapping_add(attempt.observation.elapsed.get()))>=200')],
         [('cover_observation.rs',
