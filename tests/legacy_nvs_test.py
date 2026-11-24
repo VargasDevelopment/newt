@@ -96,8 +96,13 @@ def prove(run, workspace, support):
     failure_program = start_failure(run, workspace, failures, 'start-failure')
     for case in ('panel', 'no-panel'):
         run.run([failure_program, case], workspace)
+    controls = gate_tier.negative_controls(__file__)
+    recovery = run.run([sys.executable, '-B', workspace / 'tests/reader_short_turn/check.py',
+                        '--tool-root', ROOT, '--output', run.output / 'reader-recovery',
+                        '--recovery-only', *([] if controls else ['--positives-only'])], workspace)
+    print(recovery, end='')
     killed = []
-    if gate_tier.negative_controls(__file__):
+    if controls:
         for control in json.loads((workspace / 'tests/legacy_nvs/controls.json').read_text()):
             mutant = run.output / control['name'] / 'rust'
             shutil.copytree(workspace, mutant)

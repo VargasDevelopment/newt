@@ -4,11 +4,16 @@
 use crate::retained_runtime::record::Recovery;
 use newt_reader_ui::RestorePolicy;
 
-pub fn boot_restore_policy(durable: bool, anchor: bool, retained: Option<Recovery>) -> RestorePolicy {
-    match (durable, anchor, retained) {
-        (true, true, _) | (false, _, Some(Recovery::PendingAnchor)) => RestorePolicy::Validated,
-        (true, false, _) => RestorePolicy::ColdCheckpoint,
-        (false, _, Some(Recovery::Ordinary | Recovery::PendingExact) | None) => RestorePolicy::ExactPage,
+pub enum DurableCheckpoint {
+    PageStart,
+    Anchor,
+}
+
+pub fn boot_restore_policy(durable: Option<DurableCheckpoint>, retained: Option<Recovery>) -> RestorePolicy {
+    match (durable, retained) {
+        (Some(DurableCheckpoint::Anchor), _) | (None, Some(Recovery::PendingAnchor)) => RestorePolicy::Validated,
+        (Some(DurableCheckpoint::PageStart), _) => RestorePolicy::ColdCheckpoint,
+        (None, Some(Recovery::Ordinary | Recovery::PendingExact) | None) => RestorePolicy::ExactPage,
     }
 }
 

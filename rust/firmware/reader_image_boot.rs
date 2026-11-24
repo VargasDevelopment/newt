@@ -3,7 +3,8 @@
 use super::*;
 use core::fmt::Write;
 use crate::{app_image::{Application, Home}, home_startup::CardPort,
-    nvs::NvsBlobBackend, reader_restore_policy::boot_restore_policy, reading_state_medium::MountedStateMedium,
+    nvs::NvsBlobBackend, reader_restore_policy::{DurableCheckpoint, boot_restore_policy},
+    reading_state_medium::MountedStateMedium,
     retained_runtime::{record::{self, BootSnapshot, SleepRecord, Status}, wake::{Attempt, UNAVAILABLE}}};
 use newt_c3_board::Error;
 use newt_core::{app::Screen, durable::Load, selected_book::SelectedBookStore,
@@ -158,10 +159,12 @@ impl Runtime {
         if (report.restored || durable) && (ui.app.screen == Screen::EpubReading
             || retained_recovery != Some(record::Recovery::Ordinary)) {
             self.saves.set_checkpoint_saved(durable || report.checkpoint_saved);
+            let checkpoint = durable.then(|| if target.anchor { DurableCheckpoint::Anchor }
+                else { DurableCheckpoint::PageStart });
             self.recovery = Some(crate::reader_book::PendingRecovery {
                 progress: self.saved,
                 settings: self.settings,
-                policy: boot_restore_policy(durable, target.anchor, retained_recovery),
+                policy: boot_restore_policy(checkpoint, retained_recovery),
             });
         }
         self.wake.available = true;

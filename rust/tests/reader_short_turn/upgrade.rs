@@ -3,7 +3,7 @@
 use super::*;
 use newt_core::{
     durable::{Commit, Load}, external_progress_store::ExternalProgressStore, page_envelope,
-    progress::Locator, zip_container::Status,
+    producer_visit::MissingProbe, progress::Locator, zip_container::Status,
 };
 use newt_native_io::UiIo;
 use newt_native_storage::{chapter_cache::{ChapterCacheState, ChapterCacheStorage},
@@ -131,7 +131,8 @@ pub fn resume(bytes: Vec<u8>) {
             assert!(!owner.open_physical(&mut reader, &mut source, book, restored,
                 RestorePolicy::ExactPage, now(), &mut ports));
             assert_eq!(owner.restore_failure, RestoreFailure::InvalidCheckpoint);
-            let cold = reader_restore_policy::boot_restore_policy(true, false, None);
+            let cold = reader_restore_policy::boot_restore_policy(
+                Some(reader_restore_policy::DurableCheckpoint::PageStart), None);
             for policy in [RestorePolicy::Validated, cold] {
                 assert!(owner.open_physical(&mut reader, &mut source, book, restored, policy, now(), &mut ports));
                 assert_eq!(reader.page_plan().unwrap().text(), expected_text);
@@ -148,6 +149,9 @@ pub fn resume(bytes: Vec<u8>) {
             let mut op = OperationPhased::new(&mut reader, &mut storage, panel, &mut parser, &mut breaker);
             let request = CacheRequest { spine: restored.locator.spine, target: restored.locator.character,
                 anchor: true, staged: false, build_on_miss: false, cache_only: false };
+            let mut parsed = false;
+            assert_eq!(cache.producer_stored(&mut source, &digest, 0, None, &|| false, &mut parsed, &mut op),
+                MissingProbe::Ready, "old Pages version must be missing for the producer");
             let started = std::time::Instant::now();
             let shown = cache.capture(&mut source, &digest, request, &mut op);
             let miss = started.elapsed();
@@ -161,6 +165,8 @@ pub fn resume(bytes: Vec<u8>) {
             let started = std::time::Instant::now();
             assert_eq!(cache.build(&mut source, &digest, 0, &mut op), Build::Ready);
             let rebuild = started.elapsed();
+            assert_eq!(cache.producer_stored(&mut source, &digest, 0, None, &|| false, &mut parsed, &mut op),
+                MissingProbe::Complete, "new Pages version is ready for the producer");
             let started = std::time::Instant::now();
             assert!(cache.capture(&mut source, &digest, request, &mut op).hit);
             println!("host layout capture: miss={}us hit={}us rebuild={}us",

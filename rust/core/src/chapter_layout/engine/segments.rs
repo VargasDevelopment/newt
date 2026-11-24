@@ -17,14 +17,20 @@ pub(super) struct Segment {
     pub(super) extra: u8,
 }
 
+pub(super) struct LineSegments<'a> {
+    pub(super) segments: &'a [Segment; MAX_SEGMENTS],
+    pub(super) count: usize,
+    pub(super) next_start: Option<usize>,
+}
+
 impl EngineState<'_> {
-    pub(super) fn segment_line(
+    pub(super) fn segment_line<'a>(
         &mut self,
         backend: &mut dyn Backend,
         line: Line,
         justify: bool,
-        segments: &mut [Segment; MAX_SEGMENTS],
-    ) -> (usize, Option<usize>) {
+        segments: &'a mut [Segment; MAX_SEGMENTS],
+    ) -> LineSegments<'a> {
         let hs = line.spaces == 0;
         let mut used = 0;
         let mut segment = Segment {
@@ -80,7 +86,7 @@ impl EngineState<'_> {
             }
             previous = codepoint
         }
-        let next = if used < segments.len() {
+        let next_start = if used < segments.len() {
             close_segment(segments, &mut used, segment, line.end);
             None
         } else {
@@ -91,12 +97,13 @@ impl EngineState<'_> {
             }
             Some(start)
         };
-        (used, next)
+        LineSegments { segments, count: used, next_start }
     }
 }
 
 fn close_segment(segments: &mut [Segment; MAX_SEGMENTS], used: &mut usize, mut segment: Segment, end: usize) {
     if end > segment.start {
+        debug_assert!(*used < segments.len());
         segment.end = end;
         segments[*used] = segment;
         *used += 1;

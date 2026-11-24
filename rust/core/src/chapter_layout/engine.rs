@@ -4,7 +4,7 @@ use super::{arabic, style, text::*, types::*};
 mod links;
 mod initialization;
 mod segments;
-use segments::{MAX_SEGMENTS, Segment};
+use segments::{LineSegments, MAX_SEGMENTS, Segment};
 use crate::{
     css::{self, CssDecl, CssStylesheetBuilder, TextAlign},
     hyphenator::Hyphenator,
@@ -784,14 +784,12 @@ impl<'a> EngineState<'a> {
                 continue;
             }
             let end = idx + take;
+            // A segment break may use spare rows without consuming another measured line.
             let slots = if take == remain { avail } else { take };
             for _ in 0..slots {
                 if idx == end { break; }
                 let first = idx == 0 && continuation.is_none();
-                let mut line = self.storage.lines[idx];
-                if let Some(start) = continuation {
-                    line = self.line_metrics(backend, start, line.end, line.flags);
-                }
+                let line = continuation.unwrap_or(self.storage.lines[idx]);
                 match self.place_line(backend, line, size, lh, first) {
                     LinePlacement::Placed(rest) => {
                         continuation = rest;
@@ -847,20 +845,23 @@ impl<'a> EngineState<'a> {
         let justify =
             self.paragraph.align == TextAlign::Justify && r.flags & 1 == 0 && gaps > 0 && left > 0;
         let baseline = self.y.wrapping_add(backend.ascent(size));
-        let mut segs = [Segment::default(); MAX_SEGMENTS];
-        let (n, rest) = self.segment_line(backend, r, justify, &mut segs);
-        if rest.is_some() {
-            r = self.line_metrics(backend, r.start, segs[n - 1].end, r.flags & !2);
-            left = max - r.width;
-            gaps = justification_gaps(r);
-        }
+        let mut segments = [Segment::default(); MAX_SEGMENTS];
+        let LineSegments { segments: segs, count: n, next_start } =
+            self.segment_line(backend, r, justify, &mut segments);
         if n == 0 {
             self.y = self.y.wrapping_add(lh);
             return LinePlacement::Placed(None);
         }
         if n > self.storage.runs.len() - self.run_count {
-            return if n > self.storage.runs.len() { LinePlacement::TooLarge } else { self.refused_line() };
+            return self.refused_line();
         }
+        let rest = next_start.map(|start| {
+            let (end, flags) = (r.end, r.flags);
+            r = self.line_metrics(backend, r.start, segs[n - 1].end, flags & !2);
+            left = max - r.width;
+            gaps = justification_gaps(r);
+            self.line_metrics(backend, start, end, flags | 1)
+        });
         let justify = justify && gaps > 0 && left > 0;
         let per = if justify { left / gaps } else { 0 };
         let mut remainder = if justify { left % gaps } else { 0 };
@@ -1124,8 +1125,8 @@ impl<'a> EngineState<'a> {
     }
 }
 enum LinePlacement {
-    /// The next byte offset if the measured line crossed the segment cap.
-    Placed(Option<usize>),
+    /// The measured continuation if the line crossed the segment cap.
+    Placed(Option<Line>),
     NextPage,
     TooLarge,
 }

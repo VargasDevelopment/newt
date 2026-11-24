@@ -31,7 +31,6 @@ use newt_reader_ui::{Action, DeviceInfo, ExternalOwner, PhysicalOpen, ReaderPane
 use reader_book::{BookRequest, BookStep, CheckpointRestore, MountedCheckpoint, ProducerCallbacks,
     ReaderCheckpoint, ReadingStatsRuntime, Resources};
 
-#[link(name = "crypto")]
 unsafe extern "C" { fn SHA256(data: *const u8, length: usize, out: *mut u8) -> *mut u8; }
 fn hash(bytes: &[u8], out: &mut [u8; 32]) -> bool {
     // SAFETY: host libcrypto consumes this slice and fills exactly 32 bytes.

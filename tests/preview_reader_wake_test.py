@@ -12,9 +12,11 @@ one firmware line changed in its generated copy (never in rust/firmware).
 These are host facts only. They say nothing about the X3's timing: on a
 device the press must land while the open still runs.
 """
+import binascii
 import functools
 from pathlib import Path
 import re
+import struct
 import sys
 import tempfile
 
@@ -116,6 +118,71 @@ def read_after_cancel(binary):
         return 'Read after the cancel does not show the book page'
 
 
+def u32(data, offset):
+    return struct.unpack_from('<I', data, offset)[0]
+
+
+def durable_slot(path, magic):
+    data = bytearray(path.read_bytes())
+    assert len(data) == 4096 and data[:4] == b'NRS2'
+    slots = [at for at in range(512, len(data), 512)
+             if data[at:at + 4] == b'NRSK' and data[at + 20:at + 24] == magic]
+    # This fixture starts with fresh slots and writes only a few generations.
+    return data, max(slots, key=lambda at: u32(data, at + 28))
+
+
+def write_slot(path, data, at):
+    # The NRS2 slot's outer CRC-32C covers the header and payload.
+    crc = 0xffffffff
+    for byte in data[at:at + 252]:
+        crc ^= byte
+        for _ in range(8):
+            crc = (crc >> 1) ^ (0x82f63b78 if crc & 1 else 0)
+    struct.pack_into('<I', data, at + 252, crc ^ 0xffffffff)
+    path.write_bytes(data)
+
+
+def save_stale_boundary(state):
+    progress_path, = state.glob('nb*.nrs')
+    intent_path = state / 'newt-resume.nrs'
+    progress, page = durable_slot(progress_path, b'NWTR')
+    intent, destination = durable_slot(intent_path, b'NWBR')
+    assert progress[page + 32:page + 40] == intent[destination + 32:destination + 40]
+    assert u32(progress, page + 68) == u32(intent, destination + 40)
+    assert not u32(intent, destination + 44) & 8, 'fixture needs an exact checkpoint'
+    # Model an older layout's boundary one character into the same page.
+    character = u32(progress, page + 44)
+    assert character > 0
+    struct.pack_into('<I', progress, page + 44, character + 1)
+    checksum = binascii.crc32(progress[page + 20:page + 68])
+    struct.pack_into('<I', progress, page + 68, checksum)
+    write_slot(progress_path, progress, page)
+    struct.pack_into('<I', intent, destination + 40, checksum)
+    fnv = 2166136261
+    for byte in intent[destination + 20:destination + 48]:
+        fnv = ((fnv ^ byte) * 16777619) & 0xffffffff
+    struct.pack_into('<I', intent, destination + 48, fnv)
+    write_slot(intent_path, intent, destination)
+    return character
+
+
+def cold_power_on_at_old_boundary(binary):
+    with tempfile.TemporaryDirectory(prefix='newt-cold-wake-') as scratch:
+        directory = Path(scratch)
+        preview_driver.world(binary, directory, preview_driver.parse([]))
+        rust_preview.run(binary, directory, (CONFIRM, CONFIRM, RIGHT, POWER))
+        character = save_stale_boundary(directory / 'card/Newt/State')
+        # An upgrade boots without retained words or a matching resume picture.
+        (directory / 'retained.bin').unlink(missing_ok=True)
+        (directory / 'card/Newt/Cache/resume.pic').unlink(missing_ok=True)
+        _, log = rust_preview.run(binary, directory, [], boot_kind='power-on')
+    diag = dict(re.findall(r'(checkpoint_saved|character|reader_open|actual_character)=(\d+)',
+                           log.split(' DIAG ')[-1]))
+    if diag != {'checkpoint_saved': '1', 'character': str(character + 1),
+                'reader_open': '1', 'actual_character': str(character)}:
+        return f'cold power-on did not restore the page containing the saved checkpoint ({diag})'
+
+
 RELEASE = ('reader_image_session.rs',
            '        if self.close_runtime(home).is_err() { crate::app_power::stop(); }\n'
            '        self.memory = ReaderBacking::Interrupted;',
@@ -146,6 +213,11 @@ CASES = [
          '        if !events.control.cancelled() || events.control.timed_out() { return false; }',
          '        if !events.control.cancelled() { return false; }')]),
     (read_after_cancel, []),
+    (cold_power_on_at_old_boundary, [
+        ('reader_image_boot.rs',
+         'policy: boot_restore_policy(checkpoint, retained_recovery),',
+         'policy: if checkpoint.is_some() { newt_reader_ui::RestorePolicy::ExactPage } '
+         'else { boot_restore_policy(checkpoint, retained_recovery) },')]),
 ]
 
 
@@ -156,13 +228,13 @@ def main():
         problem = case(binary)
         assert problem is None, f'{case.__name__}: {problem}'
     if not negative_controls(__file__):
-        print(f'PASS: {len(CASES)} wake-then-press flows run the firmware (controls not in this tier)')
+        print(f'PASS: {len(CASES)} wake and cold-start flows run the firmware (controls not in this tier)')
         return
     for case, controls in CASES:
         for name, old, new in controls:
             control = rust_preview.build(edits=[(name, old, new)])
             assert case(control) is not None, f'{case.__name__}: passes with {name} changed'
-    print(f'PASS: {len(CASES)} wake-then-press flows run the firmware; each control fails')
+    print(f'PASS: {len(CASES)} wake and cold-start flows run the firmware; each control fails')
 
 
 if __name__ == '__main__':
