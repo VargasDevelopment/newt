@@ -12,7 +12,7 @@ import time
 SDK_PIN = 'cd6f5b831c8fad899723b6d406586f00c575f021'
 HOST = 'x86_64-unknown-linux-gnu'
 # Exact count of the workspace's host tests, so a test that stops running fails landing.
-PORTABLE_TESTS = 449
+PORTABLE_TESTS = 451
 RV32 = 'riscv32imc-unknown-none-elf'
 FEATURES = 'dev-usb,wifi-update,embedded-sample'
 

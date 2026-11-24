@@ -339,8 +339,8 @@ fn a_png_is_drawn_only_when_every_pixel_arrives() {
     }
 }
 
-/// A progressive file's first scan at its cover placement, as grey rows.
-fn render_progressive(image: &[u8]) -> Result<Grey, BookStatus> {
+/// A progressive file's first scan at its cover placement, sent into `sink`.
+fn render_progressive_into(image: &[u8], sink: &mut dyn ImageRows) -> Result<(), BookStatus> {
     let mut layout = Layout::default();
     assert!(validate(&mut Bytes(image), &mut layout) == Status::Ready && layout.progressive);
     let (w, h) = placement(layout.width, layout.height);
@@ -348,12 +348,17 @@ fn render_progressive(image: &[u8]) -> Result<Grey, BookStatus> {
     let (mut grid, mut previous, mut current, mut output) = ([0; 512], [0; 144], [0; 144], [0; 144]);
     let buffers = progressive::Buffers { input: &mut input, tables: &mut tables, grid: &mut grid,
                                          previous: &mut previous, current: &mut current, output: &mut output };
-    let mut grey = Grey::default();
-    match progressive::render(&mut Bytes(image), buffers, w, h, &mut grey) {
-        Ok(()) => Ok(grey),
+    match progressive::render(&mut Bytes(image), buffers, w, h, sink) {
+        Ok(()) => Ok(()),
         Err(RenderError::Status(status)) => Err(status),
         Err(RenderError::Safety(error)) => panic!("{error:?}"),
     }
+}
+/// A progressive file's first scan at its cover placement, as grey rows.
+fn render_progressive(image: &[u8]) -> Result<Grey, BookStatus> {
+    let mut grey = Grey::default();
+    render_progressive_into(image, &mut grey)?;
+    Ok(grey)
 }
 
 #[test]
@@ -656,4 +661,21 @@ fn unsupported_adobe_rgb_forms_are_refused_without_drawing() {
     let bad_order = ColorJpeg { sampling: 0x22, scan_order: [1, 0, 2], ..ColorJpeg::default() };
     assert!(matches!(render_cover(&bad_order.bytes(), &mut Grey::default()),
                      Err(RenderError::Status(BookStatus::Unsupported))));
+}
+
+#[test]
+fn adobe_transform_255_baseline_is_unsupported_with_zero_rows() {
+    let image = ColorJpeg { app14: Some(adobe_app14(0xff)), ..ColorJpeg::default() };
+    let mut grey = Grey::default();
+    assert!(matches!(render_cover(&image.bytes(), &mut grey),
+                     Err(RenderError::Status(BookStatus::Unsupported))));
+    assert!(grey.0.is_empty());
+}
+
+#[test]
+fn adobe_transform_255_progressive_is_unsupported_with_zero_rows() {
+    let image = ColorJpeg { app14: Some(adobe_app14(0xff)), progressive: Some(0), ..ColorJpeg::default() };
+    let mut grey = Grey::default();
+    assert_eq!(render_progressive_into(&image.bytes(), &mut grey), Err(BookStatus::Unsupported));
+    assert!(grey.0.is_empty());
 }

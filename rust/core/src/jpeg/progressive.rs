@@ -1,5 +1,5 @@
 //! Safe translation of frozen ImageRenderer's first-scan DC preview, not full JPEG decode.
-use super::Input;
+use super::{Adobe, Input};
 use crate::page_renderer::{BookStatus, ImageRows};
 use super::renderer::RenderError;
 type Result<T> = core::result::Result<T, BookStatus>;
@@ -49,7 +49,7 @@ fn render_inner(input:&mut dyn Input,b:Buffers<'_>,width:u16,height:u16,sink:&mu
     let mut s=Stream{input,buf:b.input,pos:0,len:0,bits:0,value:0,marker:0,io:false};
     if s.word().map_err(err)?!=0xffd8{return Err(err(Parse))}
     b.tables[..4].fill(Huffman::default());
-    let(mut w,mut h,mut restart)=(0usize,0usize,0usize);let mut quant=[1u16;4];let mut comps=[Comp::default();4];let mut nc=0usize;let mut scan=[0usize;4];let mut adobe=0xffu8;let mut seen=0u8;let ns;let al;
+    let(mut w,mut h,mut restart)=(0usize,0usize,0usize);let mut quant=[1u16;4];let mut comps=[Comp::default();4];let mut nc=0usize;let mut scan=[0usize;4];let mut adobe=Adobe::Absent;let mut seen=0u8;let ns;let al;
     loop {
         let mut m=s.byte().map_err(|_|err(s.entropy_error()))?;while m==255{m=s.byte().map_err(|_|err(s.entropy_error()))?;}
         if m==0xd8||(0xd0..=0xd7).contains(&m)||m==1{continue}
@@ -62,13 +62,13 @@ fn render_inner(input:&mut dyn Input,b:Buffers<'_>,width:u16,height:u16,sink:&mu
             0xc2=>{s.byte().map_err(err)?;h=usize::from(s.word().map_err(err)?);w=usize::from(s.word().map_err(err)?);nc=usize::from(s.byte().map_err(err)?);if nc==0||nc>4||left!=6+nc*3{return Err(err(Parse))}for c in &mut comps[..nc] {c.id=s.byte().map_err(err)?;let hv=s.byte().map_err(err)?;c.h=usize::from(hv>>4);c.v=usize::from(hv&15);c.tq=usize::from(s.byte().map_err(err)?&3);if c.h==0||c.v==0{return Err(err(Parse))}}},
             0xc0|0xc1|0xd9=>return Err(err(Parse)),
             0xdd=>{if left!=2{return Err(err(Parse))}restart=usize::from(s.word().map_err(err)?);},
-            0xee=>{if left>=12{let mut tag=[0u8;12];for byte in &mut tag{*byte=s.byte().map_err(err)?;}if &tag[..5]==b"Adobe"{adobe=tag[11];}left-=12;}s.skip(left).map_err(err)?;},
+            0xee=>{if left>=12{let mut tag=[0u8;12];for byte in &mut tag{*byte=s.byte().map_err(err)?;}if &tag[..5]==b"Adobe"{adobe=Adobe::from_transform(tag[11]);}left-=12;}s.skip(left).map_err(err)?;},
             0xda=>{ns=usize::from(s.byte().map_err(err)?);if ns==0||ns>4||left!=1+ns*2+3{return Err(err(Parse))}for slot in &mut scan[..ns] {let id=s.byte().map_err(err)?;let td=s.byte().map_err(err)?>>4;*slot=comps[..nc].iter().rposition(|c|c.id==id).ok_or(err(Parse))?;seen|=1<<*slot;comps[*slot].td=usize::from(td);}let ss=s.byte().map_err(err)?;let se=s.byte().map_err(err)?;let aa=s.byte().map_err(err)?;if ss!=0||se!=0||aa>>4!=0{return Err(err(Unsupported))}al=aa&15;break;},
             _=>s.skip(left).map_err(err)?,
         }
     }
     if w==0||h==0{return Err(err(Parse))}
-    let rgb=if nc==3&&adobe!=0xff{if adobe>1{return Err(err(Unsupported))}adobe==0}else{false};
+    let rgb=if nc==3{match adobe{Adobe::Rgb=>true,Adobe::Other=>return Err(err(Unsupported)),Adobe::Absent|Adobe::Ycbcr=>false}}else{false};
     let hm=comps[..nc].iter().map(|c|c.h).max().unwrap_or(1);let vm=comps[..nc].iter().map(|c|c.v).max().unwrap_or(1);let y=comps[0];let inter=ns>1;
     let rgb_ok=ns==3&&seen&7==7&&y.h*y.v<=4
         &&((comps[1].h,comps[1].v)==(1,1)||(comps[1].h,comps[1].v)==(y.h,y.v))

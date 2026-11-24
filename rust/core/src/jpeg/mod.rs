@@ -26,10 +26,16 @@ pub struct Workspace<'a> {
     pub mcu: &'a mut [i16], // >=384
     pub pixels: &'a mut [u8], // >=256 (pinned grayscale configuration)
 }
+#[derive(Clone,Copy,PartialEq,Eq)]
+#[repr(u8)]
+pub(crate) enum Adobe { Absent, Rgb, Ycbcr, Other }
+impl Adobe {
+    pub(crate) fn from_transform(t:u8)->Self { match t { 0=>Self::Rgb, 1=>Self::Ycbcr, _=>Self::Other } }
+}
 pub struct Decoder<'a> {
     w:Workspace<'a>, pub width:u16,pub height:u16,
     mx:usize,my:usize,ncomp:usize,qt:[usize;3],cid:[u8;3],ht:[u8;3],scan:[u8;3],
-    qset:[bool;4],hset:[bool;4],adobe:u8,rgb:bool,
+    qset:[bool;4],hset:[bool;4],adobe:Adobe,rgb:bool,
     restart:u16,dc:[i16;3],pos:usize,end:usize,offset:usize,reg:u32,bits:u8,marker:u8,
 }
 #[inline(never)]
@@ -47,7 +53,7 @@ fn word(s:&[u8],i:usize)->u16 {u16::from_be_bytes([s[i],s[i+1]])}
 impl<'a> Decoder<'a> {
     pub fn prepare(w:Workspace<'a>,input:&mut dyn Input)->Result<Self> {
         if w.input.len()<512||w.segment.len()<512||w.quant.len()<256||w.huffman.len()<1088||w.block.len()<64||w.mcu.len()<384||w.pixels.len()<256{return Err(Error::Memory)}
-        let mut d=Self{w,width:0,height:0,mx:0,my:0,ncomp:0,qt:[0;3],cid:[0;3],ht:[0,0x11,0x11],scan:[0,1,2],qset:[false;4],hset:[false;4],adobe:0xff,rgb:false,restart:0,dc:[0;3],pos:0,end:0,offset:0,reg:0,bits:0,marker:0};
+        let mut d=Self{w,width:0,height:0,mx:0,my:0,ncomp:0,qt:[0;3],cid:[0;3],ht:[0,0x11,0x11],scan:[0,1,2],qset:[false;4],hset:[false;4],adobe:Adobe::Absent,rgb:false,restart:0,dc:[0;3],pos:0,end:0,offset:0,reg:0,bits:0,marker:0};
         let mut mark=0u16;
         while mark!=0xffd8 {exact(input,&mut d.w.segment[..1])?;d.offset=d.offset.wrapping_add(1);mark=(mark<<8)|u16::from(d.w.segment[0]);}
         loop {
@@ -60,7 +66,7 @@ impl<'a> Decoder<'a> {
                 let mut left=len;
                 if m==0xffee&&left>=12 {
                     exact(input,&mut d.w.segment[..12])?;
-                    if &d.w.segment[..5]==b"Adobe" {d.adobe=d.w.segment[11];}
+                    if &d.w.segment[..5]==b"Adobe" {d.adobe=Adobe::from_transform(d.w.segment[11]);}
                     left-=12;
                 }
                 while left>0 {let n=left.min(512);exact(input,&mut d.w.segment[..n])?;left-=n;}continue
@@ -108,9 +114,12 @@ impl<'a> Decoder<'a> {
                     // Native reads only the count and each component's table byte.
                     if len<1||len<1+2*usize::from(s[0]){return Err(Error::Format)}
                     if usize::from(s[0])!=d.ncomp{return Err(Error::Unsupported)}
-                    if d.ncomp==3&&d.adobe!=0xff {
-                        if d.adobe>1{return Err(Error::Unsupported)}
-                        d.rgb=d.adobe==0;
+                    if d.ncomp==3 {
+                        match d.adobe {
+                            Adobe::Rgb=>{d.rgb=true;}
+                            Adobe::Other=>return Err(Error::Unsupported),
+                            Adobe::Absent|Adobe::Ycbcr=>{}
+                        }
                     }
                     let mut seen=0u8;
                     for i in 0..d.ncomp.min(3) {
