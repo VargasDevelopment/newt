@@ -16,12 +16,12 @@ impl<C: ?Sized, S: CacheStorage> Sink for Writing<'_, '_, '_, '_, C, S> {
         let Some(pages) = self.counted.as_deref_mut() else {
             return self.writer.on_page(self.store, self.memory, &page);
         };
-        use newt_core::cache_names::segment::{MAX_SEGMENTS, PAGES};
+        use newt_core::cache_names::segment::{MAX_PAGES, MAX_SEGMENTS, PAGES};
         if *pages % PAGES == 0 && (*pages / PAGES) < MAX_SEGMENTS as u32 {
             self.writer.starts[(*pages / PAGES) as usize] = page.char_start;
         }
         *pages += 1;
-        if *pages > MAX_SEGMENTS as u32 * PAGES {
+        if *pages > MAX_PAGES {
             return self.writer.cancellation().result(false);
         }
         self.writer.cancellation().checkpoint()

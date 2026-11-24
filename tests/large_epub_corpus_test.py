@@ -104,6 +104,7 @@ def compile_native_objects(run, workspace, out_dir):
 
 
 def test_binary(run, workspace, target, *, unit=False):
+    target_name = "newt_phased_reader" if unit else "large_epub_corpus"
     wire = run.cargo(
         workspace,
         target,
@@ -119,10 +120,10 @@ def test_binary(run, workspace, target, *, unit=False):
         for row in map(json.loads, wire.splitlines())
         if row.get("reason") == "compiler-artifact"
         and row.get("executable")
-        and row["target"]["name"] == ("newt_phased_reader" if unit else "large_epub_corpus")
+        and row["target"]["name"] == target_name
     ]
     if len(outputs) != 1:
-        raise RuntimeError("one compiled large_epub_corpus test executable required")
+        raise RuntimeError(f"one compiled {target_name} test executable required")
     return outputs[0]
 
 
