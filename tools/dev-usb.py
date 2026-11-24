@@ -2,6 +2,7 @@
 """Bounded USB bridge client for a live local port and build."""
 import argparse
 from datetime import datetime, timezone
+import errno
 import json
 from pathlib import Path
 import re
@@ -301,16 +302,23 @@ class SerialClient(ProtocolClient):
         self.connection.update(transport='serial', port=port, opening_may_reset_device=True)
         # Linux CDC may assert both lines on open. pySerial 3.5 applies DTR
         # first: keep it high until RTS is low to avoid the C3 reset state.
+        linux = sys.platform.startswith('linux')
         self.port = None
         self.connection_event('opening')
         try:
             self.port = serial_module.Serial(port=None, baudrate=115200, timeout=0.05,
                                              write_timeout=timeout)
-            self.port.dtr = sys.platform.startswith('linux')
+            self.port.dtr = linux
             self.port.rts = False
             self.port.port = port
             self.port.open()
-            self.port.dtr = False
+            if linux:
+                try:
+                    self.port.dtr = False
+                except OSError as error:
+                    # Match pySerial's open-time unsupported-modem handling.
+                    if error.errno not in (errno.EINVAL, errno.ENOTTY):
+                        raise
             self.connection_event('opened')
             self.port.reset_input_buffer()  # Discard host receive bytes, not a reset command.
         except BaseException as error:

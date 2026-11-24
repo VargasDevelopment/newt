@@ -1,4 +1,5 @@
 """Fake serial-driver tests: never imports pyserial or opens a device."""
+import errno
 import importlib.util
 from pathlib import Path
 import subprocess
@@ -25,21 +26,27 @@ def rejects(callback, text):
         raise AssertionError('Expected bounded protocol failure')
 
 
-def serial_open_validation(platform='linux'):
+def serial_open_validation(platform='linux', post_error=None, linux_driver=True):
+    device = SimpleNamespace(lines={'dtr': False, 'rts': False}, resets=0, opens=0)
+    instances = []
+
     class Driver:
         """Linux CDC asserts both lines; pinned pySerial applies DTR first."""
         def __init__(self, *, port, **settings):
             assert port is None
             self.is_open = False
             self._dtr = self._rts = True
-            self.lines = {'dtr': False, 'rts': False}
-            self.resets = 0
+            self.lines = device.lines
             self.states = []
+            self.post_writes = []
+            self.close_calls = 0
+            self.input_resets = 0
+            instances.append(self)
 
         def apply(self, name, value):
             self.lines[name] = value
             self.states.append((self.lines['rts'], self.lines['dtr']))
-            self.resets += self.lines == {'rts': True, 'dtr': False}
+            device.resets += self.lines == {'rts': True, 'dtr': False}
 
         @property
         def dtr(self):
@@ -49,6 +56,9 @@ def serial_open_validation(platform='linux'):
         def dtr(self, value):
             self._dtr = value
             if self.is_open:
+                self.post_writes.append(value)
+                if post_error is not None:
+                    raise OSError(post_error, 'mock modem ioctl')
                 self.apply('dtr', value)
 
         @property
@@ -62,25 +72,48 @@ def serial_open_validation(platform='linux'):
                 self.apply('rts', value)
 
         def open(self):
-            self.lines = {'dtr': True, 'rts': True}
+            device.opens += 1
+            self.presets = (self.dtr, self.rts)
+            if linux_driver:
+                self.lines.update(dtr=True, rts=True)
             self.is_open = True
             self.apply('dtr', self.dtr)
             self.apply('rts', self.rts)
 
         def reset_input_buffer(self):
-            assert self.lines == {'dtr': False, 'rts': False}
+            self.input_resets += 1
+            assert not self.lines['rts']
 
         def close(self):
-            self.lines = {'dtr': False, 'rts': False}
+            self.close_calls += 1
+            self.lines.update(dtr=False, rts=False)
             self.is_open = False
 
     with patch.object(module.sys, 'platform', platform):
+        linux = platform.startswith('linux')
+        fails = linux and post_error == errno.EIO
         for _ in range(2):
-            peer = module.SerialClient(SimpleNamespace(Serial=Driver), '/dev/mock-only', 1)
-            assert peer.port.resets == 0, 'opening reset the C3'
-            assert peer.port.states == [(True, True), (False, True), (False, False)]
+            try:
+                peer = module.SerialClient(SimpleNamespace(Serial=Driver), '/dev/mock-only', 1)
+            except OSError as error:
+                assert fails and error.errno == errno.EIO, error
+                driver = instances[-1]
+                assert not driver.is_open and driver.close_calls == 1 and driver.input_resets == 0
+                assert error.bridge_receipt['connection']['closed']
+                return
+            assert not fails, 'EIO must fail closed'
+            assert device.resets == 0, 'opening reset the C3'
+            assert peer.port.presets == (linux, False)
+            assert peer.port.post_writes == ([False] if linux else [])
+            states = [(True, True), (False, True)] if linux_driver else [(False, False)] * 2
+            if linux and post_error is None:
+                states.append((False, False))
+            assert peer.port.states == states
+            assert peer.port.input_resets == 1
             peer.close()
-            assert not peer.port.is_open and peer.connection['closed']
+            assert not peer.port.is_open and peer.connection['closed'] and peer.port.close_calls == 1
+            assert device.lines == {'dtr': False, 'rts': False}
+        assert device.opens == 2 and len(instances) == 2
 
 
 def serial_open_control():
@@ -364,6 +397,10 @@ def main():
     command_bound_validation()
     freshness_validation()
     serial_open_validation()
+    for number in (errno.ENOTTY, errno.EINVAL, errno.EIO):
+        serial_open_validation(post_error=number)
+    for platform in ('darwin', 'win32'):
+        serial_open_validation(platform=platform, post_error=errno.EIO, linux_driver=False)
     serial_open_control()
     for body in ('FRAME format=pbm1', 'FRAME gen=1 gen=2', 'FRAME gen=', 'FRAME broken'):
         rejects(lambda: module.decode_fields(body, {'gen'}), 'metadata')
