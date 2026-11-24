@@ -63,7 +63,7 @@ impl CapturedPage<'_> {
     }
 }
 pub(crate) fn valid_index(cache: &PageCacheReader, memory: &ReaderMemory<'_>) -> bool {
-    if cache.is_partial() || cache.page_count() == 0 || cache.page_count() > 4096 {
+    if cache.is_partial() || cache.page_count() == 0 || cache.page_count() > segment::MAX_PAGES {
         return false;
     }
     (0..cache.page_count()).all(|i| {
@@ -85,6 +85,7 @@ pub(super) fn segment_of(
     let info = reader.info;
     if !reader.has_page
         || info.spine != spine
+        || info.page_count > segment::MAX_PAGES
         || ChapterSegment::count(info.page_count) == 0
         || target >= info.page_count
     {

@@ -55,6 +55,7 @@ pub struct SegmentAnchor {
 pub const MAP_INDEX: u32 = u32::MAX;
 pub const MAP_VERSION: u32 = 1;
 pub const MAX_SEGMENTS: usize = 32;
+pub const MAX_PAGES: u32 = MAX_SEGMENTS as u32 * PAGES;
 pub const MAX_BYTES: usize = 156;
 pub fn map_name(chapter: &mut [u8; 128], sha: &mut impl FnMut(&[u8], &mut Digest) -> bool) -> bool {
     segment_name(

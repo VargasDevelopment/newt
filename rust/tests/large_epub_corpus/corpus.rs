@@ -375,7 +375,7 @@ fn run_open_phased(path: &Path, mode: &str) -> OpenMetrics {
             m.first_page_ms = t_first.elapsed().as_secs_f64() * 1000.0;
             m.pages_seen = reader.info().page_count;
             let result = PhasedChapterCache { store: &mut store, hash: &mut TestHash,
-                settings: newt_core::preferences::ViewSettings::default() }.capture(
+                settings: newt_core::preferences::ViewSettings { orientation: newt_core::preferences::Orientation::Portrait, ..Default::default() } }.capture(
                 &mut source, &[0; 32], CacheRequest { spine: 0, target: 4096, anchor: false,
                     staged: false, build_on_miss: false, cache_only: false },
                 &mut OperationPhased::new(&mut reader, &mut storage, &mut loan, &mut backend, &mut breaker));
@@ -390,14 +390,25 @@ fn run_open_phased(path: &Path, mode: &str) -> OpenMetrics {
                     }, ..Default::default()
                 };
                 let restored = newt_core::progress::Progress::decode(&saved.encode().unwrap()).unwrap();
-                let status = reader.capture_phased(&mut source, restored.locator.spine,
-                    restored.locator.character, Target::Anchor,
-                    &mut storage, &mut loan, &mut backend, &mut breaker);
+                drop(reader);
+                for selection in &mut selections { *selection = Selection::default(); }
+                let mut cold = PhasedReader::new(&mut selections, Some(&mut plan), false);
+                let mut source = FileSource::open(path);
+                let opened = cold.open_phased(&mut source, &mut storage, &mut loan, &mut backend);
+                assert!(!cold.has_page(), "cold restore must not reuse published totals");
+                let result = PhasedChapterCache { store: &mut store, hash: &mut TestHash,
+                    settings: newt_core::preferences::ViewSettings { orientation: newt_core::preferences::Orientation::Portrait, ..Default::default() } }.capture(
+                    &mut source, &[0; 32], CacheRequest { spine: restored.locator.spine,
+                        target: restored.locator.character, anchor: true, staged: false,
+                        build_on_miss: false, cache_only: false },
+                    &mut OperationPhased::new(&mut cold, &mut storage, &mut loan, &mut backend, &mut breaker));
                 m.source_navigation_ok = Some(position.char_start > u32::from(u16::MAX)
-                    && restored.locator == saved.locator && status == Status::Ok
-                    && reader.publish(&mut source, &mut frame) == Status::Ok
-                    && reader.info().page == position.page
-                    && reader.info().char_start == position.char_start);
+                    && restored.locator == saved.locator && opened == Status::Ok
+                    && result.status == Status::Ok && !result.hit
+                    && cold.publish(&mut source, &mut frame) == Status::Ok
+                    && cold.info().page == position.page
+                    && cold.info().char_start == position.char_start
+                    && cold.info().page_count == position.page_count);
             }
         }
     }

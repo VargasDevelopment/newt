@@ -1602,3 +1602,7 @@ pub use cache_build::physical_engine_cases::{actual_physical_engine_cases, actua
 
 #[path = "reader/projection.rs"]
 mod projection;
+
+#[cfg(test)]
+#[path = "cache_page_limit_cases.rs"]
+mod cache_page_limit_cases;
