@@ -15,6 +15,16 @@ Source-import closure for PR #16: immutable checkpoint
 authorship and subjects through an explicit bounded frozen-source import exception. New integration commits remain strictly conventional;
 no firmware version, tag or installed image is changed by that closure.
 
+## v0.4.1
+
+### Fix
+- **reader**: keep UTF-8 characters whole across a text buffer flush (#75, #81)
+- **reader**: keep links when a page runs out of bytes (#76, #82)
+- **ui**: give a long version its own line under Updated to (#78, #79)
+- **reader**: end a page at a whole line when the run budget runs out (#64, #73)
+### Perf
+- **covers**: read and write in larger steps and use a table CRC (#74, #80)
+
 ## v0.4.0
 
 ### Feat
