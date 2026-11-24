@@ -385,7 +385,7 @@ def world(firmware, directory, options):
     fresh(directory)
     update_fixtures.write(directory, update=options['update'], other_firmware=options['other'],
                           run=lambda keys: (play(firmware, directory, keys), fresh(directory)))
-    if options['update'] == 'updated':
+    if options['update'] in ('updated', 'updated-longest'):
         older_seen_build(directory / 'card/Newt/State/newt-seen.nrs')
     if options['telemetry'] == 'sample':
         conf['telemetry'] = 'sample'

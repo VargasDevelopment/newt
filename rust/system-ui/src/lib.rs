@@ -87,6 +87,8 @@ pub const SYSTEM_CARD: Card = Card {
 pub const SYSTEM_CONTENT_LEFT: i32 = SYSTEM_CARD.x + CONTENT_INSET;
 pub const SYSTEM_CONTENT_WIDTH: i32 = SYSTEM_CARD.width - 2 * CONTENT_INSET;
 pub const SYSTEM_TITLE_TOP: i32 = SYSTEM_CARD.y + 20;
+/// Where a page's rows or text start under its one-line title.
+pub const SYSTEM_BODY_TOP: i32 = SYSTEM_TITLE_TOP + 62;
 // Pinned to the X3 values every reviewed frame was drawn with.
 const _: () = assert!(
     SYSTEM_CARD.x == 28
@@ -96,6 +98,7 @@ const _: () = assert!(
         && SYSTEM_CONTENT_LEFT == 50
         && SYSTEM_CONTENT_WIDTH == 428
         && SYSTEM_TITLE_TOP == 84
+        && SYSTEM_BODY_TOP == 146
 );
 pub struct SystemPage<'a> {
     canvas: UiCanvas<'a>,

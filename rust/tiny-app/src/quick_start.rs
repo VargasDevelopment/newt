@@ -4,7 +4,7 @@
 use newt_core::{quick_start::{Facts, Notice, ORDER, State, Step}, time_zone::{TIME_ZONE_LABELS, time_zone_label}};
 use newt_system_ui::{
     SystemBar, SystemPage, SYSTEM_CARD, SYSTEM_CONTENT_LEFT as LEFT,
-    SYSTEM_CONTENT_WIDTH as WIDTH, SYSTEM_ROW_PITCH, SYSTEM_TITLE_TOP,
+    SYSTEM_CONTENT_WIDTH as WIDTH, SYSTEM_BODY_TOP, SYSTEM_ROW_PITCH, SYSTEM_TITLE_TOP,
     ListOverlay, clamped_list_buttons, draw_frosted_system_header,
     draw_system_footer, list_overlay_buttons, render_list_overlay,
 };
@@ -120,25 +120,25 @@ fn step_text(c: &mut UiCanvas<'_>, state: &State, facts: &Facts) -> i32 {
                 else { b"Let's set up your X3 for reading. Every step can be skipped." }) + 16
         }
         Step::Reading => {
-            let next = paragraph(c, 146, b"Only books turn; Home stays upright.") + 16;
+            let next = paragraph(c, SYSTEM_BODY_TOP, b"Only books turn; Home stays upright.") + 16;
             option(c, next, false, state.focus == 0);
             option(c, next + OPTION_HEIGHT + OPTION_GAP, true, state.focus == 1);
             next + 2 * (OPTION_HEIGHT + OPTION_GAP) + 4
         }
-        Step::TimeZone => paragraph(c, 146,
+        Step::TimeZone => paragraph(c, SYSTEM_BODY_TOP,
             b"Newt shows the time in this zone.") + 20,
-        Step::Wifi if !facts.wifi_saved => paragraph(c, 146,
+        Step::Wifi if !facts.wifi_saved => paragraph(c, SYSTEM_BODY_TOP,
             b"Newt sets the clock when it checks for updates. Reading never needs Wi-Fi.") + 20,
-        Step::Wifi => paragraph(c, 146,
+        Step::Wifi => paragraph(c, SYSTEM_BODY_TOP,
             if facts.clock_set { b"Wi-Fi is saved, and the clock is set." }
             else { b"Wi-Fi is saved. Newt sets the clock when it checks for updates." }) + 20,
         Step::Books => {
-            let next = paragraph(c, 146,
+            let next = paragraph(c, SYSTEM_BODY_TOP,
                 b"Copy EPUB books anywhere on the card from a computer.") + 14;
             paragraph(c, next, b"Open them from Books on Home.") + 20
         }
         Step::Done => {
-            let mut next = paragraph(c, 146,
+            let mut next = paragraph(c, SYSTEM_BODY_TOP,
                 b"Home is next. To run this quick start again, open Settings, Quick start.") + 14;
             if !facts.wifi_saved {
                 next = paragraph(c, next, b"Newt sets the clock when it checks for updates.") + 14;

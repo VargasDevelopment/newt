@@ -146,7 +146,8 @@ nothing, so a HELLO answer means the build confirmed itself.
 **"Updated to" once.** The last confirmed build is a durable card record,
 `newt_seen` (`rust/core/src/update_seen.rs`). At the first finished Home
 after confirmation, a record naming another build shows "Updated to
-<version>" with What's new, then records this build. A missing record is
+<version>" with What's new, then records this build. A version too long
+for one title line, such as a test build's, gets its own line. A missing record is
 written silently; a damaged one is replaced.
 
 ## Wi-Fi memory

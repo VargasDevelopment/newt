@@ -6,6 +6,8 @@
  *   slot.running  0 (default) | 1: the slot this image runs from
  *   image.state   the SDK OTA state of the running image (default 2, valid),
  *                 or "unreadable"; partitions/state, once written, wins
+ *   image.version the running version in place of NEWT_FIRMWARE_VERSION,
+ *                 such as a test build's longer one
  *   slot.fail     PART-OP names ("otadata-read", "app1-erase"; OP is read,
  *                 erase or write, or reread: a read after this boot wrote
  *                 that part) whose SDK call fails after doing nothing
@@ -53,7 +55,9 @@ static int store(const struct partition *part, uint32_t at, const uint8_t *input
 }
 
 const char *nb_running_image_version(void) {
-    static const char version[32] = NEWT_FIRMWARE_VERSION;
+    static char version[32] = NEWT_FIRMWARE_VERSION;
+    const char *chosen = preview_conf("image.version");
+    if (chosen) snprintf(version, sizeof version, "%s", chosen);
     return version;
 }
 static int running_slot(void) { return preview_conf_long("slot.running", 0) == 1; }

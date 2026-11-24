@@ -6,11 +6,10 @@ use crate::{BODY_PIXELS, CardAction, Definition, TITLE_PIXELS, cstr};
 use newt_core::{app::Action, app_store::Refusal};
 use newt_system_ui::{
     SYSTEM_CONTENT_LEFT as LEFT, SYSTEM_CONTENT_WIDTH as WIDTH, SystemBar, SystemButtons,
-    SystemPage,
+    SystemPage, SYSTEM_BODY_TOP as BODY_TOP,
 };
 use newt_ui_canvas::{Frame, UiCanvas};
 
-const BODY_TOP: i32 = 146;
 const BOTTOM: i32 = crate::BOTTOM;
 
 /// Why nothing was installed.

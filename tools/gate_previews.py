@@ -291,6 +291,8 @@ def main() -> None:
               "update-wifi-connect-back": ("wifi-saved", networks + ",next" * 6 + ",activate,back"),
               # The first boot after an install: "Updated to" over Home, once.
               "device-updated": ("updated", None),
+              # A test build's 23-character version takes its own title line.
+              "device-updated-longest": ("updated-longest", None),
               "device-updated-back": ("updated", "back")}
     for name, (card, actions) in update.items():
         screen, actions = start(name, actions)
