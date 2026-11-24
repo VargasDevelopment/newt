@@ -173,6 +173,7 @@ impl Navigation {
             current_generic: current.generic,
             authored: last_mapped.is_some(),
             current_exact: exact,
+            fallback: ContentsFallback::None,
         });
         let mut row = 0u32;
         visit_rows(

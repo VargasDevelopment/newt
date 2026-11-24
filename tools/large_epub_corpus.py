@@ -27,7 +27,7 @@ Axes covered (each case declares target axis and exact expected outcomes):
   chapter-pages   768-page sync index (6x128) & 4,096-page Profile::Small cap
   long-web-novel  Combined multi-chapter text-only web novel profiles
 """
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import argparse
 import hashlib
 import json
@@ -75,6 +75,8 @@ class BookSpec:
     toc_kind: str = "nav"
     toc_entries: int | None = None
     toc_depth: int = 1
+    toc_absent: bool = False
+    toc_malformed: bool = False
     path_dir: str = "OEBPS"
     first_chapter_href_len: int | None = None
     first_chapter_href_prefix: str = ""
@@ -104,6 +106,7 @@ class Case:
     expected_sync6: bool | None = None
     expected_small32: bool | None = None
     expected_pages_range: tuple[int, int] | None = None
+    expected_fallback: str | None = None
 
 
 def _paragraph(seed: int, chapter: int, index: int) -> str:
@@ -202,6 +205,8 @@ def _opf(spec: BookSpec, hrefs: list[str], extra_manifest: list[str]) -> bytes:
         '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>' if is_ncx
         else '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>'
     ]
+    if spec.toc_absent:
+        manifest.clear()
     spine = []
     for i, href in enumerate(hrefs):
         item_id = _item_id(spec, "c", i)
@@ -210,7 +215,7 @@ def _opf(spec: BookSpec, hrefs: list[str], extra_manifest: list[str]) -> bytes:
         spine.append(f'<itemref idref="{item_id}"/>')
     for i, href in enumerate(extra_manifest):
         manifest.append(f'<item id="{_item_id(spec, "m", i)}" href="{href}" media-type="text/plain"/>')
-    spine_attr = ' toc="ncx"' if is_ncx else ""
+    spine_attr = ' toc="ncx"' if is_ncx and not spec.toc_absent else ""
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<package version="3.0" unique-identifier="uid" xmlns="http://www.idpf.org/2007/opf">\n'
@@ -292,7 +297,9 @@ def build_epub(spec: BookSpec) -> bytes:
         ("mimetype", b"application/epub+zip", False),
         ("META-INF/container.xml", container, spec.compress),
         (opf_path, _opf(spec, hrefs, extra_manifest), spec.compress),
-        (toc_name, _toc_bytes(spec.toc_kind, hrefs, toc_count, spec.toc_depth), spec.compress),
+        *([] if spec.toc_absent else [(toc_name,
+            b'<html><broken' if spec.toc_malformed else _toc_bytes(spec.toc_kind, hrefs, toc_count, spec.toc_depth),
+            spec.compress)]),
     ]
     extras: list[tuple[str, bytes, bool]] = [
         (f"{prefix}{name}", b"note\n", spec.compress) for name in extra_manifest
@@ -371,14 +378,26 @@ CASES: tuple[Case, ...] = (
          BookSpec(chapters=16, id_len=200)),
     Case("long-ids-over", "long-ids", "full", "Ok", "OutOfMemory", "admit", "160 chapters with 200-byte manifest IDs: exhausts 48 KiB shared metadata arena",
          BookSpec(chapters=160, id_len=200)),
+    Case("toc-absent", "toc-size", "fast", "Ok", "Ok", "menu", "No authored Contents: section numbers without an error notice",
+         BookSpec(chapters=2, toc_absent=True), expected_menu_valid=True, expected_authored=False, expected_menu_count=2, expected_fallback="None"),
+    Case("toc-malformed", "toc-size", "fast", "Ok", "Ok", "menu", "Malformed authored Contents: usable section numbers with an explanation",
+         BookSpec(chapters=2, toc_malformed=True), expected_menu_valid=True, expected_authored=False, expected_menu_count=2, expected_fallback="Invalid"),
+    Case("toc-chapters-248", "toc-size", "fast", "Ok", "Ok", "menu", "Authored Contents at the shared-bank boundary",
+         BookSpec(chapters=248), expected_menu_valid=True, expected_authored=True, expected_menu_count=248, expected_fallback="None"),
+    Case("toc-chapters-249", "toc-size", "fast", "Ok", "Ok", "menu", "Authored Contents exceeds shared bank: explained section-number fallback",
+         BookSpec(chapters=249), expected_menu_valid=True, expected_authored=False, expected_menu_count=249, expected_fallback="Capacity"),
+    Case("parse-spine-276", "metadata-arena", "fast", "Ok", "Ok", "menu", "Required metadata at the parse-bank boundary",
+         BookSpec(chapters=276), expected_menu_valid=True, expected_authored=False, expected_menu_count=276, expected_fallback="Capacity"),
+    Case("parse-spine-277", "metadata-arena", "fast", "Ok", "OutOfMemory", "admit", "Required metadata exceeds the fixed parse bank",
+         BookSpec(chapters=277)),
     Case("toc-nav-small", "toc-size", "fast", "Ok", "Ok", "menu", "EPUB 3 nav TOC with 32 entries (authored Contents)",
          BookSpec(chapters=32, toc_kind="nav", toc_entries=32), expected_menu_valid=True, expected_authored=True, expected_menu_count=32),
     Case("toc-mapping-at", "toc-size", "fast", "Ok", "Ok", "menu", "EPUB 3 nav TOC with 276 entries on 2 chapters: fits with_menu_mapping 1,104 B parse tail (276 authored + 1 fallback row)",
          BookSpec(chapters=2, toc_kind="nav", toc_entries=276), expected_menu_valid=True, expected_authored=True, expected_menu_count=277),
-    Case("toc-mapping-over", "toc-size", "fast", "Ok", "Ok", "menu", "EPUB 3 nav TOC with 277 entries on 2 chapters: overflows with_menu_mapping, menu invalid/empty",
-         BookSpec(chapters=2, toc_kind="nav", toc_entries=277), expected_menu_valid=False, expected_authored=False, expected_menu_count=0),
+    Case("toc-mapping-over", "toc-size", "fast", "Ok", "Ok", "menu", "EPUB 3 nav TOC with 277 entries on 2 chapters: exceeds mapping scratch: generic Contents with a capacity notice",
+         BookSpec(chapters=2, toc_kind="nav", toc_entries=277), expected_menu_valid=True, expected_authored=False, expected_menu_count=2, expected_fallback="Capacity"),
     Case("toc-nav-over-arena", "toc-size", "fast", "Ok", "Ok", "menu", "EPUB 3 nav TOC with 700 entries on 2 chapters: overflows 48 KiB shared arena, valid generic fallback",
-         BookSpec(chapters=2, toc_kind="nav", toc_entries=700), expected_menu_valid=True, expected_authored=False, expected_menu_count=2),
+         BookSpec(chapters=2, toc_kind="nav", toc_entries=700), expected_menu_valid=True, expected_authored=False, expected_menu_count=2, expected_fallback="Capacity"),
     Case("toc-ncx-nested", "toc-depth", "fast", "Ok", "Ok", "menu", "EPUB 2 NCX TOC nested 16 levels deep",
          BookSpec(chapters=4, toc_kind="ncx", toc_entries=20, toc_depth=16), expected_menu_valid=True, expected_authored=True, expected_menu_count=20),
     Case("toc-nav-nested", "toc-depth", "full", "Ok", "Ok", "menu", "EPUB 3 nav TOC nested 16 levels deep",
@@ -423,15 +442,8 @@ def write_corpus(out_dir: Path, cases: list[Case]) -> list[dict]:
         data = build_epub(c.spec)
         path = out_dir / f"{c.name}.epub"
         path.write_bytes(data)
-        manifest.append({
-            "name": c.name, "axis": c.axis, "subset": c.subset, "path": str(path),
-            "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(),
-            "expected_admit": c.expected_admit, "expected_open": c.expected_open, "check_mode": c.check_mode,
-            "expected_menu_valid": c.expected_menu_valid, "expected_authored": c.expected_authored,
-            "expected_menu_count": c.expected_menu_count, "expected_anchors": c.expected_anchors,
-            "expected_sync6": c.expected_sync6, "expected_small32": c.expected_small32,
-            "expected_pages_range": c.expected_pages_range,
-        })
+        manifest.append({**asdict(c), "path": str(path), "bytes": len(data),
+                         "sha256": hashlib.sha256(data).hexdigest()})
     return manifest
 
 

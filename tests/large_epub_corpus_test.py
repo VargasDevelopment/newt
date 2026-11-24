@@ -54,6 +54,11 @@ CONTROLS = (
     ("the 192-anchor policy cap is removed", PAGE_CACHE, "if self.anchors < self.profile.max_anchors() {", "if true {", "chapter-anchors-over"),
     ("the 4,096-page policy cap is removed", PAGE_CACHE, "if self.count >= self.profile.max_pages() {", "if false {", "chapter-pages-over-4096"),
     ("the 6-chunk sync writer index cap is raised", PHASE_STORAGE, SYNC_SIX_CHUNKS, SYNC_SEVEN_CHUNKS, "chapter-pages-over-768"),
+    ("mapping denial loses generic Contents", READER,
+     "Ok(false) => (project(arena, &[]), Status::OutOfMemory),",
+     "Ok(false) => (false, Status::OutOfMemory),", "toc-mapping-over"),
+    ("Contents fallback loses its capacity notice", READER,
+     "navigation.set_contents_fallback(contents_fallback(authored, optional));", "", "toc-nav-over-arena"),
     ("generic Contents fallback returns invalid/empty menu", READER, "Err(status) => (project(arena, &[]), status),", "Err(status) => (false, status),", "toc-nav-over-arena"),
     ("the 64 MiB source-file cap is removed", PHASED, "if bytes > admission::EXTERNAL_MAX_BYTES {", "if false {", "file-size-over"),
 )
@@ -136,6 +141,7 @@ def write_manifest(path: Path, records: list[dict]) -> None:
             _opt_bool(r.get("expected_sync6")),
             _opt_bool(r.get("expected_small32")),
             "-" if pr is None else f"{pr[0]}..{pr[1]}",
+            r.get("expected_fallback") or "-",
         )))
     path.write_text("\n".join(lines) + "\n")
 

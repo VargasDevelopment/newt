@@ -261,9 +261,11 @@ struct OpenMetrics {
     first_page_ms: f64,
     page_turn_ms: f64,
     menu_ms: f64,
+    menu_status: Option<Status>,
     menu_valid: Option<bool>,
     menu_authored: Option<bool>,
     menu_count: Option<u32>,
+    menu_fallback: Option<ContentsFallback>,
     pages_seen: u32,
     anchors_stored: u32,
     sync_6chunk_ok: Option<bool>,
@@ -307,12 +309,13 @@ fn run_open_phased(path: &Path, mode: &str) -> OpenMetrics {
             m.page_turn_ms = t2.elapsed().as_secs_f64() * 1000.0;
         }
         let t3 = Instant::now();
-        assert_eq!(reader.prepare_chapter_menu_phased(&mut source, u32::MAX, &mut storage, &mut loan, &mut backend), Status::Ok);
+        m.menu_status = Some(reader.prepare_chapter_menu_phased(&mut source, u32::MAX, &mut storage, &mut loan, &mut backend));
         m.menu_ms = t3.elapsed().as_secs_f64() * 1000.0;
         let menu = reader.chapter_menu().info();
         m.menu_valid = Some(menu.valid);
         m.menu_authored = Some(menu.authored);
         m.menu_count = Some(menu.count);
+        m.menu_fallback = Some(reader.chapter_menu().fallback());
     } else if mode == "anchors" {
         let (ok, p, stored, bytes, ms) = measure_cache(path);
         assert!(ok, "anchor policy cache build must succeed");
@@ -363,7 +366,7 @@ fn large_epub_corpus_boundaries() {
     let mut failures = Vec::new();
     for line in manifest.lines().filter(|l| !l.trim().is_empty()) {
         let cols: Vec<&str> = line.split('\t').collect();
-        assert_eq!(cols.len(), 12, "manifest row needs 12 tab-separated columns: {line}");
+        assert_eq!(cols.len(), 13, "manifest row needs 13 tab-separated columns: {line}");
         let (name, path_str, want_admit, want_open, mode) = (cols[0], cols[1], cols[2], cols[3], cols[4]);
         let (want_menu_valid, want_authored) = (parse_opt_bool(cols[5]), parse_opt_bool(cols[6]));
         let (want_menu_count, want_anchors) = (parse_opt_u32(cols[7]), parse_opt_u32(cols[8]));
@@ -390,6 +393,9 @@ fn large_epub_corpus_boundaries() {
         if want_open != "*" && open_status.name() != want_open {
             failures.push(format!("{name}: open_phased got {}, expected {want_open}", open_status.name()));
         }
+        if mode == "menu" && open_status == Status::Ok && open.menu_status != Some(Status::Ok) {
+            failures.push(format!("{name}: Contents preparation failed with {:?}", open.menu_status));
+        }
         if let Some(expected) = want_menu_valid && open.menu_valid != Some(expected) {
             failures.push(format!("{name}: menu_valid got {:?}, expected {expected}", open.menu_valid));
         }
@@ -398,6 +404,9 @@ fn large_epub_corpus_boundaries() {
         }
         if let Some(expected) = want_menu_count && open.menu_count != Some(expected) {
             failures.push(format!("{name}: menu_count got {:?}, expected {expected}", open.menu_count));
+        }
+        if cols[12] != "-" && format!("{:?}", open.menu_fallback.unwrap_or_default()) != cols[12] {
+            failures.push(format!("{name}: Contents fallback got {:?}, expected {}", open.menu_fallback, cols[12]));
         }
         if let Some(expected) = want_anchors && open.anchors_stored != expected {
             failures.push(format!("{name}: anchors_stored got {}, expected {expected}", open.anchors_stored));
