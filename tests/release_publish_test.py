@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
@@ -515,6 +516,30 @@ class ReleasePublishTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, '/releases/latest does not show it'):
             publish(self.plan(github=github), self.dir / 'out3', github)
 
+    def test_new_draft_readback_retries_absence_with_a_bound(self):
+        for misses in (0, 1, 3, 4):
+            with self.subTest(misses=misses):
+                github = FakeGitHub()
+                release = self.plan(github=github)
+                read = github.release_for
+                answers = [None] * misses
+
+                def delayed(tag):
+                    return answers.pop() if answers else read(tag)
+
+                github.release_for = delayed
+                with mock.patch('release_publish.time.sleep') as sleep:
+                    if misses < 4:
+                        self.assertTrue(publish(release, self.dir / f'out{misses}', github))
+                        self.assertEqual(github.patched, [100])
+                    else:
+                        with self.assertRaisesRegex(ValueError, 'shows no draft'):
+                            publish(release, self.dir / f'out{misses}', github)
+                        self.assertEqual(github.patched, [])
+                    self.assertEqual([call.args[0] for call in sleep.call_args_list],
+                                     [1, 2, 4][:min(misses, 3)])
+                self.assertEqual(len(github.created), 1)
+
     def test_lost_publish_answer_that_published_succeeds(self):
         github = FakeGitHub('lost')
         with redirect_stderr(io.StringIO()) as printed:
@@ -556,6 +581,8 @@ class ReleasePublishTests(unittest.TestCase):
 
 # (old, new, test): removing the guard must make its test fail.
 CONTROLS = (
+    ('        for delay in (1, 2, 4):', '        for delay in ():',
+     'test_new_draft_readback_retries_absence_with_a_bound'),
     ('    if tagged != commit:', '    if False:', 'test_refuses_untagged_build'),
     ('    if tagged != commit:', '    if False:', 'test_refuses_mismatched_tag'),
     ('    manifest = update_publish.newt_manifest(image, receipt)',

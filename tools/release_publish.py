@@ -41,6 +41,7 @@ import shlex
 import socket
 import subprocess
 import sys
+import time
 
 from bench_candidate import VARIANT, json_bytes, require, sha
 from daily_firmware import BUILD_DIRECTORY, IDENTITY_RECEIPT
@@ -427,6 +428,13 @@ def publish(release, out, github, git=None):
     if draft is None:
         github.create_draft(release.command(out))
         draft = github.release_for(release.tag)
+        # A newly created draft can lag in GitHub's listing. Retry absence only;
+        # API errors and a visible but mismatched release still stop publication.
+        for delay in (1, 2, 4):
+            if draft is not None:
+                break
+            time.sleep(delay)
+            draft = github.release_for(release.tag)
         require(draft is not None and draft.get('draft') is True,
                 f'{release.repository} shows no draft for {release.tag} after creating it')
         mismatch = draft_mismatch(github, draft, release)
