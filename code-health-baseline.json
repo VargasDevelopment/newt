@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3687792,
+      "flash_bytes": 3689776,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "e1a4e1bd810575e4979268eb97a7c287e7498782",
-      "before": 3686160,
-      "after": 3687792,
-      "reason": "+1,632 B measured (+1,632 B over the 3,686,160 B ceiling): #50 decodes 3-component Adobe APP14 transform-0 RGB JPEGs to BT.601 greyscale in both baseline (jpeg/mod.rs) and progressive interleaved DC first scans (jpeg/progressive.rs), distinguishes absent APP14 from unsupported transform values including 255, supports shared Huffman table 0 and SOS component-ID remapping for RGB scans, maps unsupported baseline headers to BookStatus::Unsupported (jpeg/renderer.rs) so unrenderable RGB forms refuse cleanly without drawing red-only art, and bumps cover NO_ART from CJB6 to CJB7 (cover.rs). Peak cover memory is unchanged (reuses baseline's 6-block MCU buffer and 12 stack bytes in progressive). Clean regional DEV USB builds: main 61e0972f 3,686,160 B; e1a4e1bd 3,687,792 B. RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, selected stack frames 0/16/32/48/480 B (within 0/16/32/48/656 B ceilings).",
-      "reviewer": "Lead (Codex Astra review, 2026-11-24)"
+      "source_revision": "99670e2e2d977a5b338f035dd6d5ff9eaf8d553c",
+      "before": 3687792,
+      "after": 3689776,
+      "reason": "+2,208 B measured over main 1716a76f (+1,984 B over the 3,687,792 B ceiling): #48 encodes versioned no-cover reason bare records (CJ + version byte C + M/U/I/X in cover.rs, automatically retrying older bare versions including CJB3..=CJB7), shows \"Making cover\" at 18 pt on uncached Books cards while cover work is pending and explains the selected book's no-cover reason or retryable pause (\"Cover will be made later\") on the existing Books note line with system notices keeping precedence (library-current-ui/src/lib.rs, library_covers.rs), distinguishes missing or invalid book metadata from retryable stat errors so transient/persistent SD stat errors keep the settle repaint and deferred note path (library_covers.rs), packs shelf-settle and retryable-pause flags into unused bits of CoverIdleState::settled with mask-preserving updates so Books performs at most one batched settle repaint and Home stays quiet under H2 (reader_cover_idle.rs, cover_idle_step.rs, reader_cover_producer.rs), and reads only the 28-byte .nlc header on focus moves. Clean regional DEV USB builds: main 1716a76f 3,687,568 B; 99670e2e 3,689,776 B. RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, CoverIdleState/CoverBookFacts/LibraryUiState sizes unchanged (16 B each), selected stack frames 0/16/32/48/480 B (within 0/16/32/48/656 B ceilings).",
+      "reviewer": "Newt Lead (cross-family review: Astra)"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
