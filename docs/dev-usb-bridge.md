@@ -31,7 +31,7 @@ After a separately approved installation and explicit authorization to access th
   --timeout 8 --press next --output .build/dev-usb/live-capture
 ```
 
-The expected build must match the actual approved image; a future combined image has its own identity. Live mode never discovers or guesses a port, uses URL/network transports, flashes/resets firmware, or retries a press with unknown completion. It constructs an unopened Serial instance and sets DTR/RTS false BEFORE opening. OS/adapter behavior can still transiently affect control lines; physical verification remains necessary. It clears only the host receive buffer, validates the exact build/capabilities, and uses the same bounded codec as simulation. Deadlines cover write and receive together; capture has a 14-second host total limit under the device's 15-second lease. At most 32 presses are accepted per invocation. Live sleep must be the last command and cannot be followed by capture; it reports requested entry, then closes, with physical wake required.
+The expected build must match the actual approved image; a future combined image has its own identity. Live mode never discovers or guesses a port, uses URL/network transports, flashes/resets firmware, or retries a press with unknown completion. It constructs an unopened Serial instance. On Linux, it presets DTR true and RTS false, opens, then clears DTR. This avoids pySerial 3.5 clearing DTR while the CDC driver still has RTS asserted, the C3's reset combination. Other platforms retain both presets false. OS/adapter behavior can still transiently affect control lines; physical verification remains necessary. It clears only the host receive buffer, validates the exact build/capabilities, and uses the same bounded codec as simulation. Deadlines cover write and receive together; capture has a 14-second host total limit under the device's 15-second lease. At most 32 presses are accepted per invocation. Live sleep must be the last command and cannot be followed by capture; it reports requested entry, then closes, with physical wake required.
 
 Fake-driver tests exercise the live transport against a protocol fixture, including fragmented reads, line states before open, wrong-build refusal, short writes, deadlines and no retries. These tests do not establish actual USB control-line transitions.
 
@@ -78,8 +78,8 @@ so a row carrying any other text, such as a name, is dropped:
 The report lists them under `firmware_rows`, at most 256 per session; extra rows
 are counted in `firmware_rows_dropped`. `--listen SECONDS` (0 to 600) keeps the
 already-open port after the last press and reads only these rows, then sends
-STATUS as usual. Opening the port resets the X3, so idle work (the census runs
-while the reader is idle) is only visible within one open session. A protocol
+STATUS as usual. Keep the port open to observe idle work (the census runs
+while the reader is idle) without an attachment's possible control-line glitch. A protocol
 record while listening ends the session with an error. Listening after a final
 `sleep` is rejected.
 

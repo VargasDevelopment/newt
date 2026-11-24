@@ -6,6 +6,7 @@ import sys
 import time
 import zlib
 from types import SimpleNamespace
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
@@ -22,6 +23,78 @@ def rejects(callback, text):
         assert text in str(error), str(error)
     else:
         raise AssertionError('Expected bounded protocol failure')
+
+
+def serial_open_validation(client_type=module.SerialClient):
+    class Driver:
+        """Linux CDC asserts both lines; pinned pySerial applies DTR first."""
+        def __init__(self, *, port, **settings):
+            assert port is None
+            self.is_open = False
+            self._dtr = self._rts = True
+            self.lines = {'dtr': False, 'rts': False}
+            self.resets = 0
+            self.states = []
+
+        def apply(self, name, value):
+            self.lines[name] = value
+            self.states.append((self.lines['rts'], self.lines['dtr']))
+            self.resets += self.lines == {'rts': True, 'dtr': False}
+
+        @property
+        def dtr(self):
+            return self._dtr
+
+        @dtr.setter
+        def dtr(self, value):
+            self._dtr = value
+            if self.is_open:
+                self.apply('dtr', value)
+
+        @property
+        def rts(self):
+            return self._rts
+
+        @rts.setter
+        def rts(self, value):
+            self._rts = value
+            if self.is_open:
+                self.apply('rts', value)
+
+        def open(self):
+            self.lines = {'dtr': True, 'rts': True}
+            self.is_open = True
+            self.apply('dtr', self.dtr)
+            self.apply('rts', self.rts)
+
+        def reset_input_buffer(self):
+            assert self.lines == {'dtr': False, 'rts': False}
+
+        def close(self):
+            self.lines = {'dtr': False, 'rts': False}
+            self.is_open = False
+
+    with patch.object(module.sys, 'platform', 'linux'):
+        for _ in range(2):
+            peer = client_type(SimpleNamespace(Serial=Driver), '/dev/mock-only', 1)
+            assert peer.port.resets == 0, 'opening reset the C3'
+            assert peer.port.states == [(True, True), (False, True), (False, False)]
+            peer.close()
+            assert not peer.port.is_open and peer.connection['closed']
+
+
+def serial_open_control():
+    source = (ROOT / 'tools/dev-usb.py').read_text()
+    original = "self.port.dtr = sys.platform.startswith('linux')"
+    assert source.count(original) == 1
+    namespace = {'__file__': str(ROOT / 'tools/dev-usb.py'), '__name__': 'serial_open_control'}
+    exec(compile(source.replace(original, 'self.port.dtr = False'), namespace['__file__'], 'exec'), namespace)
+    try:
+        serial_open_validation(namespace['SerialClient'])
+    except AssertionError as error:
+        assert str(error) == 'opening reset the C3', str(error)
+    else:
+        raise AssertionError('Control did not detect the old reset sequence')
 
 
 def command_bound_validation():
@@ -294,6 +367,8 @@ def main():
     diagnostic_v2_validation()
     command_bound_validation()
     freshness_validation()
+    serial_open_validation()
+    serial_open_control()
     for body in ('FRAME format=pbm1', 'FRAME gen=1 gen=2', 'FRAME gen=', 'FRAME broken'):
         rejects(lambda: module.decode_fields(body, {'gen'}), 'metadata')
     script = ROOT / 'tools/dev-usb.py'
@@ -308,7 +383,7 @@ def main():
                  ['live', '--port', '/dev/mock-only', '--expect-build', 'x', '--press', 'sleep', '--listen', '1']):
         result = subprocess.run([sys.executable, str(script), *args], capture_output=True)
         assert result.returncode == 2 and not result.stdout
-    print('PASS: fake serial protocol: double HELLO/random-ID freshness, bounded commands, strict diagnostics and CLI refusals; no device access')
+    print('PASS: fake serial protocol: Linux open without a reset (old-sequence control fails), double HELLO/random-ID freshness, bounded commands, strict diagnostics and CLI refusals; no device access')
 
 
 if __name__ == '__main__':
