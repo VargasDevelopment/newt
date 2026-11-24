@@ -41,6 +41,10 @@ impl<'loan, 'ctx, 'pause, C: ?Sized> CappedWriter<'loan, 'ctx, C> {
         memory: &mut WriterMemory<'_>,
         page: &Page<'_>,
     ) -> bool {
+        if self.seen >= newt_core::cache_names::segment::MAX_PAGES {
+            self.refused = true;
+            return self.cancellation.result(false);
+        }
         if self.segmented && self.seen % PAGES == 0 && (self.seen / PAGES) < MAX_SEGMENTS as u32 {
             self.starts[(self.seen / PAGES) as usize] = page.char_start;
         }

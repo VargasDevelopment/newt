@@ -24,7 +24,8 @@ pub struct Segments {
 impl Segments {
     pub fn new(certified_pages: u32) -> Self {
         Self { name: [0; 128], generation: 0, next: 0,
-            count: ChapterSegment::count(certified_pages), skipped: u32::MAX, staged: false,
+            count: if certified_pages > segment::MAX_PAGES { 0 } else { ChapterSegment::count(certified_pages) },
+            skipped: u32::MAX, staged: false,
             language: None }
     }
     fn identify(&mut self, route: &mut Route<'_>, spine: u32) -> bool {

@@ -52,6 +52,11 @@ CONTROLS = (
     ("the 511 B member-name cap is removed", ZIP_RULES, "usize::from(name_bytes) > EPUB_MAX_MEMBER_NAME_BYTES", "false", "name-len-512"),
     ("ZIP64 EOCD sentinels are not refused", ZIP_CONTAINER, "d.entries == u16::MAX || d.size == u32::MAX || d.offset == u32::MAX", "false", "zip64-sentinel"),
     ("the 192-anchor policy cap is removed", PAGE_CACHE, "if self.anchors < self.profile.max_anchors() {", "if true {", "chapter-anchors-over"),
+    ("the source renderer regains the cache page cap", "phased-sink/src/lib.rs",
+     "let resolving = self.mode == Target::TocResolve;",
+     "if page.index >= 4096 { return false; }\n        let resolving = self.mode == Target::TocResolve;", "chapter-pages-over-4096"),
+    ("the cache page cap blocks the source fallback", "phased-reader/src/phase_session.rs",
+     "if request.cache_only {", "if request.cache_only || request.target >= 4096 {", "chapter-pages-over-4096"),
     ("the 4,096-page policy cap is removed", PAGE_CACHE, "if self.count >= self.profile.max_pages() {", "if false {", "chapter-pages-over-4096"),
     ("the 6-chunk sync writer index cap is raised", PHASE_STORAGE, SYNC_SIX_CHUNKS, SYNC_SEVEN_CHUNKS, "chapter-pages-over-768"),
     ("mapping denial loses generic Contents", READER,
@@ -98,15 +103,15 @@ def compile_native_objects(run, workspace, out_dir):
     return objects
 
 
-def test_binary(run, workspace, target):
+def test_binary(run, workspace, target, *, unit=False):
+    target_name = "newt_phased_reader" if unit else "large_epub_corpus"
     wire = run.cargo(
         workspace,
         target,
         "test",
         "-p",
         "newt-phased-reader",
-        "--test",
-        "large_epub_corpus",
+        *(["--lib"] if unit else ["--test", "large_epub_corpus"]),
         "--no-run",
         "--message-format=json",
     )
@@ -115,11 +120,59 @@ def test_binary(run, workspace, target):
         for row in map(json.loads, wire.splitlines())
         if row.get("reason") == "compiler-artifact"
         and row.get("executable")
-        and row["target"]["name"] == "large_epub_corpus"
+        and row["target"]["name"] == target_name
     ]
     if len(outputs) != 1:
-        raise RuntimeError("one compiled large_epub_corpus test executable required")
+        raise RuntimeError(f"one compiled {target_name} test executable required")
     return outputs[0]
+
+
+
+CACHE_LIMIT_CONTROLS = (
+    ("producer admission probes oversized chapters", "phased-reader/src/producer_admission.rs",
+     "if r.reader.has_page() && spine == info.spine && info.page_count > segment::MAX_PAGES {", "if false {"),
+    ("settled producer ignores its page bound", "phased-reader/src/producer_current.rs",
+     "|| reader.info.page_count > newt_core::cache_names::segment::MAX_PAGES", ""),
+    ("segments exceed the map bound", "phased-reader/src/producer_segments.rs",
+     "if certified_pages > segment::MAX_PAGES { 0 } else { ChapterSegment::count(certified_pages) }",
+     "ChapterSegment::count(certified_pages)"),
+    ("writer continues beyond the final segment", "phased-reader/src/producer_writer.rs",
+     "if self.seen >= newt_core::cache_names::segment::MAX_PAGES {", "if false {"),
+    ("foreground derives an out-of-range segment", "phased-reader/src/cache_show.rs",
+     "|| info.page_count > segment::MAX_PAGES", ""),
+    ("known oversized chapters still probe cached files", "phased-reader/src/phase_session.rs",
+     "if ready && !too_large && let Some(language)", "if ready && let Some(language)"),
+)
+
+
+def cache_limit_cases(run, workspace, target, support, *, controls):
+    binary = test_binary(run, workspace, target, unit=True)
+    command = lambda executable: [executable, "cache_page_limit_cases::", "--nocapture"]
+    output = run.run(command(binary), workspace)
+    support.require("test result: ok. 3 passed; 0 failed; 0 ignored" in output,
+                    "three cache-boundary tests must pass before controls")
+    print("PASS cache boundaries: exact 4096/4097, settled producer and foreground bypass", flush=True)
+    if not controls:
+        return
+    for label, source, good, bad in CACHE_LIMIT_CONTROLS:
+        path = workspace / source
+        original = path.read_text()
+        support.require(original.count(good) == 1, f"cache control anchor: {label}")
+        path.write_text(original.replace(good, bad))
+        try:
+            binary = test_binary(run, workspace, target, unit=True)
+            number = len(run.commands)
+            try:
+                run.run(command(binary), workspace)
+            except RuntimeError:
+                output = (run.output / f"{number:03d}.stdout").read_text()
+                support.require("test result: FAILED." in output and "cache_page_limit_cases::" in output,
+                                f"cache control must fail at runtime: {label}")
+            else:
+                raise RuntimeError(f"cache control unexpectedly passed: {label}")
+        finally:
+            path.write_text(original)
+        print(f"PASS control: cache-boundary test fails when {label}", flush=True)
 
 
 def _opt_bool(value):
@@ -349,6 +402,9 @@ def main(argv=None):
                         print(line)
             if args.sweep:
                 run_sweep(binary, run, workspace, output / "sweep")
+            unit_controls = not args.no_controls and negative_controls(__file__)
+            run.env["RUSTFLAGS"] = rustflags(objects, warnings=False)
+            cache_limit_cases(run, workspace, target, support, controls=unit_controls)
             if not args.no_controls and negative_controls(__file__):
                 by_name = {r["name"]: r for r in records}
                 verified = set(by_name)

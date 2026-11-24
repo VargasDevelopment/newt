@@ -1112,9 +1112,6 @@ fn pass_stream<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     let verdict = watch.verdict();
     drop(watch);
     let mut status = status;
-    if state.exceeded {
-        status = Status::Unsupported;
-    }
     if state.overflow {
         status = Status::OutOfMemory;
     }
@@ -1605,3 +1602,7 @@ pub use cache_build::physical_engine_cases::{actual_physical_engine_cases, actua
 
 #[path = "reader/projection.rs"]
 mod projection;
+
+#[cfg(test)]
+#[path = "cache_page_limit_cases.rs"]
+mod cache_page_limit_cases;

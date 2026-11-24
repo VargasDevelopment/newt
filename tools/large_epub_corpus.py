@@ -412,7 +412,7 @@ CASES: tuple[Case, ...] = (
          BookSpec(chapters=1, chapter_paragraphs=4900), expected_sync6=False, expected_small32=True, expected_pages_range=(769, 4096)),
     Case("chapter-pages-near-4096", "chapter-pages", "full", "Ok", "Ok", "pages", "Single chapter ~4,001 pages (<4 MiB uncompressed): just below Profile::Small 4,096 cap",
          BookSpec(chapters=1, chapter_paragraphs=24000), expected_sync6=False, expected_small32=True, expected_pages_range=(3501, 4096)),
-    Case("chapter-pages-over-4096", "chapter-pages", "full", "Ok", "Ok", "pages", "Single chapter ~4,250 pages (<4 MiB uncompressed): exceeds Profile::Small 4,096-page cap",
+    Case("chapter-pages-over-4096", "chapter-pages", "full", "Ok", "Ok", "pages", "Single chapter ~4,250 pages (<4 MiB uncompressed): cache refuses, source still shows page 4,097",
          BookSpec(chapters=1, chapter_paragraphs=25500), expected_sync6=False, expected_small32=False),
     Case("web-novel-envelope", "long-web-novel", "full", "Ok", "Ok", "menu", "Long text-only web novel inside current limits (240 chapters x 40 KiB = ~9.6 MiB)",
          BookSpec(chapters=240, chapter_bytes=40 * KIB, toc_kind="nav"), expected_menu_valid=True, expected_authored=True, expected_menu_count=240, expected_fallback="None"),

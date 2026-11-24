@@ -164,7 +164,9 @@ impl<C: ReadScope + CachePresence> PhasedChapterCache<'_, C> {
         let ready = r.reader.plan.is_some()
             && (request.staged || request.spine == r.reader.info.spine)
             && session_adapter::reader_settings_match(r.reader, self.settings);
-        if ready && let Some(language) = r.reader.book_language() {
+        let too_large = r.reader.has_page() && r.reader.info.spine == request.spine
+            && r.reader.info.page_count > newt_core::cache_names::segment::MAX_PAGES;
+        if ready && !too_large && let Some(language) = r.reader.book_language() {
             let guard = r.reader.validate(source);
             if guard != Status::Ok {
                 return CapturedPage::failed(guard);
@@ -376,7 +378,7 @@ fn prepare_cached(
         Err(_) => return reader.failed(Status::Unsupported),
     };
     sink.page(page);
-    let error = if sink.state.exceeded || !sink.state.found {
+    let error = if !sink.state.found {
         Some(Status::Stale)
     } else if sink.state.overflow {
         Some(Status::OutOfMemory)

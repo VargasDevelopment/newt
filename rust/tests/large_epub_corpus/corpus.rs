@@ -99,6 +99,26 @@ impl CacheStorage for MemStore {
     fn end_write(&mut self) -> bool { true }
     fn remove(&mut self, _: &[u8]) -> bool { self.bytes.clear(); true }
 }
+impl phase_storage::ReadScope for MemStore {
+    fn query<R>(&mut self, _: &[u8], _: bool, _: &mut [u8],
+        live: &mut dyn FnMut() -> bool,
+        read: impl FnOnce(&mut dyn CacheStorage) -> R,
+    ) -> Result<(R, bool), Status> {
+        if !live() { return Err(Status::Stale); }
+        let result = read(self);
+        Ok((result, live()))
+    }
+}
+impl CachePresence for MemStore {
+    fn present(&mut self, _: &[u8], _: bool) -> bool { !self.bytes.is_empty() }
+}
+struct TestHash;
+impl hash_provider::CacheHash for TestHash {
+    fn hash(&mut self, _: &[u8], output: &mut [u8; 32]) -> bool {
+        output.fill(17);
+        true
+    }
+}
 
 struct HostScratch {
     cat_buf: Vec<u8>,
@@ -273,6 +293,7 @@ struct OpenMetrics {
     small_32chunk_ok: Option<bool>,
     fibp_bytes: usize,
     cache_ms: f64,
+    source_navigation_ok: Option<bool>,
 }
 
 fn run_open_phased(path: &Path, mode: &str) -> OpenMetrics {
@@ -345,6 +366,51 @@ fn run_open_phased(path: &Path, mode: &str) -> OpenMetrics {
         if ok32 {
             (m.pages_seen, m.fibp_bytes) = (p32, bytes32);
         }
+        if !ok32 {
+            let mut frame: Box<Frame> = vec![0; FRAME_BYTES].into_boxed_slice().try_into().unwrap();
+            let t_first = Instant::now();
+            let first = reader.capture_phased(&mut source, 0, 0, Target::Page,
+                &mut storage, &mut loan, &mut backend, &mut breaker);
+            let first = first == Status::Ok && reader.publish(&mut source, &mut frame) == Status::Ok;
+            m.first_page_ms = t_first.elapsed().as_secs_f64() * 1000.0;
+            m.pages_seen = reader.info().page_count;
+            let result = PhasedChapterCache { store: &mut store, hash: &mut TestHash,
+                settings: newt_core::preferences::ViewSettings { orientation: newt_core::preferences::Orientation::Portrait, ..Default::default() } }.capture(
+                &mut source, &[0; 32], CacheRequest { spine: 0, target: 4096, anchor: false,
+                    staged: false, build_on_miss: false, cache_only: false },
+                &mut OperationPhased::new(&mut reader, &mut storage, &mut loan, &mut backend, &mut breaker));
+            m.source_navigation_ok = Some(first && result.status == Status::Ok && !result.hit
+                && reader.publish(&mut source, &mut frame) == Status::Ok
+                && reader.info().page == 4096);
+            if m.source_navigation_ok == Some(true) {
+                let position = reader.info();
+                let saved = newt_core::progress::Progress {
+                    book: 1, locator: newt_core::progress::Locator {
+                        spine: position.spine, character: position.char_start,
+                    }, ..Default::default()
+                };
+                let restored = newt_core::progress::Progress::decode(&saved.encode().unwrap()).unwrap();
+                drop(reader);
+                for selection in &mut selections { *selection = Selection::default(); }
+                let mut cold = PhasedReader::new(&mut selections, Some(&mut plan), false);
+                let mut source = FileSource::open(path);
+                let opened = cold.open_phased(&mut source, &mut storage, &mut loan, &mut backend);
+                assert!(!cold.has_page(), "cold restore must not reuse published totals");
+                let result = PhasedChapterCache { store: &mut store, hash: &mut TestHash,
+                    settings: newt_core::preferences::ViewSettings { orientation: newt_core::preferences::Orientation::Portrait, ..Default::default() } }.capture(
+                    &mut source, &[0; 32], CacheRequest { spine: restored.locator.spine,
+                        target: restored.locator.character, anchor: true, staged: false,
+                        build_on_miss: false, cache_only: false },
+                    &mut OperationPhased::new(&mut cold, &mut storage, &mut loan, &mut backend, &mut breaker));
+                m.source_navigation_ok = Some(position.char_start > u32::from(u16::MAX)
+                    && restored.locator == saved.locator && opened == Status::Ok
+                    && result.status == Status::Ok && !result.hit
+                    && cold.publish(&mut source, &mut frame) == Status::Ok
+                    && cold.info().page == position.page
+                    && cold.info().char_start == position.char_start
+                    && cold.info().page_count == position.page_count);
+            }
+        }
     }
     m
 }
@@ -404,6 +470,9 @@ fn large_epub_corpus_boundaries() {
         }
         if mode == "menu" && open_status == Status::Ok && open.menu_status != Some(Status::Ok) {
             failures.push(format!("{name}: Contents preparation failed with {:?}", open.menu_status));
+        }
+        if open.source_navigation_ok == Some(false) {
+            failures.push(format!("{name}: source navigation was blocked by a cache limit"));
         }
         if let Some(expected) = want_menu_valid && open.menu_valid != Some(expected) {
             failures.push(format!("{name}: menu_valid got {:?}, expected {expected}", open.menu_valid));

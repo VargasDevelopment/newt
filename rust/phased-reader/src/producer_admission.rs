@@ -24,6 +24,9 @@ impl<C: ProducerProbe + CachePresence> PhasedChapterCache<'_, C> {
     ) -> MissingProbe {
         let info = r.reader.info();
         let spine = if spine == u32::MAX { info.spine } else { spine };
+        if r.reader.has_page() && spine == info.spine && info.page_count > segment::MAX_PAGES {
+            return MissingProbe::Denied;
+        }
         let Some(language) = r.reader.book_language() else {
             return MissingProbe::Denied;
         };

@@ -32,6 +32,7 @@ impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::Pro
         route: &mut Route<'_>,
     ) -> Status {
         if !reader.opened || !reader.has_page || reader.info.page_count == 0
+            || reader.info.page_count > newt_core::cache_names::segment::MAX_PAGES
             || reader.plan.is_none() || !crate::reader::session_adapter::reader_settings_match(reader, route.settings)
         { return Status::Unsupported; }
         if !self.writer.cancellation().checkpoint() { return Status::IoError; }

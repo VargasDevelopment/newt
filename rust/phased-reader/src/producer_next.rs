@@ -2,7 +2,7 @@
 #![forbid(unsafe_code)]
 use super::{PhasedReader, Writing, reader_parameters};
 use crate::{phase_storage::{Phase, producer::{Producer, WriterView}}, resources, watch::Verdict};
-use newt_core::{admission::{ChapterSource, WorkPhase, WorkScope}, cache_names::segment::{MAX_SEGMENTS, PAGES}, chapter_layout::{engine::EngineState, session::{ChapterSession, LayoutOperation, OperationHandler}, types::{LineBreak, SplitBackend}}, css::CssStylesheetBuilder, page_cache::{CacheStorage, WriterMemory}, xml_session::{self, BorrowedPolicy, ProducerBackend, XmlStream}, zip_container::{Entry, Status}, zip_window::source::BookSource};
+use newt_core::{admission::{ChapterSource, WorkPhase, WorkScope}, cache_names::segment::{MAX_PAGES, PAGES}, chapter_layout::{engine::EngineState, session::{ChapterSession, LayoutOperation, OperationHandler}, types::{LineBreak, SplitBackend}}, css::CssStylesheetBuilder, page_cache::{CacheStorage, WriterMemory}, xml_session::{self, BorrowedPolicy, ProducerBackend, XmlStream}, zip_container::{Entry, Status}, zip_window::source::BookSource};
 use newt_reader_atlas::ReaderAtlas;
 
 /// Only copied facts cross a parser/window return; no bank view escapes.
@@ -110,7 +110,7 @@ impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::Pro
                     && !session.stream.with_source(|watch, _| watch.with_source(|chapter| chapter.finish())) {
                     status = Status::Truncated;
                 }
-                if counted > MAX_SEGMENTS as u32 * PAGES || (status == Status::Ok && self.writer.refused) {
+                if counted > MAX_PAGES || (status == Status::Ok && self.writer.refused) {
                     status = Status::Unsupported;
                 }
                 let result = Parsed { status, pages: engine.pages, chars: engine.chars, verdict };

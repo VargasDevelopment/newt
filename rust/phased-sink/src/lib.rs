@@ -144,7 +144,6 @@ pub struct State {
     pub found: bool,
     pub reached: bool,
     pub malformed: bool,
-    pub exceeded: bool,
     pub overflow: bool,
     pub page_index: u32,
     pub char_start: u32,
@@ -235,10 +234,6 @@ impl Sink for SelectingSink<'_, '_> {
         }
     }
     fn page(&mut self, page: Page<'_>) -> bool {
-        if page.index >= 4096 {
-            self.state.exceeded = true;
-            return false;
-        }
         let resolving = self.mode == Target::TocResolve;
         let mut anchor = self.target;
         if resolving {
