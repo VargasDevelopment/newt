@@ -74,6 +74,8 @@ void nb_return_build(void *d) {
 int32_t nb_update(void *d, uint32_t mode, uint32_t off) {
     if (!d || lent) return NB_NULL;
     if (mode > 2 || off > 1) return NB_MODE;
+    if (preview_conf_long("cover.usb.pause_ms", 0))
+        preview_advance((uint32_t)preview_conf_long("cover.paint_ms", 400));
     memcpy(shown, pixels, sizeof shown);
     refreshed = 1;
     preview_settle_reset();

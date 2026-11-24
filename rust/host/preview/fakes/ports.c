@@ -266,13 +266,28 @@ void nsc_flush(void) { if (serial_log) fflush(serial_log); }
 void nsc_wake_transmitter(void) {}
 static uint32_t cover_usb_resume;
 static int cover_usb_work;
+static size_t cover_usb_used;
+static uint32_t cover_usb_drain;
 int32_t nsc_available_for_write(void) {
-    return nb_millis() < cover_usb_resume ? 200 : 4096;
+    if (!preview_conf_long("cover.usb.pause_ms", 0)) return 4096;
+    if (nb_millis() < cover_usb_resume) return (int32_t)preview_conf_long("cover.usb.free", 200);
+    if (nb_millis() >= cover_usb_drain) cover_usb_used = 0;
+    return (int32_t)(256 - cover_usb_used);
 }
 uint8_t nsc_connected(void) { return (uint8_t)connected; }
 int32_t nsc_available(void) { return (int32_t)(request_length - request_next); }
 int32_t nsc_read_byte(void) { return request_next < request_length ? (uint8_t)request[request_next++] : -1; }
 size_t nsc_write(const uint8_t *data, size_t length) {
+    if (preview_conf_long("cover.usb.pause_ms", 0)) {
+        size_t free_bytes = (size_t)nsc_available_for_write();
+        if (length >= 6 && memcmp(data, "COVER ", 6) == 0 && length > free_bytes) {
+            FILE *trace = fopen(preview_path("cover-blocked.txt"), "ab");
+            if (trace) { fputs("write\n", trace); fclose(trace); }
+            return 0;
+        }
+        cover_usb_used = length > 256 - cover_usb_used ? 256 : cover_usb_used + length;
+        cover_usb_drain = nb_millis() + 30;
+    }
     if (serial_log) fwrite(data, 1, length, serial_log);
     for (size_t i = 0; i < length; ++i) {
         if (data[i] == '\n') {
@@ -622,7 +637,13 @@ int32_t newt_cover_heap_monitor_stop(void) {
 }
 size_t newt_cover_heap_monitor_minimum(void) { return 150000; }
 size_t newt_cover_heap_monitor_largest(void) { return 110592; }
-uint32_t newt_cover_stack_min_free(void) { return 4096; }
+uint32_t newt_cover_stack_min_free(void) {
+    if (preview_conf_long("cover.usb.pause_ms", 0)) {
+        FILE *trace = fopen(preview_path("cover-formats.txt"), "ab");
+        if (trace) { fputs("format\n", trace); fclose(trace); }
+    }
+    return 4096;
+}
 /* The cover producer's heap, as native/cover.cpp over heap_caps: blocks up
  * to 64 KiB, charged their usable size plus the 16-byte block header. */
 _Bool newt_cover_heap_supported(void) { return 1; }
