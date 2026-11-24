@@ -437,7 +437,7 @@ have separate regressions; the fake device follows the rollback bootloader, so
 a second reset before Newt confirms a new selection fails the install.
 `tests/bench_handshake_test.py` covers the held-port readiness handshake and
 `tests/x3_slots_test.py` the rule itself. The suite belongs to
-both quick and complete gates and can run on the canonical Mac host.
+both quick and complete gates.
 
 The Lead performs the hardware A-to-B-to-A install/restore check after host
 handoff, with the bench lease and two approved candidates. If B needs a larger

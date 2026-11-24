@@ -68,7 +68,7 @@ def phase_compile(name, build):
     return binary
 
 
-def focused(suite, profile):
+def focused(suite):
     if suite == 'cache':
         phase_run([sys.executable, '-B', str(ROOT / 'tests/host_objects_test.py')], check=True, cwd=ROOT,
                   cpu_budgets=gate_runner.cpu_budgets())
@@ -77,10 +77,7 @@ def focused(suite, profile):
         for script in ('library_preview_test.py', 'library_cover_prepare_test.py', 'system_ui_contract_test.py',
                        'system_ui_rule_test.py', 'preview_owners_test.py', 'preview_update_test.py'):
             command = [sys.executable, '-B', str(ROOT / 'tests' / script)]
-            if script != 'library_cover_prepare_test.py':
-                command.append(str(binary))
-            elif profile == 'linux':
-                command.append('--portable-only')
+            command.append('--portable-only' if script == 'library_cover_prepare_test.py' else str(binary))
             phase_run(command, check=True, cwd=ROOT,
                       cpu_budgets=gate_runner.cpu_budgets())
     print(f"PASS development suite {suite}; complete host/native gates and physical proof remain required", flush=True)
@@ -107,8 +104,8 @@ def configured_main() -> None:
     parser.add_argument('--no-time-budget', action='store_true',
                         help="Skip the tier's wall-time budget: the caller budgets the whole run (tools/ci_gate.py)")
     parser.add_argument('--fresh-objects', action='store_true', help='Recompile reusable objects for cache comparison')
-    parser.add_argument('--profile', choices=('canonical', 'linux'), default='canonical',
-                        help='Linux profile uses portable cover/cache checks')
+    parser.add_argument('--profile', choices=tuple(gate_plan.PROFILES), default='linux',
+                        help='Host gate profile (Linux x86_64 only; uses portable cover checks)')
     parser.add_argument('-j', '--jobs', type=int, default=gate_runner.default_jobs(),
                         help='Phases and compiler jobs at once (default: the usable CPUs); 1 is the serial gate')
     parser.add_argument('--host-jobs', type=int, help='Per-user phase/compiler slots across checkouts (default usable CPUs; NEWT_HOST_GLOBAL_JOBS)')
@@ -124,10 +121,10 @@ def configured_main() -> None:
         parser.error('--jobs must be at least 1')
     if args.host_jobs is not None and args.host_jobs < 1:
         parser.error('--host-jobs must be at least 1')
-    if args.profile == 'linux' and sys.platform != 'linux':
-        parser.error('The Linux coverage profile requires a real Linux host')
-    if args.profile == 'canonical' and sys.platform == 'linux':
-        parser.error('Linux must explicitly select --profile linux')
+    try:
+        gate_plan.require_host(args.profile)
+    except (RuntimeError, ValueError) as error:
+        parser.error(str(error))
     if args.fresh_objects:
         os.environ['NEWT_HOST_OBJECT_CACHE'] = '0'
     with gate_runner.job_environment(ROOT, args.jobs, args.host_jobs):
@@ -155,7 +152,7 @@ def gate(args) -> None:
               flush=True)
         return
     if args.suite != 'all':
-        focused(args.suite, args.profile)
+        focused(args.suite)
         return
     print(f"PASS: official FreeInk source {FREEINK_COMMIT}, checkout inputs clean", flush=True)
     print(f"TIER {args.tier}: negative controls of {included or 'no test'}", flush=True)
@@ -171,9 +168,8 @@ def gate(args) -> None:
         gate_tier.check_time_budget(f'{args.tier} tier host gate', time.perf_counter() - args.started,
                                     gate_tier.time_budget(args.tier, 'check'), timings)
     print("PASS: host compile (ASan/UBSan), Rust checks and CLI validation")
-    if args.profile == 'linux':
-        print('Linux software coverage: portable cover/cache controls; '
-              'for Mac ImageIO coverage see docs/CI.md#explicit-cover-coverage-boundary')
+    print('Linux software coverage: portable cover/cache controls; '
+          'for Mac ImageIO coverage see docs/CI.md#explicit-cover-coverage-boundary')
     print("Hardware firmware compilation and physical bring-up are separate gates.")
 
 

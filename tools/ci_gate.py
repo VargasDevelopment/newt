@@ -79,7 +79,7 @@ def committed_source(root, expected):
 
 def host_options(tier, part):
     """Use the same host options for execution and coverage."""
-    profile = 'linux' if sys.platform == 'linux' else 'canonical'
+    profile = gate_plan.require_host('linux')
     shard = None
     if part not in ('all', 'native'):
         index, count = part.split('/')
@@ -97,12 +97,10 @@ def commands(root, python, tier, part='all'):
     # CI always checks the release tags, so nothing merges onto an untagged release.
     result = [('host', [*prefix, str(root / 'tools/check.py'), '--tier', tier, '--release-tags', '--no-time-budget',
                         *(['--fresh-objects'] if fresh_objects else []),
-                        '-j', str(host_jobs.available_cpus()[0])]),
+                        '-j', str(host_jobs.available_cpus()[0]), '--profile', profile]),
               # A plain compile makes the platform's first-use package edits
               # before any resource identity is captured. No resource proof.
               ('native-preparation', [*prefix, str(root / 'tools/firmware-build.py'), '--clean'])]
-    if profile == 'linux':
-        result[0][1].extend(['--profile', profile])
     result.append(('native-' + FIRMWARE_BUILD,
                    [*prefix, str(root / 'tools/firmware-build.py'), '--clean', '--health-report']))
     if part == 'native':
@@ -134,11 +132,8 @@ def validate_native(root, expected):
 def coverage(root, tier, part, included):
     """Report the UI contract only for the job that runs its host phase."""
     profile, fresh_objects, shard = host_options(tier, part)
-    linux = profile == 'linux'
-    result = {'profile': profile, 'complete_software_coverage': not linux,
+    result = {'profile': profile, 'complete_software_coverage': False,
               'fixture_decoder_scope': 'four SHA-locked authored PNGs; no arbitrary image decode equivalence'}
-    if not linux:
-        result['required_mac_imageio_gate'] = 'included'
     if part != 'native':
         phases, _, _ = gate_plan.host_phases(root, profile, fresh_objects, included, shard)
         if any(phase.name == gate_plan.REVIEWED_UI_TEST for phase in phases):
@@ -153,6 +148,7 @@ def run_gate(root, expected, store=None, started=None, part='all'):
     directory = owned_directory(root, root / '.build/ci-gate', create=True)
     report = owned_file(root, directory / 'report.json')
     report.unlink(missing_ok=True)
+    gate_plan.require_host('linux')
     before = committed_source(root, expected)
     # The host subprocess announces and enforces its own control selection.
     included = gate_tier.controls(tier, root, announce=False) if part != 'native' else ''
@@ -178,11 +174,9 @@ def run_gate(root, expected, store=None, started=None, part='all'):
                'hardware': 'not-tested', 'ui_approval': 'separate', 'owner': 'pending'}, indent=2) + '\n')
     if part != 'all':
         print(f'PASS {tier} tier part {part} for {expected}; the run passes only when every part does', flush=True)
-    elif sys.platform == 'linux':
+    else:
         print(f'PASS {tier} tier Linux software checks for {expected}; for Mac ImageIO coverage see '
               'docs/CI.md#explicit-cover-coverage-boundary', flush=True)
-    else:
-        print(f'PASS {tier} tier software gates for {expected}; physical acceptance remains separate', flush=True)
 
 
 def run_phases(root, expected, tier, part='all'):

@@ -290,14 +290,22 @@ inputs. Failure or receipt drift stops the sequence; ceilings are unchanged.
 
 ## Explicit cover coverage boundary
 
-**Linux.** The firmware uses its own baseline JPEG, progressive JPEG and PNG
+**Platform support.** The host gate (`tools/check.py`), CI gate (`tools/ci_gate.py`),
+host previews (`tools/rust_preview.py`), and firmware host build
+(`tools/firmware_host_build.py`) run only on **Linux x86_64** (`--profile linux`,
+the default). On any other platform they fail with a clear error rather than
+running an incomplete gate. A **Mac** runs only the host-only Swift ImageIO cover
+gate (`tools/check-mac-covers.py`); it does not run `tools/check.py`, build the
+firmware for the host, or render reviewed frames.
+
+**Linux x86_64.** The firmware uses its own baseline JPEG, progressive JPEG and PNG
 decoders. The `jpeg_decoder` and `png_decoder` families, the core
 `cover_tolerance` tests and the preview's cover flows
 (`tests/preview_cover_test.py`) exercise those paths. The Linux gate also
 verifies all frames in `artifacts/library-ui-review.json` using the firmware
-host build. The prepared-cover cases use a test helper that accepts only four
-committed, SHA-locked authored PNGs and returns their matching packed ImageIO output.
-Unknown fixture bytes fail closed.
+host build. The prepared-cover cases (`tests/library_cover_prepare_test.py --portable-only`)
+use a test helper that accepts only four committed, SHA-locked authored PNGs and
+returns their matching packed ImageIO output. Unknown fixture bytes fail closed.
 
 **Mac.** Run the host-only Swift ImageIO cover gate on the exact commit for
 release acceptance and for any change to the ImageIO path.

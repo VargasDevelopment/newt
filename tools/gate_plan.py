@@ -6,8 +6,10 @@ phase whose output it reads, and in `uses`, each fixed path it shares with
 another phase: phases sharing a path never overlap and keep this order.
 """
 from pathlib import Path
+import platform
 import sys
 
+import firmware_host_build
 from gate_runner import Phase, label
 import gate_tier
 from host_common import ROOT
@@ -17,6 +19,12 @@ from rust_gate_families import (ADAPTER_FAMILIES, FOUNDATION_CAMPAIGNS, FULL_POS
 
 PYTHON = sys.executable
 REVIEWED_UI_TEST = "system_ui_contract_test.py"
+# Host-gate profiles and the (sys.platform, platform.machine(), host triple) each runs on.
+# Every host-gate profile builds the firmware for the host (tools/firmware_host_build.py),
+# which currently supports Linux x86_64 only; on a Mac, run tools/check-mac-covers.py.
+PROFILES = {"linux": ("linux", "x86_64", "x86_64-unknown-linux-gnu")}
+MAC_COVER_NOTE = ("The host gate runs only on Linux x86_64; on a Mac, run "
+                  "tools/check-mac-covers.py (docs/CI.md#explicit-cover-coverage-boundary)")
 
 # Arguments that only add a test's negative controls (tools/gate_tier.py).
 CONTROL_FLAGS = frozenset(("--negative-controls", "--negative-control", "--baseline-controls",
@@ -45,12 +53,37 @@ QUICK = ("bench_flash_test.py --negative-controls", "bench_flash_layouts_test.py
          *(name for _, name in UNIT_TESTS), "gate_previews.py")
 
 
+def validate_profile(profile: str) -> tuple[str, str, str]:
+    """Return (sys.platform, machine, host triple) for a supported host-gate profile."""
+    spec = PROFILES.get(profile)
+    if spec is None:
+        supported = ", ".join(PROFILES)
+        raise ValueError(f"Unsupported host gate profile {profile!r}; supported profiles: {supported}. "
+                         f"{MAC_COVER_NOTE}")
+    host_platform, machine, triple = spec
+    if triple != firmware_host_build.HOST:
+        raise ValueError(f"Host gate profile {profile!r} names {triple}, but firmware_host_build.HOST "
+                         f"is {firmware_host_build.HOST}")
+    return host_platform, machine, triple
+
+
+def require_host(profile: str) -> str:
+    """Confirm that `profile` is supported and matches the running host."""
+    host_platform, machine, _ = validate_profile(profile)
+    current = platform.machine()
+    if sys.platform != host_platform or current != machine:
+        raise RuntimeError(f"Host gate profile {profile!r} requires {host_platform} {machine} "
+                           f"(current host: {sys.platform} {current}). {MAC_COVER_NOTE}")
+    return profile
+
+
 def plan(profile: str, fresh_objects: bool, controls=None) -> list[Phase]:
     """controls(script) says whether that test's negative controls run; None
     runs every one (the full tier). Without them a test drops its control
     flags, and a full_only phase does not run: one that only adds evidence
     about its test, its negative controls, an exhaustive matrix or an explicitly
     full-tier positive suite."""
+    validate_profile(profile)
     phases, names = [], {}  # names: each complete-plan name to its name here, or None
 
     def run(*arguments, bytecode=False, after=(), uses=(), alone=False, full_only=False, control_owner=None):
@@ -159,7 +192,7 @@ def plan(profile: str, fresh_objects: bool, controls=None) -> list[Phase]:
     phases.append(Phase("compile newt-preview", (PYTHON, "-B", str(ROOT / "tools/rust_preview.py")),
                         uses=(preview,)))
     test("library_preview_test.py", preview, bytecode=True, after=("compile newt-preview",))
-    test("library_cover_prepare_test.py", *(("--portable-only",) if profile == "linux" else ()))
+    test("library_cover_prepare_test.py", "--portable-only")
     test(REVIEWED_UI_TEST, preview, after=("compile newt-preview",))
     test("system_ui_rule_test.py", preview, after=("compile newt-preview",))
     test("preview_owners_test.py", preview, after=("compile newt-preview",))

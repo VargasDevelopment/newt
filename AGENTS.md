@@ -52,7 +52,7 @@ To open a pull request, focused checks for the area you changed are enough:
 | Firmware sources | also `python3 tools/firmware-build.py`, a quick compile |
 | Only docs: `README.md`, `AGENTS.md`, `CONTRIBUTING.md`, the pull request template, or Markdown and images directly in `docs/` (not `docs/toolchain-*`) | nothing more; CI's [docs lane](docs/CI.md#docs-lane) checks it |
 
-On Linux, add `--profile linux` to `check.py`.
+`tools/check.py` runs only on Linux x86_64 (see [docs/CI.md](docs/CI.md#explicit-cover-coverage-boundary) for Linux and Mac platform support).
 
 Some evidence CI cannot give. Add it where it applies:
 
