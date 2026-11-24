@@ -5,6 +5,7 @@ import importlib.util
 import json
 from pathlib import Path
 import shutil
+import signal
 import sys
 import tempfile
 import time
@@ -48,15 +49,51 @@ def startup(run, workspace, support):
              '-Wextra', '-Werror', '-O1', '-g', '-I', workspace / 'salamander/board/native',
              '-c', workspace / 'tests/reader_statistics/board_fake.c', '-o', fake], workspace)
     hashing, _ = home.sha(run, ROOT)
-    objects = [fake, home.native_io(run, workspace),
+    objects = [home.native_io(run, workspace),
                *(run.output / (name + '.o') for name in clock.NATIVE_LINK),
                '-fsanitize=address,undefined', '-fno-sanitize-recover=all', *hashing, '-lstdc++']
     flags = [str(arg).replace('-Clink-arg=-fuse-ld=', '-Clink-arg=--ld-path=')
-             for arg in build.host_link_args(run, graph, objects)]
+             for arg in build.host_link_args(run, graph, [fake, *objects])]
     executable = run.output / 'startup'
     run.run([*flags, '-Dwarnings', '--cfg', 'feature="dev-usb"', '-Copt-level=s',
              '--crate-name=legacy_startup', workspace / 'tests/legacy_nvs/startup.rs', '-o', executable], workspace)
-    return executable
+    return executable, graph, objects
+
+
+def reader_recovery(run, workspace, graph, objects, support, *, controls):
+    here = workspace / 'tests/reader_short_turn'
+    checks = load('reader_short_turn', here / 'check.py')
+    build = load('recovery_build', workspace / 'tests/phased_reader/physical/build.py')
+    out = run.output / 'reader-recovery'
+    out.mkdir()
+    fake = out / 'checkpoint-board.o'
+    run.run([run.tools['clang++'], '--no-default-config', '-x', 'c', '-std=c11', '-O1', '-g',
+             '-fsanitize=address,undefined', '-fno-sanitize-recover=all',
+             '-I', workspace / 'salamander/board/native',
+             '-c', workspace / 'tests/reader_checkpoint/board_fake.c', '-o', fake], workspace)
+    # The startup graph and parser objects already cover this firmware fixture.
+    flags = [str(arg).replace('-Clink-arg=-fuse-ld=', '-Clink-arg=--ld-path=')
+             for arg in build.host_link_args(run, graph, [fake, *objects])
+             if arg not in ('-Dwarnings', '-Clto=fat')]
+    flags.append('-Copt-level=1')
+    executable = out / 'positive'
+    run.run([*flags, here / 'host.rs', '-o', executable], workspace)
+
+    def recorded(command, *, witness=None):
+        if witness is None:
+            return run.run(command, workspace)
+        number = len(run.commands)
+        try:
+            run.run(command, workspace)
+        except RuntimeError:
+            stderr = (run.output / f'{number:03d}.stderr').read_text()
+            support.require(run.commands[number].get('returncode') == -signal.SIGABRT
+                            and 'panicked at ' in stderr and witness in stderr,
+                            'recovery control must reach its runtime assertion')
+        else:
+            raise RuntimeError('mutation survived: ' + witness)
+
+    checks.check_recovery(recorded, flags, workspace, out, executable, controls=controls)
 
 
 def start_failure_graph(run, workspace, support):
@@ -91,13 +128,16 @@ def prove(run, workspace, support):
     binary = test_binary(run, workspace, run.output / 'tests-target')
     observations = run.run([binary, '--nocapture'], workspace)
     support.require('test result: ok.' in observations, 'complete positive test run')
-    run.run([startup(run, workspace, support)], workspace)
+    program, graph, objects = startup(run, workspace, support)
+    run.run([program], workspace)
+    controls = gate_tier.negative_controls(__file__)
+    reader_recovery(run, workspace, graph, objects, support, controls=controls)
     failures = start_failure_graph(run, workspace, support)
     failure_program = start_failure(run, workspace, failures, 'start-failure')
     for case in ('panel', 'no-panel'):
         run.run([failure_program, case], workspace)
     killed = []
-    if gate_tier.negative_controls(__file__):
+    if controls:
         for control in json.loads((workspace / 'tests/legacy_nvs/controls.json').read_text()):
             mutant = run.output / control['name'] / 'rust'
             shutil.copytree(workspace, mutant)
@@ -111,7 +151,7 @@ def prove(run, workspace, support):
             wiring = kind in ('startup', 'start-failure')
             # A start-failure mutation touches only the program's own sources,
             # so it reuses the unmutated crate graph.
-            program = (startup(run, mutant, support) if kind == 'startup' else
+            program = (startup(run, mutant, support)[0] if kind == 'startup' else
                        start_failure(run, mutant, failures, 'start-failure-' + control['name'])
                        if kind == 'start-failure' else
                        test_binary(run, mutant, run.output / ('target-' + control['name'])))

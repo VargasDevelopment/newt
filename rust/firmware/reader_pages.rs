@@ -101,6 +101,7 @@ impl<N: Native> newt_phased_reader::producer_probe::ProducerProbe for ReaderPage
         let mut resolved = false;
         let hint = self.0.access().probe_page(name, &cancel, &mut resolved);
         if resolved { return hint; }
+        // A filename hit still needs the checked NTBE read before it can skip a rebuild.
         let policy = ProducerPolicy::new(&cancel);
         let mut uncertain = false;
         let Some(size) = self.0.produce(&policy, |access| {

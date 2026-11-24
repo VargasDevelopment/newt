@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 use super::*;
-use crate::{BookLanguage, OperationPhased, PhasedChapterCache, phase_storage::ReadScope, producer_probe::ProducerProbe};
-use super::super::super::identity;
+use crate::{BookLanguage, OperationPhased, PageInfo, PhasedChapterCache, phase_storage::ReadScope,
+    producer::Segments, producer_probe::ProducerProbe, producer_store::{ProducerStore, StoreState},
+    producer_writer::CappedWriter, reader::session_adapter::identity};
 use core::ffi::CStr;
 use newt_core::{cache_names::{namespace::PageCacheNeed, segment::{self, ChapterSegment, PAGES}},
     chapter_layout::types::LineBreak, preferences::{Orientation, ViewSettings}, producer_visit::MissingProbe};
@@ -11,7 +12,7 @@ use std::collections::BTreeMap;
 struct Japanese(usize);
 impl LineBreak for Japanese {
     fn breaks(&mut self, text: &[u8], language: Option<&CStr>, out: &mut [u8]) {
-        assert_eq!(language, Some(c"ja"), "producer dropped the OPF language");
+        assert_eq!(language, Some(c"ja"), "producer line-breaking language");
         linebreak::NativeBreak.breaks(text, language, out);
         self.0 += 1;
     }
@@ -64,6 +65,7 @@ impl ReadScope for Files {
 
 #[test]
 fn current_and_staged_segments_use_the_book_language() {
+    // native.py assemble generates ja.epub for this producer case.
     let mut source = Source { bytes: include_bytes!("../../../tests/producer_forwarding/ja.epub").to_vec(), fail: false };
     let bytes = source.size();
     let mut selections = [Selection::default(), Selection::default()];
@@ -134,6 +136,7 @@ fn current_and_staged_segments_use_the_book_language() {
 
 #[test]
 fn bounded_layout_uses_the_book_language() {
+    // native.py assemble generates ja-short.epub for the bounded reader.
     let epub: &[u8] = include_bytes!("../../../tests/producer_forwarding/ja-short.epub");
     use crate::{bounded::{BOOK_BYTES, Chapters, LAYOUT_BYTES, PARSE_BYTES},
         phase_storage::{bounded::MetadataState, bounded_chapters::Work}};
@@ -157,4 +160,26 @@ fn bounded_layout_uses_the_book_language() {
         chapters.layout(view, 0, ViewSettings::default(), &mut Discard)) };
     assert!(matches!(result, Ok(Ok(_))));
     assert!(breaks.0 > 0, "bounded reader must break text");
+}
+
+#[test]
+fn segment_map_requires_a_book_language() {
+    let context = Context::default();
+    let cancel = Cancellation::new(Hooks { context: &context, stop: Some(stopped), yield_now: None, pause: None });
+    let mut files = Files::default();
+    let mut store_state = StoreState::new(None);
+    let mut store = ProducerStore::new(&mut files, &cancel, &mut store_state, None);
+    let mut starts = [0; segment::MAX_SEGMENTS];
+    let writer = CappedWriter::new(&cancel, &mut starts);
+    writer.starts[1] = PAGES;
+    let mut bytes = [0; segment::MAX_BYTES];
+    let trace = Trace::new(0);
+    let mut route = Route { settings: ViewSettings::default(), digest: &[0; 32],
+        info: PageInfo { page_count: PAGES + 1, total_chars: PAGES + 1, ..PageInfo::default() },
+        hash: &mut passes::PassHash(&trace) };
+    let mut segments = Segments::new(route.info.page_count);
+    assert_eq!(segments.write_map(&writer, &mut store, Some(&mut bytes), &mut route, 0), Status::IoError);
+    segments.language = Some(BookLanguage::Japanese);
+    assert_eq!(segments.write_map(&writer, &mut store, Some(&mut bytes), &mut route, 0), Status::Ok);
+    assert_eq!(files.files.len(), 1);
 }

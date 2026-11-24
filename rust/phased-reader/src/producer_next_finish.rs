@@ -13,7 +13,7 @@ impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::Pro
     ) -> Status {
         let mut status = self.select_next(reader, spine, backend);
         if status == Status::Ok {
-            self.state.language = Some(reader.staged_selection().language);
+            self.state.language = reader.book_language();
             if !self.state.identify(route, spine) { status = Status::IoError; }
         }
         let mut pages = 0;

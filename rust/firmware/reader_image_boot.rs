@@ -3,7 +3,8 @@
 use super::*;
 use core::fmt::Write;
 use crate::{app_image::{Application, Home}, home_startup::CardPort,
-    nvs::NvsBlobBackend, reading_state_medium::MountedStateMedium,
+    nvs::NvsBlobBackend, reader_restore_policy::{DurableCheckpoint, boot_restore_policy},
+    reading_state_medium::MountedStateMedium,
     retained_runtime::{record::{self, BootSnapshot, SleepRecord, Status}, wake::{Attempt, UNAVAILABLE}}};
 use newt_c3_board::Error;
 use newt_core::{app::Screen, durable::Load, selected_book::SelectedBookStore,
@@ -154,16 +155,16 @@ impl Runtime {
             self.settings = target.settings;
             self.reader_ui.draft = self.settings;
         }
+        let retained_recovery = boot.record.recovery_kind();
         if (report.restored || durable) && (ui.app.screen == Screen::EpubReading
-            || boot.record.recovery & 3 != record::Recovery::Ordinary as u32) {
+            || retained_recovery != Some(record::Recovery::Ordinary)) {
             self.saves.set_checkpoint_saved(durable || report.checkpoint_saved);
+            let checkpoint = durable.then(|| if target.anchor { DurableCheckpoint::Anchor }
+                else { DurableCheckpoint::PageStart });
             self.recovery = Some(crate::reader_book::PendingRecovery {
                 progress: self.saved,
                 settings: self.settings,
-                policy: if if durable { target.anchor }
-                    else { boot.record.recovery & 3 == record::Recovery::PendingAnchor as u32 } {
-                        newt_reader_ui::RestorePolicy::Validated
-                    } else { newt_reader_ui::RestorePolicy::ExactPage },
+                policy: boot_restore_policy(checkpoint, retained_recovery),
             });
         }
         self.wake.available = true;

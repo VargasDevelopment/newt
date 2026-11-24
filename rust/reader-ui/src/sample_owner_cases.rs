@@ -65,7 +65,8 @@ fn with_sample(saved: Locator, work: impl for<'op, 'book, 'storage>
 #[test]
 fn exact_page_rejects_interior_anchor_while_validated_reflows_it() {
     for (policy, expected) in [(RestorePolicy::ExactPage, RestoreFailure::InvalidCheckpoint),
-        (RestorePolicy::Validated, RestoreFailure::None)] {
+        (RestorePolicy::Validated, RestoreFailure::None),
+        (RestorePolicy::ColdCheckpoint, RestoreFailure::None)] {
         with_sample(Locator { spine: 0, character: 15 }, |mut sample, chapters, frame| {
             assert_eq!(sample.restore_initial(chapters, policy, 100, frame), expected);
             assert_eq!(sample.owner.opened(), expected == RestoreFailure::None);
@@ -79,10 +80,11 @@ fn exact_page_rejects_interior_anchor_while_validated_reflows_it() {
 
 #[test]
 fn only_initial_fallback_may_replace_a_missing_coordinate() {
-    for policy in [RestorePolicy::Validated, RestorePolicy::AllowInitialFallback] {
+    for (policy, fallback) in [(RestorePolicy::Validated, false),
+        (RestorePolicy::ColdCheckpoint, false), (RestorePolicy::AllowInitialFallback, true)] {
         with_sample(Locator { spine: 99, character: 0 }, |mut sample, chapters, frame| {
             let restored = sample.restore_initial(chapters, policy, 0, frame);
-            if policy == RestorePolicy::AllowInitialFallback {
+            if fallback {
                 assert_eq!(restored, RestoreFailure::None);
                 assert_eq!(sample.tracker.snapshot(0).locator, Locator::default());
             } else {

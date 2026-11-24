@@ -100,7 +100,6 @@ impl BookLanguage {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::BookLanguage;

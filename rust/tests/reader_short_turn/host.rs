@@ -8,6 +8,9 @@ pub use newt_native_storage::{Directory, Error, Kind, Native, Open, Result, Stat
 #[path = "../../firmware/reader_book.rs"] pub mod reader_book;
 #[path = "../../firmware/reader_metadata.rs"] pub mod reader_metadata;
 #[path = "../../firmware/reader_pages.rs"] pub mod reader_pages;
+#[path = "../../firmware/reader_restore_policy.rs"] mod reader_restore_policy;
+#[path = "../../firmware/retained_runtime/record.rs"] pub mod retained_record;
+mod retained_runtime { pub use crate::retained_record as record; }
 #[path = "../../firmware/reading_state_medium.rs"] pub mod reading_state_medium;
 #[path = "../../firmware/sd_revision.rs"] pub mod sd_revision;
 #[path = "../../firmware/stats_clock.rs"] pub mod stats_clock;
@@ -16,6 +19,8 @@ mod reader_action { pub use newt_core::reader_action_profile::ActionStage; }
 #[path = "../reader_checkpoint/card.rs"] mod card;
 #[path = "../sd_reading_state/model.rs"] mod model;
 #[path = "../phased_reader/physical/linebreak.rs"] mod linebreak;
+#[path = "upgrade.rs"] mod upgrade;
+#[path = "boot_policy.rs"] mod boot_policy;
 
 use core::ffi::CStr;
 use newt_core::{progress::Progress, producer_policy::Stop, zip_window::source::BookSource};
@@ -26,7 +31,6 @@ use newt_reader_ui::{Action, DeviceInfo, ExternalOwner, PhysicalOpen, ReaderPane
 use reader_book::{BookRequest, BookStep, CheckpointRestore, MountedCheckpoint, ProducerCallbacks,
     ReaderCheckpoint, ReadingStatsRuntime, Resources};
 
-#[link(name = "crypto")]
 unsafe extern "C" { fn SHA256(data: *const u8, length: usize, out: *mut u8) -> *mut u8; }
 fn hash(bytes: &[u8], out: &mut [u8; 32]) -> bool {
     // SAFETY: host libcrypto consumes this slice and fills exactly 32 bytes.
@@ -131,7 +135,15 @@ fn scenario(bytes: Vec<u8>, finished: bool) {
 use home_startup::CardPort;
 fn main() {
     let path = std::env::args().nth(1).expect("generated public fixture");
+    if path == "--restore-policy" {
+        boot_policy::check();
+        return;
+    }
     let bytes = std::fs::read(path).unwrap();
+    if std::env::args().any(|arg| arg == "--cache-upgrade") {
+        upgrade::resume(bytes);
+        return;
+    }
     scenario(bytes.clone(), false); scenario(bytes, true);
     println!("PASS actual short open/action/finished plus image paint");
 }

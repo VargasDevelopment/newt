@@ -283,6 +283,7 @@ pub fn write_line(e: &Evidence, line: u32, b: &mut impl Write) {
                     0 => "fallback",
                     1 => "exact",
                     2 => "anchor",
+                    3 => "cold checkpoint",
                     _ => "n/a",
                 }
             );

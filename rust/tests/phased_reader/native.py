@@ -48,10 +48,14 @@ def native(run, support, ws, original, sdk):
     return None, run.output/'target'/HOST/'debug/phased-reader-host'
 
 
-def book_language(run, ws, executable):
+def reader_layout(run, ws, executable):
     fixture_dir = run.output/'language-fixtures'
-    load('phased_reader_fixtures', ws/'phased-reader/host/fixtures.py').write_languages(fixture_dir)
+    fixtures = load('phased_reader_fixtures', ws/'phased-reader/host/fixtures.py')
+    fixtures.write_languages(fixture_dir)
     run.run([executable, '--language', fixture_dir], ROOT)
+    dense = run.output/'run-budget.epub'
+    fixtures.write_run_budget(dense)
+    run.run([executable, '--run-budget', dense], ROOT)
 
 
 def assemble(output, support):

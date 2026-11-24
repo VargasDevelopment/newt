@@ -3,6 +3,8 @@
 use super::{arabic, style, text::*, types::*};
 mod links;
 mod initialization;
+mod segments;
+use segments::{LineSegments, MAX_SEGMENTS, Segment};
 use crate::{
     css::{self, CssDecl, CssStylesheetBuilder, TextAlign},
     hyphenator::Hyphenator,
@@ -409,7 +411,7 @@ impl<'a> EngineState<'a> {
             return false;
         }
         self.flush(backend);
-        if self.run_count > 0 || self.image_count > 0 {
+        if !self.failed && (self.run_count > 0 || self.image_count > 0) {
             self.emit_page(backend)
         }
         !self.failed
@@ -579,6 +581,10 @@ impl<'a> EngineState<'a> {
         while end > start && matches!(self.storage.text[end - 1], b' ' | b'\n') {
             end -= 1
         }
+        self.storage.lines[self.line_count] = self.line_metrics(backend, start, end, flags);
+        self.line_count += 1
+    }
+    fn line_metrics(&mut self, backend: &mut dyn Backend, start: usize, end: usize, flags: u8) -> Line {
         let mut r = Line {
             start,
             end,
@@ -604,8 +610,7 @@ impl<'a> EngineState<'a> {
             let s = self.storage.spans[self.span_index(if end > start { end - 1 } else { start })];
             r.width += i32::from(backend.advance(45, self.size(s.size), s.flags))
         }
-        self.storage.lines[self.line_count] = r;
-        self.line_count += 1
+        r
     }
     fn measure_lines(&mut self, backend: &mut dyn Backend) {
         self.line_count = 0;
@@ -750,6 +755,7 @@ impl<'a> EngineState<'a> {
         );
         self.measure_lines(backend);
         let mut idx = 0;
+        let mut continuation = None;
         while idx < self.line_count && !self.failed && !self.stopped {
             let px =
                 i32::from(self.params.height) - i32::from(self.params.bottom) - i32::from(self.y);
@@ -771,18 +777,32 @@ impl<'a> EngineState<'a> {
             while take < remain && remain - take < usize::from(self.params.widow) && take > 1 {
                 take -= 1
             }
-            if idx == 0 && take < remain && take < usize::from(self.params.orphan) && content {
+            if idx == 0 && continuation.is_none() && take < remain
+                && take < usize::from(self.params.orphan) && content
+            {
                 self.emit_page(backend);
                 continue;
             }
-            for l in 0..take {
-                if self.failed || self.stopped {
-                    break;
+            let end = idx + take;
+            // A segment break may use spare rows without consuming another measured line.
+            let slots = if take == remain { avail } else { take };
+            for _ in 0..slots {
+                if idx == end { break; }
+                let first = idx == 0 && continuation.is_none();
+                let line = continuation.unwrap_or(self.storage.lines[idx]);
+                match self.place_line(backend, line, size, lh, first) {
+                    LinePlacement::Placed(rest) => {
+                        continuation = rest;
+                        if rest.is_none() { idx += 1; }
+                    }
+                    LinePlacement::NextPage => break,
+                    LinePlacement::TooLarge => {
+                        self.failed = true;
+                        break;
+                    }
                 }
-                self.place_line(backend, self.storage.lines[idx + l], size, lh, idx + l == 0)
             }
-            idx += take;
-            if idx < self.line_count && !self.stopped {
+            if idx < self.line_count && !self.failed {
                 self.emit_page(backend)
             }
         }
@@ -798,15 +818,17 @@ impl<'a> EngineState<'a> {
         self.reset_par();
         self.continued = false
     }
-    fn place_line(&mut self, backend: &mut dyn Backend, r: Line, size: u16, lh: i16, first: bool) {
+    fn refused_line(&self) -> LinePlacement {
+        if self.run_count > 0 || self.image_count > 0 {
+            LinePlacement::NextPage
+        } else {
+            LinePlacement::TooLarge
+        }
+    }
+    fn place_line(&mut self, backend: &mut dyn Backend, mut r: Line, size: u16, lh: i16, first: bool) -> LinePlacement {
         if r.end == r.start {
             self.y = self.y.wrapping_add(lh);
-            return;
-        }
-        if self.run_count == 0 {
-            self.page_chars = self
-                .chars
-                .wrapping_add(count(&self.storage.text[..r.start]))
+            return LinePlacement::Placed(None);
         }
         let indent = if first && !self.continued && self.paragraph.text_indent > 0 {
             i32::from(size) * i32::from(self.paragraph.text_indent) / 100
@@ -818,12 +840,34 @@ impl<'a> EngineState<'a> {
             - i32::from(self.params.right)
             - i32::from(self.paragraph.indent)
             - indent;
-        let left = max - r.width;
-        let hs = r.spaces == 0;
-        let gaps =
-            u32::from(r.spaces) + u32::from(r.cjk) + if hs { u32::from(r.hangul) } else { 0 };
+        let mut left = max - r.width;
+        let justify_hangul = r.spaces == 0;
+        let mut gaps = justification_gaps(r, justify_hangul);
         let justify =
             self.paragraph.align == TextAlign::Justify && r.flags & 1 == 0 && gaps > 0 && left > 0;
+        let baseline = self.y.wrapping_add(backend.ascent(size));
+        let mut segs = [Segment::default(); MAX_SEGMENTS];
+        let LineSegments { count: n, next_start } =
+            self.segment_line(backend, r, justify, justify_hangul, &mut segs);
+        if n == 0 {
+            self.y = self.y.wrapping_add(lh);
+            return LinePlacement::Placed(None);
+        }
+        if n > self.storage.runs.len() - self.run_count {
+            return self.refused_line();
+        }
+        let rest = if let Some(start) = next_start {
+            let (end, flags) = (r.end, r.flags);
+            r = self.line_metrics(backend, r.start, segs[n - 1].end, flags & !2);
+            left = max - r.width;
+            gaps = justification_gaps(r, justify_hangul);
+            Some(self.line_metrics(backend, start, end, flags | 1))
+        } else {
+            None
+        };
+        let justify = justify && gaps > 0 && left > 0;
+        let per = if justify { left / gaps } else { 0 };
+        let mut remainder = if justify { left % gaps } else { 0 };
         let mut align = self.paragraph.align;
         if self.rtl {
             align = match align {
@@ -840,71 +884,8 @@ impl<'a> EngineState<'a> {
         } else if align == TextAlign::Center {
             x += left / 2
         }
-        let per = if justify { left / gaps as i32 } else { 0 };
-        let mut remainder = if justify { left % gaps as i32 } else { 0 };
-        let mut baseline = self.y.wrapping_add(backend.ascent(size));
-        let mut segs = [Segment::default(); 64];
-        let mut n = 0;
-        let mut seg = Segment {
-            start: r.start,
-            span: self.span_index(r.start),
-            level: self.storage.levels[r.start] & 7,
-            extra: self.extra(r.start),
-            ..Segment::default()
-        };
-        let (mut prev, mut i) = (0, r.start);
-        while i < r.end {
-            let at = i;
-            let si = self.span_index(at);
-            let level = self.storage.levels[at] & 7;
-            let extra = self.extra(at);
-            let cp = self.shaped(backend, r.end, &mut i, si);
-            if justify && cp == 32 {
-                close_segment(&mut segs, &mut n, seg, at);
-                let next = if i < r.end { i } else { at };
-                seg = Segment {
-                    start: i,
-                    span: self.span_index(next),
-                    level: self.storage.levels[next] & 7,
-                    extra: self.extra(next),
-                    gap: true,
-                    space: true,
-                    ..Segment::default()
-                };
-                prev = cp;
-                continue;
-            }
-            let compress = prev != 0 && compression(prev, cp, 2) != 0;
-            let cg = prev != 0
-                && !compress
-                && justify
-                && cjk(prev)
-                && cjk(cp)
-                && (hs || !(hangul(prev) && hangul(cp)));
-            let mixed = prev != 0 && crosses(prev, cp);
-            if si != seg.span || level != seg.level || extra != seg.extra || cg || mixed || compress
-            {
-                close_segment(&mut segs, &mut n, seg, at);
-                seg = Segment {
-                    start: at,
-                    span: si,
-                    level,
-                    extra,
-                    gap: cg,
-                    script: mixed,
-                    compress,
-                    ..Segment::default()
-                }
-            }
-            prev = cp
-        }
-        close_segment(&mut segs, &mut n, seg, r.end);
-        if n == 0 {
-            self.y = self.y.wrapping_add(lh);
-            return;
-        }
         // Match frozen placeLine's byte indices for at most 64 segments.
-        let mut order = [0u8; 64];
+        let mut order = [0u8; MAX_SEGMENTS];
         let (mut high, mut odd) = (0, 255);
         for s in 0..n {
             order[s] = s as u8;
@@ -933,6 +914,7 @@ impl<'a> EngineState<'a> {
         if self.rtl {
             order[..n].reverse()
         }
+        let before = (self.run_count, self.link_count, self.pool_len);
         for v in 0..n {
             let sg = segs[usize::from(order[v])];
             let span = self.storage.spans[sg.span];
@@ -958,11 +940,18 @@ impl<'a> EngineState<'a> {
                 x += self.margin(span)
             }
             let hy = sg.end == r.end && r.flags & 2 != 0 && !self.rtl;
-            if !self.emit_segment(backend, sg, hy, &mut baseline, &mut x, size) {
-                return;
+            if !self.emit_segment(backend, sg, hy, baseline, &mut x) {
+                // Unpublished runs, links and bytes are discarded together.
+                // The caller retries this whole line at the top of the next page.
+                (self.run_count, self.link_count, self.pool_len) = before;
+                return self.refused_line();
             }
         }
-        self.y = self.y.wrapping_add(lh)
+        if before.0 == 0 {
+            self.page_chars = self.chars.wrapping_add(count(&self.storage.text[..r.start]));
+        }
+        self.y = self.y.wrapping_add(lh);
+        LinePlacement::Placed(rest)
     }
     fn reserve(&mut self, n: usize) -> Option<usize> {
         if n > self.storage.page.len().saturating_sub(self.pool_len) {
@@ -986,9 +975,8 @@ impl<'a> EngineState<'a> {
         &mut self, backend: &mut dyn Backend,
         sg: Segment,
         hy: bool,
-        baseline: &mut i16,
+        baseline: i16,
         x: &mut i32,
-        size: u16,
     ) -> bool {
         let span = self.storage.spans[sg.span];
         let (mut width, mut prev, mut i) = (0, 0, sg.start);
@@ -1000,26 +988,8 @@ impl<'a> EngineState<'a> {
         let flags = span.flags | sg.extra;
         let n = sg.end - sg.start;
         let need = n + n / 2 + usize::from(hy) + 4;
-        if self.run_count >= self.storage.runs.len() {
-            self.emit_page(backend);
-            if self.stopped {
-                return false;
-            }
-            *baseline = self.y.wrapping_add(backend.ascent(size))
-        }
-        let at = if let Some(at) = self.reserve(need) {
-            at
-        } else {
-            self.emit_page(backend);
-            if self.stopped {
-                return false;
-            }
-            *baseline = self.y.wrapping_add(backend.ascent(size));
-            let Some(at) = self.reserve(need) else {
-                self.failed = true;
-                return false;
-            };
-            at
+        let Some(at) = self.reserve(need) else {
+            return false;
         };
         let (mut len, mut i) = (0, sg.start);
         while i < sg.end {
@@ -1041,7 +1011,7 @@ impl<'a> EngineState<'a> {
             len += 1;
             width += i32::from(backend.advance(45, sz, flags))
         }
-        let mut rb = *baseline;
+        let mut rb = baseline;
         if span.flags & SUP != 0 {
             rb = rb.wrapping_sub((u32::from(sz) * 33 / 100) as i16)
         } else if span.flags & SUB != 0 {
@@ -1157,22 +1127,13 @@ impl<'a> EngineState<'a> {
         self.y = self.params.top
     }
 }
-#[derive(Clone, Copy, Default)]
-struct Segment {
-    start: usize,
-    end: usize,
-    span: usize,
-    level: u8,
-    gap: bool,
-    space: bool,
-    script: bool,
-    compress: bool,
-    extra: u8,
+enum LinePlacement {
+    /// The measured continuation if the line crossed the segment cap.
+    Placed(Option<Line>),
+    NextPage,
+    TooLarge,
 }
-fn close_segment(segs: &mut [Segment; 64], n: &mut usize, mut seg: Segment, end: usize) {
-    if end > seg.start && *n < 64 {
-        seg.end = end;
-        segs[*n] = seg;
-        *n += 1
-    }
+fn justification_gaps(line: Line, justify_hangul: bool) -> i32 {
+    i32::from(line.spaces) + i32::from(line.cjk)
+        + if justify_hangul { i32::from(line.hangul) } else { 0 }
 }

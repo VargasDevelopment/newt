@@ -100,7 +100,7 @@ def native_forwarding(checker, support, runner, snapshot):
     runner.extra_seals = seals
     try:
         _, executable = native.native(runner, support, ws, snapshot, sdk)
-        native.book_language(runner, ws, executable)
+        native.reader_layout(runner, ws, executable)
         obj = runner.output / 'native_sha.o'
         runner.run([runner.tools['clang++'], '--no-default-config', '-std=c++17',
                     '-O1', '-g', '-fsanitize=address,undefined', '-fno-sanitize-recover=all',
@@ -113,10 +113,10 @@ def native_forwarding(checker, support, runner, snapshot):
         output = runner.cargo(ws, runner.output/'target', 'test', '-p', 'newt-phased-reader',
                               '--lib', '--features', 'native-host', '--target', HOST,
                               'producer_stream_tests::traces')
-        require_tests(support, output, 15, filtered=True)
+        require_tests(support, output, 16, filtered=True)
         recipe = load('landing_recipe', snapshot / 'rust/tests/producer_forwarding/recipe.py')
         support.require(len(recipe.MATRIX) == 55, 'complete forwarding matrix')
-        return {'passed_tests': 15, 'forwarding_cases': 55,
+        return {'passed_tests': 16, 'forwarding_cases': 55,
                 'fixture_sha256': checker.digest(ws/'tests/producer_forwarding/expected-outputs.bin.zlib'),
                 'native_source_sha256': support.source_inventory(ws),
                 'openssl_inputs': seals[1].hashes}
@@ -160,7 +160,7 @@ def check(checker, before, snapshot, identity):
         portable = runner.cargo(ws, checker.BUILD/'landing-host-target', 'test', '--workspace',
                                 '--exclude', 'newt-app-image', '--exclude', 'newt-native-input-owner',
                                 '--target', HOST)
-        require_tests(support, portable, 419)
+        require_tests(support, portable, 427)
         with foundation_commands(checker, runner):
             cases, expected, binary = checker.foundation(snapshot, checker.BUILD/'target', portable_done=True)
         support.require(len(cases) == 60368, 'complete foundation corpus')
@@ -202,7 +202,7 @@ def check(checker, before, snapshot, identity):
             'omitted': ['mutation controls', '20-family gate', 'SDK image/link', 'hardware',
                         'landing contract test (own gate phase)'],
             'source_sha256': before, 'toolchain': identity, 'sdk_pin': SDK_PIN,
-            'portable': {'passed_tests': 419, 'excluded': ['newt-app-image', 'newt-native-input-owner']},
+            'portable': {'passed_tests': 427, 'excluded': ['newt-app-image', 'newt-native-input-owner']},
             'foundation': {'comparisons': len(cases), 'independent_checks': True,
                            'host_binary_sha256': checker.digest(binary)},
             'native_forwarding': forwarding,

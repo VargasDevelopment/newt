@@ -25,10 +25,10 @@ impl SampleOperation<'_, '_, '_> {
         let locator = self.tracker.snapshot(0).locator;
         let mut status = self.reader.restore(self.metadata, chapters,
             locator.spine, locator.character, Some(frame));
-        if status == Status::NotFound && policy == RestorePolicy::AllowInitialFallback {
+        if status == Status::NotFound && policy.allows_initial_fallback() {
             status = self.reader.show_page(self.metadata, chapters, 0, 0, Some(frame));
         }
-        let exact_mismatch = status == Status::Ok && policy == RestorePolicy::ExactPage
+        let exact_mismatch = status == Status::Ok && policy.requires_exact_page()
             && (self.reader.info().spine != locator.spine
                 || self.reader.info().char_start != locator.character);
         if exact_mismatch { status = Status::NotFound; }

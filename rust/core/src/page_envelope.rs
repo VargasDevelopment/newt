@@ -2,6 +2,10 @@
 //! media and binds route/block position; it does not authenticate a writer.
 #![forbid(unsafe_code)]
 
+// Pages written before whole-line pagination can contain split lines and
+// duplicate character starts. Regenerate them through normal cache admission.
+const VERSION: u32 = 2;
+
 pub const BLOCK_BYTES: u32 = 4096;
 pub const MANIFEST_BYTES: u32 = 64;
 pub const MAX_PAYLOAD: u32 = 4 * 1024 * 1024;
@@ -91,7 +95,7 @@ pub fn manifest(
     payload_crc: u32,
 ) {
     out[..4].copy_from_slice(b"NTBE");
-    put32(out, 4, 1);
+    put32(out, 4, VERSION);
     put32(out, 8, bytes);
     put32(out, 12, BLOCK_BYTES);
     put32(out, 16, blocks(bytes));
@@ -104,7 +108,7 @@ pub fn manifest(
 
 pub fn inspect(input: &[u8; 64], extent: u32, route: &Route, bytes: &mut u32) -> bool {
     if &input[..4] != b"NTBE"
-        || get32(input, 4) != 1
+        || get32(input, 4) != VERSION
         || get32(input, 12) != BLOCK_BYTES
         || get32(input, 60) != crc(u32::MAX, &input[..60]) ^ u32::MAX
         || &input[28..60] != route

@@ -7,6 +7,8 @@ use newt_core::{
     preferences::{Orientation, ViewSettings},
 };
 
+// Use the envelope version for pagination changes that replace Pages in place.
+// Bumping this revision changes the filenames and leaves the old files behind.
 const CACHE_ENGINE_REVISION: u32 = 4;
 
 /// Borrow this view for one Session operation, then return every resource loan.
