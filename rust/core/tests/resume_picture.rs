@@ -3,11 +3,10 @@ use newt_core::preferences::{Orientation, TextSize, ViewSettings};
 use newt_core::resume_picture::*;
 use newt_core::wire::{get32, put32};
 
-// These are the six fixtures authored by tests/resume_picture_test.cpp.
+// The six fixtures first authored by tests/resume_picture_test.cpp.
 fn fixture(variant: usize) -> Record {
     let mut record = Record::default();
     for i in 0..32 {
-        record.binding.firmware[i] = (0x10 + i + variant) as u8;
         record.binding.book[i] = (0xa0 ^ (i * 7 + variant)) as u8;
     }
     record.binding.anchor.spine = (variant * 3 + 1) as u32;
@@ -60,21 +59,22 @@ fn rejects_unchanged(bytes: &[u8; HEADER_BYTES]) {
 
 #[test]
 fn frozen_cpp_fixtures_round_trip_with_exact_wire_layout() {
-    // IEEE CRC-32 of the exact documented C++ fixture headers (bytes 0..507).
+    // IEEE CRC-32 of the exact version 2 fixture headers (bytes 0..507).
     let checksums = [
-        0x61ab_e61f,
-        0x40fc_e60c,
-        0xc002_0169,
-        0x7863_ccea,
-        0xbda4_1683,
-        0x65f8_41e4,
+        0xc14c_ce99,
+        0x2e93_8c33,
+        0x26ec_8ea5,
+        0xf5a7_cace,
+        0xa428_36fd,
+        0x5381_a099,
     ];
     for (variant, checksum) in checksums.into_iter().enumerate() {
         let input = fixture(variant);
         let mut bytes = [0xff; HEADER_BYTES];
         input.encode(&mut bytes);
-        assert_eq!(&bytes[..8], b"NWRP\x01\0\0\0");
-        assert_eq!(&bytes[8..40], &input.binding.firmware);
+        assert_eq!(&bytes[..8], b"NWRP\x02\0\0\0");
+        // Reserved: version 1's firmware digest bound pictures to one build.
+        assert!(bytes[8..40].iter().all(|&b| b == 0));
         assert_eq!(&bytes[40..72], &input.binding.book);
         assert_eq!(get32(&bytes, 72), input.binding.anchor.spine);
         assert_eq!(get32(&bytes, 76), input.binding.anchor.character);
@@ -131,7 +131,10 @@ fn valid_checksum_does_not_bypass_header_field_checks() {
     for (at, value) in [
         (0, b'X'),
         (4, 0),
-        (4, 2),
+        (4, 1),
+        (4, 3),
+        (8, 1),
+        (39, 0x51),
         (80, 3),
         (80, 255),
         (81, 2),
@@ -191,7 +194,6 @@ fn frozen_decoder_accepts_unrestricted_integer_and_byte_fields() {
     for maximum in [false, true] {
         let word = if maximum { u32::MAX } else { 0 };
         let mut input = Record::default();
-        input.binding.firmware.fill(if maximum { 255 } else { 0 });
         input.binding.book.fill(if maximum { 255 } else { 0 });
         input.binding.anchor.spine = word;
         input.binding.anchor.character = word;
@@ -263,13 +265,10 @@ fn footer_assignment_is_whole_or_refuse_with_c_string_semantics() {
 }
 
 #[test]
-fn binding_equality_includes_every_identity_locator_and_setting_field() {
+fn binding_equality_includes_the_book_locator_and_every_setting_field() {
     let binding = fixture(2).binding;
     for at in 0..32 {
         let mut changed = binding.clone();
-        changed.firmware[at] ^= 1;
-        assert_ne!(changed, binding);
-        changed = binding.clone();
         changed.book[at] ^= 1;
         assert_ne!(changed, binding);
     }
@@ -319,6 +318,8 @@ fn mark_compares_whole_frames_and_consumes_every_first_check() {
                 assert_eq!(mark.check(generation, &frame), Check::Differs);
                 frame[at] ^= 1;
                 assert_eq!(mark.check(generation, &frame), Check::None);
+                // The save rewrites the stale picture, so the next show arms.
+                mark.written();
             }
             mark.shown(generation, &frame);
             assert_eq!(mark.check(generation.wrapping_add(1), &frame), Check::None);
@@ -333,6 +334,24 @@ fn mark_compares_whole_frames_and_consumes_every_first_check() {
     mark.shown(2, &frame);
     assert_eq!(mark.check(0, &frame), Check::None);
     assert_eq!(mark.check(2, &frame), Check::None);
+    // Only a differing check marks the picture stale, and only a write clears it.
+    let mut mark = Mark::new();
+    mark.shown(1, &frame);
+    assert_eq!(mark.check(1, &frame), Check::Covered);
+    assert_eq!(mark.check(1, &frame), Check::None);
+    assert!(!mark.stale());
+    mark.shown(1, &frame);
+    frame[0] ^= 1;
+    assert_eq!(mark.check(1, &frame), Check::Differs);
+    assert!(mark.stale());
+    // Showing it again arms no check (the page repaints) and keeps it stale.
+    mark.shown(2, &frame);
+    assert_eq!(mark.check(2, &frame), Check::None);
+    assert!(mark.stale());
+    mark.written();
+    assert!(!mark.stale());
+    mark.shown(3, &frame);
+    assert_eq!(mark.check(3, &frame), Check::Covered);
 }
 
 #[test]

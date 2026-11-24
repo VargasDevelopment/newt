@@ -339,7 +339,7 @@ mod tests {
             rejected(&mut native, &record.binding, want);
         }
         let (mut native, mut record, _) = written();
-        record.binding.firmware[0] ^= 1;
+        record.binding.book[0] ^= 1;
         rejected(&mut native, &record.binding, Load::Mismatch);
         assert_eq!(native.calls.iter().filter(|c| *c == "Read").count(), 1);
     }

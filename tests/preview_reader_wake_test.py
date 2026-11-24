@@ -6,8 +6,11 @@ The preview is the real firmware built for the host over C fakes
 the card fake act at the open's first book read after the wake's first
 refresh: press Back (open.back, Confirm first with open.confirm), fail the read
 (open.eio), or stall past the open's budget (open.slow). A press that stops the
-open is a pause for input, not a result. Each control is the same build with
-one firmware line changed in its generated copy (never in rust/firmware).
+open is a pause for input, not a result. The resume picture cases change the
+saved picture's pixels, as a build that draws the page differently leaves it,
+and check that the real page replaces it once (#105). Each control is the same
+build with one firmware line changed in its generated copy (never in
+rust/firmware).
 
 These are host facts only. They say nothing about the X3's timing: on a
 device the press must land while the open still runs.
@@ -177,6 +180,79 @@ def cold_power_on_at_old_boundary(binary):
         return f'cold power-on did not restore the page containing the saved checkpoint ({diag})'
 
 
+PICTURE = 'card/Newt/Cache/resume.pic'
+SHOWN = 'Reader picture: result=shown'
+MISS = 'Reader picture miss'
+SAVES = re.compile(r'Reader picture save: result=(\d)')
+WRITTEN = '0'
+
+
+def redraw(path):
+    """Invert a band of the picture's page text and reseal it: a valid picture
+    of other pixels, under the same book, position and settings."""
+    data = bytearray(path.read_bytes())
+    at = 512 + (len(data) - 512) // 2
+    data[at:at + 600] = bytes(byte ^ 0xff for byte in data[at:at + 600])
+    struct.pack_into('<I', data, 356, binascii.crc32(data[512:]))
+    struct.pack_into('<I', data, 508, binascii.crc32(data[:508]))
+    path.write_bytes(data)
+
+
+@functools.cache
+def picture_play(binary, keys, boot='deep-sleep', stale=True):
+    """(final frame, serial log, picture file) of `keys` from a `boot` after a
+    sleep in the book; stale redraws the saved picture first. A power-on has
+    no retained words, as after an update."""
+    with tempfile.TemporaryDirectory(prefix='newt-picture-') as scratch:
+        directory = Path(scratch)
+        preview_driver.world(binary, directory, preview_driver.parse(['--library-fixture', 'healthy']))
+        # A known battery lets the reader store its pages; a picture shows only over them.
+        preview_driver.write_conf(directory, {'telemetry': 'sample'})
+        rust_preview.run(binary, directory, SLEEP_IN_BOOK)
+        picture = directory / PICTURE
+        if stale:
+            redraw(picture)
+        if boot == 'power-on':
+            (directory / 'retained.bin').unlink(missing_ok=True)
+        frames, log = rust_preview.run(binary, directory, keys, boot)
+        return frames[-1], log, picture.read_bytes()
+
+
+def stale_picture_repaints_once(binary):
+    """The stale picture shows at the wake, then the real page replaces it at
+    the same position. The next sleep writes a fresh picture, so the wake after
+    it needs no repaint."""
+    page, log, fresh = picture_play(binary, (), stale=False)
+    if SHOWN not in log or MISS in log:
+        return 'an unchanged picture is not shown and covered at the wake'
+    repainted, log, _ = picture_play(binary, ())
+    if SHOWN not in log or MISS not in log or repainted != page:
+        return 'the wake does not replace a stale picture with the real page'
+    final, log, rewritten = picture_play(binary, (POWER, rust_preview.WAKE))
+    wakes = log.split(SHOWN)
+    if len(wakes) != 3:
+        return 'a wake does not show the picture'
+    if SAVES.findall(wakes[1]) != [WRITTEN] or rewritten != fresh:
+        return 'the sleep after the repaint keeps the stale picture'
+    if MISS in wakes[2] or final != page:
+        return 'the wake after the fresh picture repaints again'
+
+
+def cold_picture_is_checked(binary):
+    """A power-on has no mark from an earlier boot, so its picture is checked
+    against the real page in the same boot that shows it."""
+    page, log, _ = picture_play(binary, (), 'power-on', stale=False)
+    if SHOWN not in log or MISS in log:
+        return 'an unchanged picture is not shown and covered at power-on'
+    repainted, log, _ = picture_play(binary, (), 'power-on')
+    if SHOWN not in log or MISS not in log or repainted != page:
+        return 'power-on does not replace a stale picture with the real page'
+
+
+# The reader trusts any shown picture without comparing it with the real page.
+UNCHECKED = ('reader_image_paint.rs',
+             '        let covered = check == newt_core::resume_picture::Check::Covered;',
+             '        let covered = check != newt_core::resume_picture::Check::None;')
 RELEASE = ('reader_image_session.rs',
            '        if self.close_runtime(home).is_err() { crate::app_power::stop(); }\n'
            '        self.memory = ReaderBacking::Interrupted;',
@@ -215,6 +291,13 @@ CASES = [
          'policy: if durable { newt_reader_ui::RestorePolicy::ExactPage } '
          'else { boot_restore_policy(None,\n'
          '                    report.restored.then_some(&boot.record), self.settings) },')]),
+    (stale_picture_repaints_once, [
+        UNCHECKED,
+        # A save skips the picture whose binding and footer match.
+        ('reader_image_picture.rs',
+         '        let holds = !self.picture.stale() && home.with_storage_io(|_, io| {',
+         '        let holds = home.with_storage_io(|_, io| {')]),
+    (cold_picture_is_checked, [UNCHECKED]),
 ]
 
 

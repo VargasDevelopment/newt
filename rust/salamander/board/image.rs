@@ -8,7 +8,6 @@ mod hash;
 // SAFETY: these synchronous SDK calls retain no Rust pointers or owners.
 unsafe extern "C" {
     fn nb_running_image_version() -> *const c_char;
-    fn nb_running_image_digest(out: *mut u8);
     fn nb_running_image_state(out: *mut u32) -> i32;
     fn nb_mark_running_image_valid() -> i32;
     fn nb_image_app_partition(slot: u32) -> *const c_void;
@@ -29,12 +28,6 @@ pub fn running_image_version() -> &'static CStr {
     unsafe { CStr::from_ptr(nb_running_image_version()) }
 }
 impl Board<'_> {
-    /// The current firmware's SDK-provided ELF SHA-256, without hashing work.
-    pub fn running_image_digest(&self, out: &mut [u8; 32]) {
-        // SAFETY: the initialized SDK descriptor is immutable; the exclusive
-        // 32-byte output lasts through this synchronous copy and is not retained.
-        unsafe { nb_running_image_digest(out.as_mut_ptr()) }
-    }
     pub fn running_image_state(&mut self) -> Result<u32, Error> {
         let mut state = 0;
         // SAFETY: initialized SDK and one live scalar output for this call.

@@ -8,9 +8,11 @@ pub const LABEL_BYTES: usize = 256;
 pub const HEADER_BYTES: usize = 512;
 pub const FILE_BYTES: usize = HEADER_BYTES + crate::frame::FRAME_BYTES;
 
+/// What the picture shows. It holds no firmware identity, so an update that
+/// draws the same page keeps the picture; one that draws it differently is
+/// caught by the panel mark and repainted once (#105).
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Binding {
-    pub firmware: [u8; 32],
     pub book: [u8; 32],
     pub anchor: Locator,
     pub settings: ViewSettings,
@@ -96,14 +98,15 @@ pub struct Record {
 
 impl Record {
     pub const MAGIC: u32 = 0x5052_574e;
-    pub const VERSION: u32 = 1;
+    /// Version 1 bound the firmware digest at bytes 8..40; those bytes are
+    /// now reserved zero, so a version 1 picture is rejected once.
+    pub const VERSION: u32 = 2;
 
     /// The footer normally comes from assign or decode and has a terminal NUL.
     pub fn encode(&self, bytes: &mut [u8; HEADER_BYTES]) {
         bytes.fill(0);
         put32(bytes, 0, Self::MAGIC);
         put32(bytes, 4, Self::VERSION);
-        bytes[8..40].copy_from_slice(&self.binding.firmware);
         bytes[40..72].copy_from_slice(&self.binding.book);
         put32(bytes, 72, self.binding.anchor.spine);
         put32(bytes, 76, self.binding.anchor.character);
@@ -134,6 +137,7 @@ impl Record {
         if get32(bytes, 0) != Self::MAGIC
             || get32(bytes, 4) != Self::VERSION
             || get32(bytes, 508) != Self::crc(&bytes[..508])
+            || bytes[8..40].iter().any(|&byte| byte != 0)
             || bytes[81] > 1
             || bytes[96] > 1
             || length >= LABEL_BYTES
@@ -147,7 +151,6 @@ impl Record {
             }
         }
         // Validate first, then fill the caller's record without a second record.
-        self.binding.firmware.copy_from_slice(&bytes[8..40]);
         self.binding.book.copy_from_slice(&bytes[40..72]);
         self.binding.anchor.spine = get32(bytes, 72);
         self.binding.anchor.character = get32(bytes, 76);
@@ -210,11 +213,17 @@ pub enum Check {
 }
 
 /// Ordinary RAM only; a cold boot has no mark. The first check consumes it.
+/// A picture that differed from the real page stays stale until rewritten:
+/// its binding and footer still match, so only this mark forces the save.
+/// It stays 8 bytes (RAM is at its ceiling): while a check is pending
+/// (`generation` != 0), `crc` is the shown frame's; otherwise it is STALE or 0.
 #[derive(Debug, Default)]
 pub struct Mark {
     generation: u32,
     crc: u32,
 }
+
+const STALE: u32 = 1;
 
 impl Mark {
     pub const fn new() -> Self {
@@ -224,21 +233,40 @@ impl Mark {
         }
     }
 
+    pub fn stale(&self) -> bool {
+        self.generation == 0 && self.crc == STALE
+    }
+
+    pub fn written(&mut self) {
+        if self.stale() {
+            self.crc = 0;
+        }
+    }
+
+    /// A stale picture is not armed: it would differ again, and its check
+    /// returning None repaints the page just the same while it stays stale.
     pub fn shown(&mut self, generation: u32, frame: &Frame) {
+        if self.stale() {
+            return;
+        }
         self.generation = generation;
-        self.crc = Record::crc(frame);
+        self.crc = if generation == 0 { 0 } else { Record::crc(frame) };
     }
 
     pub fn check(&mut self, generation: u32, frame: &Frame) -> Check {
-        let held = self.generation != 0 && generation == self.generation;
-        self.generation = 0;
-        if !held {
+        if self.generation == 0 {
             return Check::None;
         }
-        if Record::crc(frame) == self.crc {
+        let held = generation == self.generation;
+        self.generation = 0;
+        let check = if !held {
+            Check::None
+        } else if Record::crc(frame) == self.crc {
             Check::Covered
         } else {
             Check::Differs
-        }
+        };
+        self.crc = if check == Check::Differs { STALE } else { 0 };
+        check
     }
 }

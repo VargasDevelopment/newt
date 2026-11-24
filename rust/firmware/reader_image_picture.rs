@@ -12,14 +12,11 @@ use newt_native_storage::{RouteState, chapter_cache::ChapterCacheStorage};
 use newt_phased_reader::CachePresence;
 
 impl Runtime {
-    fn picture_binding_image(&self, home: &Home<'_>) -> Option<Binding> {
+    fn picture_binding_image(&self) -> Option<Binding> {
         let saved = self.recovery.as_ref().map_or(&self.saved, |pending| pending.progress());
         if !self.selection.active() || saved.book != self.selection.book_id() { return None; }
-        let mut binding = Binding { book: *self.selection.digest(), anchor: saved.locator,
-            settings: self.recovery.as_ref().map_or(self.settings, |pending| pending.settings),
-            ..Binding::default() };
-        home.bus.board.running_image_digest(&mut binding.firmware);
-        Some(binding)
+        Some(Binding { book: *self.selection.digest(), anchor: saved.locator,
+            settings: self.recovery.as_ref().map_or(self.settings, |pending| pending.settings) })
     }
 
     #[inline(never)]
@@ -29,7 +26,7 @@ impl Runtime {
         if ui.press == PressState::Deferred { ui.press = PressState::Accepted; }
         if !owned || !home.bus.board.display_ready() || ui.press != PressState::Accepted
             || session_checkpoint || ui.app.screen != Screen::EpubReading { return false; }
-        let Some(binding) = self.picture_binding_image(home) else { return false; };
+        let Some(binding) = self.picture_binding_image() else { return false; };
         let mut record = Record::default();
         let matches = home.with_storage_io(|_, io| {
             let mut native = PictureIo::new(io);
@@ -69,7 +66,7 @@ impl Runtime {
         ui: &mut Application<'_>, logical: &mut Frame, trace: Trace<'_>,
     ) -> Result<bool, BoardError> {
         if ui.press != PressState::Accepted || ui.app.screen != Screen::EpubReading { return Ok(false); }
-        let Some(binding) = self.picture_binding_image(home) else { return Ok(false); };
+        let Some(binding) = self.picture_binding_image() else { return Ok(false); };
         let started = display::refresh_start(&mut home.bus.board);
         let mut footer = Footer::default();
         let loaded = home.with_storage_io(|_, io| {
@@ -150,7 +147,7 @@ impl Runtime {
         logical: &mut Frame, events: &mut Events<'_, '_>,
     ) {
         if !self.saves.checkpoint_saved() || !self.opened() { return; }
-        let Some(binding) = self.picture_binding_image(home) else { return; };
+        let Some(binding) = self.picture_binding_image() else { return; };
         let mut record = Record { binding, ..Record::default() };
         let Some(book) = self.book() else { return; };
         let page = book.owner.state.position_info(book.reader.info(), book.reader.selection().spines).page;
@@ -159,7 +156,8 @@ impl Runtime {
             pages: page.page_count, overall_known: page.overall_known,
             overall_percent: page.overall_percent, section_label: Some(section.label) }) { return; }
         let started = home.bus.board.millis();
-        let holds = home.with_storage_io(|_, io| {
+        // A stale picture's binding and footer still match; only its pixels changed.
+        let holds = !self.picture.stale() && home.with_storage_io(|_, io| {
             let mut native = PictureIo::new(io);
             Slot::new(&mut native, newt_native_io::cover::rename_replaces_destination())
                 .holds(&record.binding, &record.footer)
@@ -172,6 +170,7 @@ impl Runtime {
                     .write(&mut record, logical)
             }).unwrap_or(Save::Failed)
         } else { Save::Failed };
+        if result == Save::Written { self.picture.written(); }
         #[cfg(feature = "dev-usb")]
         let _ = crate::app_runtime::trace::row(&home.bus.log, 96, format_args!(
             "Reader picture save: result={} ms={} bytes={}\n", result as u8,
