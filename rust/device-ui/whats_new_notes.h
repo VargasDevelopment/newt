@@ -8,15 +8,12 @@
 namespace newt {
 inline constexpr WhatsNewUpdate kWhatsNew[] = {
     {"Nov 24, 2026",
+     {"Book covers appear faster.",
+      "Various smaller enhancements."}},
+    {"Nov 24, 2026",
      {"More books show a cover, from PNG and progressive JPEG too.",
       "Books with no cover get one more try.",
       "Chinese, Japanese and Korean books break lines in better places.",
       "Install apps from the card (experimental)."}},
-    {"Nov 22, 2026",
-     {"Newt's first public release. Welcome!",
-      "Copy EPUB books anywhere on the card.",
-      "Each book keeps its page, even through sleep.",
-      "Updates come over Wi-Fi or from the card.",
-      "Your other firmware stays. Settings can restart into it."}},
 };
 }  // namespace newt
