@@ -212,7 +212,30 @@ pub fn render_reader_overlay(
         }
         _ => {}
     }
-    let settings_note: &[u8] = match (ui.preferences_writable, ui.notice, SettingsRow::at(ui.selected)) {
+    let hint: &[u8] = match (ui.panel, ui.notice) {
+        (ReaderPanel::Menu, ReaderUiNotice::FinishSaveFailed) => b"Could not save. Try again.",
+        (ReaderPanel::Menu, ReaderUiNotice::FinishUnconfirmed) => {
+            b"Save unconfirmed. Restart may use old or new."
+        }
+        (ReaderPanel::Menu, ReaderUiNotice::FinishOpening) => {
+            b"Still opening this book. Try again soon."
+        }
+        (ReaderPanel::Settings, _) => settings_note(ui),
+        _ => CHOOSE_HINT,
+    };
+    text(&mut c, x + 22, y + h - 32, hint, 17, false, w - 44);
+    drop(c);
+    if let Some((right, baseline)) = sample {
+        draw_size_sample(frame, settings, right, baseline, ui.draft.text_size);
+    }
+}
+
+const CHOOSE_HINT: &[u8] = b"Prev/Next: choose / Select / Back";
+
+/// Reading settings' hint line: storage and save problems first, then a note
+/// on the focused row.
+fn settings_note(ui: &ReaderUiState) -> &'static [u8] {
+    match (ui.preferences_writable, ui.notice, SettingsRow::at(ui.selected)) {
         (false, _, _) => b"Settings storage unavailable",
         (true, ReaderUiNotice::SaveFailed, _) => b"Could not verify save. Draft kept.",
         // "Right" and "left" name where the buttons end up.
@@ -222,39 +245,22 @@ pub fn render_reader_overlay(
             Orientation::LandscapeCw => b"Buttons on the left. Home stays portrait.",
         },
         (true, _, SettingsRow::TextSize) => b"Book text only. Pages reflow when saved.",
-        _ => b"Prev/Next: choose / Select / Back",
-    };
-    let hint: &[u8] = match (ui.panel, ui.notice) {
-        (ReaderPanel::Menu, ReaderUiNotice::FinishSaveFailed) => b"Could not save. Try again.",
-        (ReaderPanel::Menu, ReaderUiNotice::FinishUnconfirmed) => {
-            b"Save unconfirmed. Restart may use old or new."
-        }
-        (ReaderPanel::Menu, ReaderUiNotice::FinishOpening) => {
-            b"Still opening this book. Try again soon."
-        }
-        (ReaderPanel::Settings, _) => settings_note,
-        _ => b"Prev/Next: choose / Select / Back",
-    };
-    text(&mut c, x + 22, y + h - 32, hint, 17, false, w - 44);
-    drop(c);
-    if let Some((right, baseline)) = sample {
-        draw_size_sample(frame, settings, right, baseline, ui.draft.text_size);
+        _ => CHOOSE_HINT,
     }
 }
 
-/// "Aa" in the reading font at the draft size, so the row previews the choice.
+/// "Aa" in the reading font at the draft size, right-aligned at `right`, so
+/// the row previews the choice. Placed right to left: "a" ends at `right`.
 fn draw_size_sample(frame: &mut Frame, settings: ViewSettings, right: i32, baseline: i32, size: TextSize) {
     use newt_core::page_renderer::Font;
     let mut atlas = newt_reader_atlas::ReaderAtlas;
     let (px, geometry) = (size.px(), newt_reader_atlas::Geometry::reader(settings.orientation.is_landscape()));
-    let (a, upper) = (u32::from(b'a'), u32::from(b'A'));
-    let width = i32::from(atlas.advance(upper, px, 0) + atlas.kerning(upper, a, px, 0) + atlas.advance(a, px, 0));
-    let mut pen = right - width;
-    for (cp, next) in [(upper, Some(a)), (a, None)] {
-        // The frame and geometry match by construction, so drawing cannot fail.
-        let _ = atlas.draw(frame, geometry, pen, baseline, cp, px, 0);
-        pen += i32::from(atlas.advance(cp, px, 0) + next.map_or(0, |n| atlas.kerning(cp, n, px, 0)));
-    }
+    let (upper, lower) = (u32::from(b'A'), u32::from(b'a'));
+    let lower_at = right - i32::from(atlas.advance(lower, px, 0));
+    let upper_at = lower_at - i32::from(atlas.advance(upper, px, 0) + atlas.kerning(upper, lower, px, 0));
+    // The frame and geometry match by construction, so drawing cannot fail.
+    let _ = atlas.draw(frame, geometry, upper_at, baseline, upper, px, 0);
+    let _ = atlas.draw(frame, geometry, lower_at, baseline, lower, px, 0);
 }
 
 #[cfg(test)]

@@ -118,14 +118,17 @@ class Face(C.Structure):
                 ('metrics', C.c_short * 7), ('glyph', C.POINTER(Slot))]
 
 
+FaceHandle = C.POINTER(Face)
+
+
 class FreeType:
     def __init__(self, profile):
         self.profile = profile
         self.ft = C.CDLL('libfreetype.so.6')
-        self.ft.FT_New_Face.argtypes = [C.c_void_p, C.c_char_p, C.c_long, C.POINTER(C.POINTER(Face))]
-        self.ft.FT_Set_Char_Size.argtypes = [C.POINTER(Face), C.c_long, C.c_long, C.c_uint, C.c_uint]
-        self.ft.FT_Get_Char_Index.argtypes = [C.POINTER(Face), C.c_ulong]
-        self.ft.FT_Load_Glyph.argtypes = [C.POINTER(Face), C.c_uint, C.c_int32]
+        self.ft.FT_New_Face.argtypes = [C.c_void_p, C.c_char_p, C.c_long, C.POINTER(C.c_void_p)]
+        self.ft.FT_Set_Char_Size.argtypes = [FaceHandle, C.c_long, C.c_long, C.c_uint, C.c_uint]
+        self.ft.FT_Get_Char_Index.argtypes = [FaceHandle, C.c_ulong]
+        self.ft.FT_Load_Glyph.argtypes = [FaceHandle, C.c_uint, C.c_int32]
         self.library = C.c_void_p()
         self.check(self.ft.FT_Init_FreeType(C.byref(self.library)))
         version = [C.c_int() for _ in range(3)]
@@ -140,8 +143,10 @@ class FreeType:
 
     def render(self, path, px, codepoints):
         """Points stay pinned; DPI scales with px, so 30 px is exactly the pinned 150 DPI."""
-        face = C.POINTER(Face)()
-        self.check(self.ft.FT_New_Face(self.library, str(path).encode(), 0, C.byref(face)))
+        # A plain handle, cast once: procedure_closure_test must place every call.
+        handle = C.c_void_p()
+        self.check(self.ft.FT_New_Face(self.library, str(path).encode(), 0, C.byref(handle)))
+        face = C.cast(handle, FaceHandle)
         points, dpi = self.profile['point_size'] * 64, self.profile['dpi'] * px // PROFILE_SIZE
         self.check(self.ft.FT_Set_Char_Size(face, points, points, dpi, dpi))
         figures, cutoffs = proportional_figures(path), self.profile['coverage_thresholds_8bit']
