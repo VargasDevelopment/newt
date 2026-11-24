@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Complete host gate. This does not compile or flash ESP32 firmware."""
 import os
+import platform
 import sys
 
 sys.dont_write_bytecode = True
@@ -14,6 +15,17 @@ if sys.flags.optimize:
 os.environ.update(UBSAN_OPTIONS="halt_on_error=1", ASAN_OPTIONS="halt_on_error=1:abort_on_error=1")
 
 HANDOFF_GUARD = "NEWT_CHECK_PYTHON_HANDOFF"
+SUPPORTED_HOST = ("linux", "x86_64")
+MAC_COVER_NOTE = ("The host gate runs only on Linux x86_64; on a Mac, run "
+                  "tools/check-mac-covers.py (docs/CI.md#explicit-cover-coverage-boundary)")
+
+
+def require_supported_host() -> None:
+    """Reject unsupported hosts before looking for a checkout's pinned Python."""
+    current = platform.machine()
+    if (sys.platform, current) != SUPPORTED_HOST:
+        sys.exit(f"Host gate requires {SUPPORTED_HOST[0]} {SUPPORTED_HOST[1]} "
+                 f"(current host: {sys.platform} {current}). {MAC_COVER_NOTE}")
 
 
 def handoff_to_pinned_python(root: str) -> None:
@@ -21,7 +33,7 @@ def handoff_to_pinned_python(root: str) -> None:
 
     A distro python3 fails the strict runtime check (tools/python_runtime.py),
     and may be too old for the gate's imports, so this runs before any of them
-    and uses only os and sys. No pinned Python is an error, never a fallback.
+    and uses only os, platform and sys. No pinned Python is an error, never a fallback.
     """
     pinned = os.path.join(root, ".toolchain/platformio/penv/bin/python")
     target = os.path.realpath(pinned)
@@ -38,6 +50,7 @@ def handoff_to_pinned_python(root: str) -> None:
 
 
 if __name__ == "__main__":
+    require_supported_host()
     handoff_to_pinned_python(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import argparse

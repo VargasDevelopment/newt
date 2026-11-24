@@ -488,6 +488,44 @@ class PlanTests(unittest.TestCase):
                 self.assertIn('Linux x86_64', stderr.getvalue())
                 self.assertIn('check-mac-covers.py', stderr.getvalue())
 
+    def test_check_entrypoint_rejects_unsupported_hosts_before_pinned_python_handoff(self):
+        import check as host_check
+
+        self.assertEqual(host_check.SUPPORTED_HOST, gate_plan.PROFILES['linux'][:2])
+        self.assertEqual(host_check.MAC_COVER_NOTE, gate_plan.MAC_COVER_NOTE)
+        source = (gate_plan.ROOT / 'tools/check.py').read_text()
+        guard = '    require_supported_host()\n'
+        self.assertEqual(source.count(guard), 1)
+
+        def run_entry(script_text, host_platform, machine):
+            with tempfile.TemporaryDirectory() as directory:
+                gate = Path(directory) / 'tools/check.py'
+                gate.parent.mkdir()
+                gate.write_text(script_text)
+                driver = (
+                    f"import platform, runpy, sys\n"
+                    f"sys.platform = {host_platform!r}\n"
+                    f"platform.machine = lambda: {machine!r}\n"
+                    f"sys.argv = [{str(gate)!r}]\n"
+                    f"runpy.run_path({str(gate)!r}, run_name='__main__')\n"
+                )
+                return subprocess.run([sys.executable, '-I', '-B', '-c', driver],
+                                      capture_output=True, text=True, timeout=60)
+
+        for host_platform, machine in (('darwin', 'arm64'), ('linux', 'aarch64')):
+            with self.subTest(host_platform=host_platform, machine=machine):
+                result = run_entry(source, host_platform, machine)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('Linux x86_64', result.stderr)
+                self.assertIn('check-mac-covers.py', result.stderr)
+                self.assertNotIn('pinned Python', result.stderr)
+
+        # Negative control: removing the early host guard falls through to the missing pinned-Python error.
+        without_guard = run_entry(source.replace(guard, '', 1), 'darwin', 'arm64')
+        self.assertNotEqual(without_guard.returncode, 0)
+        self.assertIn('pinned Python', without_guard.stderr)
+        self.assertNotIn('check-mac-covers.py', without_guard.stderr)
+
 
     def test_push_plan_drops_only_negative_controls(self):
         complete = [phase for phase in gate_plan.plan('linux', False)
