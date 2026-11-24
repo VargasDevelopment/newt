@@ -44,7 +44,7 @@ from gate_tier import negative_controls  # noqa: E402
 BACK, CONFIRM, RIGHT = 0, 1, 3
 SHELF = (CONFIRM,)
 # rust/firmware/reader_cover_idle.rs CoverResult.
-PRODUCED, CANCELLED, DECLINED, MISSING, UNSUPPORTED, IO_ERROR = 2, 3, 4, 5, 6, 9
+PRODUCED, CANCELLED, DECLINED, MISSING, UNSUPPORTED, INVALID, IO_ERROR = 2, 3, 4, 5, 6, 8, 9
 ROWS = re.compile(r'COVER work=attempt result=(\d+)')
 HOME_READY = 'HOME_COVER eligible=1 attempted=1 step=7 ready=1 painted=1'
 # A cover record: NLC2 header (signature, book size, even mtime, route) and,
@@ -482,9 +482,10 @@ def low_heap(binary):
     shelf = next(names for names in shelves() if WIDE in names)
     # Only the wide PNG's shelf has cover work; the walk passes current books.
     records = {book: record(book, CJB6) for book in BOOKS if book not in shelf}
-    # Room for 64 KiB kept free and 51 KiB more: enough to admit cover work
-    # and for every other book's blocks, too little for the wide PNG's 53 KiB.
-    low = {'cover.heap.free': str((64 + 51) * 1024)}
+    # Room for 64 KiB kept free and 53 KiB more: enough to admit cover work
+    # (its planned peak includes the staging write block) and for every other
+    # book's blocks, too little for the wide PNG's block, a little over 53 KiB.
+    low = {'cover.heap.free': str((64 + 53) * 1024)}
     with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
         world = World(binary, scratch, records, **low)
         _, results, _ = world.run(to_book(shelf[0]))
@@ -497,6 +498,30 @@ def low_heap(binary):
         _, results, _ = world.run(to_book(shelf[0]))
         if problem := art_problem(world, WIDE):
             return f'the next visit ended {results}: {problem}'
+
+
+def changed_book(binary):
+    """A book whose bytes change after cover work has read it whole, keeping
+    its size and times as a same-size copy on FAT can, gets no record and no
+    temporary from that attempt; a later visit makes the cover of its new
+    bytes."""
+    book = 'Alder'
+    edit = {'card.edit': f'/newt-sd/Newt/Books/{book}.epub', 'card.edit.on': f'{book}.epub.cover-stage.tmp'}
+    with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
+        world = World(binary, scratch, **edit)
+        # A filler member makes the book many CRC reads long, with the middle
+        # byte that changes inside it, so the book's cover stays readable.
+        path = world.directory / f'card/Newt/Books/{book}.epub'
+        with zipfile.ZipFile(path, 'a') as archive:
+            archive.writestr('OEBPS/filler.bin', bytes(64 * 1024))
+        os.utime(path, (MTIME, MTIME))
+        _, results, _ = world.run(SHELF)
+        if results[:1] != [INVALID] or world.cover(book) is not None or world.temporaries():
+            return f'the changed book\'s attempt ended {results[:1]}, left {world.cover(book)!r} and {world.temporaries()}'
+        preview_driver.write_conf(world.directory, {key: '' for key in edit})
+        _, results, _ = world.run(SHELF)
+        if results != [PRODUCED] or (problem := art_problem(world, book)):
+            return f'the next visit ended {results}: {art_problem(world, book)}'
 
 
 def damaged_records(binary):
@@ -572,6 +597,10 @@ CASES = [
         # An I/O fault records the book as having no cover.
         [('cover_session.rs', 'if !verdict(result)||!self.unfaulted(){self.no_art=false;return(result,false);}',
           'if !verdict(result)&&result!=R::IoError{self.no_art=false;return(result,false);}')]]),
+    (changed_book, [
+        # A changed book's second whole read is not compared with its first.
+        [('cover_session.rs', 'if self.source.crc(block.as_mut())!=Some(self.source_crc)||',
+          'if self.source.crc(block.as_mut()).is_none()||')]]),
     (damaged_records, [
         # A record cut short counts as current, so its cover is never redrawn.
         [('cover_probe.rs', 'if file.size()!=28&&file.size()!=(28+cover::PIXELS)as u64{return Probe::Generate;}',

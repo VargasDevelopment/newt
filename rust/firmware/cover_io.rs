@@ -5,6 +5,13 @@ use newt_native_io::{UiIo, cover::{self, Facts}};
 use newt_native_storage::{Native, Error, Result};
 use newt_core::zip_window::source::BookSource;
 use super::observation::Observation;
+/// One read of a whole-book CRC pass. Each card call has a fixed cost, so
+/// larger reads make a pass faster (#74). Beside the raster this block stays
+/// below the staging block, so a pass never exceeds the planned peak that
+/// admits cover work, even when it sets an attempt's measured peak.
+pub const CRC_BYTES: usize = 8 * 1024;
+/// The largest single card write, for the same fixed per-call cost (#74).
+pub const WRITE_BYTES: usize = 4 * 1024;
 pub trait Control {
     fn stopped(&self) -> bool;
     fn yield_now(&self);
@@ -115,6 +122,26 @@ impl<'a> Source<'a> {
             else{s.regular() && s.size == self.binding.size}) { return true; }
         self.faulted.set(true); false
     }
+    /// The CRC-32 of the whole bound file, read in `block`-sized steps. The
+    /// handle is checked before and after the pass, not per read: per-read
+    /// fstats and 1 KiB steps made a pass cost three card operations per KiB
+    /// (#74). Comparing whole-book CRCs is what catches a change that keeps
+    /// the size, which a per-read fstat on FAT cannot see either.
+    pub fn crc(&mut self, block: &mut [u8]) -> Option<u32> {
+        if block.is_empty() || !self.valid() { return None; }
+        let (mut at, mut crc) = (0, u32::MAX);
+        while at < self.size() {
+            if !self.control.poll() { return None; }
+            let take = block.len().min((self.size()-at) as usize);
+            match self.files.read_at(self.fd,at,&mut block[..take]) {
+                Ok(got) if got != 0 && got <= take => {
+                    crc = newt_core::cover::crc(crc,&block[..got]); at += got as u64;
+                }
+                _ => { self.faulted.set(true); return None; }
+            }
+        }
+        (self.valid() && self.control.poll()).then_some(crc ^ u32::MAX)
+    }
     pub fn still_bound(&self, path: &CStr) -> bool {
         if !self.control.poll() || !self.valid() || !self.control.poll() { return false; }
         if self.files.stat(path).is_ok_and(|s| self.binding.same(s)) { return true; }
@@ -140,7 +167,7 @@ impl Drop for Source<'_> { fn drop(&mut self) { self.close(); } }
 pub fn write(files: &Files<'_>, control: &dyn Control, fd: i32, mut data: &[u8]) -> bool {
     while !data.is_empty() {
         if !control.poll() { return false; }
-        let take = data.len().min(1024);
+        let take = data.len().min(WRITE_BYTES);
         match files.write(fd,&data[..take]) {
             Ok(got) if got != 0 && got <= take => data = &data[got..],
             _ => return false,
@@ -156,14 +183,4 @@ pub fn remove_temporary(files: &Files<'_>, path: &CStr, control: Option<&dyn Con
             && files.unlink(path).is_ok(),
         _ => false,
     }
-}
-pub fn source_crc(source: &mut Source<'_>, out: &mut u32) -> bool {
-    let mut chunk = [0;1024]; let mut at = 0; *out = u32::MAX;
-    while at < source.size() {
-        let take = chunk.len().min((source.size()-at) as usize);
-        let got = source.read_at(at,&mut chunk[..take]);
-        if got <= 0 { return false; }
-        *out = newt_core::cover::crc(*out,&chunk[..got as usize]); at += got as u64;
-    }
-    *out ^= u32::MAX; source.valid()
 }

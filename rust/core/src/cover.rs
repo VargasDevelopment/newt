@@ -25,13 +25,31 @@ pub fn read(source: &mut dyn BookSource, mut at: u64, mut out: &mut [u8]) -> boo
     }
     true
 }
+/// CRC-32 (IEEE, reflected) without its final inversion: start from
+/// `u32::MAX` and invert the result. One table step per byte, because a
+/// cover reads its whole book about three times and a bitwise loop made the
+/// CRC the slowest part of that (#74).
 pub fn crc(mut value: u32, bytes: &[u8]) -> u32 {
     for &byte in bytes {
-        value ^= u32::from(byte);
-        for _ in 0..8 { value = (value >> 1) ^ if value & 1 != 0 { 0xedb8_8320 } else { 0 }; }
+        value = (value >> 8) ^ CRC_TABLE[usize::from(value as u8 ^ byte)];
     }
     value
 }
+static CRC_TABLE: [u32; 256] = {
+    let mut table = [0; 256];
+    let mut index = 0;
+    while index < 256 {
+        let mut value = index as u32;
+        let mut bit = 0;
+        while bit < 8 {
+            value = (value >> 1) ^ if value & 1 != 0 { 0xedb8_8320 } else { 0 };
+            bit += 1;
+        }
+        table[index] = value;
+        index += 1;
+    }
+    table
+};
 pub fn fnv(mut value: u32, bytes: &[u8]) -> u32 {
     for &byte in bytes { value = (value ^ u32::from(byte)).wrapping_mul(16_777_619); }
     value
