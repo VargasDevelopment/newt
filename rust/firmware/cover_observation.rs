@@ -10,10 +10,10 @@ use super::heap::Heap;
 pub struct Observation{
     started:u32,elapsed:Cell<u32>,reads:Cell<usize>,read_bytes:Cell<usize>,
     writes:Cell<usize>,write_bytes:Cell<usize>,opens:Cell<usize>,path_stats:Cell<usize>,
-    min_free:Cell<usize>,min_largest:Cell<usize>,monitor_start:Cell<i32>,monitor_stop:Cell<i32>,stack_min_free:u32,
+    min_free:Cell<usize>,min_largest:Cell<usize>,monitor_start:Cell<i32>,monitor_stop:Cell<i32>,
 }
 impl Observation{
-    pub fn new(started:u32)->Self{Self{started,stack_min_free:0,elapsed:Cell::new(0),reads:Cell::new(0),read_bytes:Cell::new(0),
+    pub fn new(started:u32)->Self{Self{started,elapsed:Cell::new(0),reads:Cell::new(0),read_bytes:Cell::new(0),
         writes:Cell::new(0),write_bytes:Cell::new(0),opens:Cell::new(0),path_stats:Cell::new(0),
         min_free:Cell::new(usize::MAX),min_largest:Cell::new(usize::MAX),monitor_start:Cell::new(-1),monitor_stop:Cell::new(-1)}}
     pub fn open(&self){self.opens.set(self.opens.get().wrapping_add(1));}
@@ -34,7 +34,7 @@ impl Observation{
     pub fn finish_time(&self,now:u32){self.elapsed.set(now.wrapping_sub(self.started));}
 }
 #[cfg(target_pointer_width="32")]
-const _:()=assert!(core::mem::size_of::<Observation>()==52);
+const _:()=assert!(core::mem::size_of::<Observation>()==48);
 /// The actual SDK local-heap monitor; no global diagnostic controller.
 pub struct Monitor<'a>{observation:&'a Observation,active:bool}
 impl<'a> Monitor<'a>{
@@ -55,13 +55,13 @@ impl Drop for Monitor<'_>{fn drop(&mut self){if self.active{sdk::monitor_stop();
 /// All job/descriptor/heap borrows end before the observation is returned.
 #[inline(never)]
 pub fn collect(clock:fn()->u32,work:impl FnOnce(&Heap<'_>)->R)->(R,Observation){
-    let mut observation=Observation::new(clock());
+    let observation=Observation::new(clock());
     let result={
         let mut monitor=Monitor::start(&observation);
         let heap=Heap::new(Some(&observation));
         let result=work(&heap);monitor.finish();result
     };
-    observation.finish_time(clock());observation.stack_min_free=sdk::stack_min_free();(result,observation)
+    observation.finish_time(clock());(result,observation)
 }
 /// Keep C snprintf's exact bounded capacity and total-length result. Overflow
 /// stays unloggable; no truncation, silent trimming or extra output allocation.
@@ -123,7 +123,7 @@ fn report(observation:&Observation,result:R,io:&UiIo,control:&dyn Control)->bool
     let formatted=write!(record,"COVER work={} result={} elapsed_ms={} reads={} read_bytes={} writes={} write_bytes={} opens={} path_stats={} min_free_local={} min_largest_observed={} monitor_start={} monitor_stop={} stack_min_free={}\n",
         if result==R::Idle{"cached"}else{"attempt"},result as u8,observation.elapsed.get(),observation.reads.get(),
         observation.read_bytes.get(),observation.writes.get(),observation.write_bytes.get(),observation.opens.get(),
-        observation.path_stats.get(),min_free,min_largest,observation.monitor_start.get(),observation.monitor_stop.get(),observation.stack_min_free);
+        observation.path_stats.get(),min_free,min_largest,observation.monitor_start.get(),observation.monitor_stop.get(),sdk::stack_min_free());
     if formatted.is_err()||!emit(io,control,record){return false;}
     if result!=R::Idle{
         let census=census(io,control);let mut bytes=[0;160];let mut record=Record::new(&mut bytes);

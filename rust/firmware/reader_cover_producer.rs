@@ -67,7 +67,7 @@ fn run_step(state:&mut CoverIdleState,screen:Screen,targets:&Targets<'_>,
     {
         let(result,observation)=observation::collect(millis,|heap|
             idle_step::step(state,screen as u8,targets,io,control,heap,millis,BOOKS,COVERS,published));
-        pending.record(result,observation);pending.publish(io,control);result
+        pending.record(result,observation);result
     }
     #[cfg(not(feature="dev-usb"))]
     {idle_step::step(state,screen as u8,targets,io,control,&heap::Heap::new(None),millis,BOOKS,COVERS,published)}
