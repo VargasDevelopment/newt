@@ -3,7 +3,7 @@ import re
 N=r'(?:0|[1-9][0-9]*)'
 H=r'(?:-|(?:[0-9a-f]{2})+)'
 Z=rf'(?:~|{H})'
-STATUS='Ok|IoError|NotEpub|NotZip|Truncated|Unsupported|OutOfMemory|ParseError'
+STATUS='Ok|IoError|NotEpub|NotZip|Truncated|Unsupported|OutOfMemory|ParseError|MetadataTooLarge|PathTooLong'
 def parse(text, wire):
     if not text or not text.endswith('\n') or '\r' in text:
         raise ValueError('incomplete LF')

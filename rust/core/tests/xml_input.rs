@@ -180,7 +180,12 @@ fn path_outputs_caps_nuls_and_partial_oom() {
     assert!(resolve_href(&mut a, None, Some(&[b'x'; 511]), None).is_some());
     let used = a.used();
     assert!(resolve_href(&mut a, None, Some(&[b'x'; 512]), None).is_none());
+    assert_eq!(resolve_href_checked(&mut a, None, Some(&[b'x'; 512]), None), Err(HrefError::TooLong));
     assert_eq!(a.used(), used);
+    let mut tiny = [];
+    let mut capacity = Arena::new(&mut tiny);
+    assert_eq!(resolve_href_checked(&mut capacity, None, Some(b"a"), None), Err(HrefError::Capacity));
+    assert_eq!(resolve_href_checked(&mut capacity, None, None, None), Err(HrefError::Missing));
 }
 
 #[test]

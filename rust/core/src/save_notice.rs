@@ -52,8 +52,24 @@ impl SourceIssue {
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
-pub enum ReaderIssue { None, Session, Memory, InvalidCheckpoint, InvalidText, Io, NotEpub, Encrypted, Truncated, Unsupported, Parse, Unavailable, SourceUnavailable }
+pub enum ReaderIssue { None, Session, Memory, InvalidCheckpoint, InvalidText, Io, NotEpub, Encrypted, Truncated, Unsupported, Parse, Unavailable, SourceUnavailable, MetadataTooLarge, PathTooLong }
 impl ReaderIssue {
+    /// Fixed book-capacity refusals must not suggest a runtime heap failure.
+    pub fn for_open_failure(status: crate::zip_container::Status) -> Self {
+        use crate::zip_container::Status;
+        match status {
+            Status::OutOfMemory => Self::Memory,
+            Status::IoError | Status::Stale => Self::Io,
+            Status::NotZip | Status::NotEpub => Self::NotEpub,
+            Status::Encrypted => Self::Encrypted,
+            Status::Truncated => Self::Truncated,
+            Status::Unsupported => Self::Unsupported,
+            Status::MetadataTooLarge => Self::MetadataTooLarge,
+            Status::PathTooLong => Self::PathTooLong,
+            Status::ParseError => Self::Parse,
+            Status::NotFound | Status::Ok => Self::Unavailable,
+        }
+    }
     pub fn text(self) -> Option<&'static CStr> { Self::text_raw(self as u8) }
     pub fn text_raw(raw: u8) -> Option<&'static CStr> {
         match raw {
@@ -69,6 +85,8 @@ impl ReaderIssue {
             10 => Some(c"This EPUB could not be parsed."),
             11 => Some(c"Book content or saved position unavailable. It is kept."),
             12 => Some(c"SD book unavailable or changed. Position kept."),
+            13 => Some(c"Book metadata is too large. Position kept."),
+            14 => Some(c"An EPUB path is too long. Position kept."),
             _ => None,
         }
     }

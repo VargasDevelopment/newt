@@ -21,6 +21,8 @@ pub enum Status {
     ParseError,
     NotFound,
     Stale,
+    MetadataTooLarge,
+    PathTooLong,
 }
 impl Status {
     pub fn name(self) -> &'static str {
@@ -36,6 +38,8 @@ impl Status {
             Self::ParseError => "ParseError",
             Self::NotFound => "NotFound",
             Self::Stale => "Stale",
+            Self::MetadataTooLarge => "MetadataTooLarge",
+            Self::PathTooLong => "PathTooLong",
         }
     }
 }

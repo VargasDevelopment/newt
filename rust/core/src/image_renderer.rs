@@ -271,7 +271,7 @@ fn status(s: crate::zip_container::Status) -> BookStatus {
         S::NotEpub => BookStatus::NotEpub,
         S::Encrypted => BookStatus::Encrypted,
         S::Truncated => BookStatus::Truncated,
-        S::Unsupported => BookStatus::Unsupported,
+        S::Unsupported | S::MetadataTooLarge | S::PathTooLong => BookStatus::Unsupported,
         S::OutOfMemory => BookStatus::OutOfMemory,
         S::ParseError => BookStatus::ParseError,
         S::NotFound => BookStatus::NotFound,

@@ -3,7 +3,7 @@
 //! attempt's arena initialization; reset/release invalidates them. Arrays, parser
 //! resources, source and arena must be disjoint. Typed storage has its own cost.
 #![forbid(unsafe_code)]
-use crate::xml_input::{TextCapture, has_token, local_is, resolve_href as resolve_byte_href};
+use crate::xml_input::{TextCapture, has_token, local_is};
 use crate::xml_session::{Attributes, Handler, PARSE_CHUNK, ParserBackend, Resources};
 use crate::zip_container::{Entry, InflateScratch, Status, hash_path};
 use crate::zip_window::{
@@ -67,8 +67,14 @@ fn resolve_href(
     href: Option<&[u8]>,
     fragment: Option<&mut Option<CStringRef>>,
 ) -> Option<CStringRef> {
+    resolve_href_checked(arena, base, href, fragment).ok()
+}
+fn resolve_href_checked(
+    arena: &mut Arena<'_>, base: Option<&[u8]>, href: Option<&[u8]>,
+    fragment: Option<&mut Option<CStringRef>>,
+) -> Result<CStringRef, crate::xml_input::HrefError> {
     let mut raw_fragment = None;
-    let path = resolve_byte_href(
+    let path = crate::xml_input::resolve_href_checked(
         arena,
         base,
         href,
@@ -81,7 +87,12 @@ fn resolve_href(
     if let Some(output) = fragment {
         *output = raw_fragment.and_then(|range| arena.string_ref(range));
     }
-    path.and_then(|range| arena.string_ref(range))
+    path.and_then(|range| arena.string_ref(range).ok_or(crate::xml_input::HrefError::Capacity))
+}
+
+// These allocations are caller-owned metadata buffers, not runtime XML heap.
+pub(crate) fn metadata_capacity_error(status: Status) -> Status {
+    if status == Status::OutOfMemory { Status::MetadataTooLarge } else { status }
 }
 
 struct Container<'a, 'b> {
@@ -151,7 +162,7 @@ struct Package<'a, 'b> {
     hashes: &'a mut [u32],
     manifest_used: usize,
     spine_used: usize,
-    oom: bool,
+    error: Status,
     cover_hash: u32,
     interned: [Option<CStringRef>; 12],
     interned_count: usize,
@@ -181,11 +192,14 @@ impl<'a, 'b> Package<'a, 'b> {
             hashes,
             manifest_used: 0,
             spine_used: 0,
-            oom: false,
+            error: Status::Ok,
             cover_hash: 0,
             interned: [None; 12],
             interned_count: 0,
         }
+    }
+    fn fail(&mut self, status: Status) {
+        if self.error == Status::Ok { self.error = status; }
     }
     fn intern(&mut self, media: &[u8]) -> Option<CStringRef> {
         for value in &self.interned[..self.interned_count] {
@@ -245,7 +259,18 @@ impl Handler for Package<'_, '_> {
                         id_hash: hash_path(id),
                         ..ManifestItem::default()
                     };
-                    item.href = resolve_href(self.arena, Some(self.dir), Some(href), None);
+                    if item.id.is_none() { self.fail(Status::MetadataTooLarge); }
+                    item.href = match resolve_href_checked(self.arena, Some(self.dir), Some(href), None) {
+                        Ok(path) => Some(path),
+                        Err(error) => {
+                            self.fail(match error {
+                                crate::xml_input::HrefError::TooLong => Status::PathTooLong,
+                                crate::xml_input::HrefError::Capacity => Status::MetadataTooLarge,
+                                crate::xml_input::HrefError::Missing => Status::ParseError,
+                            });
+                            None
+                        }
+                    };
                     let media = atts.local(b"media-type");
                     item.media_type = media.and_then(|m| self.intern(m));
                     item.is_nav = has_token(atts.local(b"properties"), b"nav");
@@ -255,7 +280,7 @@ impl Handler for Package<'_, '_> {
                         || (media.is_some() && item.media_type.is_none());
                     self.manifest[self.manifest_used] = item;
                     if failed {
-                        self.oom = true;
+                        self.fail(Status::MetadataTooLarge);
                     } else {
                         self.manifest_used += 1;
                     }
@@ -294,7 +319,7 @@ impl Handler for Package<'_, '_> {
                         if let Some(value) = self.arena.copy_nul_ref(Some(text)) {
                             *slot = Some(value);
                         } else {
-                            self.oom = true;
+                            self.fail(Status::MetadataTooLarge);
                         }
                     }
                 }
@@ -363,8 +388,8 @@ pub fn parse_package_allocated<
     if status != Status::Ok {
         return Err(status);
     }
-    if counter.oom {
-        return Err(Status::OutOfMemory);
+    if counter.error != Status::Ok {
+        return Err(counter.error);
     }
     let (manifest_count, spine_count, metadata, toc_id) = (
         counter.manifest_count,
@@ -375,9 +400,9 @@ pub fn parse_package_allocated<
     if manifest_count == 0 || spine_count == 0 {
         return Err(Status::NotEpub);
     }
-    let (manifest, spine_hashes) = allocate_manifest(arena, manifest_count, spine_count)?;
+    let (manifest, spine_hashes) = allocate_manifest(arena, manifest_count, spine_count).map_err(metadata_capacity_error)?;
     if manifest.len() < manifest_count || spine_hashes.len() < spine_count {
-        return Err(Status::OutOfMemory);
+        return Err(Status::MetadataTooLarge);
     }
     manifest[..manifest_count].fill(ManifestItem::default());
     let mut filler = Package::new(
@@ -391,8 +416,8 @@ pub fn parse_package_allocated<
     if status != Status::Ok {
         return Err(status);
     }
-    if filler.oom {
-        return Err(Status::OutOfMemory);
+    if filler.error != Status::Ok {
+        return Err(filler.error);
     }
     if filler.cover_hash != 0 {
         if let Some(item) = filler
@@ -403,9 +428,9 @@ pub fn parse_package_allocated<
             item.is_cover_image = true;
         }
     }
-    let spine = allocate_spine(filler.arena, filler.spine_used)?;
+    let spine = allocate_spine(filler.arena, filler.spine_used).map_err(metadata_capacity_error)?;
     if spine.len() < filler.spine_used {
-        return Err(Status::OutOfMemory);
+        return Err(Status::MetadataTooLarge);
     }
     let mut used = 0;
     for hash in &filler.hashes[..filler.spine_used] {
@@ -792,7 +817,7 @@ mod tests {
         p.start_element(b"spine", &mut empty);
         p.start_element(b"itemref", &mut empty);
         assert_eq!((p.manifest_used, p.spine_used), (0, 0));
-        assert!(!p.oom);
+        assert_eq!(p.error, Status::Ok);
     }
     struct Source {
         calls: usize,
@@ -887,7 +912,7 @@ mod tests {
                 },
                 &mut out
             ),
-            Status::OutOfMemory
+            Status::MetadataTooLarge
         );
         assert_eq!(out.spine_count, 77);
         assert!(manifest[0].id.is_some());

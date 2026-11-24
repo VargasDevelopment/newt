@@ -282,17 +282,30 @@ fn hex_digit(c: u8) -> Option<u8> {
         _ => None,
     }
 }
-/// A present fragment slot is cleared before any failure; fragment allocation precedes path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HrefError { Missing, TooLong, Capacity }
+
 pub fn resolve_href(
     arena: &mut Arena<'_>,
     base_dir: Option<&[u8]>,
     href: Option<&[u8]>,
-    mut fragment_out: Option<&mut Option<ByteRange>>,
+    fragment_out: Option<&mut Option<ByteRange>>,
 ) -> Option<ByteRange> {
+    resolve_href_checked(arena, base_dir, href, fragment_out).ok()
+}
+
+/// Keep path-policy refusal distinct from the caller's arena capacity.
+/// Fragment allocation order and partial arena writes match the Option adapter.
+pub fn resolve_href_checked(
+    arena: &mut Arena<'_>,
+    base_dir: Option<&[u8]>,
+    href: Option<&[u8]>,
+    mut fragment_out: Option<&mut Option<ByteRange>>,
+) -> Result<ByteRange, HrefError> {
     if let Some(out) = fragment_out.as_deref_mut() {
         *out = None;
     }
-    let href = c_bytes(href?);
+    let href = c_bytes(href.ok_or(HrefError::Missing)?);
     let (raw, fragment) = match href.iter().position(|b| *b == b'#') {
         Some(at) => (&href[..at], Some(&href[at + 1..])),
         None => (href, None),
@@ -303,9 +316,9 @@ pub fn resolve_href(
     let mut terminated = false;
     while !decoded.0.is_empty() {
         let at = raw.len() - decoded.0.len();
-        let c = decoded.next()?;
+        let c = decoded.next().ok_or(HrefError::Missing)?;
         if decoded_len + 1 >= MAX_PATH {
-            return None;
+            return Err(HrefError::TooLong);
         }
         decoded_len += 1;
         if c == 0 && !terminated {
@@ -322,7 +335,7 @@ pub fn resolve_href(
         base_dir.map(c_bytes).unwrap_or(&[])
     };
     if base.len() >= MAX_PATH {
-        return None;
+        return Err(HrefError::TooLong);
     }
     // Track separators, not path bytes: the final allocation may fit when a
     // long intermediate path would not fit in the arena's remaining space.
@@ -337,17 +350,17 @@ pub fn resolve_href(
     }
     let mut scan = HrefBytes(path.0);
     while let Some((_, len, dots)) = scan.segment() {
-        joined.push(len, dots)?;
+        joined.push(len, dots).ok_or(HrefError::TooLong)?;
     }
     let joined_len = joined.len;
     if let (Some(fragment), Some(out)) = (fragment, fragment_out) {
         *out = arena.copy_nul(Some(fragment));
         if out.is_none() {
-            return None;
+            return Err(HrefError::Capacity);
         }
     }
-    let result = arena.alloc(joined_len + 1, 1)?;
-    let output = arena.view_mut(result)?;
+    let result = arena.alloc(joined_len + 1, 1).ok_or(HrefError::Capacity)?;
+    let output = arena.view_mut(result).ok_or(HrefError::Capacity)?;
     output[joined_len] = 0;
     // Emit backwards into the exact final extent, skipping segments removed
     // by later parents instead of keeping either 512-byte scratch string.
@@ -383,7 +396,7 @@ pub fn resolve_href(
         }
         output[..base_len].copy_from_slice(&base[..base_len]);
     }
-    Some(result)
+    Ok(result)
 }
 
 struct HrefBytes<'a>(&'a [u8]);

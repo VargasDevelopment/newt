@@ -137,9 +137,9 @@ fn all_target_probe_signatures_accept_borrowed_source_and_backend() {
 fn typed_admission_boundaries_preserve_publication_and_pass_order() {
     let xml = book_xml();
     for (manifest_cap, hash_cap, spine_cap, passes, expected) in [
-        (0, 2, 2, 1, Status::OutOfMemory),
-        (1, 1, 2, 1, Status::OutOfMemory),
-        (1, 2, 1, 2, Status::OutOfMemory),
+        (0, 2, 2, 1, Status::MetadataTooLarge),
+        (1, 1, 2, 1, Status::MetadataTooLarge),
+        (1, 2, 1, 2, Status::MetadataTooLarge),
         (1, 2, 2, 2, Status::Ok),
     ] {
         let mut source = BorrowedSource(xml.as_bytes());

@@ -66,6 +66,12 @@ CONTROLS = (
      "navigation.set_contents_fallback(contents_fallback(authored, optional));", "", "toc-nav-over-arena"),
     ("malformed Contents loses its explanation", READER,
      "else { ContentsFallback::Invalid }", "else { ContentsFallback::None }", "toc-malformed"),
+    ("fixed metadata capacity is reported as runtime memory", "core/src/package_parsers.rs",
+     "if status == Status::OutOfMemory { Status::MetadataTooLarge } else { status }",
+     "status", "parse-spine-277"),
+    ("an overlong required path is reported as metadata capacity", "core/src/package_parsers.rs",
+     "crate::xml_input::HrefError::TooLong => Status::PathTooLong",
+     "crate::xml_input::HrefError::TooLong => Status::MetadataTooLarge", "name-len-href-512-over"),
     ("generic Contents fallback returns invalid/empty menu", READER, "Err(status) => (project(arena, &[]), status),", "Err(status) => (false, status),", "toc-nav-over-arena"),
     ("the 64 MiB source-file cap is removed", PHASED, "if bytes > admission::EXTERNAL_MAX_BYTES {", "if false {", "file-size-over"),
 )
