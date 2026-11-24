@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
 //! Boot's restore decision handed to the real reader open (#107). A page start
-//! saved under other settings must reopen at the page that holds its locator;
-//! one saved under the reopen settings stays an exact page.
+//! saved under other settings (a text size or an orientation) must reopen at
+//! the page that holds its locator; one saved under the reopen settings stays
+//! an exact page.
 use super::*;
 use newt_core::{app::{AppState, Screen}, durable::{Commit, Load},
-    external_progress_store::ExternalProgressStore, preferences::Orientation, progress::Locator,
+    external_progress_store::ExternalProgressStore, preferences::{Orientation, TextSize}, progress::Locator,
     save_notice::ReadingSaveNotice, sleep_intent::{SleepResumeIntent, SleepResumeStore, progress_checkpoint}};
 use newt_native_io::UiIo;
 use newt_native_storage::RouteState;
@@ -59,63 +60,77 @@ pub fn check(bytes: Vec<u8>) {
         (&mut tokens[0] as *mut u8).cast(), (&mut tokens[1] as *mut u8).cast()) }.unwrap();
     drop(pending);
     board.with_reader_io(|panel, io| {
-        let mut digest = [0; 32];
-        assert!(hash(&bytes, &mut digest));
-        let book = u64::from_le_bytes(digest[..8].try_into().unwrap());
         let portrait = ViewSettings { orientation: Orientation::Portrait, ..ViewSettings::default() };
-        let landscape = ViewSettings::default();
-        assert_ne!(portrait, landscape);
-        let at = |character| Progress { book, locator: Locator { spine: 0, character }, ..Progress::default() };
-        let mut card = card::Card::default();
-        // A Portrait page start that is not a Landscape one, and the Landscape page holding it.
-        let (start, holding) = (1..40).find_map(|page| {
-            let start = open(panel, io, &mut card, &bytes, portrait, at(page * 300), RestorePolicy::Validated)?;
-            let holding = open(panel, io, &mut card, &bytes, landscape, at(start), RestorePolicy::Validated)?;
-            (start != holding).then_some((start, holding))
-        }).expect("page boundaries differ between Portrait and Landscape");
-        assert_eq!(open(panel, io, &mut card, &bytes, landscape, at(start), RestorePolicy::ExactPage), None,
-            "the Portrait page start is not a Landscape page start");
-
-        // Warm wake: the sleep record was saved under Portrait. The durable
-        // settings are Portrait (match), Landscape (a lost save acknowledgement)
-        // or the defaults (missing preferences), which are Landscape too.
-        let state = AppState { screen: Screen::EpubReading, ..AppState::default() };
-        for (case, settings, page) in [("same", portrait, start), ("lost-ack", landscape, holding),
-            ("prefs-missing", ViewSettings::default(), holding)] {
-            for recovery in [Recovery::Ordinary, Recovery::PendingExact] {
-                let record = make_record(&state, Some(&at(start)), portrait, true, recovery, true);
-                let policy = boot_restore_policy(None, Some(&record), settings);
-                assert_eq!(open(panel, io, &mut card, &bytes, settings, at(start), policy), Some(page),
-                    "warm {case}: a sleep page start reopens under the durable settings ({recovery:?}, {policy:?})");
-            }
-        }
-
-        // Power-on: the resume target names a Portrait page start; the durable
-        // settings are Portrait or Landscape. Everything below is read back
-        // from the card's durable bytes, as a cold boot does.
-        for (case, durable, page) in [("same", portrait, start), ("stale", landscape, holding)] {
-            let mut saved = at(start);
-            with_router(&mut card, io, |store| {
-                assert_eq!(ExternalProgressStore::new(store, Some(&digest)).save(&mut saved, None, None, false, None),
-                    Commit::Saved);
-                let intent = SleepResumeIntent { book, checkpoint: progress_checkpoint(&saved),
-                    settings: portrait.packed() | 4 };
-                assert_eq!(SleepResumeStore::new(store).save(intent), Commit::Saved);
-            });
-            card = card.cold_bytes();
-            let (settings, policy, progress) = with_router(&mut card, io, |store| {
-                let mut target = home_startup::boot_resume::Target::load(store, true, durable, &mut ReadingSaveNotice::default());
-                let mut progress = Progress::default();
-                let ready = ExternalProgressStore::new(store, Some(&digest)).load(&mut progress) == Load::Loaded(());
-                let target = target.load_committed(store, true, true, &mut progress, ready, true,
-                    |store, out, at| ExternalProgressStore::new(store, Some(&digest)).load_checkpoint(out, at))
-                    .expect("committed resume target");
-                (target.settings, boot_restore_policy(Some(DurableCheckpoint::of(target)), None, target.settings), progress)
-            });
-            assert_eq!(settings, durable, "power-on {case}: durable settings win");
-            assert_eq!(open(panel, io, &mut card, &bytes, settings, progress, policy), Some(page),
-                "power-on {case}: the resume target reopens under the durable settings ({policy:?})");
-        }
+        // Text size first, so the compiled policy controls fail on its rows (#41).
+        let medium = ViewSettings { text_size: TextSize::Px27, ..portrait };
+        pair(panel, io, &bytes, medium, ViewSettings { text_size: TextSize::Px24, ..portrait }, "27 -> 24 px");
+        pair(panel, io, &bytes, portrait, ViewSettings::default(), "Portrait -> Landscape");
     }).unwrap();
     println!("PASS boot restore policy reopens sleep and power-on pages under the durable settings");
+}
+
+/// A page saved under `under` reopens as that exact page under `under`, and as
+/// the page holding it under `other` or the defaults.
+fn pair(panel: &mut newt_c3_board::ReaderPanel<'_, '_>, io: &UiIo, bytes: &[u8], under: ViewSettings,
+    other: ViewSettings, what: &str,
+) {
+    let mut digest = [0; 32];
+    assert!(hash(bytes, &mut digest));
+    let book = u64::from_le_bytes(digest[..8].try_into().unwrap());
+    let at = |character| Progress { book, locator: Locator { spine: 0, character }, ..Progress::default() };
+    let mut card = card::Card::default();
+    // A page start under `under` that is not one under `other`.
+    let start = (1..40).find_map(|page| {
+        let start = open(panel, io, &mut card, bytes, under, at(page * 300), RestorePolicy::Validated)?;
+        let holding = open(panel, io, &mut card, bytes, other, at(start), RestorePolicy::Validated)?;
+        (start != holding).then_some(start)
+    }).unwrap_or_else(|| panic!("{what}: page boundaries differ"));
+    assert_eq!(open(panel, io, &mut card, bytes, other, at(start), RestorePolicy::ExactPage), None,
+        "{what}: the saved page start is not a page start under the other settings");
+    // The page each durable setting must reopen.
+    let defaults = ViewSettings::default();
+    let [other_page, default_page] = [other, defaults].map(|settings| if settings == under { Some(start) } else {
+        open(panel, io, &mut card, bytes, settings, at(start), RestorePolicy::Validated)
+    });
+
+    // Warm wake: the sleep record was saved under `under`. The durable
+    // settings match, differ (a lost save acknowledgement) or are the
+    // defaults (missing preferences).
+    let state = AppState { screen: Screen::EpubReading, ..AppState::default() };
+    for (case, settings, page) in [("same", under, Some(start)), ("lost-ack", other, other_page),
+        ("prefs-missing", defaults, default_page)] {
+        for recovery in [Recovery::Ordinary, Recovery::PendingExact] {
+            let record = make_record(&state, Some(&at(start)), under, true, recovery, true);
+            let policy = boot_restore_policy(None, Some(&record), settings);
+            assert_eq!(open(panel, io, &mut card, bytes, settings, at(start), policy), page,
+                "warm {case}: a sleep page start reopens under the durable settings ({what}, {recovery:?}, {policy:?})");
+        }
+    }
+
+    // Power-on: the resume target names a page start saved under `under`.
+    // Everything below is read back from the card's durable bytes, as a cold
+    // boot does.
+    for (case, durable, page) in [("same", under, Some(start)), ("stale", other, other_page)] {
+        let mut saved = at(start);
+        with_router(&mut card, io, |store| {
+            assert_eq!(ExternalProgressStore::new(store, Some(&digest)).save(&mut saved, None, None, false, None),
+                Commit::Saved);
+            let intent = SleepResumeIntent { book, checkpoint: progress_checkpoint(&saved),
+                settings: under.packed() | 4 };
+            assert_eq!(SleepResumeStore::new(store).save(intent), Commit::Saved);
+        });
+        card = card.cold_bytes();
+        let (settings, policy, progress) = with_router(&mut card, io, |store| {
+            let mut target = home_startup::boot_resume::Target::load(store, true, durable, &mut ReadingSaveNotice::default());
+            let mut progress = Progress::default();
+            let ready = ExternalProgressStore::new(store, Some(&digest)).load(&mut progress) == Load::Loaded(());
+            let target = target.load_committed(store, true, true, &mut progress, ready, true,
+                |store, out, at| ExternalProgressStore::new(store, Some(&digest)).load_checkpoint(out, at))
+                .expect("committed resume target");
+            (target.settings, boot_restore_policy(Some(DurableCheckpoint::of(target)), None, target.settings), progress)
+        });
+        assert_eq!(settings, durable, "power-on {case}: durable settings win ({what})");
+        assert_eq!(open(panel, io, &mut card, bytes, settings, progress, policy), page,
+            "power-on {case}: the resume target reopens under the durable settings ({what}, {policy:?})");
+    }
 }

@@ -90,12 +90,15 @@ fn resume_target(tokens: &mut [u8; 2]) {
     let landscape = ViewSettings::default();
     let portrait = ViewSettings { orientation: Orientation::Portrait, ..landscape };
     let clockwise = ViewSettings { orientation: Orientation::LandscapeCw, ..landscape };
+    let size = |text_size| ViewSettings { text_size, ..portrait };
     let digest = [17; 32];
-    for case in ["same", "stale", "explicit-fallback", "failed-commit", "prefs-missing",
+    for case in ["same", "stale-size", "stale", "explicit-fallback", "failed-commit", "prefs-missing",
         "prefs-corrupt", "target-missing", "target-corrupt"] {
         // The page was saved under `under`, then `chosen` was saved with no page turn.
         let (under, chosen) = match case {
             "stale" | "failed-commit" => (landscape, portrait),
+            // 27 -> 30 -> 24 px (#41): the middle save is also stale.
+            "stale-size" => (size(TextSize::Px27), size(TextSize::Px24)),
             "explicit-fallback" => (portrait, clockwise),
             _ => (portrait, portrait),
         };
@@ -111,6 +114,7 @@ fn resume_target(tokens: &mut [u8; 2]) {
                 assert_eq!(SleepResumeStore::new(store).save(intent), Commit::Saved);
             }
         });
+        if case == "stale-size" { assert!(home.preferences.save(&mut home.nvs, size(TextSize::Px30))); }
         home.nvs.fail_commit = case == "failed-commit";
         if chosen != under { assert_eq!(home.preferences.save(&mut home.nvs, chosen), case != "failed-commit"); }
         let mut flash = core::mem::take(&mut home.nvs);
