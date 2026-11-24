@@ -269,7 +269,8 @@ static int cover_usb_work, cover_monitor_active;
 static size_t cover_usb_used;
 static uint32_t cover_usb_drain, cover_input_begin, cover_input_end;
 static int cover_usb_model(void) {
-    return preview_conf_long("cover.usb.pause_ms", 0) || preview_conf("cover.usb.write_result");
+    const char *val = preview_conf("cover.usb.write_result");
+    return preview_conf_long("cover.usb.pause_ms", 0) || (val && *val);
 }
 static int cover_input_pending(void) {
     return nb_millis() >= cover_input_begin && nb_millis() < cover_input_end;
@@ -327,7 +328,7 @@ static void press(uint8_t button) {
 }
 static uint32_t step_at;
 void nb_delay_ms(uint32_t ms) {
-    if (ms == 10 && cover_input_pending()) cover_trace("cover-input-delay.txt");
+    if (ms > 1 && cover_input_pending()) cover_trace("cover-input-delay.txt");
     preview_advance(ms ? ms : 1);
     settled += ms ? ms : 1;
     load_script();
