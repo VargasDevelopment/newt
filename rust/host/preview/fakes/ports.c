@@ -2,7 +2,8 @@
  * HOST PREVIEW FAKE ONLY. Input, NVS, serial and card-listing natives for the
  * real firmware, over one preview folder ($NEWT_PREVIEW_DIR):
  *
- *   script.txt    codes still to play: buttons 0-6, or 7, a minute with no press
+ *   script.txt    codes still to play: buttons 0-6, 7 (a minute with no press),
+ *                 or 8 then a button (pressed before the screen settles)
  *   fixture.conf  key=value lines (fixture.c)
  *   card/         the SD card, as /newt-sd
  *   nvs/NS/KEY    one NVS blob per file
@@ -36,6 +37,7 @@
 /* Fake time a step may take to settle before the run is a fake bug. */
 #define RUN_LIMIT_MS (30u * 60u * 1000u)
 #define WAIT_MINUTE 7
+#define QUEUED 8
 
 uint32_t nb_millis(void);
 void preview_advance(uint32_t ms);
@@ -301,6 +303,12 @@ void nb_delay_ms(uint32_t ms) {
         if (!task_started || task_suspended) { fputs("no input task for a scripted press\n", stderr); preview_finish(72, "no-input"); }
         settled = 0;
         press(script[script_next++]);
+        /* A queued press joins this one before the UI runs, so one input drain
+         * sees both, as when a reader presses faster than the panel redraws. */
+        while (script_next + 1 < script_count && script[script_next] == QUEUED) {
+            press(script[script_next + 1]);
+            script_next += 2;
+        }
         return;
     }
     if (!connected) { observe(); return; }

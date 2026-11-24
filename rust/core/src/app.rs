@@ -8,14 +8,18 @@ pub enum HomeSection { #[default] Books, Apps, Settings }
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action { Previous, Next, Activate, Back, Sleep, Read }
-/// A press as the reader sees it on the shown frame. Clockwise landscape holds
-/// the X3 half a turn from counterclockwise, so each button pair sits on the
+/// A press as the reader sees it. Clockwise landscape holds the X3 half a turn
+/// from counterclockwise, so on a book screen each button pair sits on the
 /// other side of the text; swapping previous and next keeps "forward" there.
-pub fn facing(action: Action, shown: crate::preferences::Orientation) -> Action {
-    use crate::preferences::Orientation::LandscapeCw;
-    match (action, shown) {
-        (Action::Previous, LandscapeCw) => Action::Next,
-        (Action::Next, LandscapeCw) => Action::Previous,
+/// Book screens follow the frame on the panel (`shown`). Every other screen is
+/// portrait, even while a book's frame is still shown: presses queued after
+/// Back reach Home before its first repaint.
+pub fn facing(action: Action, screen: Screen, shown: crate::preferences::Orientation) -> Action {
+    let turned = matches!(screen, Screen::EpubReading | Screen::Reading)
+        && shown == crate::preferences::Orientation::LandscapeCw;
+    match (action, turned) {
+        (Action::Previous, true) => Action::Next,
+        (Action::Next, true) => Action::Previous,
         _ => action,
     }
 }
@@ -271,16 +275,24 @@ pub fn leave_quick_start(state: &mut AppState, to_settings: bool) {
 
 #[cfg(test)]
 mod facing_tests {
-    use super::{Action, facing};
+    use super::{Action, Screen, facing};
     use crate::preferences::Orientation;
 
+    const ALL: [Action; 6] = [Action::Previous, Action::Next, Action::Activate, Action::Back, Action::Sleep, Action::Read];
+    const SCREENS: [Screen; 8] = [Screen::Home, Screen::Reading, Screen::Device, Screen::Sleeping,
+        Screen::EpubReading, Screen::TinyApp, Screen::Library, Screen::QuickStart];
+
     #[test]
-    fn only_clockwise_landscape_swaps_and_only_page_buttons() {
-        let all = [Action::Previous, Action::Next, Action::Activate, Action::Back, Action::Sleep, Action::Read];
-        for shown in [Orientation::Portrait, Orientation::LandscapeCcw] {
-            for action in all { assert_eq!(facing(action, shown), action); }
+    fn only_clockwise_book_screens_swap_and_only_page_buttons() {
+        for screen in SCREENS {
+            for shown in [Orientation::Portrait, Orientation::LandscapeCcw] {
+                for action in ALL { assert_eq!(facing(action, screen, shown), action); }
+            }
+            let turned = ALL.map(|action| facing(action, screen, Orientation::LandscapeCw));
+            let book = matches!(screen, Screen::EpubReading | Screen::Reading);
+            assert_eq!(turned == [Action::Next, Action::Previous, Action::Activate, Action::Back, Action::Sleep, Action::Read],
+                book, "{screen:?}");
+            assert_eq!(turned == ALL, !book, "{screen:?}");
         }
-        let turned = all.map(|action| facing(action, Orientation::LandscapeCw));
-        assert_eq!(turned, [Action::Next, Action::Previous, Action::Activate, Action::Back, Action::Sleep, Action::Read]);
     }
 }

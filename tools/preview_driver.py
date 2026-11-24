@@ -31,7 +31,7 @@ import rust_preview  # noqa: E402
 from rust_preview import WAKE  # noqa: E402
 import update_fixtures  # noqa: E402
 
-BACK, CONFIRM, LEFT, RIGHT, UP, DOWN, POWER, WAIT_MINUTE = range(8)
+BACK, CONFIRM, LEFT, RIGHT, UP, DOWN, POWER, WAIT_MINUTE, QUEUED = range(9)
 # action_for_button: Back is Read on Home, so "read" and "back" are one button.
 ACTIONS = {'previous': LEFT, 'up': UP, 'next': RIGHT, 'down': DOWN, 'activate': CONFIRM,
            'back': BACK, 'read': BACK, 'sleep': POWER, 'wake': WAKE}
@@ -85,10 +85,18 @@ def clock_value(text):
 
 
 def action_codes(text):
-    names = text.split(',')
-    if len(names) > 1024 or any(name not in ACTIONS for name in names):
+    """Comma-separated presses. "a+b" presses b before a's screen settles, so
+    one input drain handles both; wake cannot join a group."""
+    groups = [group.split('+') for group in text.split(',')]
+    if (sum(map(len, groups)) > 1024 or any(name not in ACTIONS for group in groups for name in group)
+            or any(len(group) > 1 and 'wake' in group for group in groups)):
         raise Invalid(f'--actions: {text!r}')
-    return [ACTIONS[name] for name in names]
+    codes = []
+    for first, *queued in groups:
+        codes.append(ACTIONS[first])
+        for name in queued:
+            codes += [QUEUED, ACTIONS[name]]
+    return codes
 
 
 def choice(flag, value, allowed):

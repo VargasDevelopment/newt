@@ -103,6 +103,10 @@ impl SleepRecord {
     pub const fn is_sd(&self) -> bool {
         self.reader_settings & 4 != 0
     }
+    /// The reader settings in the packed word; bits 2 and 3 are this record's own.
+    pub fn reader_view(&self) -> Option<ViewSettings> {
+        ViewSettings::unpacked(self.reader_settings)
+    }
 }
 
 #[repr(u8)]
@@ -270,7 +274,7 @@ pub fn validate(record: &SleepRecord, expected_book: u64, expected_sd_source: bo
         }
         // Bit 2 is the SD source; the rest are the shared packed settings.
         if record.reader_settings & !(PACKED_SETTINGS | 4) != 0
-            || ViewSettings::unpacked(record.reader_settings).is_none()
+            || record.reader_view().is_none()
         {
             return Status::SettingsRange;
         }
@@ -294,7 +298,7 @@ pub fn restore(
         || record.recovery_kind() != Some(Recovery::Ordinary);
     if book {
         let (Some(progress), Some(settings), Some(view)) =
-            (progress, settings, ViewSettings::unpacked(record.reader_settings)) else {
+            (progress, settings, record.reader_view()) else {
             return false;
         };
         *progress = Progress {
