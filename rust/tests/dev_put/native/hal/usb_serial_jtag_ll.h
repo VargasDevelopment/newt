@@ -20,3 +20,4 @@ inline int usb_serial_jtag_ll_read_rxfifo(uint8_t* out, uint32_t n) {
     return static_cast<int>(got);
 }
 inline void usb_serial_jtag_ll_txfifo_flush() {}
+inline bool usb_serial_jtag_ll_txfifo_writable() { return true; }
