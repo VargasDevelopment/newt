@@ -10,7 +10,17 @@
 #endif
 static_assert(std::is_same<std::remove_reference_t<decltype(Serial)>, HWCDC>::value,
               "Serial must be HWCDCSerial: its write holds one lock per call");
-void nsc_begin(void) { nsc_port_begin(Serial); }
+#if NEWT_DEV_USB
+static size_t put_rx_bytes;
+size_t nsc_rx_capacity(void) { return put_rx_bytes; }
+#endif
+void nsc_begin(void) {
+#if NEWT_DEV_USB
+    // Before begin installs the ISR: never replace a live receive queue.
+    put_rx_bytes = Serial.setRxBufferSize(4352);
+#endif
+    nsc_port_begin(Serial);
+}
 void nsc_set_tx_timeout_ms(uint32_t ms) { nsc_port_tx_timeout(Serial, ms); }
 size_t nsc_write(const uint8_t *data, size_t len) { return nsc_port_write(Serial, data, len); }
 #if NEWT_DEV_USB

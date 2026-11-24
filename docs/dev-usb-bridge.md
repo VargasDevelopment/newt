@@ -132,106 +132,103 @@ be interpreted separately; host receipts identify the observation session.
 
 ## Card write
 
-`put` writes files into one of three fixed card folders: `Newt/Apps`,
-`Newt/Update` or `Newt/Dev`. Nothing in Newt reads `Newt/Dev`, so it is the test
-folder: a file there cannot change what the device does. The code is
-`rust/core/src/dev_put.rs`; the firmware glue is
-`rust/firmware/app_runtime/card_write.rs`.
+`put` writes a file to any validated path under the card root, including
+`Newt/Books`. `Newt/Dev` remains useful for inert test files. This is a DEV
+interface: staging a book, app, update or state record can change device behavior.
+The code is `rust/core/src/dev_put.rs`; the firmware glue is
+`rust/firmware/app_runtime/card_write.rs`. None of this path or its enlarged
+receive queue is included when `dev-usb` / `NEWT_DEV_USB` is off.
 
 - **When:** only on Home with no book open, opening or due to reopen. Otherwise
   PUT answers `ERROR busy reason=reading|opening|not-home`. Update mode and a
   restart never write.
-- **Names:** 1 to 32 of `A-Z a-z 0-9 . _ -`, starting with a letter or digit,
-  with no `..` and no trailing dot. So no separator, parent, absolute path,
-  hidden name or link, and nothing FAT would strip to another name. FAT ignores
-  case, so the host refuses a batch where two names differ only in case. An
-  existing file of that name is replaced; a folder never is.
-- **Size:** at most 7,798,784 bytes (one app slot, so a bench `newt.bin` fits).
-  An empty file is allowed. The card must keep 1 MiB free after the write,
-  otherwise `ERROR card-full free=N`.
+- **Paths:** card-relative UTF-8, with `/` between FAT long-name components.
+  No absolute path, empty component, `..`, backslash, control byte, FAT forbidden
+  character, DOS device name, or trailing dot/space. Each component fits 255
+  UTF-16 units; the complete native path, including `/newt-sd/`, fits 511 bytes.
+  Every existing parent is checked without following links. Missing directories
+  are created. A final file may be replaced; a directory or other kind never is.
+  The internal `.newt-put`, `.newt-old` and `.newt-old-name` names are reserved.
+  FAT ignores case, so the host refuses duplicate names within a batch.
+- **Size:** no PUT file-size cap or reserved free-space allowance. FILE checks
+  the card's free bytes; insufficient space answers `ERROR card-full free=N`.
+  An empty file is valid. File sizes and offsets use unsigned 64-bit counts;
+  the card format's own file limits and later write errors still apply. Filling
+  the card can prevent other Newt records from being saved.
 
 ### Lease
 
 `N1 BOOT SESSION ID PUT` grants a lease, answered
-`PUT line=255 chunk=150 cap=7798784`. Then, with increasing IDs in the same
-session:
+`PUT line=4351 chunk=4096 path=hex data=raw`. With increasing request IDs:
 
-1. `FILE FOLDER NAME SIZE SHA256` (64 lowercase hex), answered `FILE free=N`.
-2. `DATA OFFSET BASE64` for each 150-byte chunk in order (the last can be
-   shorter; an empty file has none), answered `DATA N` with the bytes written
-   so far.
-3. `DONE`, answered `DONE size=N sha256=HEX` only after the device synced the
-   temp, read it back from the card, checked its size and SHA-256 and renamed
-   it into place.
+1. `FILE PATH_HEX SIZE SHA256`, answered `FILE free=N`. PATH_HEX encodes the
+   entire card-relative UTF-8 destination; SHA256 is 64 lowercase hex digits.
+2. `DATA OFFSET LENGTH` plus LF, **immediately followed by exactly LENGTH raw
+   bytes**, answered `DATA N` with the bytes written so far. Every block is
+   4,096 bytes, except the final shorter block; an empty file has none.
+   No delimiter follows the raw bytes. Newlines, NUL and `N1 HELLO` inside a
+   block are ordinary data. There is one outstanding request, never a pipeline.
+3. `DONE`, answered `DONE size=N sha256=HEX` after sync, complete card read-back,
+   size/SHA-256 verification and commit. Incoming bytes alone are not the check.
 
-Lease lines are at most 255 bytes, so a line and its LF fit the USB
-Serial/JTAG receive queue (256 bytes, HWCDC's default) whole. That queue's
-interrupt drops what a full queue cannot take, and the host sends the next line
-only after the answer, so the queue never holds more than one line, however
-slowly the device reads. The bridge's own command lines, its 80-byte RX buffer
-and the 512-byte reply bound do not change. The lease reads into one 447-byte
-heap block that exists only while it runs, so the bridge holds no new RAM while
-idle.
+The old 150-byte Base64 blocks came from HWCDC's default 256-byte RX queue:
+its ISR drops bytes when that queue fills. DEV startup now requests 4,352 bytes
+**before** beginning the port. A maximal DATA header and its 4,096-byte payload
+fit whole. The host waits for the answer before another frame. Allocation
+failure leaves normal startup working and refuses PUT with `ERROR no-memory`.
+The queue uses 4,096 more heap bytes in DEV builds; a lease separately borrows
+4,543 heap bytes and releases them on every exit. The bridge's ordinary
+80-byte command RX buffer and 512-byte reply bound do not change.
 
-- Bytes go to the folder's hidden `.newt-put`, never to the final name.
-- DONE is the commit point. Before its first rename it syncs the folder's
-  `.newt-old-name` marker, holding the target's name, even for a new file. A
-  replaced file then moves to the folder's `.newt-old`, the temp takes its
-  name, and only then are `.newt-old` and the marker removed. If the new
-  file's rename fails, the old file moves back.
-- Physical input, a disconnect, 3 s without a complete line, a 1 s reply
-  stall, 600 s in all, or a malformed or stale line abandons the lease: the
-  temp is removed, the final name keeps what it held, and the session ends
-  (`ERROR abandoned reason=...` while the host is still there). Physical input,
-  a disconnect and the 600 s bound also stop DONE while it reads the temp back
-  and just before its first rename. From the first rename on, DONE finishes,
-  moves the old file back or reports `recovery-needed`. A HELLO ends the lease
-  and is answered as a new handshake, except during DONE: DONE reads no line,
-  so a HELLO sent meanwhile is read after DONE answers, and that answer gives
-  the commit's result.
-- A refused request (`ERROR REASON` or `ERROR card step=STEP code=ERRNO`) ends
-  the lease with the temp removed and the final name as it was; the session
-  continues.
-- `ERROR recovery-needed step=STEP code=ERRNO` means the device cannot prove
-  the commit finished or was undone, for example a rename that failed after it
-  changed the card. The folder's hidden files and marker stay, and every write
-  to that folder is refused until they are cleared by hand (below).
-- Each FILE first looks at its folder's marker. Without one, no rename is left
-  unresolved, so a leftover `.newt-put` is removed; a `.newt-old` without a
-  marker refuses.
-  A marker means a commit stopped between its marker and its cleanup, and the
-  names alone cannot say where: a FAT rename cut short can leave two names, or
-  a name and a hidden short alias, on one file, and removing either frees the
-  other's data. So it refuses with `recovery-needed` and deletes nothing. The
-  app and update scans never offer a hidden name.
+- Bytes go to the card root's hidden `.newt-put`; the final name is untouched
+  until DONE. A partial raw block is never written.
+- Before its first rename, DONE syncs root `.newt-old-name`, containing the
+  complete relative target. A replaced file moves to root `.newt-old`, the
+  verified temp takes its name, and only then are backup and marker removed.
+  A failed install rename attempts to restore the old file.
+- Physical input, disconnect, 3 s without receive progress / a complete header,
+  a 1 s reply stall, or malformed/stale input abandons the lease and removes
+  the temp. There is no total-duration deadline on an active transfer.
+  Physical input and disconnect also stop read-back and the check immediately
+  before the first rename. Once renaming starts, DONE finishes, restores or
+  reports `recovery-needed`. HELLO at a header boundary cancels the lease;
+  while receiving a block it is data, and during DONE it is read after DONE.
+- A refused request ends the lease with `ERROR REASON` or
+  `ERROR card step=STEP code=ERRNO`. No file or frame is automatically retried.
+- `ERROR recovery-needed step=STEP code=ERRNO` means the commit cannot be
+  proved complete or undone. The internal files stay; further writes refuse.
+  A FAT rename cut short can leave two names or a hidden short alias on one
+  cluster chain: deleting either can free the other's data. A marker therefore
+  never triggers automatic deletion or recovery from mere presence checks.
 
-To clear `recovery-needed`, put the card in a computer and repair its FAT
-filesystem (a check that only reports is not enough). Confirm the repair left no
-cross-linked files; if it fails, stop and copy off what you need before
-reformatting. Then delete any `.newt-put`, `.newt-old` and `.newt-old-name` in
-that folder and put the file again.
+To clear `recovery-needed`, repair the card's FAT filesystem on a computer,
+confirm it has no cross-linked files, then remove the internal files. If repair
+fails, copy off what is needed before reformatting. This exceptional recovery is
+separate from staging or an ordinary interrupted transfer, which needs no card swap.
 
 ### Host
 
 ```sh
 .toolchain/platformio/penv/bin/python tools/dev-usb.py put \
-  --port /dev/EXPLICIT_OWNER_SELECTED_PORT --expect-build 78c5b1fe6f37 \
-  --folder dev --file local/a.js --file local/b.js
+  --port /dev/EXPLICIT_OWNER_SELECTED_PORT --expect-build 0123456789ab \
+  --folder Newt/Books --file local/generated.epub
 ```
 
-`--name` renames a single `--file`. Names, sizes and the count (at most 64) are
-checked before the port opens. The client checks the device's final size and
-SHA-256 against its own, stops at the first failure and never retries. When
-DONE's answer never arrives the file may or may not be in place: the receipt
-says `"result": "unknown"`, and the card must be checked after a fresh
-handshake. `"result": "recovery-needed"` means the folder needs the hand check above
-before its next put. Each file's receipt entry gives its result, `free_before` and
-seconds; DATA lines are summarised once per file instead of traced one by one.
+`--folder` accepts a card-relative directory; `.` means the card root. The old
+`apps`, `update` and `dev` spellings remain aliases for their `Newt/` directories.
+`--name` changes the basename of a single `--file`. Paths and the batch count
+(at most 64) are checked before opening the port. The client verifies the final
+size and SHA-256, stops at the first failure and never retries an unknown DONE.
+A missing DONE answer gives `"result": "unknown"`; establish a fresh handshake
+and check the card before another write. Receipts include free bytes, total
+seconds and bytes per second, including read-back and commit; DATA is summarized
+once per file. The DONE deadline grows with file size.
 
-Each 150-byte chunk waits for its answer, so speed depends on the USB round
-trip. The estimate is 30 to 50 KB/s: about a second for a 36 KB file and two
-minutes for a 3.6 MB `newt.bin`. It is not yet measured on hardware. DONE reads
-the whole file back, so its host deadline grows with the size.
+HWCDC ignores the `115200` baud argument: it uses the ESP32-C3's USB Serial/JTAG
+full-speed USB link. Larger raw blocks remove the Base64 overhead and reduce
+round trips and small card writes. End-to-end speed still depends on the host,
+USB scheduling, SDK queue handling, card writes, sync and read-back. Virtual X3
+rates measure its emulator/host stream, not the physical USB link or card.
 
 ## One Home build
 

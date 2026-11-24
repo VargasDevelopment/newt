@@ -16,7 +16,7 @@ from bench_lease import lease_port
 from dev_usb_panel_telemetry import (
     MAX_PRESS_TELEMETRY, collect_press_telemetry, decode_panel_ring)
 from dev_usb_firmware_rows import MAX_LISTEN_SECONDS, FirmwareRows, listen
-from dev_usb_put import FOLDERS, plan, put_files
+from dev_usb_put import card_folder, card_target, plan, put_files
 
 RECORD = re.compile(rb'!N1 ([0-9]+) ([0-9]+) ([0-9]+) (.*) \*([0-9a-f]{8})\n\Z')
 MAX_AUDIT_RECORDS = 2048  # Covers both directions of 32 PRESSes and two full captures.
@@ -427,8 +427,8 @@ def main():
     parser.add_argument('--output', type=Path, help='host capture basename')
     parser.add_argument('--diagnostics', action='store_true', help='read boot/reader diagnostics after STATUS')
     parser.add_argument('--listen', type=float, default=0, help='after the last press, read firmware rows (0–600 s)')
-    # put writes each --file into one fixed card folder: Newt/Apps, Newt/Update or Newt/Dev (docs/dev-usb-bridge.md).
-    parser.add_argument('--folder', choices=FOLDERS, help='put: the card folder')
+    # PUT validates every destination before opening the port.
+    parser.add_argument('--folder', help='put: any card-relative directory (e.g. Newt/Books; . for card root); apps/update/dev are aliases')
     parser.add_argument('--file', action='append', type=Path, default=[], help='put: a local file, repeatable')
     parser.add_argument('--name', help='put: the card name for a single --file (default: its own name)')
     args = parser.parse_args()
@@ -445,6 +445,8 @@ def main():
             parser.error('put needs --folder and takes no presses, capture or listening')
         try:
             args.files = plan(args.file, args.name)
+            for _, name, _ in args.files:
+                card_target(args.folder, name)
         except (ValueError, OSError) as error:
             parser.error(str(error))
     if 'sleep' in args.press and (args.press[-1] != 'sleep' or args.press.count('sleep') != 1 or args.output or args.diagnostics or args.listen):

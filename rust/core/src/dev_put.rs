@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: MIT
-//! The development USB bridge's one card write: a single file into one of
-//! three fixed dev folders, over a short lease that follows the bridge's PUT.
+//! The development USB bridge's one card write: a single file at
+//! any validated card-relative path, over a cancellable lease that follows the bridge's PUT.
 //!
 //! Every lease line fits the USB receive queue whole, in caller memory that
-//! exists only for the lease. Bytes go to the folder's fixed temp name, are
+//! exists only for the lease. Bytes go to the card root's reserved temp name, are
 //! synced, read back from the card and checked against the offered size and
 //! SHA-256, and only then renamed into place, so the final name never holds a
 //! partial file. DONE syncs a marker naming its target before any rename; a
 //! replaced file waits in a backup until the new one holds its name, and a
 //! failed rename moves it back. A marker a power loss left refuses the
-//! folder's writes until the card is checked by hand. Physical input, a
+//! writes to the card until the card is checked by hand. Physical input, a
 //! disconnect, a stall or a new HELLO abandons the transfer up to DONE's
 //! commit point; until then every exit closes the file and removes the temp.
 use core::ffi::CStr;
@@ -18,93 +18,29 @@ use core::ffi::CStr;
 mod lease;
 pub use lease::run;
 
-/// The largest image an app slot holds, so a bench `newt.bin` fits.
-pub const CAP_BYTES: u32 = crate::update_card::APP_SLOT_BYTES;
-/// HWCDC's receive queue (its `begin` default). Its interrupt drops what a
-/// full queue cannot take, so a lease line and its LF must fit it whole; the
-/// host sends one line and waits for its answer.
-pub const RX_QUEUE_BYTES: usize = 256;
-/// Bytes per DATA line: 200 base64 characters.
-pub const CHUNK_BYTES: usize = 150;
-/// One lease line without its LF. The longest is DATA: a header of at most 36
-/// bytes, `DATA `, an offset below the cap, a space and its base64 (249).
+/// DEV HWCDC queue, configured before its interrupt starts. A whole frame,
+/// including LF, fits it; the host waits for an answer before sending another.
+pub const RX_QUEUE_BYTES: usize = 4352;
+/// Raw bytes per DATA block; amortizes card writes and replies without Base64.
+pub const CHUNK_BYTES: usize = 4096;
 pub const LINE_BYTES: usize = RX_QUEUE_BYTES - 1;
-/// Holds the longest reply (`DONE`, 137 bytes with its maximum header).
 const REPLY_BYTES: usize = 192;
-/// The lease's whole working memory, lent by the caller for one lease.
+/// One heap loan only while a lease owns the port and card.
 pub const MEMORY_BYTES: usize = LINE_BYTES + REPLY_BYTES;
-pub const NAME_BYTES: usize = 32;
-/// Left free after the write for Newt's own records and caches.
-pub const RESERVE_BYTES: u64 = 1 << 20;
-/// No complete line within this, or no reply progress within `STALL_MS`,
-/// abandons the transfer.
+/// Native IO's path bound, including the mount prefix and trailing NUL.
+pub const PATH_BYTES: usize = 512;
 pub const IDLE_MS: u32 = 3_000;
 const STALL_MS: u32 = 1_000;
-/// A hard bound on the whole lease: the cap at about 13 KB/s.
-pub const TOTAL_MS: u32 = 600_000;
+const ROOT: &CStr = c"/newt-sd";
+// One global lease and recovery marker: internal names cannot be destinations.
+const TEMP: &CStr = c"/newt-sd/.newt-put";
+const OLD: &CStr = c"/newt-sd/.newt-old";
+const MARKER: &CStr = c"/newt-sd/.newt-old-name";
 
-const NEWT: &CStr = c"/newt-sd/Newt";
-const PATH_BYTES: usize = 64;
-
-/// The only folders the bridge writes. Nothing in Newt reads `Newt/Dev`, so a
-/// test file there cannot change what the device does.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Folder { Apps, Update, Dev }
-impl Folder {
-    fn parse(token: &str) -> Option<Self> {
-        match token {
-            "apps" => Some(Self::Apps),
-            "update" => Some(Self::Update),
-            "dev" => Some(Self::Dev),
-            _ => None,
-        }
-    }
-    pub fn path(self) -> &'static CStr {
-        match self {
-            Self::Apps => crate::app_card::DIRECTORY,
-            Self::Update => crate::update_card::DIRECTORY,
-            Self::Dev => c"/newt-sd/Newt/Dev",
-        }
-    }
-    /// Hidden, so neither the app scan nor the update scan offers it, and no
-    /// allowed name (which starts with a letter or digit) can equal it.
-    pub fn temp(self) -> &'static CStr {
-        match self {
-            Self::Apps => c"/newt-sd/Newt/Apps/.newt-put",
-            Self::Update => c"/newt-sd/Newt/Update/.newt-put",
-            Self::Dev => c"/newt-sd/Newt/Dev/.newt-put",
-        }
-    }
-    /// Where a replaced file waits, hidden the same way, until the new one
-    /// holds its name.
-    pub fn old(self) -> &'static CStr {
-        match self {
-            Self::Apps => c"/newt-sd/Newt/Apps/.newt-old",
-            Self::Update => c"/newt-sd/Newt/Update/.newt-old",
-            Self::Dev => c"/newt-sd/Newt/Dev/.newt-old",
-        }
-    }
-    /// DONE's target name, synced before its first rename.
-    pub fn marker(self) -> &'static CStr {
-        match self {
-            Self::Apps => c"/newt-sd/Newt/Apps/.newt-old-name",
-            Self::Update => c"/newt-sd/Newt/Update/.newt-old-name",
-            Self::Dev => c"/newt-sd/Newt/Dev/.newt-old-name",
-        }
-    }
-}
-
-/// One plain name: 1 to 32 of `A-Z a-z 0-9 . _ -`, starting with a letter or
-/// digit, with no `..` and no trailing dot. So no separator, parent, absolute
-/// path or hidden name, and none FAT would strip to another name (FAT drops a
-/// trailing dot; it also ignores case, which the host checks across a batch).
-pub fn name_allowed(name: &[u8]) -> bool {
-    (1..=NAME_BYTES).contains(&name.len())
-        && name[0].is_ascii_alphanumeric()
-        && name.iter().all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
-        && !name.windows(2).any(|pair| pair == b"..")
-        && name.last() != Some(&b'.')
-}
+#[path = "dev_put/path.rs"]
+mod path;
+pub use path::name_allowed;
+use path::target_path;
 
 /// What the card holds at a path, read without following a link.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

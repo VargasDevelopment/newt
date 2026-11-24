@@ -18,7 +18,7 @@ pub const FAILED: i32 = -5;
 pub const FREED: &[u8] = b"<freed clusters>";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Node { File(Vec<u8>), Folder }
+pub enum Node { File(Vec<u8>), Folder, Other }
 
 pub struct Handle { path: String, at: usize }
 
@@ -119,6 +119,7 @@ impl Card for FakeCard {
             None => Entry::Missing,
             Some(Node::File(_)) => Entry::File,
             Some(Node::Folder) => Entry::Folder,
+            Some(Node::Other) => Entry::Other,
         })
     }
     fn make_folder(&mut self, path: &CStr) -> Result<(), i32> {
@@ -205,7 +206,7 @@ impl Card for FakeCard {
 
 /// What the host does next, in order. A press or an unplug happens when the
 /// lease next looks while no byte is waiting; after the script, silence.
-pub enum Event { Line(String), Press, Unplug }
+pub enum Event { Line(String), Bytes(Vec<u8>), Press, Unplug }
 
 pub struct FakeWire {
     script: VecDeque<Event>,
@@ -261,9 +262,12 @@ impl Wire for FakeWire {
         self.connected
     }
     fn read_byte(&mut self) -> i32 {
-        if self.pending.is_empty() && matches!(self.script.front(), Some(Event::Line(_))) {
-            let Some(Event::Line(line)) = self.script.pop_front() else { unreachable!() };
-            self.pending.extend(line.into_bytes());
+        if self.pending.is_empty() {
+            match self.script.front() {
+                Some(Event::Line(_)) => { let Some(Event::Line(line)) = self.script.pop_front() else { unreachable!() }; self.pending.extend(line.into_bytes()); }
+                Some(Event::Bytes(_)) => { let Some(Event::Bytes(bytes)) = self.script.pop_front() else { unreachable!() }; self.pending.extend(bytes); }
+                _ => {}
+            }
         }
         self.pending.pop_front().map_or(-1, i32::from)
     }

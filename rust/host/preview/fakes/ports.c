@@ -260,6 +260,7 @@ static void reply(const char *text) {
     dev_step++;
 }
 static FILE *serial_log;
+size_t nsc_rx_capacity(void) { return 4352; }
 void nsc_begin(void) { serial_log = fopen(preview_path("serial.log"), "ab"); }
 void nsc_set_tx_timeout_ms(uint32_t ms) { (void)ms; }
 void nsc_flush(void) { if (serial_log) fflush(serial_log); }

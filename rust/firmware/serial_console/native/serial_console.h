@@ -10,7 +10,8 @@ extern "C" {
  * ARDUINO_USB_MODE=1 and ARDUINO_USB_CDC_ON_BOOT=1 select (platformio.ini at
  * bc9ffda5, framework-arduinoespressif32 3.3.7). Sole caller:
  * rust/firmware/serial_console.rs. Each entry makes at most one synchronous
- * SDK call: no retry, buffer, allocation, callback or retained pointer. */
+ * SDK call, except DEV begin also requests its receive queue before begin.
+ * No retry, callback or retained caller pointer. */
 
 /* Serial.begin(115200), as firmware/main.cpp setup. Once, before any write. */
 void nsc_begin(void);
@@ -26,6 +27,7 @@ size_t nsc_write(const uint8_t *data, size_t len);
 /* DEV channel leaves connection/space/chunk policy on the Rust side. Each
  * entry forwards the existing UsbChannel SDK operation, retaining nothing. */
 #if NEWT_DEV_USB
+size_t nsc_rx_capacity(void);
 uint8_t nsc_connected(void);
 int nsc_available(void);
 int nsc_read_byte(void);

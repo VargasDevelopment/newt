@@ -1,5 +1,4 @@
 """dev-usb.py put over a fake device lease: never imports pyserial or opens a device."""
-import base64
 import hashlib
 import importlib.util
 from pathlib import Path
@@ -35,8 +34,10 @@ class LeasePeer(module.ProtocolClient):
         self.card, self.open = {}, None
 
     def write_data(self, data, remaining):
-        tokens = data.decode().split(' ')
-        kind = 'HELLO' if tokens[1] == 'HELLO\n' else tokens[4].strip()
+        header, _, payload = data.partition(b'\n')
+        self.payload = payload
+        tokens = header.decode().split(' ')
+        kind = 'HELLO' if tokens[1] == 'HELLO' else tokens[4].strip()
         self.writes.append(kind)
         self.longest = max(self.longest, len(data))
         if kind == self.short:
@@ -59,13 +60,16 @@ class LeasePeer(module.ProtocolClient):
         if kind == 'PUT':
             return put.OFFER
         if kind == 'FILE':
-            folder, name, size, digest = arguments
+            encoded, size, digest = arguments
+            target = bytes.fromhex(encoded).decode()
+            folder, _, name = target.rpartition("/")
             self.open = folder, name, int(size), digest, bytearray()
             return 'FILE free=1073741824'
         if kind == 'DATA':
-            offset, text = arguments
+            offset, length = arguments
             assert int(offset) == len(self.open[4])
-            self.open[4].extend(base64.b64decode(text, validate=True))
+            assert len(self.payload) == int(length)
+            self.open[4].extend(self.payload)
             return f'DATA {len(self.open[4])}'
         folder, name, size, digest, data = self.open
         if len(data) != size or hashlib.sha256(data).hexdigest() != digest:
@@ -83,7 +87,7 @@ class LeasePeer(module.ProtocolClient):
         self.connection['closed'] = True
 
 
-def session(peer, files, folder='dev'):
+def session(peer, files, folder='Newt/Dev'):
     args = SimpleNamespace(mode='put', expect_build=BUILD, press=[], diagnostics=False, output=None,
                            listen=0, folder=folder, files=files, timeout=0.1)
     return module.run_session(peer, args)
@@ -101,11 +105,11 @@ def success():
     peer = LeasePeer()
     report = session(peer, FILES)
     assert 'error' not in report, report['error']
-    assert peer.card == {('dev', name): data for _, name, data in FILES}
+    assert peer.card == {('Newt/Dev', name): data for _, name, data in FILES}
     assert [entry['result'] for entry in report['put']['files']] == ['written'] * 3
     assert report['put']['files'][1]['sha256'] == hashlib.sha256(FILES[1][2]).hexdigest()
-    assert peer.writes.count('DATA') == 0 + 246 + 35 and peer.writes[-1] == 'STATUS'
-    assert peer.longest <= 256, 'each line and its LF fit the device receive queue whole'
+    assert peer.writes.count('DATA') == 0 + 9 + 2 and peer.writes[-1] == 'STATUS'
+    assert peer.longest <= 4352, 'each line and its LF fit the device receive queue whole'
     kinds = [record['kind'] for record in report['protocol']['records']]
     assert kinds.count('DATA') == 3, 'DATA is summarised once per file'
     assert len(kinds) < 40
@@ -167,10 +171,10 @@ def plans_are_checked_before_the_port_opens():
         (folder / 'upper').mkdir()
         (folder / 'upper/A.TXT').write_bytes(b'y')
         assert put.plan([folder / 'a.txt'], 'renamed.txt')[0][1:] == ('renamed.txt', b'x')
-        for paths, name, error in (([folder / '.hidden'], None, 'Card name'), ([folder / 'a..b'], None, 'Card name'),
-                                   ([folder / 'a.txt'], '../x', 'Card name'), ([folder / 'a.txt'], 'a/b', 'Card name'),
-                                   ([folder / 'a.txt'], 'x' * 33, 'Card name'),
-                                   ([folder / 'x.'], None, 'Card name'), ([folder / 'a.txt'], 'newt.bin.', 'Card name'),
+        for paths, name, error in (([folder / 'a..b'], None, 'FAT card name'),
+                                   ([folder / 'a.txt'], '../x', 'FAT card name'), ([folder / 'a.txt'], 'a/b', 'FAT card name'),
+                                   ([folder / 'a.txt'], 'x' * 256, 'FAT card name'),
+                                   ([folder / 'x.'], None, 'FAT card name'), ([folder / 'a.txt'], 'newt.bin.', 'FAT card name'),
                                    ([folder / 'a.txt', folder / 'upper/A.TXT'], None, 'FAT ignores case'),
                                    ([folder / 'a.txt', folder / 'b.txt'], 'c.txt', 'exactly one'),
                                    ([folder / 'a.txt', folder / 'a.txt'], None, 'share'),
@@ -181,20 +185,25 @@ def plans_are_checked_before_the_port_opens():
                 assert error in str(refusal), str(refusal)
             else:
                 raise AssertionError(f'{paths} {name} accepted')
+        # A file larger than the old app-slot cap is an ordinary transfer.
         large = folder / 'large.bin'
         with large.open('wb') as out:
-            out.truncate(put.CAP_BYTES + 1)
-        try:
-            put.plan([large])
-        except ValueError as refusal:
-            assert 'cap' in str(refusal)
-        else:
-            raise AssertionError('oversized file accepted')
+            out.truncate(0x770001)
+        assert len(put.plan([large])[0][2]) == 0x770001
+        assert put.card_target('Newt/Books/nested', 'a b.epub') == 'Newt/Books/nested/a b.epub'
+        assert put.card_target('.', '.hidden') == '.hidden'
+        for destination in ['../Books', '/Newt/Books', 'Newt//Books', 'Newt/../Books', '.newt-put', 'bad.']:
+            try:
+                put.card_target(destination, 'a.epub')
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(f'Invalid destination accepted: {destination}')
         script = ROOT / 'tools/dev-usb.py'
         port = ['--port', '/dev/mock-only', '--expect-build', 'x']
         for args in (['put', *port, '--file', str(folder / 'a.txt')], ['put', *port, '--folder', 'dev'],
-                     ['live', *port, '--folder', 'dev'], ['put', *port, '--folder', 'books', '--file', str(folder / 'a.txt')],
-                     ['put', *port, '--folder', 'dev', '--file', str(folder / '.hidden')],
+                     ['live', *port, '--folder', 'dev'], ['put', *port, '--folder', '../Books', '--file', str(folder / 'a.txt')],
+                     ['put', *port, '--folder', 'dev', '--file', str(folder / 'a..b')],
                      ['put', *port, '--folder', 'dev', '--file', str(folder / 'a.txt'), '--press', 'next']):
             result = subprocess.run([sys.executable, str(script), *args], capture_output=True)
             assert result.returncode == 2 and not result.stdout, args

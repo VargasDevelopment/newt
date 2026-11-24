@@ -7,6 +7,7 @@ const HWCDC_TX_RING_BYTES: i32 = 256;
 // SAFETY: linked native entries forward synchronous SDK Serial observations,
 // one bounded write, or the existing nonblocking HAL transmit-tail wake pair.
 unsafe extern "C" {
+    fn nsc_rx_capacity() -> usize;
     fn nsc_connected() -> u8;
     fn nsc_available() -> i32;
     fn nsc_read_byte() -> i32;
@@ -74,4 +75,10 @@ pub fn flush_tx_tail() -> bool {
 pub fn available_for_write() -> i32 {
     // SAFETY: scalar SDK observation, retaining no object or buffer.
     unsafe { nsc_available_for_write() }
+}
+
+/// DEV receive queue allocated before Serial's interrupt starts; zero if allocation failed.
+pub fn rx_capacity() -> usize {
+    // SAFETY: scalar result of the begun SDK port's queue allocation.
+    unsafe { nsc_rx_capacity() }
 }

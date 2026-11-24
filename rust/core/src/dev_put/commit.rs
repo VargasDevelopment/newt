@@ -12,21 +12,21 @@
 //! renames and the backup's removal; a marker the next FILE finds refuses the
 //! folder, and recovery deletes nothing.
 use super::{write_all, Lease, Refused};
-use crate::dev_put::{Entry, Folder};
+use crate::dev_put::{Entry, TEMP, OLD, MARKER};
 use core::ffi::CStr;
 
 impl Lease<'_> {
     /// Syncs the marker naming DONE's target before its first rename.
-    pub(super) fn mark(&mut self, folder: Folder, name: &[u8]) -> Result<(), Refused> {
+    pub(super) fn mark(&mut self, name: &[u8]) -> Result<(), Refused> {
         // FILE resolved any earlier commit; never overwrite the marker of one.
-        if self.card.entry(folder.old()).map_err(|code| Refused::Card("backup", code))? != Entry::Missing {
+        if self.card.entry(OLD).map_err(|code| Refused::Card("backup", code))? != Entry::Missing {
             return Err(Refused::Recovery("backup", 0));
         }
-        let fd = self.card.create(folder.marker()).map_err(|code| Refused::Card("mark", code))?;
+        let fd = self.card.create(MARKER).map_err(|code| Refused::Card("mark", code))?;
         let synced = write_all(self.card, fd, name).and_then(|()| self.card.sync(fd));
         let closed = self.card.close(fd);
         if let Err(code) = synced.and(closed) {
-            let _ = self.card.remove(folder.marker());
+            let _ = self.card.remove(MARKER);
             return Err(Refused::Card("mark", code));
         }
         Ok(())
@@ -35,37 +35,37 @@ impl Lease<'_> {
     /// Moves an old target aside, renames the temp into place and drops the
     /// backup. Any refused rename leaves the marker unless the folder reads as
     /// it did before DONE.
-    pub(super) fn commit(&mut self, folder: Folder, target: &CStr, replacing: bool) -> Result<(), Refused> {
+    pub(super) fn commit(&mut self, target: &CStr, replacing: bool) -> Result<(), Refused> {
         if replacing {
-            if let Err(code) = self.card.rename(target, folder.old()) {
-                return Err(self.undone(folder, target, replacing, "replace", code));
+            if let Err(code) = self.card.rename(target, OLD) {
+                return Err(self.undone(target, replacing, "replace", code));
             }
         }
-        if let Err(code) = self.card.rename(folder.temp(), target) {
-            if replacing && self.card.rename(folder.old(), target).is_err() { return Err(Refused::Recovery("rename", code)); }
-            return Err(self.undone(folder, target, replacing, "rename", code));
+        if let Err(code) = self.card.rename(TEMP, target) {
+            if replacing && self.card.rename(OLD, target).is_err() { return Err(Refused::Recovery("rename", code)); }
+            return Err(self.undone(target, replacing, "rename", code));
         }
         // Both renames completed, so the backup shares no data with the target.
         // FatFs's f_unlink removes the entry before it frees the chain, and its
         // one-sector window writes the entry's sector before it loads a FAT
         // sector: a power loss inside the unlink only leaks clusters.
-        if replacing { self.card.remove(folder.old()).map_err(|code| Refused::Recovery("backup", code))?; }
+        if replacing { self.card.remove(OLD).map_err(|code| Refused::Recovery("backup", code))?; }
         // A marker this leaves refuses the folder's next FILE: the hand check clears it.
-        let _ = self.card.remove(folder.marker());
+        let _ = self.card.remove(MARKER);
         Ok(())
     }
 
     /// A refused rename is a plain card refusal only when the target, backup
     /// and temp read exactly as before DONE (a rollback complete); a rename can
     /// fail in its final sync after its entries changed.
-    fn undone(&mut self, folder: Folder, target: &CStr, replacing: bool, step: &'static str, code: i32) -> Refused {
+    fn undone(&mut self, target: &CStr, replacing: bool, step: &'static str, code: i32) -> Refused {
         let before = if replacing { Entry::File } else { Entry::Missing };
-        let unchanged = self.card.entry(target) == Ok(before) && self.card.entry(folder.old()) == Ok(Entry::Missing)
-            && self.card.entry(folder.temp()) == Ok(Entry::File);
+        let unchanged = self.card.entry(target) == Ok(before) && self.card.entry(OLD) == Ok(Entry::Missing)
+            && self.card.entry(TEMP) == Ok(Entry::File);
         if !unchanged { return Refused::Recovery(step, code); }
-        if let Err(code) = self.card.remove(folder.marker()) { return Refused::Recovery("marker", code); }
+        if let Err(code) = self.card.remove(MARKER) { return Refused::Recovery("marker", code); }
         // Without the marker, a temp left by a failed remove is an abandoned transfer's.
-        let _ = self.card.remove(folder.temp());
+        let _ = self.card.remove(TEMP);
         Refused::Card(step, code)
     }
 
@@ -74,15 +74,15 @@ impl Lease<'_> {
     /// presence check can say where (see the module note), so it refuses every
     /// write until the card is checked by hand. Without one no rename is left
     /// unresolved.
-    pub(super) fn recover(&mut self, folder: Folder) -> Result<(), Refused> {
-        let old = self.hidden(folder.old(), "backup")?;
-        if self.hidden(folder.marker(), "marker")? { return Err(Refused::Recovery("commit", 0)); }
+    pub(super) fn recover(&mut self, ) -> Result<(), Refused> {
+        let old = self.hidden(OLD, "backup")?;
+        if self.hidden(MARKER, "marker")? { return Err(Refused::Recovery("commit", 0)); }
         // FILE then removes a leftover temp; a backup without its marker has no known target.
         if old { return Err(Refused::Recovery("backup", 0)); }
         Ok(())
     }
 
-    fn hidden(&mut self, path: &CStr, step: &'static str) -> Result<bool, Refused> {
+    pub(super) fn hidden(&mut self, path: &CStr, step: &'static str) -> Result<bool, Refused> {
         match self.card.entry(path).map_err(|code| Refused::Recovery(step, code))? {
             Entry::Missing => Ok(false),
             Entry::File => Ok(true),

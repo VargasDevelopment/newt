@@ -23,27 +23,38 @@ sys.path.insert(0, str(ROOT / 'tools'))
 from gate_tier import negative_controls
 
 BINARY = 'dev_put'
-TESTS = 32
+TESTS = 35
 # Recovery's one rule: a marker the next FILE finds refuses.
-MARKED = '        if self.hidden(folder.marker(), "marker")? { return Err(Refused::Recovery("commit", 0)); }\n'
+MARKED = '        if self.hidden(MARKER, "marker")? { return Err(Refused::Recovery("commit", 0)); }\n'
 # (what breaks, its file under rust/core/src, its text there, the broken text, the test that must fail)
 CONTROLS = (
     ('the SHA-256 is not compared', 'dev_put/lease.rs', "        if digest != sha256 { return Err(Refused::DigestMismatch); }\n", "",
      'a_digest_mismatch_leaves_no_final_file'),
-    ('a `..` name is allowed', 'dev_put.rs', "pub fn name_allowed(name: &[u8]) -> bool {\n",
+    ('a `..` name is allowed', 'dev_put/path.rs', "pub fn name_allowed(name: &[u8]) -> bool {\n",
      "pub fn name_allowed(name: &[u8]) -> bool {\n    if name == b\"..\" { return true; }\n",
      'names_outside_the_safe_set_are_refused'),
+    ('an absolute path passes validation', 'dev_put/path.rs',
+     "relative.split(|&b| b == b'/').all(name_allowed)",
+     "relative.split(|&b| b == b'/').filter(|c| !c.is_empty()).all(name_allowed)",
+     'names_outside_the_safe_set_are_refused'),
+    ('a parent of another kind is accepted', 'dev_put/lease.rs',
+     'Entry::File | Entry::Other => Err(Refused::Target)', 'Entry::File | Entry::Other => Ok(())',
+     'paths_cannot_follow_non_directory_parents'),
+    ('raw reception ignores takeover and idle timeout', 'dev_put/lease.rs',
+     '            if let Some(reason) = self.abandoned(activity) { return Err(Refused::Abandoned(reason)); }\n',
+     '            if let Some(reason) = self.abandoned(activity) { return Ok(Step::Next); }\n',
+     'an_interrupted_raw_block_never_replaces_the_final_file'),
     ('an open book does not refuse', 'dev_put.rs', "    if facts.reader_open { return Err(Busy::Reading); }\n", "",
      'admission_refuses_reading_opening_and_away_from_home'),
-    ('bytes go straight to the final name', 'dev_put/lease.rs', "let fd = self.card.create(folder.temp())",
+    ('bytes go straight to the final name', 'dev_put/lease.rs', "let fd = self.card.create(TEMP)",
      "let fd = self.card.create(path(&target))", 'physical_input_abandons_and_keeps_the_old_file'),
     ('recovery deletes a file or clears the marker while a marker stands', 'dev_put/commit.rs', MARKED,
-     "        if self.hidden(folder.marker(), \"marker\")? { let _ = self.card.remove(folder.old()); "
-     "let _ = self.card.remove(folder.temp()); let _ = self.card.remove(folder.marker()); return Ok(()); }\n",
+     "        if self.hidden(MARKER, \"marker\")? { let _ = self.card.remove(OLD); "
+     "let _ = self.card.remove(TEMP); let _ = self.card.remove(MARKER); return Ok(()); }\n",
      'commit::a_rename_a_power_loss_cut_short_is_never_unlinked'),
     ('a marker clears once no backup or temp shows (the target alone, or nothing)', 'dev_put/commit.rs', MARKED,
-     "        if self.hidden(folder.marker(), \"marker\")? {\n"
-     "            if !old && self.card.entry(folder.temp()) == Ok(Entry::Missing) { return self.card.remove(folder.marker())"
+     "        if self.hidden(MARKER, \"marker\")? {\n"
+     "            if !old && self.card.entry(TEMP) == Ok(Entry::Missing) { return self.card.remove(MARKER)"
      ".map_err(|code| Refused::Recovery(\"marker\", code)); }\n"
      "            return Err(Refused::Recovery(\"commit\", 0));\n        }\n",
      'commit::a_marker_left_by_any_commit_refuses_whatever_the_names_show'),
@@ -56,11 +67,11 @@ CONTROLS = (
     ('the first rename ignores a takeover', 'dev_put/lease.rs',
      "        if let Some(reason) = self.interruption() {\n"
      "            // No rename ran, so the temp the exit removes is no other name's.\n"
-     "            let _ = self.card.remove(folder.marker());\n            return Err(Refused::Abandoned(reason));\n        }\n", "",
+     "            let _ = self.card.remove(MARKER);\n            return Err(Refused::Abandoned(reason));\n        }\n", "",
      'commit::a_press_just_before_the_first_rename_keeps_the_old_file'),
-    ('the deadline is not checked', 'dev_put/lease.rs',
-     "        if self.wire.now().wrapping_sub(self.started) >= TOTAL_MS { return Some(\"total-time\"); }\n", "",
-     'commit::the_deadline_stops_done_before_its_first_rename'),
+    ('an idle transfer never times out', 'dev_put/lease.rs',
+     'self.interruption().or(idle.then_some("timeout"))', 'self.interruption()',
+     'silence_times_out_and_removes_the_temp'),
     ('a failed restore reads as a plain refusal', 'dev_put/commit.rs',
      'is_err() { return Err(Refused::Recovery("rename", code)); }', 'is_err() { return Err(Refused::Card("rename", code)); }',
      'commit::a_failed_restore_keeps_the_backup_and_says_so'),

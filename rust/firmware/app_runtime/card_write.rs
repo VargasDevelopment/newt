@@ -13,6 +13,10 @@ const MOUNT: &CStr = c"/newt-sd";
 
 /// Runs one granted lease to its end and hands the outcome to the bridge.
 pub fn lease(bridge: &mut Bridge, home: &mut Home<'_>, events: &mut Events<'_, '_>, session: Session) {
+    if newt_c3_board::dev_usb::rx_capacity() < dev_put::RX_QUEUE_BYTES {
+        bridge.put_refused(session.request, b"ERROR no-memory");
+        return;
+    }
     let mut block = newt_sdk_heap::Bytes::try_new(MEMORY_BYTES);
     let Some(memory) = block.as_mut().and_then(|block| <&mut [u8; MEMORY_BYTES]>::try_from(block.as_mut()).ok()) else {
         bridge.put_refused(session.request, b"ERROR no-memory");
