@@ -339,8 +339,8 @@ fn a_png_is_drawn_only_when_every_pixel_arrives() {
     }
 }
 
-/// A progressive file's first scan at its cover placement, as grey rows.
-fn render_progressive(image: &[u8]) -> Result<Grey, BookStatus> {
+/// A progressive file's first scan at its cover placement, sent into `sink`.
+fn render_progressive_into(image: &[u8], sink: &mut dyn ImageRows) -> Result<(), BookStatus> {
     let mut layout = Layout::default();
     assert!(validate(&mut Bytes(image), &mut layout) == Status::Ready && layout.progressive);
     let (w, h) = placement(layout.width, layout.height);
@@ -348,12 +348,17 @@ fn render_progressive(image: &[u8]) -> Result<Grey, BookStatus> {
     let (mut grid, mut previous, mut current, mut output) = ([0; 512], [0; 144], [0; 144], [0; 144]);
     let buffers = progressive::Buffers { input: &mut input, tables: &mut tables, grid: &mut grid,
                                          previous: &mut previous, current: &mut current, output: &mut output };
-    let mut grey = Grey::default();
-    match progressive::render(&mut Bytes(image), buffers, w, h, &mut grey) {
-        Ok(()) => Ok(grey),
+    match progressive::render(&mut Bytes(image), buffers, w, h, sink) {
+        Ok(()) => Ok(()),
         Err(RenderError::Status(status)) => Err(status),
         Err(RenderError::Safety(error)) => panic!("{error:?}"),
     }
+}
+/// A progressive file's first scan at its cover placement, as grey rows.
+fn render_progressive(image: &[u8]) -> Result<Grey, BookStatus> {
+    let mut grey = Grey::default();
+    render_progressive_into(image, &mut grey)?;
+    Ok(grey)
 }
 
 #[test]
@@ -408,13 +413,13 @@ fn y_sampling_12_and_41_draw_the_grey_frame() {
 
 #[test]
 fn old_no_art_records_retry_once() {
-    // Older decoders wrote CJB3, CJB4 (before #316) and CJB5 (before #46):
-    // generate once more, show no cover meanwhile.
-    for route in [*b"CJB3", *b"CJB4", *b"CJB5"].map(u32::from_le_bytes) {
+    // Older decoders wrote CJB3, CJB4 (before #316), CJB5 (before #46) and
+    // CJB6 (before #50): generate once more, show no cover meanwhile.
+    for route in [*b"CJB3", *b"CJB4", *b"CJB5", *b"CJB6"].map(u32::from_le_bytes) {
         assert_eq!(cover::record(None, route), Record::Generate);
         assert!(cover::no_art(route));
     }
-    assert_eq!(cover::NO_ART, u32::from_le_bytes(*b"CJB6"));
+    assert_eq!(cover::NO_ART, u32::from_le_bytes(*b"CJB7"));
     // The record a new attempt writes settles: no repeat.
     let header = cover::header(1234, 5678, cover::NO_ART);
     let written = u32::from_le_bytes(header[24..].try_into().unwrap());
@@ -424,8 +429,253 @@ fn old_no_art_records_retry_once() {
     assert_eq!(cover::record(Some(BASE), cover::NO_ART), Record::Generate);
     assert_eq!(cover::record(Some(BASE), BASE), Record::Current);
     // Art whose CRC happens to equal a route word is still current art.
-    for route in [*b"CJB3", *b"CJB4", *b"CJB5", *b"CJB6"].map(u32::from_le_bytes) {
+    for route in [*b"CJB3", *b"CJB4", *b"CJB5", *b"CJB6", *b"CJB7"].map(u32::from_le_bytes) {
         assert_eq!(cover::record(Some(route), route), Record::Current);
     }
     assert_eq!(cover::record(None, BASE), Record::Generate);
+}
+
+/// Authored 3-component JPEG with flat 8x8 RGB (or YCbCr) blocks, optional
+/// APP14 segment, configurable component IDs/tables/order, baseline or progressive.
+#[derive(Clone)]
+struct ColorJpeg {
+    width: u16,
+    height: u16,
+    blocks: Vec<[u8; 3]>,
+    app14: Option<Vec<u8>>,
+    cids: [u8; 3],
+    scan_order: [usize; 3],
+    scan_len: usize,
+    sampling: u8,
+    shared_table: bool,
+    quants: [u8; 3],
+    progressive: Option<u8>,
+}
+impl Default for ColorJpeg {
+    fn default() -> Self {
+        Self {
+            width: 64, height: 16,
+            blocks: vec![
+                [0, 255, 0], [0, 0, 255], [255, 0, 0], [0, 200, 200],
+                [40, 220, 100], [255, 255, 255], [0, 0, 0], [16, 180, 240],
+            ],
+            app14: Some(adobe_app14(0)),
+            cids: *b"RGB",
+            scan_order: [0, 1, 2],
+            scan_len: 3,
+            sampling: 0x11,
+            shared_table: true,
+            quants: [1, 1, 1],
+            progressive: None,
+        }
+    }
+}
+fn adobe_app14(transform: u8) -> Vec<u8> {
+    let mut body = b"Adobe".to_vec();
+    body.extend([0, 100, 0, 0, 0, 0, transform]);
+    body
+}
+fn expected_gray([r, g, b]: [u8; 3]) -> u8 {
+    ((u32::from(r) * 299 + u32::from(g) * 587 + u32::from(b) * 114) / 1000) as u8
+}
+impl ColorJpeg {
+    fn bytes(&self) -> Vec<u8> {
+        let mut out = vec![0xff, 0xd8];
+        if let Some(app14) = &self.app14 {
+            segment(&mut out, 0xee, app14);
+        }
+        for id in 0..3u8 {
+            segment(&mut out, 0xdb, &[[id].as_slice(), &[self.quants[usize::from(id)]; 64]].concat());
+        }
+        let [h0, h1] = self.height.to_be_bytes();
+        let [w0, w1] = self.width.to_be_bytes();
+        let frame = vec![
+            8, h0, h1, w0, w1, 3,
+            self.cids[0], self.sampling, 0,
+            self.cids[1], 0x11, 1,
+            self.cids[2], 0x11, 2,
+        ];
+        segment(&mut out, if self.progressive.is_some() { 0xc2 } else { 0xc0 }, &frame);
+        let (mut dc_counts, mut ac_counts) = ([0u8; 16], [0u8; 16]);
+        dc_counts[3] = 12;
+        ac_counts[1] = 1;
+        let dc_symbols: Vec<u8> = (0..12).collect();
+        for id in if self.shared_table { 0..1 } else { 0..2 } {
+            segment(&mut out, 0xc4, &[[id].as_slice(), &dc_counts, &dc_symbols, &[0x10 | id], &ac_counts, &[0]].concat());
+        }
+        let mut scan = vec![self.scan_len as u8];
+        for &ci in &self.scan_order[..self.scan_len] {
+            let tbl = if self.shared_table || ci == 0 { 0x00 } else { 0x11 };
+            scan.extend([self.cids[ci], tbl]);
+        }
+        scan.extend(self.progressive.map_or([0, 63, 0], |al| [0, 0, al]));
+        segment(&mut out, 0xda, &scan);
+        let (bw, bh) = (usize::from(self.width.div_ceil(8)), usize::from(self.height.div_ceil(8)));
+        let (h, v) = (usize::from(self.sampling >> 4), usize::from(self.sampling & 15));
+        let dc_of = |bx: usize, by: usize, ci: usize| -> i32 {
+            let sample = if bx < bw && by < bh {
+                self.blocks[(by * bw + bx) % self.blocks.len()][ci]
+            } else { 128 };
+            (i32::from(sample) - 128) * 8 / i32::from(self.quants[ci])
+        };
+        let mut units = Vec::new();
+        if self.scan_len == 1 {
+            let ci = self.scan_order[0];
+            for by in 0..bh { for bx in 0..bw { units.push((ci, dc_of(bx, by, ci))); } }
+        } else {
+            for row in 0..bh.div_ceil(v) {
+                for col in 0..bw.div_ceil(h) {
+                    for &ci in &self.scan_order[..self.scan_len] {
+                        if ci == 0 {
+                            for dy in 0..v { for dx in 0..h { units.push((0, dc_of(col * h + dx, row * v + dy, 0))); } }
+                        } else {
+                            units.push((ci, dc_of(col * h, row * v, ci)));
+                        }
+                    }
+                }
+            }
+        }
+        let mut bits = Vec::new();
+        let mut put = |value: u32, length: u32| bits.extend((0..length).rev().map(|i| value >> i & 1 != 0));
+        let mut previous = [0i32; 3];
+        for (ci, dc) in units {
+            let target = dc >> self.progressive.unwrap_or(0);
+            let diff = target - previous[ci];
+            previous[ci] = target;
+            let category = 32 - diff.unsigned_abs().leading_zeros();
+            put(category, 4);
+            put((if diff < 0 { diff + (1 << category) - 1 } else { diff }) as u32, category);
+            if self.progressive.is_none() { put(0, 2); }
+        }
+        bits.resize(bits.len().div_ceil(8) * 8, true);
+        for byte in bits.chunks(8) {
+            let byte = byte.iter().fold(0u8, |acc, &bit| acc << 1 | u8::from(bit));
+            out.push(byte);
+            if byte == 0xff { out.push(0); }
+        }
+        out.extend([0xff, 0xd9]);
+        out
+    }
+}
+
+#[test]
+fn adobe_rgb_baseline_draws_true_luminance_and_ycbcr_stays_unchanged() {
+    let image = ColorJpeg::default();
+    let mut rgb = Grey::default();
+    assert_eq!(render_cover(&image.bytes(), &mut rgb).unwrap(), (64, 16));
+    for (index, &pixel) in image.blocks.iter().enumerate() {
+        let got = rgb.0[0][index * 8 + 4];
+        let want = expected_gray(pixel);
+        assert!(got.abs_diff(want) <= 1, "block {index} ({pixel:?}): got {got}, want {want}");
+    }
+    // Zero-red pure green must be mid-bright (~149), never black (0).
+    assert!(rgb.0[0][4] >= 148 && rgb.0[0][4] <= 150);
+
+    // Separate Huffman tables, distinct quantizers, and reordered SOS [B, G, R] give the same greys.
+    let reordered = ColorJpeg { shared_table: false, scan_order: [2, 1, 0], quants: [1, 2, 2], ..image.clone() };
+    let mut other = Grey::default();
+    assert_eq!(render_cover(&reordered.bytes(), &mut other).unwrap(), (64, 16));
+    for (index, &pixel) in image.blocks.iter().enumerate() {
+        assert!(other.0[0][index * 8 + 4].abs_diff(expected_gray(pixel)) <= 2, "reordered block {index}");
+    }
+
+    // Subsampled R (2x2) with 1x1 G and B upsamples G/B across the 16x16 MCU.
+    let sub = ColorJpeg { sampling: 0x22, blocks: vec![[0, 200, 100]], ..image.clone() };
+    let mut sub_grey = Grey::default();
+    assert_eq!(render_cover(&sub.bytes(), &mut sub_grey).unwrap(), (64, 16));
+    assert!(sub_grey.0.iter().flatten().all(|&g| g.abs_diff(expected_gray([0, 200, 100])) <= 1));
+
+    // Scale 3 (1/8 DC-only shortcut) on a wide RGB cover draws exact luminance too.
+    let wide = ColorJpeg { width: 1200, height: 160, blocks: vec![[0, 200, 200]], ..image.clone() };
+    let mut scaled = Grey::default();
+    let (sw, sh) = render_cover(&wide.bytes(), &mut scaled).unwrap();
+    assert!((sw, sh) == (144, 19) && scaled.0.iter().flatten().all(|&g| g.abs_diff(expected_gray([0, 200, 200])) <= 1));
+
+    // YCbCr (APP14 transform 1, no APP14, or non-Adobe APP14) stays unchanged: component 0 only.
+    for app14 in [Some(adobe_app14(1)), None, Some(b"Other\0\0\0\0\0\0\0".to_vec()), Some(b"Adobe".to_vec())] {
+        let ycbcr = ColorJpeg { app14, shared_table: false, ..image.clone() };
+        let mut grey = Grey::default();
+        render_cover(&ycbcr.bytes(), &mut grey).unwrap();
+        for (index, &pixel) in image.blocks.iter().enumerate() {
+            assert_eq!(grey.0[0][index * 8 + 4], pixel[0], "YCbCr block {index}");
+        }
+    }
+    // 1-component grayscale ignores APP14 transform 0.
+    let mut gray_only = Jpeg::default().bytes();
+    let mut app14 = Vec::new();
+    segment(&mut app14, 0xee, &adobe_app14(0));
+    gray_only.splice(2..2, app14);
+    assert_eq!(cover_crc(&gray_only).unwrap(), BASE);
+}
+
+#[test]
+fn adobe_rgb_progressive_draws_true_luminance_and_ycbcr_stays_unchanged() {
+    for al in [0u8, 1u8] {
+        // Distinct quantizers per channel verify each RGB channel uses its own DQT entry.
+        let image = ColorJpeg {
+            width: 64, height: 16,
+            blocks: vec![[0, 240, 0], [0, 0, 240], [240, 0, 0], [0, 208, 208],
+                         [32, 224, 96], [240, 240, 240], [16, 16, 16], [16, 176, 240]],
+            quants: [1, 2, 2],
+            progressive: Some(al),
+            ..ColorJpeg::default()
+        };
+        let rgb = render_progressive(&image.bytes()).unwrap();
+        assert_eq!(rgb.0.len(), 16);
+        // Corners (0, 0) = block 0 ([0, 240, 0]) and (63, 0) = block 7 ([16, 176, 240]).
+        let want0 = expected_gray(image.blocks[0]);
+        let want7 = expected_gray(image.blocks[7]);
+        assert!(rgb.0[0][0].abs_diff(want0) <= 2, "al={al}: got {}, want {want0}", rgb.0[0][0]);
+        assert!(rgb.0[0][63].abs_diff(want7) <= 2, "al={al}: got {}, want {want7}", rgb.0[0][63]);
+
+        // Same file with APP14 transform 1 or no APP14 stays Y-only (component 0 = 0 at corner 0).
+        for app14 in [Some(adobe_app14(1)), None] {
+            let ycbcr = ColorJpeg { app14, ..image.clone() };
+            let grey = render_progressive(&ycbcr.bytes()).unwrap();
+            assert_eq!(grey.0[0][0], image.blocks[0][0], "al={al} YCbCr corner 0");
+            assert_eq!(grey.0[0][63], image.blocks[7][0], "al={al} YCbCr corner 7");
+        }
+    }
+}
+
+#[test]
+fn unsupported_adobe_rgb_forms_are_refused_without_drawing() {
+    // Non-interleaved baseline and progressive Adobe RGB (1- or 2-component scan)
+    // cannot compute RGB within the decoder's memory plan and fail as Unsupported.
+    let split_base = ColorJpeg { scan_len: 1, ..ColorJpeg::default() };
+    assert!(matches!(render_cover(&split_base.bytes(), &mut Grey::default()),
+                     Err(RenderError::Status(BookStatus::Unsupported))));
+    for scan_len in [1usize, 2usize] {
+        let split = ColorJpeg { progressive: Some(0), scan_len, ..ColorJpeg::default() };
+        assert_eq!(render_progressive(&split.bytes()).err(), Some(BookStatus::Unsupported));
+    }
+
+    // Adobe transform 2 (YCCK) on a 3-component JPEG is refused in both baseline and progressive.
+    let bad_base = ColorJpeg { app14: Some(adobe_app14(2)), ..ColorJpeg::default() };
+    assert!(matches!(render_cover(&bad_base.bytes(), &mut Grey::default()),
+                     Err(RenderError::Status(BookStatus::Unsupported))));
+    let bad_prog = ColorJpeg { app14: Some(adobe_app14(2)), progressive: Some(0), ..ColorJpeg::default() };
+    assert_eq!(render_progressive(&bad_prog.bytes()).err(), Some(BookStatus::Unsupported));
+
+    // Subsampled baseline RGB whose first SOS component is not component 0 is refused.
+    let bad_order = ColorJpeg { sampling: 0x22, scan_order: [1, 0, 2], ..ColorJpeg::default() };
+    assert!(matches!(render_cover(&bad_order.bytes(), &mut Grey::default()),
+                     Err(RenderError::Status(BookStatus::Unsupported))));
+}
+
+#[test]
+fn adobe_transform_255_baseline_is_unsupported_with_zero_rows() {
+    let image = ColorJpeg { app14: Some(adobe_app14(0xff)), ..ColorJpeg::default() };
+    let mut grey = Grey::default();
+    assert!(matches!(render_cover(&image.bytes(), &mut grey),
+                     Err(RenderError::Status(BookStatus::Unsupported))));
+    assert!(grey.0.is_empty());
+}
+
+#[test]
+fn adobe_transform_255_progressive_is_unsupported_with_zero_rows() {
+    let image = ColorJpeg { app14: Some(adobe_app14(0xff)), progressive: Some(0), ..ColorJpeg::default() };
+    let mut grey = Grey::default();
+    assert_eq!(render_progressive_into(&image.bytes(), &mut grey), Err(BookStatus::Unsupported));
+    assert!(grey.0.is_empty());
 }
