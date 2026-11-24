@@ -82,11 +82,27 @@ fn one_authority_read_and_required_peer_resolution() {
             }).expect("acknowledged peer");
         assert_eq!((calls, store.begins, store.ends), (1, 1, 1));
         assert_eq!(saved, acknowledged);
-        assert_eq!(restored.settings, ViewSettings {
-            orientation: Orientation::LandscapeCcw, slim_progress_bar: true, refresh_pages: 10,
-        });
+        assert_eq!(restored.settings, settings(), "durable preferences win over the target's");
         assert!(restored.anchor && restored.checked);
         assert_eq!(restored.issue, ResumeIssue::None);
+    }
+}
+
+/// #107: a page start saved under other settings is not a page start under
+/// the durable ones, so only a target saved under the same settings keeps it.
+#[test]
+fn durable_preferences_win_and_other_settings_reopen_at_the_anchor() {
+    let durable = settings();
+    let other = ViewSettings { orientation: Orientation::LandscapeCcw, ..durable };
+    for (saved_under, anchor) in [(durable, false), (other, true)] {
+        let saved = progress(11);
+        let mut store = Store::new();
+        store.seed(0, 1, SleepResumeIntent { settings: saved_under.packed() | 4, ..intent(&saved) });
+        let mut target = Target::load(&mut store, true, durable, &mut ReadingSaveNotice::default());
+        let mut out = saved;
+        let restored = target.load_committed(&mut store, true, true, &mut out, true, true,
+            |_, _, _| Load::Loaded(())).expect("acknowledged peer");
+        assert_eq!((restored.settings, restored.anchor), (durable, anchor));
     }
 }
 

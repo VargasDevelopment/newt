@@ -12,6 +12,7 @@ use newt_core::{
 /// The one frozen SleepResumeTarget, discarded after setup. This is not a
 /// reading-session checkpoint or a replacement for durable preferences.
 pub struct Target {
+    /// The durable preferences at boot; a reopen always uses these.
     pub settings: ViewSettings,
     pub anchor: bool,
     pub issue: ResumeIssue,
@@ -113,8 +114,11 @@ impl Target {
             return None;
         }
         // valid() above has checked the packed settings.
-        self.settings = ViewSettings::unpacked(intent.settings)?;
-        self.anchor = intent.settings & 8 != 0;
+        let saved_under = ViewSettings::unpacked(intent.settings)?;
+        // Durable preferences win (#107). A target saved under other settings
+        // (a save with no page turn after it) names a page start in that older
+        // layout, so the book reopens at its locator with the current ones.
+        self.anchor = intent.settings & 8 != 0 || saved_under != self.settings;
         *saved = acknowledged;
         Some(self)
     }

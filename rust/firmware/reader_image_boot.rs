@@ -149,8 +149,8 @@ impl Runtime {
             report.restored && ui.app.screen != Screen::EpubReading,
             report.restored && self.saved.book != 0 && !report.checkpoint_saved);
         self.checkpoint.restore_uncertainty(self.saves.page_unconfirmed(), self.saves.destination_unconfirmed());
-        // Exact-page recovery uses its saved geometry; Home retains its own
-        // independently committed preference after an interrupted reflow.
+        // The target carries the durable preferences; a page saved under other
+        // settings reopens at its anchor (#107), so Home and reader agree.
         if durable {
             self.settings = target.settings;
             self.reader_ui.draft = self.settings;
