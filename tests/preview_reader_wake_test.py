@@ -208,10 +208,13 @@ CASES = [
          '        if !events.control.cancelled() { return false; }')]),
     (read_after_cancel, []),
     (cold_power_on_at_old_boundary, [
+        # Boot asks a durable reopen for its exact page.
         ('reader_image_boot.rs',
-         'policy: boot_restore_policy(checkpoint, retained_recovery),',
-         'policy: if checkpoint.is_some() { newt_reader_ui::RestorePolicy::ExactPage } '
-         'else { boot_restore_policy(checkpoint, retained_recovery) },')]),
+         'policy: boot_restore_policy(durable.then(|| DurableCheckpoint::of(&target)),\n'
+         '                    report.restored.then_some(&boot.record), self.settings),',
+         'policy: if durable { newt_reader_ui::RestorePolicy::ExactPage } '
+         'else { boot_restore_policy(None,\n'
+         '                    report.restored.then_some(&boot.record), self.settings) },')]),
 ]
 
 
