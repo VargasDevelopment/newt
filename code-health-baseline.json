@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3684224,
+      "flash_bytes": 3685328,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "c09d32257e05b30b8b0320e4bdd26a9e729a588d",
-      "before": 3683744,
-      "after": 3684224,
-      "reason": "#75 keeps UTF-8 characters whole across text buffer flushes by carrying the incomplete character and its style span into the next fill. Clean regional DEV USB flash 3,683,744 → 3,684,224 B (+480 B against main 27e6f909). RAM 124,096 → 124,096 B, RTC 300 → 300 B, Wi-Fi lend 22,528 → 22,528 B. Measured stack entries match main.",
-      "reviewer": "Lead (Claude Opus) after an independent Opus xhigh review of b2d19400 and Codex (no findings)"
+      "source_revision": "a93488d17199d580c61456ac84a91a44eb11b485",
+      "before": 3684224,
+      "after": 3685328,
+      "reason": "+1,104 B: #74 makes covers faster. Whole-book cover CRCs read in 8 KiB steps from a cover Memory block with one handle check per pass, cover members stage in 4 KiB writes, and the cover CRC uses a 1 KiB table in flash instead of a bitwise loop (same values, so saved covers stay valid). Clean regional DEV USB builds: main cdf1f424 (same firmware tree as c09d3225) 3,684,224 B; a93488d1 3,685,328 B. RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, all 328 selected stack frames unchanged.",
+      "reviewer": "Lead (Claude Opus) after an independent Opus xhigh review and Codex review of the pushed head"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
