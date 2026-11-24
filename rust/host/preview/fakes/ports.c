@@ -265,6 +265,7 @@ void nsc_set_tx_timeout_ms(uint32_t ms) { (void)ms; }
 void nsc_flush(void) { if (serial_log) fflush(serial_log); }
 void nsc_wake_transmitter(void) {}
 static uint32_t cover_usb_resume;
+static int cover_usb_work;
 int32_t nsc_available_for_write(void) {
     return nb_millis() < cover_usb_resume ? 200 : 4096;
 }
@@ -465,6 +466,7 @@ static void edit_file(const char *path) {
 void preview_io_open(int32_t fd, const char *path) {
     const char *drop = preview_conf("cover.heap.drop.on");
     if (fd >= 0 && drop && *drop && strstr(path, drop)) cover_heap_dropped = 1;
+    cover_usb_work = 1;
     if (fd >= 0 && fd < 256) snprintf(descriptors[fd], sizeof descriptors[fd], "%s", path);
     trace_card("open", path);
     change_file(path);
@@ -612,10 +614,10 @@ int32_t newt_cover_fstat(int32_t fd, struct cover_facts *out) {
 }
 _Bool newt_cover_complete_handle_metadata(void) { return 1; }
 _Bool newt_cover_rename_replaces_destination(void) { return 1; }
-int32_t newt_cover_heap_monitor_start(void) { return 0; }
+int32_t newt_cover_heap_monitor_start(void) { cover_usb_work = 0; return 0; }
 int32_t newt_cover_heap_monitor_stop(void) {
     /* A busy CDC send buffer after cover work; it drains on later UI passes. */
-    cover_usb_resume = nb_millis() + (uint32_t)preview_conf_long("cover.usb.pause_ms", 0);
+    if (cover_usb_work) cover_usb_resume = nb_millis() + (uint32_t)preview_conf_long("cover.usb.pause_ms", 0);
     return 0;
 }
 size_t newt_cover_heap_monitor_minimum(void) { return 150000; }
