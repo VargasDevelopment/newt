@@ -15,6 +15,24 @@ Source-import closure for PR #16: immutable checkpoint
 authorship and subjects through an explicit bounded frozen-source import exception. New integration commits remain strictly conventional;
 no firmware version, tag or installed image is changed by that closure.
 
+## v0.4.0
+
+### Feat
+- **apps**: offer and install a card app from Apps (NEWT-102, #27)
+- **dev-usb**: put files in the card's Newt folders over USB (#26, #35)
+- **apps**: install a card app into the installed-app record (NEWT-102, #25)
+### Fix
+- **i18n**: apply the book's declared language to line breaking (#53, #67)
+- **covers**: retry the oldest no-cover records once (#62, #63)
+- **covers**: make covers from PNG, progressive JPEG and broken cover declarations (#46, #51)
+- **ci**: count a declined nightly's draft as a taken number (#39, #40)
+- **release**: version and list the changelog from what reached main (#30, #36)
+- **repo**: ignore linked .release-venv and installer/node_modules (#19, #22)
+- **firmware**: read the version from the fixed image descriptor (NEWT-114, #17)
+### Refactor
+- **ui**: derive system page geometry from the device (NEWT-102, #23)
+- **apps**: move the installed-app record into core (NEWT-102, #24)
+
 ## v0.3.0
 
 ### Feat
