@@ -10,6 +10,9 @@ corpus, and --measure to print per-case timings and arena metrics.
 their own phase so neither half outgrows one phase's CPU budget.
 """
 import argparse
+import contextlib
+import hashlib
+import io
 import importlib.util
 import json
 import os
@@ -163,6 +166,21 @@ def test_binary(run, workspace, target, *, unit=False):
     return outputs[0]
 
 
+class FreshBuilds:
+    """Proves each control's kill came from its own mutant build: an executable
+    already seen from the clean source or from a different mutation fails the
+    phase. Controls that apply the same edit may share one."""
+
+    def __init__(self):
+        self.seen = {}
+
+    def admit(self, executable, mutation):
+        digest = hashlib.sha256(Path(executable).read_bytes()).hexdigest()
+        earlier = self.seen.setdefault(digest, mutation)
+        if earlier != mutation:
+            raise RuntimeError(f"control build reused a previous executable ({earlier[0] if earlier else 'clean'})")
+
+
 
 CACHE_LIMIT_CONTROLS = (
     ("producer admission probes oversized chapters", "phased-reader/src/producer_admission.rs",
@@ -181,15 +199,17 @@ CACHE_LIMIT_CONTROLS = (
 )
 
 
-def cache_limit_cases(run, workspace, target, support, *, controls):
+def cache_limit_cases(run, workspace, target, support, *, builds=None):
+    """The cache-boundary tests, then their controls when given BUILDS."""
     binary = test_binary(run, workspace, target, unit=True)
     command = lambda executable: [executable, "cache_page_limit_cases::", "--nocapture"]
     output = run.run(command(binary), workspace)
     support.require("test result: ok. 3 passed; 0 failed; 0 ignored" in output,
                     "three cache-boundary tests must pass before controls")
     print("PASS cache boundaries: exact 4096/4097, settled producer and foreground bypass", flush=True)
-    if not controls:
+    if builds is None:
         return
+    builds.admit(binary, None)
     for label, source, good, bad in CACHE_LIMIT_CONTROLS:
         path = workspace / source
         original = path.read_text()
@@ -197,6 +217,7 @@ def cache_limit_cases(run, workspace, target, support, *, controls):
         path.write_text(original.replace(good, bad))
         try:
             binary = test_binary(run, workspace, target, unit=True)
+            builds.admit(binary, (source, good, bad))
             number = len(run.commands)
             try:
                 run.run(command(binary), workspace)
@@ -309,7 +330,59 @@ def verify_control_baseline_guard(binary, run, workspace, epubs_dir, output, sup
     print(f"PASS self-test: clean baseline rejects broken expectation on {bad_name}", flush=True)
 
 
-def run_control(run, workspace, target, support, manifest, verified, name, source, good, bad, failing_case):
+class _FakeBuild:
+    """A stand-in Run for verify_fresh_build_guard: the "build" copies the
+    source into an executable, and the "test" fails on a broken source. A stale
+    build hands back the previous executable instead."""
+
+    def __init__(self, root, source):
+        self.output, self.source, self.env, self.commands = root, source, {}, []
+        self.stale, self.last = False, None
+
+    def cargo(self, workspace, target, *arguments):
+        if not self.stale:
+            self.last = self.output / f"exe-{len(self.commands)}"
+            self.last.write_text(self.source.read_text())
+        self.commands.append(("cargo",))
+        return json.dumps({"reason": "compiler-artifact", "executable": str(self.last),
+                           "target": {"name": "large_epub_corpus"}})
+
+    def run(self, command, cwd):
+        number = len(self.commands)
+        self.commands.append(command)
+        broken = "BROKEN" in Path(command[0]).read_text()
+        (self.output / f"{number:03d}.stdout").write_text("test result: FAILED. case:" if broken else "test result: ok.")
+        (self.output / f"{number:03d}.stderr").write_text("")
+        if broken:
+            raise RuntimeError("test failed")
+        return "test result: ok."
+
+
+def verify_fresh_build_guard(support):
+    """Self-test: a no-op control fails whether its build reuses the previous
+    mutant's executable or yields the clean one, never counting as a kill."""
+    def reused(stale_successor):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "lib.rs").write_text("LIMIT")
+            run, builds = _FakeBuild(root, root / "lib.rs"), FreshBuilds()
+            builds.admit(test_binary(run, root, root), None)
+            control = lambda name, bad: run_control(run, root, root, support, root / "m.tsv", {"case"}, builds,
+                                                    name, "lib.rs", "LIMIT", bad, "case")
+            with contextlib.redirect_stdout(io.StringIO()):
+                control("a real break", "BROKEN")
+                run.stale = stale_successor
+                try:
+                    control("a no-op", "LIMIT")
+                except RuntimeError as error:
+                    return "reused a previous executable" in str(error)
+            return False
+    support.require(reused(True), "a stale mutant executable must fail its successor control")
+    support.require(reused(False), "a clean executable must fail a no-op control")
+    print("PASS self-test: a control fails when its build reuses an earlier executable", flush=True)
+
+
+def run_control(run, workspace, target, support, manifest, verified, builds, name, source, good, bad, failing_case):
     support.require(failing_case in verified, f'control "{name}": {failing_case} has no clean baseline')
     path = workspace / source
     text = path.read_text()
@@ -317,6 +390,7 @@ def run_control(run, workspace, target, support, manifest, verified, name, sourc
     path.write_text(text.replace(good, bad))
     try:
         binary = test_binary(run, workspace, target)
+        builds.admit(binary, (source, good, bad))
         number = len(run.commands)
         run.env["NEWT_LARGE_EPUB_MANIFEST"] = str(manifest)
         try:
@@ -397,7 +471,10 @@ def run_sweep(binary, run, workspace, out_dir):
 def run_controls(binary, run, workspace, target, support, epubs_dir, output):
     """Every negative control. Each target case is generated here and must pass
     on unchanged code first, so this needs nothing from the clean-case run."""
-    cache_limit_cases(run, workspace, target, support, controls=True)
+    verify_fresh_build_guard(support)
+    builds = FreshBuilds()
+    builds.admit(binary, None)
+    cache_limit_cases(run, workspace, target, support, builds=builds)
     by_name, verified = {}, set()
     prepare_control_baselines(binary, run, workspace, epubs_dir, output, support, by_name, verified, CONTROLS)
     verify_control_baseline_guard(binary, run, workspace, epubs_dir, output, support, by_name)
@@ -405,7 +482,7 @@ def run_controls(binary, run, workspace, target, support, epubs_dir, output):
         case_name = row[4]
         case_manifest = output / f"ctrl-{case_name}.tsv"
         write_manifest(case_manifest, [by_name[case_name]])
-        run_control(run, workspace, target, support, case_manifest, verified, *row)
+        run_control(run, workspace, target, support, case_manifest, verified, builds, *row)
 
 
 def main(argv=None):
@@ -447,8 +524,9 @@ def main(argv=None):
         run.env["RUSTFLAGS"] = rustflags(objects, warnings=not args.negative_controls)
         if args.negative_controls:
             # Each control rebuilds after a one-line edit: incremental builds
-            # without debug info halve that. A stale build could only keep the
-            # code unbroken, which fails the control, so it cannot hide one.
+            # without debug info halve that. FreshBuilds rejects a control
+            # whose build returns an earlier executable; staleness within a
+            # new executable relies on rustc's incremental correctness.
             run.env.update(CARGO_INCREMENTAL="1", CARGO_PROFILE_DEV_DEBUG="0")
         run.env["NEWT_LARGE_EPUB_MANIFEST"] = str(manifest)
         target = output / "target"
@@ -469,7 +547,7 @@ def main(argv=None):
             if args.sweep:
                 run_sweep(binary, run, workspace, output / "sweep")
             run.env["RUSTFLAGS"] = rustflags(objects, warnings=False)
-            cache_limit_cases(run, workspace, target, support, controls=False)
+            cache_limit_cases(run, workspace, target, support)
         except RuntimeError:
             for log in sorted((output / "logs").glob("*.std*"))[-2:]:
                 print(log.read_text(), file=sys.stderr, end="")
