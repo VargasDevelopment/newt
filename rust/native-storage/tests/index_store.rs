@@ -343,7 +343,7 @@ fn a_rebuilt_index_and_its_backup_stay_evictable() {
 }
 
 use newt_core as core_api;
-#[path = "../../tests/book_index_build/support.rs"]
+#[path = "../../core/tests/book_index_build/support.rs"]
 mod build_support;
 use chapter_cache::{IndexBuildStore, IndexWorkState};
 

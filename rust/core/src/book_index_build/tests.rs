@@ -2,7 +2,7 @@ extern crate std;
 use crate as core_api;
 use super::*;
 use std::{vec, vec::Vec};
-#[path = "../../../tests/book_index_build/support.rs"]
+#[path = "../../tests/book_index_build/support.rs"]
 mod support;
 #[derive(Clone, Copy)]
 enum Fault { None, Crc, Short, Write, Sync }
