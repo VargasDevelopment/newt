@@ -165,7 +165,7 @@ impl Runtime {
                 return false;
             }
             *self.selection.flags_mut() &= !flag::TITLE_DEFERRED;
-            *self.selection.flags_mut() |= flag::COMMIT_OWED;
+            *self.selection.flags_mut() |= flag::COMMIT_OWED | flag::ACCEPTED_OPEN_OWED;
             self.update_home_image(home, events.action);
             if self.session.as_ref().is_some_and(|session| session.verification.state()
                 == crate::reader_verification::Verification::Pending) {

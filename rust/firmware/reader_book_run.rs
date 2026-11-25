@@ -112,6 +112,26 @@ where
             let settings = resources.settings;
             let action = match step {
                 BookStep::Action(action) => action,
+                BookStep::MarkFinished => {
+                    checkpoint.stats(
+                        io,
+                        card,
+                        &mut resources,
+                        &reader,
+                        &mut owner,
+                        &mut ui,
+                        &opened_digest,
+                        revision.source_verified() && revision.digest() == opened_digest,
+                        request,
+                        stats_sha256,
+                        &mut statistics,
+                        at,
+                        StatsOperation::Mark {
+                            opening: accepted_open_owed || revision.source_verification_pending(),
+                        },
+                    );
+                    break Some(ReaderUiIntent::Repaint);
+                }
                 BookStep::Sleep(plane) => {
                     composed = Some(match request.sleep {
                         Some(scene) => resources.paint_sleep(
@@ -305,30 +325,29 @@ where
                     }
                 }
                 ReaderUiWork::Intent(ReaderUiIntent::MarkFinished) => {
-                    if matches!(route, Route::Short) && revision.source_verification_pending() {
-                        break Some(ReaderUiIntent::MarkFinished);
-                    }
-                    checkpoint.stats(
-                        io,
-                        card,
-                        &mut resources,
-                        &reader,
-                        &mut owner,
-                        &mut ui,
-                        &opened_digest,
-                        revision.source_verified() && revision.digest() == opened_digest,
-                        request,
-                        stats_sha256,
-                        &mut statistics,
-                        at,
-                        StatsOperation::Mark {
-                            opening: accepted_open_owed || revision.source_verification_pending(),
-                        },
-                    );
                     match route {
-                        Route::Short => break Some(ReaderUiIntent::Repaint),
+                        // Carry the mark intent explicitly so the image layer
+                        // settles verification and owed commits before marking.
+                        Route::Short => break Some(ReaderUiIntent::MarkFinished),
                         #[cfg(feature = "checkpoint-fixture")]
                         Route::WholeLoop => {
+                            checkpoint.stats(
+                                io,
+                                card,
+                                &mut resources,
+                                &reader,
+                                &mut owner,
+                                &mut ui,
+                                &opened_digest,
+                                revision.source_verified() && revision.digest() == opened_digest,
+                                request,
+                                stats_sha256,
+                                &mut statistics,
+                                at,
+                                StatsOperation::Mark {
+                                    opening: accepted_open_owed || revision.source_verification_pending(),
+                                },
+                            );
                             // Parsing may have lent the logical frame as scratch.
                             // Reconstruct the complete raw page before its overlay.
                             composed = Some(checkpoint.paint(

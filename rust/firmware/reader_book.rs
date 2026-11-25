@@ -164,6 +164,9 @@ pub enum BookStep {
     /// Settings reflow checkpoints the live position without publishing a new
     /// reading destination; reopening happens after this loan ends.
     ReflowCheckpoint,
+    /// Mark as finished / not finished after verification and any owed
+    /// selection/progress commit have settled.
+    MarkFinished,
     Sleep(newt_device_ui::HomePlane),
 }
 

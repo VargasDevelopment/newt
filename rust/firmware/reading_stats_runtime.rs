@@ -213,7 +213,9 @@ impl ReadingStatsRuntime {
         // Mark as finished seeds the ledger on demand once page durability is known.
         if self.condition == StatsCondition::Unseeded && !page_unconfirmed {
             let seeded = seed_stats(store, Some(&book.digest), None);
-            self.note(seeded);
+            if seeded.result != StatsResult::Unconfirmed {
+                self.note(seeded);
+            }
             if seeded.result != StatsResult::Done {
                 ui.notice = if seeded.result == StatsResult::Unconfirmed {
                     ReaderUiNotice::FinishUnconfirmed
