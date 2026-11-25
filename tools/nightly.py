@@ -8,11 +8,14 @@ ever carries it. The job then builds the stamped commit like any release, pushes
 the tag and publishes the build as a GitHub pre-release with
 release_publish.py --prerelease.
 
-The version is <next>-dev.YYYYMMDD.N. <next> is the patch after the core of the
-main commit's own version (0.2.1-rc.1 gives 0.2.2); YYYYMMDD is the UTC day; N
-follows every nightly tag of <next> that day, published or not, and every draft
-release's tag: a run that declines to publish keeps its draft but never pushes
-its tag, and the next run must not take that number again. Devices hold at
+The version is <next>-dev.YYMMDDHHMM (UTC). <next> is the patch after the core
+of the main commit's own version (0.5.0 gives 0.5.1, 0.5.1-rc.1 gives 0.5.2);
+YYMMDDHHMM is a fixed-width 10-digit UTC timestamp so GitHub's descending text
+order matches SemVer order and ranks above legacy <next>-dev.YYYYMMDD.N tags.
+Every existing tag and draft release's tag counts as taken: a tag is never
+reused, and a stamp behind an existing one is refused. On an exact same-minute
+collision, `stamp` waits once until the next UTC minute, rechecks main's tip,
+tags and drafts, and refuses if the new minute is still taken. Devices hold at
 most 23 characters of a version, so a longer one is refused. A push that changes
 nothing the image is built from since the last published nightly gets none; a
 tag with no published release (none, or only a draft) never counts as one.
@@ -27,10 +30,11 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 
 from bench_candidate import require
-from release_tools import (DESTINATION, NIGHTLY, ROOT, VERSION_HEADER, committed_release, declared_release,
-                           git_output, is_ancestor, resolve_commit)
+from release_tools import (ANY_NIGHTLY, DESTINATION, NIGHTLY, NIGHTLY_STAMP, ROOT, VERSION_HEADER,
+                           committed_release, declared_release, git_output, is_ancestor, resolve_commit)
 from x3_slots import NEWT_VERSION_BYTES
 
 CONFIG = '.cz.toml'
@@ -40,7 +44,8 @@ VERSION_LINES = {CONFIG: ('version = "', '"'), VERSION_HEADER: ('#define NEWT_FI
 NOT_IMAGE = ('.github/', 'docs/', 'installer/', 'tests/', 'rust/tests/', 'rust/host/')
 # The firmware toolchain locks live under docs/ but choose what builds the image.
 IMAGE_DOCS = re.compile(r'docs/toolchain-[^/]+\.(?:json|lock)')
-TAG = re.compile(r'v([0-9]+)\.([0-9]+)\.([0-9]+)-dev\.([0-9]{8})\.([1-9][0-9]*)')
+NEW_TAG = re.compile(r'v([0-9]+)\.([0-9]+)\.([0-9]+)-dev\.(' + NIGHTLY_STAMP + r')')
+LEGACY_TAG = re.compile(r'v([0-9]+)\.([0-9]+)\.([0-9]+)-dev\.([0-9]{8})\.([1-9][0-9]*)')
 
 
 def next_release(release):
@@ -51,20 +56,59 @@ def next_release(release):
     return f'{major}.{minor}.{patch + 1}'
 
 
+def parse_nightly_tag(tag):
+    """(major, minor, patch, stamp_or_date, legacy_seq, tag) in SemVer order, or None.
+    Fixed-width 10-digit stamps (>= 2101010000) have seq 0 and sort above all 8-digit legacy tags."""
+    if (found := NEW_TAG.fullmatch(tag)) is not None:
+        major, minor, patch, stamp_id = map(int, found.groups())
+        return (major, minor, patch, stamp_id, 0, tag)
+    if (found := LEGACY_TAG.fullmatch(tag)) is not None:
+        major, minor, patch, day, seq = map(int, found.groups())
+        return (major, minor, patch, day, seq, tag)
+    return None
+
+
 def nightly_tags(tags):
-    """Each nightly tag's (major, minor, patch, YYYYMMDD, N), in SemVer order, newest last."""
-    return sorted(tuple(map(int, found.groups())) for tag in tags if (found := TAG.fullmatch(tag)))
+    """Each nightly tag's SemVer sort tuple, newest last."""
+    return sorted(parsed for tag in tags if (parsed := parse_nightly_tag(tag)) is not None)
 
 
-def nightly_version(release, day, tags):
-    """The next nightly of `release` on `day` (YYYYMMDD), after every tag already taken."""
-    base = next_release(release)
+def format_stamp(moment):
+    """A timezone-aware datetime as its UTC YYMMDDHHMM nightly identifier."""
+    require(isinstance(moment, datetime) and moment.tzinfo is not None,
+            'Nightly timestamp must be a timezone-aware datetime')
+    utc = moment.astimezone(timezone.utc)
+    require(2021 <= utc.year <= 2099, f'UTC year {utc.year} is outside the nightly range (2021..2099)')
+    return utc.strftime('%y%m%d%H%M')
+
+
+def latest_stamp(base, tags):
+    """Highest taken 10-digit YYMMDDHHMM integer for `<base>-dev.*`, or None."""
     core = tuple(map(int, base.split('.')))
-    taken = [n for *other, date, n in nightly_tags(tags) if tuple(other) == core and date == int(day)]
-    version = f'{base}-dev.{day}.{max(taken, default=0) + 1}'
+    taken = [stamp_id for *other, stamp_id, seq, _ in nightly_tags(tags) if tuple(other) == core and seq == 0]
+    return max(taken, default=None)
+
+
+def nightly_version(release, stamp_id, tags):
+    """The nightly of `release` at UTC `stamp_id` (YYMMDDHHMM or datetime); refuses collisions and older stamps."""
+    base = next_release(release)
+    if isinstance(stamp_id, datetime):
+        stamp_id = format_stamp(stamp_id)
+    require(isinstance(stamp_id, str) and re.fullmatch(NIGHTLY_STAMP, stamp_id) is not None,
+            f'{stamp_id!r} is not a UTC YYMMDDHHMM nightly identifier')
+    newest = latest_stamp(base, tags)
+    require(newest is None or int(stamp_id) > newest,
+            f'Nightly {base}-dev.{stamp_id} collides with or precedes existing {base}-dev.{newest}')
+    version = f'{base}-dev.{stamp_id}'
     require(len(version) < NEWT_VERSION_BYTES,
             f'{version} is longer than the image identity holds ({NEWT_VERSION_BYTES - 1} characters)')
     return version
+
+
+def next_minute_wait(moment):
+    """Seconds until just past the next UTC minute boundary, in (1.0, 61.0]."""
+    utc = moment.astimezone(timezone.utc)
+    return 61.0 - utc.second - utc.microsecond / 1_000_000
 
 
 def show(root, commit, path):
@@ -86,16 +130,17 @@ def stamped(root, commit, version):
     return texts
 
 
-def stamp_source(root, commit):
+def stamp_source(root, commit, legacy=False):
     """The main commit that `commit` stamps, or None unless `commit` is exactly a stamp: one parent on
     origin/main's first-parent history, a nightly of that parent's next release, and no other change."""
     parents = git_output(root, 'rev-list', '--parents', '-n', '1', commit).split()[1:]
     if len(parents) != 1 or parents[0] not in git_output(root, 'rev-list', '--first-parent', DESTINATION).split():
         return None
     source, version = parents[0], committed_release(root, commit)[0]
+    pattern = ANY_NIGHTLY if legacy else NIGHTLY
     try:
         expected = stamped(root, source, version)
-        nightly = re.fullmatch(NIGHTLY, version) and version.startswith(next_release(
+        nightly = re.fullmatch(pattern, version) and version.startswith(next_release(
             committed_release(root, source)[0]) + '-dev.')
     except ValueError:
         return None
@@ -123,12 +168,18 @@ def published(repository, tag, answer=None):
 
 def draft_tags(repository, answer=None):
     """The tags of the repository's draft releases. A draft has no git tag until it publishes, and
-    release_publish.py never deletes one, so a nightly that declined to publish keeps its number taken.
-    A failed read raises: guessing "no drafts" would reuse a draft's number and fail its publish."""
+    release_publish.py never deletes one, so a nightly that declined to publish keeps its tag taken.
+    A failed read raises: guessing "no drafts" would reuse a draft's tag and fail its publish."""
     command = ['gh', 'api', '--paginate', f'repos/{repository}/releases', '--jq', '.[] | select(.draft) | .tag_name']
     reply = (answer or (lambda command: subprocess.run(command, capture_output=True)))(command)
     require(reply.returncode == 0, f'{shlex.join(command)} failed: {reply.stderr.decode().strip()}')
     return reply.stdout.decode().split()
+
+
+def origin_nightly_tags(root):
+    """Origin's nightly tag names (git ls-remote, read only)."""
+    lines = git_output(root, 'ls-remote', '--tags', 'origin', 'refs/tags/v*-dev.*').splitlines()
+    return [line.split('\t', 1)[1].removeprefix('refs/tags/') for line in lines if not line.endswith('^{}')]
 
 
 def push_tag(root, tag, source):
@@ -159,17 +210,17 @@ def image_changes(root, since, head):
 def last_source(root, tags, published):
     """The main commit the newest published nightly stamps, or None. Only a release GitHub shows
     published for the tag counts: a tag whose publish failed must not suppress the next nightly."""
-    for major, minor, patch, day, n in reversed(nightly_tags(tags)):
-        tag = f'v{major}.{minor}.{patch}-dev.{day:08d}.{n}'
+    for *_, tag in reversed(nightly_tags(tags)):
         if published(tag) is not None:
-            return stamp_source(root, resolve_commit(root, 'refs/tags/' + tag))
+            return stamp_source(root, resolve_commit(root, 'refs/tags/' + tag), legacy=True)
     return None
 
 
-def stamp(published, root=ROOT, today=None, force=False, drafts=()):
+def stamp(published, root=ROOT, now=None, force=False, drafts=(), sleep=time.sleep):
     """Commits and tags the nightly of HEAD, main's tip; returns its version, or None when main has
     moved on or the image has not changed since the last published nightly. `published(tag)` reads
-    GitHub; `drafts` are its draft releases' tags, whose numbers are taken too."""
+    GitHub; `drafts` is a tag list or zero-arg reader for draft releases' tags. On a same-minute
+    collision, waits once for the next UTC minute, rechecks main/tags/drafts, and refuses if still taken."""
     head = resolve_commit(root, 'HEAD')
     live = git_output(root, 'ls-remote', 'origin', 'refs/heads/main').split('\t')[0]
     if live != head:
@@ -182,8 +233,27 @@ def stamp(published, root=ROOT, today=None, force=False, drafts=()):
         print(f'No nightly: nothing the image is built from changed since the last published one ({since})',
               file=sys.stderr)
         return None
-    day = (today or datetime.now(timezone.utc)).strftime('%Y%m%d')
-    version = nightly_version(committed_release(root, head)[0], day, [*tags, *drafts])
+    release = committed_release(root, head)[0]
+    base = next_release(release)
+    read_now = now if callable(now) else (lambda: now) if now is not None else (lambda: datetime.now(timezone.utc))
+    read_drafts = drafts if callable(drafts) else (lambda: list(drafts))
+    moment = read_now()
+    stamp_id = format_stamp(moment)
+    taken = [*tags, *origin_nightly_tags(root), *read_drafts()]
+    newest = latest_stamp(base, taken)
+    if newest is not None and int(stamp_id) == newest:
+        delay = next_minute_wait(moment)
+        print(f'Nightly {base}-dev.{stamp_id} is already taken; waiting {delay:.1f}s for the next UTC minute',
+              file=sys.stderr)
+        sleep(delay)
+        live = git_output(root, 'ls-remote', 'origin', 'refs/heads/main').split('\t')[0]
+        if live != head:
+            print(f'No nightly: main has moved on to {live}; its own run builds the next one', file=sys.stderr)
+            return None
+        moment = read_now()
+        stamp_id = format_stamp(moment)
+        taken = [*git_output(root, 'tag', '--list', 'v*-dev.*').split(), *origin_nightly_tags(root), *read_drafts()]
+    version = nightly_version(release, stamp_id, taken)
     for path, text in stamped(root, head, version).items():
         (root / path).write_text(text)
     git_output(root, 'commit', '-q', '-m', f'chore(release): nightly {version}\n\nSource: {head}', '--', *VERSION_LINES)
@@ -204,7 +274,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         version = stamp(lambda tag: published(args.repository, tag), force=args.force,
-                        drafts=draft_tags(args.repository))
+                        drafts=lambda: draft_tags(args.repository))
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         print(f'Nightly stopped: {error}', file=sys.stderr)
         return 1

@@ -303,10 +303,10 @@ Check joins once (`rust/firmware/update_online_runtime.rs`) and reads
 `/releases/latest`, no token, which skips drafts and pre-releases.
 
 **Test builds.** Test builds are GitHub pre-releases: CI publishes a
-nightly build of `main`, versioned `<next>-dev.YYYYMMDD.N` like
-`0.2.2-dev.20261123.1` ([RELEASING](RELEASING.md#nightly-test-builds)), with
-the same assets and checks as a release. A test build ranks above `0.2.1`
-and below `0.2.2`, so a later nightly, or a release above it, replaces it.
+nightly build of `main`, versioned `<next>-dev.YYMMDDHHMM` (UTC) like
+`0.5.1-dev.2611251500` ([RELEASING](RELEASING.md#nightly-test-builds)), with
+the same assets and checks as a release. A test build ranks above `0.5.0`
+and below `0.5.1`, so a later nightly, or a release above it, replaces it.
 Devices ignore them unless Test builds is On. That switch is on a hidden
 Developer page: open About's first newt, then press Previous, Next,
 Previous, Next. With it On, Check reads `NEWEST_RELEASE_URL` instead:

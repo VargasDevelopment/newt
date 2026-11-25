@@ -72,9 +72,10 @@ pub fn semver2_is_stable(version: Option<&CStr>) -> bool {
 pub fn semver2_is_nightly(version: Option<&CStr>) -> bool {
     let Some(v) = version.and_then(|v| split(v.to_bytes())) else { return false; };
     let Some(rest) = v.pre.strip_prefix(b"dev.") else { return false; };
+    if numeric(rest) && rest.len() == 10 { return true; }
     let Some(dot) = rest.iter().position(|&c| c == b'.') else { return false; };
     let (date, tail) = rest.split_at(dot); let sequence = &tail[1..];
-    date.len() == 8 && numeric(date) && numeric(sequence) && sequence != b"0"
+    numeric(date) && date.len() == 8 && numeric(sequence) && sequence != b"0"
 }
 
 fn compare_numbers(a: &[u8], b: &[u8]) -> Ordering {

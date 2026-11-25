@@ -214,3 +214,39 @@ pub fn render_update<P: Password, S>(view: &UpdateView<'_, P, S>, bar: &SystemBa
     }
 }
 const _: () = assert!(b"CrossPoint ".len() + 32 + 1 <= 48 && FILE_BYTES <= 48);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use newt_core::{update_manifest::UpdateKind, wifi_network_store::workflow::{NativeWipe, Secret}};
+
+    struct Empty<const N: usize>([u8; N]);
+    impl<const N: usize> Secret<N> for Empty<N> {
+        fn size(&self) -> usize { 0 }
+        fn bytes(&self) -> &[u8; N] { &self.0 }
+        fn clear(&mut self, _: &dyn NativeWipe) {}
+        fn fill(&mut self, _: usize, _: &dyn NativeWipe, _: &mut dyn FnMut(&mut [u8]) -> bool) -> bool { false }
+    }
+    impl Password for Empty<PASSWORD_BYTES> {
+        fn append(&mut self, _: &[u8]) -> bool { false }
+        fn erase(&mut self) -> bool { false }
+    }
+
+    #[test]
+    fn older_offer_hint_recognizes_new_and_legacy_nightlies() {
+        let mut offer = UpdateOffer { present: true, readable: true, ..UpdateOffer::default() };
+        offer.manifest.kind = UpdateKind::Newt;
+        offer.manifest.version[..5].copy_from_slice(b"0.5.0");
+        offer.manifest.build[..12].copy_from_slice(b"0123456789ab");
+        for (running, suffix) in [
+            (c"0.5.1-dev.2611251500", b" Turn Test builds Off, then Check again.".as_slice()),
+            (c"0.5.1-dev.20261125.1", b" Turn Test builds Off, then Check again.".as_slice()),
+            (c"0.5.1", b" Use USB to install an older version.".as_slice()),
+        ] {
+            let view = UpdateView::new(running, Empty([0; PASSWORD_BYTES]), Empty([0; 32]));
+            let mut note = [0; 160];
+            offer_note(&view, &offer, &mut note);
+            assert!(cstr(&note).ends_with(suffix), "running={running:?}");
+        }
+    }
+}

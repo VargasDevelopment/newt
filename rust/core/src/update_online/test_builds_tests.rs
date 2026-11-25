@@ -62,6 +62,28 @@ fn a_test_build_ranks_between_its_neighbours() {
     assert_eq!(order(c"0.2.2-dev.20261124.1", c"0.2.2-dev.20261123.9"), 1);
     // Numeric identifiers compare as numbers, not text.
     assert_eq!(order(c"0.2.2-dev.20261123.10", c"0.2.2-dev.20261123.9"), 1);
+    // Fixed-width YYMMDDHHMM nightlies (semver2_compare is unchanged since v0.5.0)
+    // outrank v0.5.0 and legacy dev.YYYYMMDD.N builds while staying below 0.5.1.
+    let fixed = c"0.5.1-dev.2611251500";
+    assert_eq!(order(fixed, c"0.5.0"), 1);
+    assert_eq!(order(fixed, c"0.5.1-dev.20261125.9"), 1);
+    assert_eq!(order(fixed, c"0.5.1-dev.20261125.17"), 1);
+    assert_eq!(order(fixed, c"0.5.1"), -1);
+    assert_eq!(order(c"0.5.1-dev.2611251501", fixed), 1);
+    assert_eq!(order(c"0.5.1-dev.2611260000", c"0.5.1-dev.2611252359"), 1);
+    assert_eq!(order(c"0.5.1-dev.2701010000", c"0.5.1-dev.2612312359"), 1);
+}
+
+#[test]
+fn nightly_classification_accepts_fixed_width_and_legacy_forms() {
+    use crate::update_manifest::semver2_is_nightly;
+    for nightly in [c"0.5.1-dev.2611251500", c"10.10.11-dev.4212312359", c"0.5.1-dev.20261125.1", c"0.5.1-dev.20261125.17"] {
+        assert!(semver2_is_nightly(Some(nightly)), "{nightly:?}");
+    }
+    for other in [c"0.5.1", c"0.5.1-alpha.0", c"0.5.1-dev.invalid", c"0.5.1-dev.0611251500",
+        c"0.5.1-dev.261125150", c"0.5.1-dev.26112515001", c"0.5.1-dev.2611251500.1", c"0.5.1-dev.20261125.0"] {
+        assert!(!semver2_is_nightly(Some(other)), "{other:?}");
+    }
 }
 
 #[test]
@@ -71,10 +93,12 @@ fn a_test_build_version_fits_the_manifest() {
         "format=newt-update-1\nkind=newt\nversion={version}\nbuild=0123456789ab\nsize=4096\nsha256={}\n",
         "0".repeat(64));
     let mut parsed = UpdateManifest::default();
-    for version in ["0.2.2-dev.20261123.1", "1.20.30-dev.20261123.99"] {
+    for version in ["0.2.2-dev.20261123.1", "1.20.30-dev.20261123.99", "0.5.1-dev.2611251500", "10.10.11-dev.2611251500"] {
         let text = manifest(version);
         assert!(parse_update_manifest(Some(text.as_bytes()), text.len(), &mut parsed), "{version}");
     }
-    let long = manifest("0.2.2-nightly.20261123.1");
-    assert!(!parse_update_manifest(Some(long.as_bytes()), long.len(), &mut parsed));
+    for bad in ["0.2.2-nightly.20261123.1", "100.10.11-dev.2611251500", "0.5.1-dev.0611251500"] {
+        let text = manifest(bad);
+        assert!(!parse_update_manifest(Some(text.as_bytes()), text.len(), &mut parsed), "{bad}");
+    }
 }

@@ -501,7 +501,7 @@ git() {
 }
 python3() {
     local version=0.2.0
-    if [[ "$revision" == stamped ]]; then version=0.2.1-dev.20261122.1234; fi
+    if [[ "$revision" == stamped ]]; then version=10.10.11-dev.2611222359; fi
     mkdir -p "$(dirname "$image")"
     printf '%-32s%-24s' "$version" "$version" > "$image"
     if [[ "$EXTRA_COPY" == yes ]]; then printf 'Version: %s' "$version" >> "$image"; fi
