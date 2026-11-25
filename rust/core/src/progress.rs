@@ -77,27 +77,50 @@ impl Progress {
         })
     }
 
+    fn same_state(&self, other: &Self) -> bool {
+        self.book == other.book
+            && self.locator == other.locator
+            && self.active_milliseconds == other.active_milliseconds
+            && self.forward_pages == other.forward_pages
+            && self.qualified_sessions == other.qualified_sessions
+    }
+
     /// Whether this loaded durable record supersedes a warm or pending
-    /// `candidate` for the same book. Strictly newer modular sequences and
-    /// exact-antipode ambiguity prefer durable authority; at equal sequence,
-    /// an unconfirmed live candidate (`candidate_saved == false`) keeps
-    /// unsaved progress, while a claimed-saved mismatch defers to durable.
-    pub fn supersedes(&self, candidate: &Self, candidate_saved: bool) -> bool {
+    /// `candidate` for the same book.
+    ///
+    /// `attempted_sequence` is the highest sequence `candidate`'s session has
+    /// attempted to write to durable storage (confirmed or not). When
+    /// `candidate_saved` is true, durable wins on any strictly newer modular
+    /// sequence (including exact-antipode ambiguity) or an equal-sequence state
+    /// mismatch. When `candidate_saved` is false, durable wins only when its
+    /// sequence is strictly past both `candidate.sequence` and
+    /// `attempted_sequence`, or when durable confirms this exact live state at
+    /// or ahead of `candidate.sequence` (reconciling a lost acknowledgement).
+    pub fn supersedes(
+        &self,
+        candidate: &Self,
+        candidate_saved: bool,
+        attempted_sequence: u32,
+    ) -> bool {
         if self.book == 0 || self.book != candidate.book {
             return false;
         }
-        let delta = self.sequence.wrapping_sub(candidate.sequence);
-        if delta == 0 {
-            candidate_saved
-                && Self {
-                    session_milliseconds: 0,
-                    ..*self
-                } != Self {
-                    session_milliseconds: 0,
-                    ..*candidate
-                }
+        let floor = if !candidate_saved
+            && attempted_sequence.wrapping_sub(candidate.sequence) < 0x8000_0000
+        {
+            attempted_sequence
         } else {
-            delta <= 0x8000_0000
+            candidate.sequence
+        };
+        let delta = self.sequence.wrapping_sub(floor);
+        if delta != 0 && delta <= 0x8000_0000 {
+            return true;
+        }
+        if candidate_saved {
+            delta == 0 && !self.same_state(candidate)
+        } else {
+            self.sequence.wrapping_sub(candidate.sequence) < 0x8000_0000
+                && self.same_state(candidate)
         }
     }
 }
@@ -173,17 +196,41 @@ mod tests {
 
     #[test]
     fn durable_supersedes_by_modular_sequence_and_saved_mismatch() {
-        assert!(sample(6, 500).supersedes(&sample(5, 100), true));
-        assert!(sample(6, 500).supersedes(&sample(5, 100), false));
-        assert!(sample(0, 500).supersedes(&sample(u32::MAX, 100), false));
-        assert!(!sample(u32::MAX, 100).supersedes(&sample(0, 500), true));
-        assert!(sample(0x8000_0005, 500).supersedes(&sample(5, 100), false));
-        assert!(!sample(5, 100).supersedes(&sample(5, 500), false));
-        assert!(sample(5, 500).supersedes(&sample(5, 100), true));
-        assert!(!sample(5, 500).supersedes(&sample(5, 500), true));
+        assert!(sample(6, 500).supersedes(&sample(5, 100), true, 5));
+        assert!(sample(6, 500).supersedes(&sample(5, 100), false, 5));
+        assert!(sample(0, 500).supersedes(&sample(u32::MAX, 100), false, u32::MAX));
+        assert!(!sample(u32::MAX, 100).supersedes(&sample(0, 500), true, 0));
+        assert!(sample(0x8000_0005, 500).supersedes(&sample(5, 100), false, 5));
+        assert!(!sample(5, 100).supersedes(&sample(5, 500), false, 5));
+        assert!(sample(5, 500).supersedes(&sample(5, 100), true, 5));
+        assert!(!sample(5, 500).supersedes(&sample(5, 500), true, 5));
         let with_session = Progress { session_milliseconds: 999, ..sample(5, 500) };
-        assert!(!with_session.supersedes(&sample(5, 500), true));
-        assert!(!Progress { book: 0, ..sample(6, 500) }.supersedes(&sample(5, 100), true));
-        assert!(!Progress { book: 9, ..sample(6, 500) }.supersedes(&sample(5, 100), true));
+        assert!(!with_session.supersedes(&sample(5, 500), true, 5));
+        assert!(!Progress { book: 0, ..sample(6, 500) }.supersedes(&sample(5, 100), true, 5));
+        assert!(!Progress { book: 9, ..sample(6, 500) }.supersedes(&sample(5, 100), true, 5));
+    }
+
+    #[test]
+    fn unconfirmed_candidate_uses_attempted_sequence_provenance() {
+        // Lost ack at seq 3 (char 1123), then later forward (1686) or backward (0)
+        // turn whose write failed: durable seq 3 must not replace the live page.
+        assert!(!sample(3, 1123).supersedes(&sample(2, 1686), false, 3));
+        assert!(!sample(3, 1123).supersedes(&sample(2, 1686), false, 4));
+        assert!(!sample(3, 1123).supersedes(&sample(2, 0), false, 3));
+        assert!(!sample(3, 1123).supersedes(&sample(2, 0), false, 4));
+        // Lost ack with no later page change reconciles and promotes to saved.
+        assert!(sample(3, 1123).supersedes(&sample(2, 1123), false, 3));
+        assert!(sample(3, 1123).supersedes(&sample(2, 1123), false, 4));
+        // Durable strictly past the attempted mark still supersedes stale unsaved RTC (#111).
+        assert!(sample(4, 1123).supersedes(&sample(2, 1686), false, 3));
+        assert!(sample(5, 1123).supersedes(&sample(2, 1686), false, 4));
+        // Modular wrap across u32::MAX -> 0 for attempted_sequence.
+        assert!(!sample(0, 1123).supersedes(&sample(u32::MAX, 1686), false, 0));
+        assert!(sample(0, 1123).supersedes(&sample(u32::MAX, 1123), false, 0));
+        assert!(sample(1, 1123).supersedes(&sample(u32::MAX, 1686), false, 0));
+        // Durable older than candidate.sequence never downgrades even on matching state.
+        assert!(!sample(1, 500).supersedes(&sample(2, 500), false, 3));
+        // Stale/behind attempted_sequence falls back to candidate.sequence.
+        assert!(sample(3, 1123).supersedes(&sample(2, 1686), false, 1));
     }
 }

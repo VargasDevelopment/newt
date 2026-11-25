@@ -48,14 +48,23 @@ impl Runtime {
             && (opened || pending.is_some() || (checkpoint_saved && has_progress));
         ui.app.resume_screen = if book_open { Screen::EpubReading } else { Screen::Home };
         if !book_open { ui.app.selected = 0; }
-        let (progress, settings, saved, recovery) = if let Some(pending) = pending {
+        let (progress, settings, saved, recovery, pending_attempted) = if let Some(pending) = pending {
             (Some(pending.progress()), pending.settings(), self.saves.checkpoint_saved(),
-                pending_recovery(pending.policy()))
+                pending_recovery(pending.policy()), Some(pending.attempted_sequence()))
         } else {
-            (book_open.then_some(&self.saved), self.settings, checkpoint_saved, Recovery::Ordinary)
+            (book_open.then_some(&self.saved), self.settings, checkpoint_saved, Recovery::Ordinary, None)
         };
         let mut retained = record::make_record(&ui.app, progress, settings, saved, recovery,
             self.selection.active());
+        if !saved && let Some(progress) = progress {
+            let mut attempted = self.checkpoint.attempted_sequence_for(progress);
+            if let Some(pending_attempted) = pending_attempted
+                && pending_attempted.wrapping_sub(attempted) < 0x8000_0000
+            {
+                attempted = pending_attempted;
+            }
+            retained.stamp_attempted(attempted);
+        }
         retained.recovery |= self.saves.retained();
         retained.checksum = retained.checksum();
 
@@ -77,7 +86,7 @@ impl Runtime {
             } else { SaveOutcome::Unchanged };
             self.observe_destination(retained.resume_screen == Screen::EpubReading as u32, destination);
         }
-        retained.recovery = (retained.recovery & 3) | self.saves.retained();
+        retained.recovery = (retained.recovery & !12) | self.saves.retained();
         retained.checksum = retained.checksum();
         self.saves.set_fold_owed(self.statistics.fold_owed);
         let notice = self.saves.publish();

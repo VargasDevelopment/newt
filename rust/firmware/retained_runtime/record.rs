@@ -90,7 +90,11 @@ impl SleepRecord {
         }
         hash
     }
-    /// Bits 2/3 preserve uncertainty; low-bit value 3 is rejected, never cast.
+    pub const ATTEMPTED_SHIFT: u32 = 4;
+    pub const MAX_ATTEMPTED_DELTA: u32 = u32::MAX >> Self::ATTEMPTED_SHIFT;
+
+    /// Bits 2/3 preserve uncertainty; bits 4..=31 carry the attempted-sequence
+    /// delta for unconfirmed book/recovery records; low-bit value 3 is rejected.
     pub const fn recovery_kind(&self) -> Option<Recovery> {
         match self.recovery & 3 {
             0 => Some(Recovery::Ordinary),
@@ -98,6 +102,35 @@ impl SleepRecord {
             2 => Some(Recovery::PendingAnchor),
             _ => None,
         }
+    }
+    /// Highest durable sequence this retained candidate's session attempted to
+    /// write (confirmed or not). Confirmed records carry no pending attempts.
+    pub const fn attempted_sequence(&self) -> u32 {
+        if self.checkpoint_saved != 0 {
+            self.sequence
+        } else {
+            self.sequence
+                .wrapping_add(self.recovery >> Self::ATTEMPTED_SHIFT)
+        }
+    }
+    /// Pack the attempted-sequence delta into bits 4..=31 of `recovery` for an
+    /// unconfirmed book/recovery record without growing the 68-byte RTC record.
+    pub fn stamp_attempted(&mut self, attempted_sequence: u32) {
+        let book = self.resume_screen == Screen::EpubReading as u32
+            || self.recovery_kind() != Some(Recovery::Ordinary);
+        let delta = if !book || self.checkpoint_saved != 0 {
+            0
+        } else {
+            let forward = attempted_sequence.wrapping_sub(self.sequence);
+            if forward < 0x8000_0000 {
+                // >268M unconfirmed advances is unreachable in practice; saturation caps delta at 2^28-1, understating higher attempts instead of wrapping.
+                forward.min(Self::MAX_ATTEMPTED_DELTA)
+            } else {
+                0
+            }
+        };
+        self.recovery = (self.recovery & 15) | (delta << Self::ATTEMPTED_SHIFT);
+        self.checksum = self.checksum();
     }
     /// Raw discriminator bit; does not authenticate a cold record.
     pub const fn is_sd(&self) -> bool {
@@ -264,13 +297,14 @@ pub fn validate(record: &SleepRecord, expected_book: u64, expected_sd_source: bo
     if record.rejected_sleep > 1 || record.checkpoint_saved > 1 {
         return Status::EntryRange;
     }
-    if record.recovery & !15 != 0 || record.recovery_kind().is_none() {
+    if record.recovery_kind().is_none() {
         return Status::Reserved;
     }
     if record.resume_screen == Screen::Home as u32
         && record.recovery_kind() == Some(Recovery::Ordinary)
     {
-        if record.book_low != 0
+        if record.recovery & !15 != 0
+            || record.book_low != 0
             || record.book_high != 0
             || record.spine != 0
             || record.character != 0
@@ -285,6 +319,9 @@ pub fn validate(record: &SleepRecord, expected_book: u64, expected_sd_source: bo
             return Status::Reserved;
         }
     } else {
+        if record.checkpoint_saved != 0 && record.recovery & !15 != 0 {
+            return Status::Reserved;
+        }
         if expected_book == 0
             || join_words(record.book_low, record.book_high) != expected_book
             || record.is_sd() != expected_sd_source
@@ -299,6 +336,13 @@ pub fn validate(record: &SleepRecord, expected_book: u64, expected_sd_source: bo
         }
     }
     Status::Valid
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RestoreExpectation {
+    pub book: u64,
+    pub sd_source: bool,
+    pub durable_present: bool,
 }
 
 #[repr(u8)]
@@ -318,18 +362,16 @@ impl Restored {
 }
 
 /// Every failure preserves all outputs; Home leaves optional book outputs alone.
-/// When `durable_present` is true, `*progress` holds the loaded durable record
-/// and is preserved whenever it supersedes `record`'s reading position.
+/// When `expected.durable_present` is true, `*progress` holds the loaded
+/// durable record and is preserved whenever it supersedes `record`'s position.
 pub fn restore(
     record: &SleepRecord,
     state: &mut AppState,
     progress: Option<&mut Progress>,
-    durable_present: bool,
     settings: Option<&mut ViewSettings>,
-    expected_book: u64,
-    expected_sd_source: bool,
+    expected: RestoreExpectation,
 ) -> Restored {
-    if validate(record, expected_book, expected_sd_source) != Status::Valid {
+    if validate(record, expected.book, expected.sd_source) != Status::Valid {
         return Restored::None;
     }
     let book = record.resume_screen == Screen::EpubReading as u32
@@ -341,7 +383,9 @@ pub fn restore(
             return Restored::None;
         };
         let retained = record.progress();
-        if durable_present && progress.supersedes(&retained, record.checkpoint_saved != 0) {
+        if expected.durable_present
+            && progress.supersedes(&retained, record.checkpoint_saved != 0, record.attempted_sequence())
+        {
             durable_progress = true;
         } else {
             *progress = retained;
@@ -365,29 +409,18 @@ pub fn restore(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn restore_on_boot(
     boot: Boot,
     record: &SleepRecord,
     state: &mut AppState,
     progress: Option<&mut Progress>,
-    durable_present: bool,
     settings: Option<&mut ViewSettings>,
-    expected_book: u64,
-    expected_sd_source: bool,
+    expected: RestoreExpectation,
 ) -> Restored {
     if boot == Boot::OtherReset {
         return Restored::None;
     }
-    restore(
-        record,
-        state,
-        progress,
-        durable_present,
-        settings,
-        expected_book,
-        expected_sd_source,
-    )
+    restore(record, state, progress, settings, expected)
 }
 
 /// Caller supplies observations from its SDK boundary; this module reads no hardware.
@@ -413,32 +446,27 @@ pub struct BootReport {
 }
 /// Portable restoreSleepBoot semantics, including unconditional one-shot consumption.
 /// The caller publishes `wake` into DeviceInfo; logging and reset/cause acquisition are pending.
-#[allow(clippy::too_many_arguments)]
 pub fn restore_boot(
     snapshot: &BootSnapshot,
     retained: &mut SleepRecord,
     state: &mut AppState,
     progress: Option<&mut Progress>,
-    durable_present: bool,
     settings: Option<&mut ViewSettings>,
-    expected_book: u64,
-    expected_sd_source: bool,
+    expected: RestoreExpectation,
 ) -> BootReport {
     let eligibility = classify_boot(
         snapshot.deep_wake,
         snapshot.software_reset,
         &snapshot.record,
     );
-    let status = validate(&snapshot.record, expected_book, expected_sd_source);
+    let status = validate(&snapshot.record, expected.book, expected.sd_source);
     let outcome = restore_on_boot(
         eligibility,
         &snapshot.record,
         state,
         progress,
-        durable_present,
         settings,
-        expected_book,
-        expected_sd_source,
+        expected,
     );
     let restored = outcome.restored();
     let durable_progress = outcome.durable_progress();

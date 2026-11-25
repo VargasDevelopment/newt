@@ -11,7 +11,7 @@ use newt_native_io::UiIo;
 use newt_native_storage::RouteState;
 use newt_phased_reader::PhasedChapterCache;
 use reader_restore_policy::{DurableCheckpoint, boot_restore_policy};
-use retained_record::{BootSnapshot, Recovery, make_record, restore_boot};
+use retained_record::{BootSnapshot, Recovery, RestoreExpectation, make_record, restore_boot};
 use upgrade::{with_pages, with_router};
 
 /// The page start the real opener shows for `saved` under `settings`, or None when it refuses.
@@ -147,7 +147,8 @@ fn pair(panel: &mut newt_c3_board::ReaderPanel<'_, '_>, io: &UiIo, bytes: &[u8],
     let mut restored_app = AppState::default();
     let mut ignored = other;
     let report = restore_boot(&snapshot, &mut consumed, &mut restored_app,
-        Some(&mut restored_progress), true, Some(&mut ignored), book, true);
+        Some(&mut restored_progress), Some(&mut ignored),
+        RestoreExpectation { book, sd_source: true, durable_present: true });
     assert!(report.restored && report.durable_progress && report.checkpoint_saved,
         "warm stale-RTC: newer durable progress supersedes stale RTC ({what})");
     assert_eq!(restored_progress, newer_durable,

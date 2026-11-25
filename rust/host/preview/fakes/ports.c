@@ -556,7 +556,7 @@ int preview_io_fault(const char *operation, int32_t fd) {
     if (strcmp(operation, "card-read") == 0 && fd >= 0 && fd < 256) card_back(descriptors[fd]);
     char what[4200];
     snprintf(what, sizeof what, "%s:%s", operation, fd >= 0 && fd < 256 ? descriptors[fd] : "");
-    return preview_store_fault(what);
+    return preview_store_fault_at(what, script_next);
 }
 /* "card-stat:PATH" in store.refuse fails every stat; "card.stat.once=TEXT"
  * fails only the first stat whose path holds TEXT (transient SD read glitch). */

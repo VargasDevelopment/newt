@@ -137,15 +137,18 @@ impl Runtime {
             self.home.clear_chapter();
             self.saves.set_progress_unavailable(true);
         }
-        let expected = if self.selection.active() { self.selection.book_id() } else { self.unselected_book_id() };
-        let durable_present = if self.selection.active() {
-            self.selection.saved_progress_present()
-        } else {
-            sample_loaded
+        let expected = record::RestoreExpectation {
+            book: if self.selection.active() { self.selection.book_id() } else { self.unselected_book_id() },
+            sd_source: self.selection.active(),
+            durable_present: if self.selection.active() {
+                self.selection.saved_progress_present()
+            } else {
+                sample_loaded
+            },
         };
         let mut consumed = SleepRecord::default();
         let report = home.restore_retained_boot(boot, &mut consumed, &mut ui.app,
-            Some(&mut self.saved), durable_present, expected, self.selection.active());
+            Some(&mut self.saved), expected);
         if durable && !report.restored {
             ui.app.screen = Screen::EpubReading;
             ui.app.resume_screen = Screen::EpubReading;
@@ -160,6 +163,18 @@ impl Runtime {
             report.restored && ui.app.screen != Screen::EpubReading,
             report.restored && self.saved.book != 0 && !report.checkpoint_saved);
         self.checkpoint.restore_uncertainty(self.saves.page_unconfirmed(), self.saves.destination_unconfirmed());
+        let restored_attempted = if durable || report.durable_progress || report.checkpoint_saved {
+            self.saved.sequence
+        } else {
+            boot.record.attempted_sequence()
+        };
+        if report.restored || durable {
+            if durable || report.durable_progress || report.checkpoint_saved {
+                self.checkpoint.reset_attempted(self.saved.book, restored_attempted);
+            } else {
+                self.checkpoint.restore_attempted(self.saved.book, restored_attempted);
+            }
+        }
         // The target carries the durable preferences; a page saved under other
         // settings reopens at its anchor (#107), so Home and reader agree.
         if durable {
@@ -177,6 +192,7 @@ impl Runtime {
             } else { None };
             self.recovery = Some(crate::reader_book::PendingRecovery {
                 progress: self.saved,
+                attempted_sequence: restored_attempted,
                 settings: self.settings,
                 policy: boot_restore_policy(durable_checkpoint,
                     report.restored.then_some(&boot.record), self.settings),

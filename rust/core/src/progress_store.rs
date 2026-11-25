@@ -98,6 +98,7 @@ pub struct ProgressStore<'a, B: Backend> {
     backend: &'a mut B,
     namespace: &'a str,
     slots: Slots,
+    attempted_sequence: Option<u32>,
 }
 
 impl<'a, B: Backend> ProgressStore<'a, B> {
@@ -109,7 +110,14 @@ impl<'a, B: Backend> ProgressStore<'a, B> {
             backend,
             namespace,
             slots: Slots::default(),
+            attempted_sequence: None,
         }
+    }
+
+    /// Sequence passed to `commit_bytes` (or confirmed active) by the last save.
+    /// `None` when the save stopped before attempting a durable write.
+    pub fn attempted_sequence(&self) -> Option<u32> {
+        self.attempted_sequence
     }
 
     fn begin(&mut self, readonly: bool) -> StorageOpen {
@@ -212,12 +220,14 @@ impl<'a, B: Backend> ProgressStore<'a, B> {
         strict: bool,
         peers: Option<&mut PeerLocators>,
     ) -> Commit {
+        self.attempted_sequence = None;
         if self.begin(false) != StorageOpen::Opened {
             return Commit::Unconfirmed;
         }
         let session = value.session_milliseconds;
         let mut encoded = [0; BYTES];
         let mut decoded = None;
+        let mut attempted = None;
         let mut saved;
         {
             let transaction = Transaction(self.backend);
@@ -254,6 +264,7 @@ impl<'a, B: Backend> ProgressStore<'a, B> {
                         && transaction.0.readback_durable()
                     {
                         decoded = Some(active);
+                        attempted = Some(active.sequence);
                         return true;
                     }
                 }
@@ -267,6 +278,7 @@ impl<'a, B: Backend> ProgressStore<'a, B> {
                     return false;
                 };
                 encoded = bytes;
+                attempted = Some(plan.value.sequence);
                 let mut verified = [0; BYTES];
                 if commit_bytes(
                     transaction.0,
@@ -286,6 +298,7 @@ impl<'a, B: Backend> ProgressStore<'a, B> {
                 true
             })();
         }
+        self.attempted_sequence = attempted;
         // Reconcile through the same namespace boundary, only from durable
         // readback of the complete planned bytes, never from cached visibility.
         if !saved
@@ -295,6 +308,7 @@ impl<'a, B: Backend> ProgressStore<'a, B> {
             && observed.encode() == Some(encoded)
         {
             decoded = Some(observed);
+            self.attempted_sequence = Some(observed.sequence);
             saved = true;
         }
         if saved {
@@ -309,5 +323,78 @@ impl<'a, B: Backend> ProgressStore<'a, B> {
         } else {
             Commit::Unconfirmed
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::durable::DurableWrite;
+
+    #[derive(Default)]
+    struct FakeBackend {
+        slots: [Option<[u8; BYTES]>; 2],
+        fail_open: bool,
+        drop_ack: bool,
+    }
+    impl Backend for FakeBackend {
+        fn begin(&mut self, _: &str, _: bool) -> StorageOpen {
+            if self.fail_open { StorageOpen::Failed } else { StorageOpen::Opened }
+        }
+        fn end(&mut self) {}
+        fn read_blob(&mut self, key: &str, out: &mut [u8]) -> BlobRead {
+            let slot = usize::from(key == SLOT_KEYS[1]);
+            match self.slots[slot] {
+                None => BlobRead::Missing,
+                Some(bytes) => {
+                    out[..BYTES].copy_from_slice(&bytes);
+                    BlobRead::Present(BYTES)
+                }
+            }
+        }
+        fn put_bytes(&mut self, _: DurableWrite, key: &str, bytes: &[u8]) -> usize {
+            let slot = usize::from(key == SLOT_KEYS[1]);
+            self.slots[slot] = Some(bytes.try_into().expect("NWTR size"));
+            if self.drop_ack { 0 } else { bytes.len() }
+        }
+        fn readback_durable(&self) -> bool {
+            !self.drop_ack
+        }
+    }
+
+    fn record(sequence: u32, character: u32) -> Progress {
+        Progress {
+            sequence,
+            session_milliseconds: 0,
+            book: 0x1122_3344_5566_7788,
+            locator: Locator { spine: 0, character },
+            active_milliseconds: 1000,
+            forward_pages: 1,
+            qualified_sessions: 1,
+        }
+    }
+
+    #[test]
+    fn save_reports_attempted_sequence_only_when_commit_is_entered() {
+        let mut backend = FakeBackend::default();
+        backend.slots[0] = record(u32::MAX, 100).encode();
+        backend.fail_open = true;
+        let mut store = ProgressStore::new(&mut backend);
+        let mut proposed = record(u32::MAX, 200);
+        assert_eq!(store.save(&mut proposed, None, false), Commit::Unconfirmed);
+        assert_eq!(store.attempted_sequence(), None);
+
+        backend.fail_open = false;
+        backend.drop_ack = true;
+        let mut store = ProgressStore::new(&mut backend);
+        assert_eq!(store.save(&mut proposed, None, false), Commit::Unconfirmed);
+        assert_eq!(store.attempted_sequence(), Some(0));
+        assert_eq!(proposed.sequence, u32::MAX);
+
+        backend.drop_ack = false;
+        let mut store = ProgressStore::new(&mut backend);
+        assert_eq!(store.save(&mut proposed, None, false), Commit::Saved);
+        assert_eq!(store.attempted_sequence(), Some(0));
+        assert_eq!(proposed.sequence, 0);
     }
 }

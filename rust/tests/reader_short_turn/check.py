@@ -203,8 +203,12 @@ def recovery_controls(run, command, dense, workspace, out):
          ['--restore-policy'], 'wake diagnostics report retained'),
         # #111: an admitted sleep record overwrites newer durable progress without comparing sequence.
         (record, 'stale-rtc-replaces-durable',
-         'if durable_present && progress.supersedes(&retained, record.checkpoint_saved != 0) {',
-         'if false && durable_present && progress.supersedes(&retained, record.checkpoint_saved != 0) {',
+         'if expected.durable_present\n'
+         '            && progress.supersedes(&retained, record.checkpoint_saved != 0, record.attempted_sequence())\n'
+         '        {',
+         'if false && expected.durable_present\n'
+         '            && progress.supersedes(&retained, record.checkpoint_saved != 0, record.attempted_sequence())\n'
+         '        {',
          [dense, '--boot-resume'], 'warm stale-RTC: newer durable progress supersedes stale RTC'),
     ):
         source = target.read_text()

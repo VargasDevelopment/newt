@@ -418,6 +418,7 @@ impl Runtime {
             self.saves.set_checkpoint_saved(true);
             self.saves.restore(self.saves.retained() & !4, false, false);
             self.checkpoint.restore_uncertainty(false, self.saves.destination_unconfirmed());
+            self.checkpoint.reset_attempted(self.saved.book, self.saved.sequence);
         }
     }
 

@@ -29,7 +29,7 @@ import preview_driver  # noqa: E402
 import rust_preview  # noqa: E402
 from gate_tier import negative_controls  # noqa: E402
 
-BACK, CONFIRM, RIGHT, POWER = 0, 1, 3, 6
+BACK, CONFIRM, LEFT, RIGHT, POWER, WAIT_MINUTE = 0, 1, 2, 3, 6, 7
 # From Home: Library, open its first SD book, sleep.
 SLEEP_IN_BOOK = (CONFIRM, CONFIRM, POWER)
 WAKE_IN_BOOK = (*SLEEP_IN_BOOK, rust_preview.WAKE)
@@ -503,6 +503,48 @@ def late_reload_reconciles_stale_pending_recovery(binary):
             return f'open did not reconcile stale PendingRecovery with newer durable progress ({got})'
 
 
+def lost_ack_then_refused_write_keeps_later_position(binary):
+    """A lost sync ack followed by a later forward or backward page turn whose
+    write is refused must keep the later retained page on wake and on late
+    PendingRecovery reload, never rolling back to the older durable page."""
+    faults = {
+        'store.drop': 'card-sync:/newt-sd/Newt/State/nb',
+        'store.refuse': 'card-write:/newt-sd/Newt/State/nb',
+        'store.refuse.after': '3',
+    }
+    for label, script, check in (
+        ('forward', (RIGHT, WAIT_MINUTE, RIGHT, POWER), lambda live, dur: live > dur),
+        ('backward', (RIGHT, WAIT_MINUTE, LEFT, LEFT, POWER), lambda live, dur: live == 0 < dur),
+    ):
+        with tempfile.TemporaryDirectory(prefix=f'newt-two-fault-{label}-') as scratch:
+            d = Path(scratch)
+            preview_driver.world(binary, d, preview_driver.parse(['--library-fixture', 'healthy']))
+            rust_preview.run(binary, d, (CONFIRM, CONFIRM, RIGHT, POWER))
+            base_char = u32((d / 'retained.bin').read_bytes(), 24)
+            preview_driver.write_conf(d, faults)
+            rust_preview.run(binary, d, script, boot_kind='deep-sleep')
+            rtc = (d / 'retained.bin').read_bytes()
+            live_char = u32(rtc, 24)
+            progress_path, = (d / 'card/Newt/State').glob('nb*.nrs')
+            raw, latest = durable_slot(progress_path, b'NWTR')
+            durable_seq, durable_char = u32(raw, latest + 28), u32(raw, latest + 44)
+            assert durable_seq == 3 and durable_char > base_char and u32(rtc, 56) == 0
+            assert check(live_char, durable_char), (label, live_char, durable_char)
+            preview_driver.write_conf(d, {})
+            _, log = rust_preview.run(binary, d, (), boot_kind='deep-sleep')
+            got = diag_fields(log)
+            if (got.get('checkpoint_saved'), got.get('actual_character')) != ('0', str(live_char)):
+                return f'{label} wake rolled back to older durable page ({got}, want {live_char})'
+            if label == 'forward':
+                # Home PendingAnchor (RestorePolicy::Validated) reloads durable progress on Read.
+                anchor = reseal_sleep(rtc, screen=0, recovery=(u32(rtc, 60) & ~3) | 2)
+                (d / 'retained.bin').write_bytes(anchor)
+                _, log = rust_preview.run(binary, d, (BACK,), boot_kind='deep-sleep')
+                got = diag_fields(log)
+                if (got.get('checkpoint_saved'), got.get('actual_character')) != ('0', str(live_char)):
+                    return f'late reload rolled back PendingRecovery ({got}, want {live_char})'
+
+
 def sample_durable_beats_stale_rtc(binary):
     """Embedded sample (NVS newt_reader) obeys the same freshness rule on warm wake."""
     with tempfile.TemporaryDirectory(prefix='newt-sample-rtc-') as scratch:
@@ -581,8 +623,12 @@ CASES = [
     (durable_beats_stale_rtc, [
         # Admitted sleep record overwrites newer durable progress without comparing sequence (#111).
         ('retained_runtime/record.rs',
-         '        if durable_present && progress.supersedes(&retained, record.checkpoint_saved != 0) {',
-         '        if false && durable_present && progress.supersedes(&retained, record.checkpoint_saved != 0) {'),
+         '        if expected.durable_present\n'
+         '            && progress.supersedes(&retained, record.checkpoint_saved != 0, record.attempted_sequence())\n'
+         '        {',
+         '        if false && expected.durable_present\n'
+         '            && progress.supersedes(&retained, record.checkpoint_saved != 0, record.attempted_sequence())\n'
+         '        {'),
         # Superseded warm wake keeps stale RTC's ExactPage policy instead of ColdCheckpoint (#111).
         ('reader_image_boot.rs',
          '            } else if report.durable_progress {\n'
@@ -595,6 +641,15 @@ CASES = [
         ('reader_image_open.rs',
          '                self.reconcile_recovery_progress();\n',
          '                let _ = Self::reconcile_recovery_progress;\n')]),
+    (lost_ack_then_refused_write_keeps_later_position, [
+        # Boot restore drops attempted-sequence provenance and rolls back after lost ack + refusal.
+        ('retained_runtime/record.rs',
+         '            && progress.supersedes(&retained, record.checkpoint_saved != 0, record.attempted_sequence())',
+         '            && progress.supersedes(&retained, record.checkpoint_saved != 0, retained.sequence)'),
+        # PendingRecovery late reload drops attempted-sequence provenance and rolls back.
+        ('reader_pending_recovery.rs',
+         '        if !durable.supersedes(&self.progress, checkpoint_saved, self.attempted_sequence) {',
+         '        if !durable.supersedes(&self.progress, checkpoint_saved, self.progress.sequence) {')]),
     (sample_durable_beats_stale_rtc, []),
 ]
 

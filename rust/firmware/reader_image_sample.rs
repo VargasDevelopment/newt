@@ -136,9 +136,21 @@ impl Runtime {
         };
         let complete = self.saves.checkpoint(committed);
         if result.progress == crate::reader_book::checkpoint::Outcome::Unconfirmed || self.saves.unconfirmed() {
+            let progress = if result.progress == crate::reader_book::checkpoint::Outcome::Verified {
+                self.saved
+            } else {
+                candidate
+            };
+            let attempted_sequence = if result.progress == crate::reader_book::checkpoint::Outcome::Verified {
+                progress.sequence
+            } else {
+                self.checkpoint.attempted_sequence_for(&progress)
+            };
             self.recovery = Some(crate::reader_book::PendingRecovery {
-                progress: if result.progress == crate::reader_book::checkpoint::Outcome::Verified { self.saved } else { candidate },
-                settings: self.settings, policy: RestorePolicy::ExactPage,
+                progress,
+                attempted_sequence,
+                settings: self.settings,
+                policy: RestorePolicy::ExactPage,
             });
         } else { self.recovery = None; }
         self.last_progress.set(now);

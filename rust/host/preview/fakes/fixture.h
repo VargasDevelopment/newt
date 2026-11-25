@@ -21,4 +21,5 @@ void preview_freeze(void);
 int preview_boot_kind(void);
 /* 0 ok, 1 refuse, 2 drop the sync/commit, for "OP:TARGET" (see fixture.c). */
 int preview_store_fault(const char *what);
+int preview_store_fault_at(const char *what, size_t step);
 #endif

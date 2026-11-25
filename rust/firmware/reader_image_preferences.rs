@@ -42,7 +42,9 @@ impl Runtime {
             // save; otherwise the still-live candidate owns retry geometry.
             if let Some(reading) = self.reading() {
                 let candidate = *reading.tracker.snapshot(at);
-                self.recovery = Some(PendingRecovery::for_reflow(candidate, self.saved, proposed, saved));
+                let attempted = self.checkpoint.attempted_sequence_for(&candidate);
+                self.recovery = Some(PendingRecovery::for_reflow(
+                    candidate, self.saved, proposed, saved, attempted));
             }
         }
         // setSettings closes the reader and its session before another
