@@ -516,17 +516,24 @@ void preview_io_open(int32_t fd, const char *path) {
     edit_file(path);
 }
 /* "open.back=TEXT", "open.eio=TEXT" or "open.slow=TEXT": once a wake has
- * refreshed the panel (its picture or working page), the first card read of a
- * path holding TEXT presses Back (or "open.button=N", Confirm first with
- * "open.confirm=1") as a hand would while that open still reads the book,
- * fails that one read with EIO, or takes past the open's 20 s budget, as a
- * stalled card would. */
+ * refreshed the panel (at least "open.after_refresh", default 1), the card read
+ * of a path holding TEXT (after skipping "open.skip" matching reads, default 0)
+ * presses Back (or "open.button=N", Confirm first with "open.confirm=1") as a
+ * hand would while that open still reads the book, fails that one read with
+ * EIO, or takes past the open's 20 s budget, as a stalled card would. */
 static int open_fault_used;
+static unsigned open_fault_seen;
 static int open_fault(const char *path) {
-    if (open_fault_used || !refreshes || preview_boot_kind() != 2) return 0;
+    const char *after = preview_conf("open.after_refresh");
+    unsigned need = after && *after ? (unsigned)atoi(after) : 1;
+    if (open_fault_used || refreshes < need || preview_boot_kind() != 2) return 0;
     const char *back = preview_conf("open.back"), *eio = preview_conf("open.eio"),
         *slow = preview_conf("open.slow"), *confirm = preview_conf("open.confirm"),
-        *button = preview_conf("open.button");
+        *button = preview_conf("open.button"), *skip = preview_conf("open.skip");
+    unsigned skip_count = skip && *skip ? (unsigned)atoi(skip) : 0;
+    const char *match = eio && *eio ? eio : slow && *slow ? slow : back;
+    if (!match || !*match || !strstr(path, match)) return 0;
+    if (open_fault_seen < skip_count) { ++open_fault_seen; return 0; }
     if (eio && *eio && strstr(path, eio)) { open_fault_used = 1; return 1; }
     if (slow && *slow && strstr(path, slow)) { open_fault_used = 1; preview_advance(20001); return 0; }
     if (!back || !*back || !strstr(path, back) || !task_started || task_suspended) return 0;
