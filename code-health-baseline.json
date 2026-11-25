@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3975104,
+      "flash_bytes": 3975136,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,10 +28,10 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "1cdffed24286767511cc7a2a315a4a119fa4da47",
-      "before": 3974384,
-      "after": 3975104,
-      "reason": "+720 B over the 3,974,384 B ceiling (main bb33d2c2): #114 mirrors all four front buttons on clockwise landscape book screens (Back/Confirm/Left/Right -> Next/Previous/Activate/Back) while preserving side Up/Down page swap, moves live open-cancellation, full-queue priority, and verification-peek Back detection from front 1 (Back) to front 4 (Right) on clockwise book screens, and synchronizes the producer's Back mapping at DisplayReceipt::completed_at so working frames and resume pictures published inside with_open stay in sync before returning to run_loop (app.rs, salamander/input/lib.rs, app_runtime/display.rs, app_runtime/run_loop.rs, reader_image_verification.rs, and display publish callers). Clean regional DEV USB builds: main bb33d2c2 3,974,384 B; 1cdffed2 3,975,104 B (56.7% of the 7,016,448 B usable app flash). RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, selected stack frames 0/16/32/48/480 B (within 0/16/32/48/656 B ceilings; 327 frames).",
+      "source_revision": "6f661d87e276afce7f512de9f4e310cfa0c4a2af",
+      "before": 3975104,
+      "after": 3975136,
+      "reason": "+32 B over the 3,975,104 B ceiling (main 57251ee8): release 0.5.0 adds the Nov 25, 2026 What's new entry (six plain-words lines), drops the oldest Nov 24 entry that no longer fits About, and moves the version label 0.4.1 -> 0.5.0 (rust/device-ui/whats_new_notes.h, firmware_version.h). No code change. Clean regional DEV USB builds: main 57251ee8 3,975,104 B; 6f661d87 3,975,136 B (CI run 45520546225 and local clean build agree; 56.7% of the 7,016,448 B usable app flash). RAM, RTC (300 -> 300 B), lent Wi-Fi RAM and selected stack frames within unchanged ceilings.",
       "reviewer": "Newt Lead (cross-family review: Astra)"
     },
     "ram_bytes": {
