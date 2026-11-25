@@ -445,3 +445,20 @@ fn resident_publication_keeps_source_and_receipt_open_with_three_files() {
     card.close(source).unwrap();
     card.close(receipt).unwrap();
 }
+
+
+#[test]
+fn published_build_requires_the_verified_read_scope() {
+    let mut card = build_card();
+    spilling_build(&mut card).unwrap();
+    with_store(&mut card, |cache| {
+        let mut work = IndexWorkState::new();
+        let mut store = IndexBuildStore::lend(cache, &mut work, &BOOK.digest).unwrap();
+        let mut name = [0; 69];
+        book_index::name(&BOOK.digest, &mut name);
+        assert_eq!(CacheStorage::read_at(&mut store, &name, 0, &mut [0; 384]), -1);
+        assert!(Reader::open(&mut store, &BOOK).is_none());
+        assert!(store.release_pages());
+    });
+    assert_eq!(with_store(&mut card, |s| read(s, &BOOK, built_index_complete)), Some(true));
+}

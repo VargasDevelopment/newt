@@ -3,7 +3,8 @@
 use newt_core::{admission::{self, Yield}, book_index::{self, Identity},
     book_index_build::WorkFile, page_cache::CacheStorage, xml_session::ParserBackend,
     zip_container::Status, zip_window::source::BookSource};
-use crate::phase_storage::{BuildLoan, Storage};
+use crate::phase_storage::{BuildLoan, ReadScope, Storage};
+use crate::CachePresence;
 
 /// One attempt, over the same card owner as Pages. No source is retained.
 pub trait Store: WorkFile + CacheStorage {
@@ -15,24 +16,48 @@ pub trait Store: WorkFile + CacheStorage {
 // Additional live adapter state is bounded independently of B2's 2,304-byte
 // builder budget; the 32 KiB run and 7,552-byte join state stay in the banks.
 const _: () = assert!(core::mem::size_of::<ObservedStore<'static, 'static>>() <= 40);
-pub fn open<B: ParserBackend + ?Sized>(source: &mut dyn BookSource, digest: &[u8; 32],
+pub fn open<B: ParserBackend + ?Sized, C: ReadScope + CachePresence>(
+    source: &mut dyn BookSource, digest: &[u8; 32],
     storage: &mut Storage<'_>, lender: &mut impl BuildLoan, backend: &mut B,
-    store: &mut dyn Store, hook: Yield<'_>) {
+    store: &mut C, hook: Yield<'_>) {
     let identity = Identity { digest: *digest, policy: admission::POLICY_VERSION };
     stage(hook, 0);
-    let mut name = [0; 69];
-    book_index::name(digest, &mut name);
-    if !store.release_pages() {
+    let existed = match probe(source, &identity, lender, store, hook) {
+        Ok((true, _)) => { result(hook, 0, Status::Ok, true); return; }
+        Ok((false, existed)) => existed,
+        Err(status) => { result(hook, 3, status, true); return; }
+    };
+    if store.with_index(digest, |store| {
+        build(source, identity, storage, lender, backend, store, hook, existed)
+    }).is_none() {
         result(hook, 3, Status::IoError, true);
-        return;
     }
+}
+
+// Header scratch dies before census and the build take the same parse loan.
+#[inline(never)]
+fn probe(source: &mut dyn BookSource, identity: &Identity, lender: &mut impl BuildLoan,
+    store: &mut impl ReadScope, hook: Yield<'_>) -> Result<(bool, bool), Status> {
+    let mut name = [0; 69];
+    book_index::name(&identity.digest, &mut name);
     let existed = store.file_size(&name) >= 0;
-    if let Some(index) = book_index::Reader::open(store, &identity) {
-        counts(hook, index.header().members, index.header().spine);
-        store.release_pages();
-        result(hook, 0, Status::Ok, true);
-        return;
+    let hit = lender.with_parse(|scratch| {
+        store.query(&name, true, scratch, &mut || source.read_at(0, &mut []) == 0, |verified| {
+            book_index::Reader::open(verified, identity).map(|index| {
+                (index.header().members, index.header().spine)
+            })
+        })
+    })?;
+    if let Ok((Some((members, spine)), true)) = hit {
+        counts(hook, members, spine);
+        return Ok((true, existed));
     }
+    Ok((false, existed))
+}
+
+fn build<B: ParserBackend + ?Sized>(source: &mut dyn BookSource, identity: Identity,
+    storage: &mut Storage<'_>, lender: &mut impl BuildLoan, backend: &mut B,
+    store: &mut dyn Store, hook: Yield<'_>, existed: bool) {
     if !store.release_pages() { result(hook, 3, Status::IoError, true); return; }
     stage(hook, 1);
     {

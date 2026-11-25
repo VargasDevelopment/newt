@@ -61,7 +61,7 @@ pub struct ReaderWorkProfile {
 impl Default for ReaderWorkProfile {
     fn default() -> Self {
         Self {
-            index: core::array::from_fn(|_| Scalar::new(0)),
+            index: core::array::from_fn(|i| Scalar::new(if i == 0 { u32::MAX } else { 0 })),
             index_stage: Scalar::new(0),
             index_started: Scalar::new(0),
             phases: core::array::from_fn(|_| Counters::default()),
