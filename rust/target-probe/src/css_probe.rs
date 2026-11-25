@@ -1,6 +1,7 @@
 //! Link/inspect on RV32 separately. Rust ABI exports take runtime borrows.
 //! No FFI layout or hardware execution claim is made.
-use newt_core::zip_container::{Entry, InflateScratch, Status};
+use newt_core::member_check::Checked;
+use newt_core::zip_container::{InflateScratch, Status};
 use newt_core::css::{CssDecl, CssRule};
 use crate::css_borrowed as probes;
 #[unsafe(no_mangle)]
@@ -18,7 +19,7 @@ pub fn newt_css_text_borrowed(
 #[inline(never)]
 pub fn newt_css_sheet_borrowed(
     input: &[u8],
-    entry: &Entry,
+    entry: &Checked,
     slots: &mut [CssRule],
     decode: Option<InflateScratch<'_>>,
     text: &mut [u8],

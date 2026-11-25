@@ -296,7 +296,8 @@ mod tests {
             let toc = [TocEntry { href, title, ..Default::default() }];
             let package = PackageResult { spine_count: 1, ..Default::default() };
             let book = Metadata { arena: &arena, package: &package,
-                manifest: &manifest, spine: &[0], toc: if authored { &toc } else { &[] }, entries: &entries };
+                manifest: &manifest, spine: &[0], toc: if authored { &toc } else { &[] }, entries: &entries,
+                directory_offset: 0 };
             let mut selections = [Selection::default(), Selection::default()];
             assert!(selections[1].navigation.bind_menu(&book, Section::default(), 0, &mut [0]));
             selections[1].navigation.set_contents_fallback(fallback);

@@ -9,7 +9,7 @@ pub struct Workflow<'a, S: BookSource + ?Sized, B: ParserBackend + ?Sized> {
     pub policy: Option<&'a dyn crate::xml_session::SourcePolicy>,
 }
 impl<S: BookSource + ?Sized, B: ParserBackend + ?Sized> Workflow<'_, S, B> {
-    pub fn pass(&mut self, entry: &Entry, handler: &mut dyn Handler) -> Status {
+    pub fn pass(&mut self, entry: &Checked, handler: &mut dyn Handler) -> Status {
         let decoder = self.decoder.as_mut().map(|s| InflateScratch {
             state: &mut *s.state,
             dictionary: &mut *s.dictionary,

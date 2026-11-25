@@ -1,7 +1,8 @@
 //! Runtime borrowed probes; no target-native XML backend is supplied or claimed.
+use newt_core::member_check::Checked;
 use newt_core::package_parsers::*;
 use newt_core::xml_session::ParserBackend;
-use newt_core::zip_container::{Entry, Status};
+use newt_core::zip_container::{Status};
 use newt_core::zip_window::{
     arena::{Arena, CStringRef},
     source::BookSource,
@@ -10,7 +11,7 @@ use newt_core::zip_window::{
 #[inline(never)]
 pub fn newt_rust_package_probe(
     workflow: &mut Workflow<'_, dyn BookSource + '_, dyn ParserBackend + '_>,
-    entry: &Entry,
+    entry: &Checked,
     dir: &[u8],
     arena: &mut Arena<'_>,
     storage: PackageStorage<'_>,
@@ -22,7 +23,7 @@ pub fn newt_rust_package_probe(
 #[inline(never)]
 pub fn newt_rust_container_probe(
     workflow: &mut Workflow<'_, dyn BookSource + '_, dyn ParserBackend + '_>,
-    entry: &Entry,
+    entry: &Checked,
     arena: &mut Arena<'_>,
     out: &mut Option<CStringRef>,
 ) -> Status {
@@ -32,7 +33,7 @@ pub fn newt_rust_container_probe(
 #[inline(never)]
 pub fn newt_rust_toc_probe(
     workflow: &mut Workflow<'_, dyn BookSource + '_, dyn ParserBackend + '_>,
-    entry: &Entry,
+    entry: &Checked,
     dir: &[u8],
     arena: &mut Arena<'_>,
     kind: TocKind,

@@ -1,5 +1,6 @@
 //! Runtime borrowed code generation for the shared chapter core; no native backend or firmware.
 
+use newt_core::member_check::Checked;
 use newt_core::{
     css::CssStylesheetBuilder,
     chapter_layout::{engine::Engine, images::{self, BookImages, Probed},
@@ -7,7 +8,7 @@ use newt_core::{
         types::{Backend, Capacity, Images, LineBreak, Page, Params, Storage}},
     page_renderer, xml_input::EntityFilter,
     xml_session::{BorrowedPolicy, ProcessingPolicy, ProducerBackend, Resources, XmlStream},
-    zip_container::{Entry, Status}, zip_window::source::BookSource,
+    zip_container::{Status}, zip_window::source::BookSource,
 };
 
 #[unsafe(no_mangle)]
@@ -36,7 +37,7 @@ pub fn nrust_chapter_construct_borrowed<'a>(
 
 #[unsafe(no_mangle)]
 pub fn nrust_chapter_xml_borrowed(
-    source: &mut dyn BookSource, entry: &Entry, backend: &mut dyn ProducerBackend,
+    source: &mut dyn BookSource, entry: &Checked, backend: &mut dyn ProducerBackend,
     policy: &mut dyn ProcessingPolicy, buffer: &mut [u8; 2048],
     filter: &mut EntityFilter, engine: &mut Engine<'_>, limits: [u32; 2], output: &mut u64,
 ) -> Status {
@@ -52,7 +53,7 @@ pub fn nrust_chapter_xml_borrowed(
 
 #[unsafe(no_mangle)]
 pub fn nrust_chapter_prescan_borrowed(
-    source: &mut dyn BookSource, entry: &Entry, backend: &mut dyn ProducerBackend,
+    source: &mut dyn BookSource, entry: &Checked, backend: &mut dyn ProducerBackend,
     policy: &mut dyn ProcessingPolicy, buffer: &mut [u8; 2048],
     filter: &mut EntityFilter, images: &mut BookImages<'_>, table: &mut [Probed],
 ) -> usize {

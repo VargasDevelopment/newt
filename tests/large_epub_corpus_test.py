@@ -91,8 +91,9 @@ CONTROLS = (
      "if data > directory || u64::from(entry.compressed_size) > directory - data {", "if false {", "damaged-chapter-range"),
     ("a damaged chapter is read instead of refused", PHASED,
      "selected.entry = book.check(&entry)?;", "selected.entry = book.check(&entry).unwrap_or_default();", "damaged-chapter-signature"),
-    ("a damaged stylesheet is still applied", "phased-reader/src/styles.rs",
-     "is_none_or(|entry| catalog.check(&mut tracked, entry).is_err())", "is_none()", "damaged-css"),
+    # A stylesheet read needs a Checked member, so styles.rs cannot skip the
+    # check and still compile; this proves the stylesheet read runs it.
+    ("a damaged stylesheet passes the open-time check", MEMBER_CHECK, "if got != expected {", "if false {", "damaged-css"),
     ("duplicate names are compared by hash only", "core/src/canonical.rs",
      "if sort.view.name(sort.at(i - 1)) == sort.view.name(sort.at(i)) {",
      "if sort.at(i - 1).name_hash == sort.at(i).name_hash {", "hash-collision"),

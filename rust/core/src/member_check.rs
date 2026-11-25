@@ -5,6 +5,7 @@
 //! (container, OPF, nav, chapter, stylesheet, image or cover), the caller
 //! looks it up in a live catalog and passes it through [`check`]. A damaged
 //! member then fails where it is used, and the rest of the book stays readable.
+//! `Reader::open` takes only a [`Checked`], so the compiler enforces this.
 use crate::zip_container::{Entry, RAW_HEADER_OFFSET, Status};
 use crate::zip_record_rules::{
     EPUB_MAX_MEMBER_NAME_BYTES, ZipCentralRecordRule, ZipLocalHeaderRule, zip_local_header_rule,
@@ -22,12 +23,50 @@ impl Checked {
     pub const fn raw(size: u32) -> Self {
         Self(Entry::raw(size))
     }
+    /// Pinned-translation harnesses only: their oracles read members without
+    /// the open-time check, so the comparison must too.
+    #[cfg(feature = "pinned-harness")]
+    pub const fn unverified(entry: Entry) -> Self {
+        Self(entry)
+    }
 }
-/// Read-only: a `Checked` reads as its entry, but only [`check`] makes one.
+#[cfg(all(feature = "pinned-harness", target_os = "none"))]
+compile_error!("pinned-harness skips the open-time member check; never enable it on firmware");
+/// Read-only: a `Checked` reads as its entry but cannot be edited into another.
 impl core::ops::Deref for Checked {
     type Target = Entry;
     fn deref(&self) -> &Entry {
         &self.0
+    }
+}
+/// A [`Checked`] member kept compactly for a later read in the same open
+/// (a stylesheet found while its chapter streams). Only a `Checked` makes one.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CheckedRecord {
+    compressed_size: u32,
+    uncompressed_size: u32,
+    local_header_offset: u32,
+    method: u16,
+}
+impl From<&Checked> for CheckedRecord {
+    fn from(member: &Checked) -> Self {
+        Self {
+            compressed_size: member.compressed_size,
+            uncompressed_size: member.uncompressed_size,
+            local_header_offset: member.local_header_offset,
+            method: member.method,
+        }
+    }
+}
+impl CheckedRecord {
+    pub fn member(&self) -> Checked {
+        Checked(Entry {
+            compressed_size: self.compressed_size,
+            uncompressed_size: self.uncompressed_size,
+            local_header_offset: self.local_header_offset,
+            method: self.method,
+            ..Entry::default()
+        })
     }
 }
 impl Default for Checked {

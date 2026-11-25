@@ -2,7 +2,8 @@
 #![forbid(unsafe_code)]
 use super::{PhasedReader, Writing, reader_parameters};
 use crate::{phase_storage::{Phase, producer::{Producer, WriterView}}, resources, watch::Verdict};
-use newt_core::{admission::{ChapterSource, WorkPhase, WorkScope}, cache_names::segment::{MAX_PAGES, PAGES}, chapter_layout::{engine::EngineState, session::{ChapterSession, LayoutOperation, OperationHandler}, types::{LineBreak, SplitBackend}}, css::CssStylesheetBuilder, page_cache::{CacheStorage, WriterMemory}, xml_session::{self, BorrowedPolicy, ProducerBackend, XmlStream}, zip_container::{Entry, Status}, zip_window::source::BookSource};
+use newt_core::member_check::Checked;
+use newt_core::{admission::{ChapterSource, WorkPhase, WorkScope}, cache_names::segment::{MAX_PAGES, PAGES}, chapter_layout::{engine::EngineState, session::{ChapterSession, LayoutOperation, OperationHandler}, types::{LineBreak, SplitBackend}}, css::CssStylesheetBuilder, page_cache::{CacheStorage, WriterMemory}, xml_session::{self, BorrowedPolicy, ProducerBackend, XmlStream}, zip_container::Status, zip_window::source::BookSource};
 use newt_reader_atlas::ReaderAtlas;
 
 /// Only copied facts cross a parser/window return; no bank view escapes.
@@ -66,7 +67,7 @@ impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::Pro
                 Err(status) => { failed.status = status; return Ok(failed); }
             };
             crate::phase_storage::with_style_watch(backing, &mut chapter, slot.state, |watch| {
-                let raw = Entry::raw(selected.entry.uncompressed_size);
+                let raw = Checked::raw(selected.entry.uncompressed_size);
                 let mut images = lr.images.for_chapter(&selected.href);
                 let mut engine = match EngineState::new(reader_parameters(reader.page_layout, Some(slot), selected.language),
                     resources::storage(&mut lr.storage), lr.breaker, &mut images, None,

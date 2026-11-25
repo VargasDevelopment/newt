@@ -1,3 +1,4 @@
+use newt_core::member_check::Checked;
 use newt_core::{
     zip_container::{Entry, Status},
     zip_window::source::BookSource,
@@ -157,29 +158,29 @@ fn sheet_status_precedence_and_no_partial_commit() {
     };
     let n = src.data.len() as u32;
     assert_eq!(
-        b.add_sheet(&mut src, &Entry::raw(n), None, &mut []),
+        b.add_sheet(&mut src, &Checked::raw(n), None, &mut []),
         Status::OutOfMemory
     );
     assert_eq!(src.calls, 0);
     let mut e = Entry::raw(n);
     e.method = 99;
     assert_eq!(
-        b.add_sheet(&mut src, &e, None, &mut []),
+        b.add_sheet(&mut src, &Checked::unverified(e), None, &mut []),
         Status::Unsupported
     );
     e.uncompressed_size = 65537;
-    assert_eq!(b.add_sheet(&mut src, &e, None, &mut []), Status::Ok);
+    assert_eq!(b.add_sheet(&mut src, &Checked::unverified(e), None, &mut []), Status::Ok);
     assert_eq!(src.calls, 0);
     assert_eq!(b.skipped_sheets(), 1);
     let mut text = [0; 64];
     assert_eq!(
-        b.add_sheet(&mut src, &Entry::raw(n + 1), None, &mut text),
+        b.add_sheet(&mut src, &Checked::raw(n + 1), None, &mut text),
         Status::IoError
     );
     assert_eq!(b.finish().content_hash, HASH_SEED);
     assert!(b.finish().rules.is_empty());
     assert_eq!(
-        b.add_sheet(&mut src, &Entry::raw(n), None, &mut text),
+        b.add_sheet(&mut src, &Checked::raw(n), None, &mut text),
         Status::Ok
     );
     assert_eq!(b.finish().rules[0].decl.size_pct, 200);

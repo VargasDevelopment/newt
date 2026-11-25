@@ -1,4 +1,5 @@
 //! EPUB admission checks. Typed resources are caller-owned; no hidden inflater stack.
+use crate::member_check::Checked;
 use crate::zip_container::{self as zip, Directory, Entry, InflateScratch, Reader, Status};
 use crate::zip_record_rules::*;
 use crate::zip_window::{arena::Arena, source::BookSource, window::ZipDirectoryWindow};
@@ -271,7 +272,7 @@ pub fn category(name: &[u8]) -> u8 {
 /// Scratch presence is the typed-domain OOM decision, independent of byte arena.
 pub fn expand<S: BookSource + ?Sized>(
     source: &mut S,
-    entry: &Entry,
+    entry: &Checked,
     index: u16,
     name: &[u8],
     decoder: Option<InflateScratch<'_>>,
@@ -340,7 +341,7 @@ pub struct ChapterSource<'a, S: BookSource + ?Sized> {
 impl<'a, S: BookSource + ?Sized> ChapterSource<'a, S> {
     pub fn open(
         source: &'a mut S,
-        entry: &'a Entry,
+        entry: &'a Checked,
         decoder: Option<InflateScratch<'a>>,
         on_yield: Yield<'a>,
         policy: Option<&'a dyn crate::xml_session::SourcePolicy>,

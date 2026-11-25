@@ -82,6 +82,7 @@ pub(crate) fn select_book_metadata<
                 spine: &spines[..package.spine_count],
                 toc,
                 entries: &entries[..entry_count],
+                directory_offset,
             },
             spine,
         )

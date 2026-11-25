@@ -3,7 +3,8 @@
 use core::{mem::{MaybeUninit, size_of}, ptr::{addr_of_mut, write_bytes}};
 use newt_phased_reader::{BookLanguage, Selection, selection_initialization::{
     HREF, TITLE, MAX_TARGETS, STRING_BYTES, Navigation, navigation as nav,
-}, zip_container::Entry};
+}};
+use newt_core::member_check::Checked;
 
 /// No Selection, Navigation, or large array is ever constructed on the stack.
 #[inline(never)]
@@ -15,7 +16,7 @@ pub fn initialize(output: &mut MaybeUninit<Selection>) {
     // The small default wrappers are repr(transparent) over their private
     // field types, so each write establishes that field's actual Rust value.
     unsafe {
-        addr_of_mut!((*slot).entry).write(Entry::default());
+        addr_of_mut!((*slot).entry).write(Checked::default());
         write_bytes(slot.cast::<u8>().add(HREF.0), 0, HREF.1);
         write_bytes(slot.cast::<u8>().add(TITLE.0), 0, TITLE.1);
         addr_of_mut!((*slot).spines).write(0);

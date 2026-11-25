@@ -1,6 +1,7 @@
 //! Runtime-borrowed calls using the actual native backend, not an injected mock.
 //! Rust ABI only; parent must explicitly retain and call these in its RV32 harness.
 use crate::Expat;
+use newt_core::member_check::Checked;
 use newt_core::{
     package_parsers::{PackageResult, PackageStorage, Workflow, parse_package},
     xml_input::EntityFilter,
@@ -13,7 +14,7 @@ use newt_core::{
 #[inline(never)]
 pub fn nrust38_native_xml_probe(
     source: &mut dyn BookSource,
-    entry: &Entry,
+    entry: &Checked,
     decoder: Option<InflateScratch<'_>>,
     handler: &mut dyn Handler,
     resources: Resources<'_>,
@@ -45,7 +46,7 @@ pub fn nrust38_native_xml_probe(
 #[inline(never)]
 pub fn nrust38_native_package_probe(
     source: &mut dyn BookSource,
-    entry: &Entry,
+    entry: &Checked,
     decoder: Option<InflateScratch<'_>>,
     buffer: Option<&mut [u8; 2048]>,
     filter: Option<&mut EntityFilter>,

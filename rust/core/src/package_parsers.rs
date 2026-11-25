@@ -3,9 +3,10 @@
 //! attempt's arena initialization; reset/release invalidates them. Arrays, parser
 //! resources, source and arena must be disjoint. Typed storage has its own cost.
 #![forbid(unsafe_code)]
+use crate::member_check::Checked;
 use crate::xml_input::{TextCapture, has_token, local_is};
 use crate::xml_session::{Attributes, Handler, PARSE_CHUNK, ParserBackend, Resources};
-use crate::zip_container::{Entry, InflateScratch, Status, hash_path};
+use crate::zip_container::{InflateScratch, Status, hash_path};
 use crate::zip_window::{
     arena::{Arena, CStringRef},
     source::BookSource,
@@ -119,7 +120,7 @@ impl Handler for Container<'_, '_> {
 }
 pub fn parse_container<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     workflow: &mut Workflow<'_, S, B>,
-    entry: &Entry,
+    entry: &Checked,
     arena: &mut Arena<'_>,
     out: &mut Option<CStringRef>,
 ) -> Status {
@@ -337,7 +338,7 @@ impl Handler for Package<'_, '_> {
 }
 pub fn parse_package<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     workflow: &mut Workflow<'_, S, B>,
-    entry: &Entry,
+    entry: &Checked,
     dir: &[u8],
     arena: &mut Arena<'_>,
     storage: PackageStorage<'_>,
@@ -374,7 +375,7 @@ pub fn parse_package_allocated<
     B: ParserBackend + ?Sized,
 >(
     workflow: &mut Workflow<'_, S, B>,
-    entry: &Entry,
+    entry: &Checked,
     dir: &[u8],
     arena: &mut Arena<'arena>,
     allocate_manifest: impl FnOnce(
@@ -663,7 +664,7 @@ impl Handler for Toc<'_, '_> {
 }
 pub fn parse_toc<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     workflow: &mut Workflow<'_, S, B>,
-    entry: &Entry,
+    entry: &Checked,
     dir: &[u8],
     arena: &mut Arena<'_>,
     kind: TocKind,
@@ -709,7 +710,7 @@ impl TocBacking for [TocEntry] {
 
 pub fn count_toc<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     workflow: &mut Workflow<'_, S, B>,
-    entry: &Entry,
+    entry: &Checked,
     dir: &[u8],
     arena: &mut Arena<'_>,
     kind: TocKind,
@@ -725,7 +726,7 @@ pub fn count_toc<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
 /// XML/source failure precedes handler OOM. Publish only a complete fill.
 pub fn fill_toc<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     workflow: &mut Workflow<'_, S, B>,
-    entry: &Entry,
+    entry: &Checked,
     dir: &[u8],
     arena: &mut Arena<'_>,
     kind: TocKind,
@@ -905,7 +906,7 @@ mod tests {
         assert_eq!(
             parse_package(
                 &mut workflow,
-                &Entry::raw(1),
+                &Checked::raw(1),
                 b"",
                 &mut arena,
                 PackageStorage {
@@ -948,7 +949,7 @@ mod tests {
         assert_eq!(
             parse_package(
                 &mut workflow,
-                &Entry::raw(1),
+                &Checked::raw(1),
                 b"",
                 &mut arena,
                 PackageStorage {
@@ -1039,7 +1040,7 @@ mod tests {
         assert_eq!(
             parse_toc(
                 &mut workflow,
-                &Entry::raw(1),
+                &Checked::raw(1),
                 b"",
                 &mut arena,
                 TocKind::Nav,
@@ -1078,7 +1079,7 @@ mod tests {
         let phase = core::cell::Cell::new(0);
         let storage = parse_package_allocated(
             &mut workflow,
-            &Entry::raw(1),
+            &Checked::raw(1),
             b"",
             &mut arena,
             |arena, manifests, spines| {
@@ -1149,7 +1150,7 @@ mod tests {
         };
         let result = parse_package_allocated(
             &mut workflow,
-            &Entry::raw(1),
+            &Checked::raw(1),
             b"",
             &mut arena,
             |_, _, _| Ok((&mut manifest, &mut hashes)),

@@ -303,7 +303,7 @@ pub fn newt_rust_zip_container_catalog_probe(
 #[inline(never)]
 pub fn newt_rust_zip_container_reader_probe(
     input: &[u8],
-    entry: &newt_core::zip_container::Entry,
+    entry: &newt_core::member_check::Checked,
     state: &mut newt_core::inflate::State,
     dictionary: &mut [u8; 32768],
     staging: &mut [u8; 2048],

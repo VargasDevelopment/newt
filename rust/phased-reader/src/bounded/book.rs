@@ -34,11 +34,13 @@ pub struct MetadataParts<'a, 'storage> {
     pub spine: &'a mut [u16],
     pub toc: &'a mut [TocEntry],
     pub package: PackageResult,
+    pub directory_offset: u32,
 }
 impl MetadataParts<'_, '_> {
     pub fn view(&self) -> Metadata<'_, '_> {
         Metadata { arena: self.arena, entries: self.entries, manifest: self.manifest,
-            spine: self.spine, toc: self.toc, package: &self.package }
+            spine: self.spine, toc: self.toc, package: &self.package,
+            directory_offset: self.directory_offset }
     }
 }
 
@@ -68,5 +70,5 @@ pub fn load_toc<'a, 'storage, S: BookSource + ?Sized, B: ParserBackend + ?Sized>
         let used = package_parsers::fill_toc(&mut workflow, &entry, directory, arena, kind, toc)?;
         toc.get_mut(..used).ok_or(Status::OutOfMemory)?
     } else { &mut [] };
-    Ok(MetadataParts { arena, entries, manifest, spine, toc, package: result })
+    Ok(MetadataParts { arena, entries, manifest, spine, toc, package: result, directory_offset })
 }

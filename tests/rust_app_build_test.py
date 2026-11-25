@@ -10,6 +10,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import tomllib
 import types
 import unittest
 from unittest.mock import patch
@@ -115,7 +116,7 @@ class CheckoutSources(unittest.TestCase):
 
     def test_fixture_features_refuse_before_any_process_or_output(self):
         for features in ('checkpoint-fixture', 'dev-usb,checkpoint-fixture',
-                         'newt-app-image/checkpoint-fixture', 'unreviewed-feature'):
+                         'newt-app-image/checkpoint-fixture', 'newt-core/pinned-harness', 'unreviewed-feature'):
             with self.subTest(features=features), tempfile.TemporaryDirectory() as directory:
                 output = Path(directory)/'absent'
                 with patch.object(sys, 'argv', ['rust-app-build.py', '--output', str(output),
@@ -256,6 +257,32 @@ class DailyConfiguration(unittest.TestCase):
         self.bundle.write_bytes(b'changed bundle')
         with self.assertRaisesRegex(ValueError, 'certificate bundle changed'):
             daily_firmware.generated_configuration(self.root, 'a' * 12, '2026-11-16')
+
+
+class PinnedHarness(unittest.TestCase):
+    """The pinned-harness feature skips the open-time ZIP member check (#60)."""
+
+    def test_only_host_harnesses_and_core_tests_enable_it(self):
+        users = {}
+        for manifest in sorted((ROOT / 'rust').glob('**/Cargo.toml')):
+            if 'pinned-harness' in manifest.read_text():
+                users[manifest.parent.relative_to(ROOT / 'rust').as_posix()] = tomllib.loads(manifest.read_text())
+        self.assertEqual(set(users), {'core', 'host'})
+        core = users['core']
+        self.assertEqual(core['features']['pinned-harness'], [])
+        self.assertEqual(core['dev-dependencies']['newt-core']['features'], ['pinned-harness'])
+        self.assertNotIn('pinned-harness', core['features'].get('default', []))
+        self.assertNotIn('pinned-harness', str(core.get('dependencies', {})))
+        self.assertEqual(users['host']['dependencies']['newt-core']['features'], ['pinned-harness'])
+        # The host harness crate is a leaf, so no other graph inherits its features.
+        host = users['host']['package']['name']
+        for manifest in (ROOT / 'rust').glob('**/Cargo.toml'):
+            if manifest.parent.name != 'host':
+                self.assertNotIn(host, manifest.read_text(), manifest)
+
+    def test_firmware_targets_refuse_it_at_compile_time(self):
+        source = (ROOT / 'rust/core/src/member_check.rs').read_text()
+        self.assertIn('#[cfg(all(feature = "pinned-harness", target_os = "none"))]\ncompile_error!(', source)
 
 
 if __name__ == '__main__':

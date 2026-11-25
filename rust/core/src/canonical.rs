@@ -461,10 +461,10 @@ impl CatalogView<'_, '_> {
     /// this call, so the sort can run before or after a member inflate:
     ///
     /// ```
-    /// # use newt_core::{canonical::CatalogView, zip_container::{Entry, InflateScratch, Reader}};
+    /// # use newt_core::{canonical::CatalogView, member_check::Checked, zip_container::{InflateScratch, Reader}};
     /// # use newt_core::zip_window::source::BookSource;
     /// fn sort_then_read<S: BookSource>(view: CatalogView<'_, '_>, source: &mut S,
-    ///     idle: &mut InflateScratch<'_>, member: &Entry) {
+    ///     idle: &mut InflateScratch<'_>, member: &Checked) {
     ///     view.duplicate_names(idle);
     ///     let mut reader = Reader::new(source, Some(InflateScratch {
     ///         state: &mut *idle.state, dictionary: &mut *idle.dictionary, input: &mut *idle.input }));
@@ -476,10 +476,10 @@ impl CatalogView<'_, '_> {
     /// but never while an inflate holds that dictionary:
     ///
     /// ```compile_fail
-    /// # use newt_core::{canonical::CatalogView, zip_container::{Entry, InflateScratch, Reader}};
+    /// # use newt_core::{canonical::CatalogView, member_check::Checked, zip_container::{InflateScratch, Reader}};
     /// # use newt_core::zip_window::source::BookSource;
     /// fn sort_during_read<S: BookSource>(view: CatalogView<'_, '_>, source: &mut S,
-    ///     idle: &mut InflateScratch<'_>, member: &Entry) {
+    ///     idle: &mut InflateScratch<'_>, member: &Checked) {
     ///     let mut reader = Reader::new(source, Some(InflateScratch {
     ///         state: &mut *idle.state, dictionary: &mut *idle.dictionary, input: &mut *idle.input }));
     ///     reader.open(member);

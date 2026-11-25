@@ -1,5 +1,5 @@
 //! Source reads are the witness: Unknown is an authoritative cached result.
-use newt_core::{chapter_layout::{images::{BookImages,Catalog,Probed},types::Images},zip_container::Entry,zip_window::source::BookSource};
+use newt_core::{chapter_layout::{images::{BookImages,Catalog,Probed},types::Images},member_check::Checked,zip_container::Status,zip_window::source::BookSource};
 struct Source { calls:Vec<(u64,usize)> }
 impl BookSource for Source {
     fn size(&self)->u64 {26}
@@ -11,8 +11,8 @@ impl BookSource for Source {
 }
 struct Index;
 impl Catalog for Index {
-    fn find(&self,p:&[u8])->Option<Entry>{(p==b"img.png").then_some(Entry::raw(26))}
-    fn find_hash(&self,h:u32)->Option<Entry>{(h==newt_core::css::hash(b"img.png")).then_some(Entry::raw(26))}
+    fn member(&self,_:&mut dyn BookSource,p:&[u8])->Result<Checked,Status>{(p==b"img.png").then_some(Checked::raw(26)).ok_or(Status::NotFound)}
+    fn member_by_hash(&self,_:&mut dyn BookSource,h:u32)->Result<Checked,Status>{(h==newt_core::css::hash(b"img.png")).then_some(Checked::raw(26)).ok_or(Status::NotFound)}
 }
 #[test]
 fn cached_unknown_has_no_reads_inline_unknown_reads_once_per_probe() {

@@ -2,6 +2,7 @@
 //! No allocation and no retained bank-derived references in reader state.
 use crate::{canonical, resources::*, styles};
 use core::mem::{align_of, size_of};
+use newt_core::member_check::Checked;
 use newt_core::{
     chapter_layout::types::{self as layout, LineBreak},
     css::CssRule,
@@ -506,7 +507,7 @@ impl Phase<'_> {
         &mut self,
         source: &mut S,
         backend: &mut B,
-        chapter: &Entry,
+        chapter: &Checked,
         href: &[u8],
         spine: u32,
         on_yield: newt_core::admission::Yield<'_>,

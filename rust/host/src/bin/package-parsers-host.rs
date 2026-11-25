@@ -5,6 +5,7 @@ mod expat;
 mod native_tests;
 use newt_core::package_parsers::*;
 use newt_core::xml_session::PARSE_CHUNK;
+use newt_core::member_check::Checked;
 use newt_core::zip_container::{Entry, InflateScratch, Status};
 use newt_core::zip_window::{
     arena::{Arena, CStringRef},
@@ -122,6 +123,7 @@ fn run(line: &str) -> Result<(), ()> {
     } else {
         false
     };
+    let entry = Checked::unverified(entry);
     let mut inflater = (entry.method == 8 && decoder_available).then(|| {
         (
             Box::new(newt_core::inflate::State::new(newt_core::inflate::BitBuffer::Bits64)),

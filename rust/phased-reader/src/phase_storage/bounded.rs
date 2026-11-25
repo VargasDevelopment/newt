@@ -39,12 +39,14 @@ pub struct MetadataState {
     spine: Span<u16>,
     toc: Span<TocEntry>,
     package: PackageResult,
+    directory_offset: u32,
     book_peak: usize,
 }
 impl Default for MetadataState {
     fn default() -> Self {
         Self { arena: None, prefix: 0, entries: Span::new(), manifest: Span::new(),
-            spine: Span::new(), toc: Span::new(), package: PackageResult::default(), book_peak: 0 }
+            spine: Span::new(), toc: Span::new(), package: PackageResult::default(),
+            directory_offset: 0, book_peak: 0 }
     }
 }
 impl MetadataState {
@@ -120,6 +122,7 @@ impl MetadataState {
                 self.prefix = parts.arena.capacity();
                 self.book_peak = self.book_peak.max(parts.arena.high_water() + BOOK_BYTES - self.prefix);
                 self.package = parts.package;
+                self.directory_offset = parts.directory_offset;
                 self.arena = Some(parts.arena.state());
                 Status::Ok
             }
@@ -149,7 +152,7 @@ impl MetadataState {
                 self.spine.get(tail, self.prefix)?, self.toc.get(tail, self.prefix)?)
         };
         Ok(operation(&Metadata { arena: &returned.arena, entries, manifest, spine, toc,
-            package: &self.package }))
+            package: &self.package, directory_offset: self.directory_offset }))
     }
 }
 struct ReturnedArena<'a, 'state> { arena: Arena<'a>, state: &'state mut Option<ArenaState> }

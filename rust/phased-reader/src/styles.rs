@@ -2,7 +2,7 @@
 use crate::{
     css::{CssDecl, CssRule, CssStylesheet, CssStylesheetBuilder, TextAlign},
     scan::{Scanner, Sink, Token},
-    zip_container::{Entry, InflateScratch, Status},
+    zip_container::{InflateScratch, Status},
     zip_window::{arena::Arena, source::BookSource},
 };
 pub const ID: u32 = 0x4e53540a;
@@ -75,26 +75,12 @@ pub enum Link {
     Damaged,
     WorkLimit,
 }
+/// The resolved record outlives its metadata Book; names and hashes do not.
+/// `checked` is set only when a resolved stylesheet passes the open-time check.
 #[derive(Clone, Copy, Default)]
-#[repr(C)]
 pub struct Member {
-    pub compressed_size: u32,
-    pub uncompressed_size: u32,
-    pub local_header_offset: u32,
-    pub method: u16,
+    pub checked: Option<CheckedRecord>,
     pub link: Link,
-}
-impl Member {
-    // The resolved record outlives its metadata Book; names and hashes do not.
-    fn entry(&self) -> Entry {
-        Entry {
-            compressed_size: self.compressed_size,
-            uncompressed_size: self.uncompressed_size,
-            local_header_offset: self.local_header_offset,
-            method: self.method,
-            ..Entry::default()
-        }
-    }
 }
 
 pub struct Sources<'a> {
@@ -758,11 +744,12 @@ pub fn build<S: BookSource + ?Sized>(
             let m = &sources.links[link];
             link += 1;
             issues |= link_issue(m.link);
-            if m.link != Link::Resolved {
+            // Resolve sets the record for every link it leaves Resolved.
+            let (Link::Resolved, Some(record)) = (m.link, m.checked) else {
                 continue;
-            }
+            };
             let bytes = source.size();
-            let entry = m.entry();
+            let entry = record.member();
             let mut tracked = FaultTrack {
                 source,
                 bytes,
@@ -778,11 +765,11 @@ pub fn build<S: BookSource + ?Sized>(
                 ) {
                     Err(e) => e,
                     Ok(mut chapter) => {
-                        admission.begin(true, m.uncompressed_size);
+                        admission.begin(true, entry.uncompressed_size);
                         let mut at = 0;
                         let mut status = Status::Ok;
-                        while at < m.uncompressed_size {
-                            let want = (m.uncompressed_size - at).min(256) as usize;
+                        while at < entry.uncompressed_size {
+                            let want = (entry.uncompressed_size - at).min(256) as usize;
                             let n =
                                 chapter.read_at(at as u64, &mut admission.scratch.chunk[..want]);
                             if n <= 0 {
@@ -834,6 +821,7 @@ use crate::{
     xml_session::{Attributes, Handler, ParserBackend, Resources, XmlStream},
 };
 use newt_core::canonical::CatalogView;
+use newt_core::member_check::{Checked, CheckedRecord};
 pub struct Book<'a, 's> {
     pub manifest: &'a [ManifestItem],
     pub arena: &'a Arena<'s>,
@@ -955,10 +943,6 @@ impl SourceScan<'_, '_, '_, '_, '_> {
                         };
                         if out.link == Link::Resolved {
                             self.members[self.links] = index as u16;
-                            out.compressed_size = entry.compressed_size;
-                            out.uncompressed_size = entry.uncompressed_size;
-                            out.local_header_offset = entry.local_header_offset;
-                            out.method = entry.method;
                         }
                     }
                 }
@@ -1087,7 +1071,7 @@ pub struct ResolveScratch<'a, 'storage> {
 pub fn resolve<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     book: &Book<'_, '_>,
     source: &mut S,
-    chapter: &Entry,
+    chapter: &Checked,
     href: Option<&[u8]>,
     backend: &mut B,
     scratch: ResolveScratch<'_, '_>,
@@ -1130,7 +1114,7 @@ pub fn resolve<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     ) {
         Err(e) => e,
         Ok(mut decoded) => {
-            let raw = Entry::raw(chapter.uncompressed_size);
+            let raw = Checked::raw(chapter.uncompressed_size);
             let mut session = XmlStream::with_policy(&mut decoded, None, backend, crate::xml_session::OptionalPolicy(policy));
             let mut status = session.open(&raw, scratch.xml, true);
             let mut end = false;
@@ -1157,12 +1141,12 @@ pub fn resolve<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     if let Some(catalog) = book.catalog {
         let SourceScan { out, members, links, .. } = &mut handler;
         for (member, &index) in out.links[..*links].iter_mut().zip(members.iter()) {
-            let damaged = member.link == Link::Resolved
-                && catalog
-                    .entry(usize::from(index))
-                    .is_none_or(|entry| catalog.check(&mut tracked, entry).is_err());
-            if damaged {
-                *member = Member { link: Link::Damaged, ..Member::default() };
+            if member.link != Link::Resolved {
+                continue;
+            }
+            match catalog.entry(usize::from(index)).map(|entry| catalog.check(&mut tracked, entry)) {
+                Some(Ok(checked)) => member.checked = Some(CheckedRecord::from(&checked)),
+                None | Some(Err(_)) => *member = Member { link: Link::Damaged, checked: None },
             }
         }
     }

@@ -1,9 +1,10 @@
 // Derived from pinned FreeInk XmlSax.cpp/h (MIT); see rust/THIRD_PARTY.md.
 #![forbid(unsafe_code)]
 
+use crate::member_check::Checked;
 use crate::{
     xml_input::EntityFilter,
-    zip_container::{Entry, InflateScratch, Reader, Status},
+    zip_container::{InflateScratch, Reader, Status},
     zip_window::source::BookSource,
 };
 
@@ -157,7 +158,7 @@ impl<'a, S: BookSource + ?Sized, B: ParserBackend + ?Sized, P: SessionPolicy<B>>
     }
     pub fn open(
         &mut self,
-        entry: &'a Entry,
+        entry: &'a Checked,
         resources: Resources<'a>,
         filter_html_entities: bool,
     ) -> Status {
@@ -320,7 +321,7 @@ impl<'a, S: BookSource + ?Sized, B: ParserBackend + ?Sized, P: SessionPolicy<B>>
     }
     pub fn open(
         &mut self,
-        entry: &'a Entry,
+        entry: &'a Checked,
         handler: &'a mut dyn Handler,
         resources: Resources<'a>,
         filter: bool,
@@ -361,7 +362,7 @@ impl<'a, S: BookSource + ?Sized, B: ParserBackend + ?Sized, P: SessionPolicy<B>>
 /// arena mark/release: caller storage is never consumed or allocated here.
 pub fn parse_entry<'a, S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     source: &'a mut S,
-    entry: &'a Entry,
+    entry: &'a Checked,
     decoder: Option<InflateScratch<'a>>,
     backend: &'a mut B,
     handler: &'a mut dyn Handler,
@@ -388,7 +389,7 @@ pub fn parse_entry_with_policy<
     P: SessionPolicy<B>,
 >(
     source: &'a mut S,
-    entry: &'a Entry,
+    entry: &'a Checked,
     decoder: Option<InflateScratch<'a>>,
     backend: &'a mut B,
     handler: &'a mut dyn Handler,

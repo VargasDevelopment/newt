@@ -6,14 +6,14 @@ use newt_core::{chapter_layout::{engine::Engine, session::{ChapterSession, Layou
         types::{Images, LineBreak, Params, Sink, SplitBackend, Storage}},
     css::CssStylesheetBuilder,
     xml_input::EntityFilter, xml_session::{self, ParserBackend, XmlStream},
-    zip_container::{Entry, Status}, zip_window::source::BookSource};
+    member_check::Checked, zip_container::Status, zip_window::source::BookSource};
 use newt_reader_atlas::ReaderAtlas;
 
 /// Every field is a loan of the existing layout/parse banks or the real
 /// source/parser/image service. No fallback resources or buffers are created.
 pub struct Chapter<'a, 'entry, B: ParserBackend + ?Sized> {
     pub source: &'a mut dyn BookSource,
-    pub entry: &'entry Entry,
+    pub entry: &'entry Checked,
     pub params: Params<'a>,
     pub storage: Storage<'a>,
     pub chapter_css: CssStylesheetBuilder<'a>,

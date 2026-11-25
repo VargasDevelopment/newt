@@ -1,6 +1,7 @@
 //! Chapter page cache writer half. MIT.
 //! Child of reader.rs: private selection/validation stay inside the reader.
 use super::*;
+use newt_core::member_check::Checked;
 use newt_core::{
     chapter_layout::types::{Page, Sink, SplitBackend},
     page_cache::{CacheStorage, PageCacheWriter, Profile, WriterMemory},
@@ -260,7 +261,7 @@ fn cache_pass<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
         None,
     )?;
     let mut watch = Watch::begin(&mut chapter, slot.state);
-    let raw = Entry::raw(selected.entry.uncompressed_size);
+    let raw = Checked::raw(selected.entry.uncompressed_size);
     let (mut status, pages, chars, complete) = {
         let mut font = ReaderAtlas;
         let mut backend = SplitBackend {
@@ -501,7 +502,7 @@ fn physical_cache_pass<S: BookSource + ?Sized, B: ParserBackend + ?Sized, C: Cac
         None,
         )?;
     let mut watch = Watch::begin(&mut chapter, slot.state);
-    let raw = Entry::raw(selected.entry.uncompressed_size);
+    let raw = Checked::raw(selected.entry.uncompressed_size);
     let (mut status, pages, chars, complete) = {
         let mut images = lr.images.for_chapter(&selected.href);
         let mut engine = EngineState::new(reader_parameters(page_layout, Some(slot), selected.language),

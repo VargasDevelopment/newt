@@ -375,7 +375,9 @@ impl<'a, S: BookSource + ?Sized> Reader<'a, S> {
             inflate_ready: false,
         }
     }
-    pub fn open(&mut self, entry: &'a Entry) -> Status {
+    /// Newt: only a member that passed the open-time check can be read.
+    pub fn open(&mut self, entry: &'a crate::member_check::Checked) -> Status {
+        let entry: &'a Entry = entry;
         self.entry = Some(entry);
         self.produced = 0;
         self.in_pos = 0;
