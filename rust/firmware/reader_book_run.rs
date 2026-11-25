@@ -51,7 +51,6 @@ where
         owner.open_physical(indexed, &mut reader, &mut *revision, book_identity, saved, policy,
             opened_at, &mut resources.owner())
     } else { owner.state.opened() || owner.state.has_progress() };
-    after_open(|| {
     let result = if opened {
         // The selected identity outlives revocable receipt authority.
         let opened_digest = digest;
@@ -409,11 +408,4 @@ where
     #[cfg(feature = "checkpoint-fixture")]
     if matches!(route, Route::WholeLoop) { owner.close(&mut reader); }
     result
-    })
-}
-
-// Turn and checkpoint workspace must not stay live through the first open.
-#[inline(never)]
-fn after_open<R>(operation: impl FnOnce() -> R) -> R {
-    operation()
 }

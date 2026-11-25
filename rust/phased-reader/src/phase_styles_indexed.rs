@@ -3,6 +3,8 @@ use super::*;
 use core::cell::RefCell;
 
 impl Phase<'_> {
+    // Style parser workspace is not live during index selection or TOC binding.
+    #[inline(never)]
     pub(crate) fn styles_indexed<B: ParserBackend + ?Sized, C: ReadScope>(
         &mut self, source: &mut dyn BookSource, backend: &mut B, store: &mut C,
         digest: &[u8; 32], index: &newt_core::book_index::Reader, selected: &crate::Selection,

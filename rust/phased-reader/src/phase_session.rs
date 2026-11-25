@@ -415,6 +415,8 @@ impl<'trace, B: ParserBackend + ?Sized, L: BuildLoan, C: ReadScope + CachePresen
             newt_core::admission::WorkKind::OpenRoute, ReaderOpenRoute::CacheHit as i32)); }
         result
     }
+    // Page capture workspace must not burden opening or chapter/menu requests.
+    #[inline(never)]
     pub fn capture_page_owned_traced(&mut self, request: CacheRequest) -> CapturedPage<'trace> {
         let before = session::stamp(self.revision);
         let digest = *self.revision.digest();
