@@ -774,6 +774,119 @@ impl<'a> EngineState<'a> {
             self.storage.lines[self.line_count - 1].flags |= 1
         }
     }
+    fn accumulate_glyph_extent(
+        &mut self,
+        backend: &mut dyn Backend,
+        cp: u32,
+        sz: u16,
+        span_flags: u8,
+        run_flags: u8,
+        run_ascent: &mut Option<i32>,
+        fallback_descent: &mut Option<i32>,
+        max_above: &mut i32,
+        max_below: &mut i32,
+    ) {
+        let (above_raw, below_raw) = if let Some((ink_above, ink_below)) =
+            backend.ink_extents(cp, sz, run_flags)
+        {
+            if ink_above <= 0 && ink_below <= 0 {
+                return;
+            }
+            let ascent = *run_ascent.get_or_insert_with(|| i32::from(backend.ascent(sz)));
+            (ascent.max(i32::from(ink_above)), i32::from(ink_below).max(0))
+        } else {
+            if !is_visible_cp(cp) {
+                return;
+            }
+            let ascent = *run_ascent.get_or_insert_with(|| i32::from(backend.ascent(sz)));
+            let descent = *fallback_descent.get_or_insert_with(|| {
+                let run_lh = i32::from(self.line_height(backend, sz));
+                (run_lh - ascent).max(i32::from(sz.div_ceil(4)))
+            });
+            (ascent, descent)
+        };
+        let (above, below) = if span_flags & SUP != 0 {
+            let shift = (u32::from(sz) * 33 / 100) as i32;
+            (above_raw + shift, below_raw - shift)
+        } else if span_flags & SUB != 0 {
+            let shift = (u32::from(sz) * 12 / 100) as i32;
+            (above_raw - shift, below_raw + shift)
+        } else {
+            (above_raw, below_raw)
+        };
+        *max_above = (*max_above).max(above);
+        *max_below = (*max_below).max(below);
+    }
+    fn line_extra(&mut self, backend: &mut dyn Backend, line: Line, size: u16, lh: i16) -> LineExtra {
+        if !self.params.inline_ascent || line.end <= line.start {
+            return LineExtra::default();
+        }
+        let base_ascent = i32::from(backend.ascent(size));
+        // Keep base_below signed (lh - base_ascent) so condensed line_spacing (< 100%)
+        // accounts for the full distance from the placed baseline to the row bottom.
+        let base_below = i32::from(lh) - base_ascent;
+        let mut max_above = base_ascent;
+        let mut max_below = base_below;
+        let mut si = self.span_index(line.start);
+        while si < self.span_count {
+            let s = self.storage.spans[si];
+            let seg_start = usize::from(s.start).max(line.start);
+            if seg_start >= line.end {
+                break;
+            }
+            let seg_end = if si + 1 < self.span_count {
+                usize::from(self.storage.spans[si + 1].start).min(line.end)
+            } else {
+                line.end
+            };
+            let sz = self.size(s.size);
+            if sz > size || s.flags & (SUP | SUB) != 0 {
+                let (mut run_ascent, mut fallback_descent) = (None, None);
+                let mut i = seg_start;
+                while i < seg_end {
+                    let pos = i;
+                    let mut cp = self.shaped(backend, seg_end, &mut i, si);
+                    if cp == 0xad {
+                        continue;
+                    }
+                    if self.storage.levels[pos] & 1 != 0 {
+                        cp = mirror(cp);
+                    }
+                    let run_flags = s.flags | self.extra(pos);
+                    self.accumulate_glyph_extent(
+                        backend,
+                        cp,
+                        sz,
+                        s.flags,
+                        run_flags,
+                        &mut run_ascent,
+                        &mut fallback_descent,
+                        &mut max_above,
+                        &mut max_below,
+                    );
+                }
+                if line.flags & 2 != 0 && !self.rtl && seg_end == line.end && seg_start < seg_end {
+                    let run_flags = s.flags | self.extra(seg_end - 1);
+                    self.accumulate_glyph_extent(
+                        backend,
+                        45,
+                        sz,
+                        s.flags,
+                        run_flags,
+                        &mut run_ascent,
+                        &mut fallback_descent,
+                        &mut max_above,
+                        &mut max_below,
+                    );
+                }
+            }
+            si += 1;
+        }
+        LineExtra {
+            above: (max_above - base_ascent).clamp(0, i32::from(i16::MAX)) as i16,
+            below: (max_below - base_below).clamp(0, i32::from(i16::MAX)) as i16,
+        }
+    }
     pub fn flush(&mut self, backend: &mut dyn Backend) {
         if self.len == 0 {
             self.continued = false;
@@ -792,18 +905,44 @@ impl<'a> EngineState<'a> {
                 / 10000) as i16,
         );
         self.measure_lines(backend);
+        let has_tall_span = self.params.inline_ascent
+            && self.storage.spans[..self.span_count]
+                .iter()
+                .any(|s| self.size(s.size) > size || s.flags & (SUP | SUB) != 0);
         let mut idx = 0;
         let mut continuation = None;
         while idx < self.line_count && !self.failed && !self.stopped {
             let px =
                 i32::from(self.params.height) - i32::from(self.params.bottom) - i32::from(self.y);
-            let avail = if px > 0 {
+            let content = self.run_count > 0 || self.y > self.params.top;
+            let avail = if px <= 0 {
+                0
+            } else if !has_tall_span {
                 (px / i32::from(lh)) as usize
             } else {
-                0
+                let (mut used, mut fit) = (0i32, 0usize);
+                for i in idx..self.line_count {
+                    let line = if i == idx {
+                        continuation.unwrap_or(self.storage.lines[i])
+                    } else {
+                        self.storage.lines[i]
+                    };
+                    let extra = self.line_extra(backend, line, size, lh);
+                    let need = i32::from(lh) + extra.total();
+                    if used + need > px {
+                        break;
+                    }
+                    used += need;
+                    fit += 1;
+                }
+                if fit == 0 && !content && px >= i32::from(lh) {
+                    // An empty page still places one oversized line rather than dropping text.
+                    1
+                } else {
+                    fit
+                }
             };
             let remain = self.line_count - idx;
-            let content = self.run_count > 0 || self.y > self.params.top;
             if avail == 0 {
                 if !content {
                     break;
@@ -823,12 +962,20 @@ impl<'a> EngineState<'a> {
             }
             let end = idx + take;
             // A segment break may use spare rows without consuming another measured line.
-            let slots = if take == remain { avail } else { take };
+            let slots = if take == remain {
+                if has_tall_span {
+                    (px / i32::from(lh)).max(take as i32) as usize
+                } else {
+                    avail
+                }
+            } else {
+                take
+            };
             for _ in 0..slots {
                 if idx == end { break; }
                 let first = idx == 0 && continuation.is_none();
                 let line = continuation.unwrap_or(self.storage.lines[idx]);
-                match self.place_line(backend, line, size, lh, first) {
+                match self.place_line(backend, line, size, lh, first, has_tall_span) {
                     LinePlacement::Placed(rest) => {
                         continuation = rest;
                         if rest.is_none() { idx += 1; }
@@ -863,9 +1010,29 @@ impl<'a> EngineState<'a> {
             LinePlacement::TooLarge
         }
     }
-    fn place_line(&mut self, backend: &mut dyn Backend, mut r: Line, size: u16, lh: i16, first: bool) -> LinePlacement {
+    fn overflows_page_bottom(&self, row_lh: i16) -> bool {
+        i32::from(self.y) + i32::from(row_lh)
+            > i32::from(self.params.height) - i32::from(self.params.bottom)
+            && (self.run_count > 0 || self.image_count > 0 || self.y > self.params.top)
+    }
+    fn place_line(
+        &mut self,
+        backend: &mut dyn Backend,
+        mut r: Line,
+        size: u16,
+        lh: i16,
+        first: bool,
+        has_tall_span: bool,
+    ) -> LinePlacement {
         if r.end == r.start {
-            self.y = self.y.wrapping_add(lh);
+            if has_tall_span && self.overflows_page_bottom(lh) {
+                return LinePlacement::NextPage;
+            }
+            self.y = if has_tall_span {
+                self.y.saturating_add(lh)
+            } else {
+                self.y.wrapping_add(lh)
+            };
             return LinePlacement::Placed(None);
         }
         let indent = if first && !self.continued && self.paragraph.text_indent > 0 {
@@ -888,7 +1055,14 @@ impl<'a> EngineState<'a> {
         let LineSegments { count: n, next_start } =
             self.segment_line(backend, r, justify, justify_hangul, &mut segs);
         if n == 0 {
-            self.y = self.y.wrapping_add(lh);
+            if has_tall_span && self.overflows_page_bottom(lh) {
+                return LinePlacement::NextPage;
+            }
+            self.y = if has_tall_span {
+                self.y.saturating_add(lh)
+            } else {
+                self.y.wrapping_add(lh)
+            };
             return LinePlacement::Placed(None);
         }
         if n > self.storage.runs.len() - self.run_count {
@@ -902,6 +1076,20 @@ impl<'a> EngineState<'a> {
             Some(self.line_metrics(backend, start, end, flags | 1))
         } else {
             None
+        };
+        let extra = if has_tall_span {
+            self.line_extra(backend, r, size, lh)
+        } else {
+            LineExtra::default()
+        };
+        let line_lh = (i32::from(lh) + extra.total()).min(i32::from(i16::MAX)) as i16;
+        if has_tall_span && self.overflows_page_bottom(line_lh) {
+            return LinePlacement::NextPage;
+        }
+        let baseline = if has_tall_span {
+            baseline.saturating_add(extra.above)
+        } else {
+            baseline
         };
         let justify = justify && gaps > 0 && left > 0;
         let per = if justify { left / gaps } else { 0 };
@@ -989,7 +1177,11 @@ impl<'a> EngineState<'a> {
         if before.0 == 0 {
             self.page_chars = self.chars.wrapping_add(count(&self.storage.text[..r.start]));
         }
-        self.y = self.y.wrapping_add(lh);
+        self.y = if has_tall_span {
+            self.y.saturating_add(line_lh)
+        } else {
+            self.y.wrapping_add(lh)
+        };
         LinePlacement::Placed(rest)
     }
     fn emit_segment(
@@ -1143,6 +1335,37 @@ impl<'a> EngineState<'a> {
         self.pool_len = 0;
         self.y = self.params.top
     }
+}
+#[derive(Clone, Copy, Default)]
+struct LineExtra {
+    above: i16,
+    below: i16,
+}
+impl LineExtra {
+    fn total(self) -> i32 {
+        i32::from(self.above) + i32::from(self.below)
+    }
+}
+fn is_visible_cp(cp: u32) -> bool {
+    !matches!(
+        cp,
+        0x09 | 0x0a | 0x0d | 0x20 | 0x85 | 0xa0 | 0xad | 0x34f | 0x61c
+            | 0x115f..=0x1160
+            | 0x17b4..=0x17b5
+            | 0x180b..=0x180f
+            | 0x2000..=0x200f
+            | 0x2028..=0x202f
+            | 0x205f..=0x206f
+            | 0x3000
+            | 0x3164
+            | 0xfe00..=0xfe0f
+            | 0xfeff
+            | 0xffa0
+            | 0xfff0..=0xfff8
+            | 0x1bca0..=0x1bca3
+            | 0x1d173..=0x1d17a
+            | 0xe0000..=0xe0fff
+    )
 }
 enum LinePlacement {
     /// The measured continuation if the line crossed the segment cap.

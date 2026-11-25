@@ -39,6 +39,12 @@ pub trait Font {
     }
     // Raster implementations must delegate to has_glyph; metrics fakes may return true.
     fn covers(&mut self, cp: u32) -> bool;
+    /// Optional ink bounds `(above_baseline, below_baseline)` in pixels matching rasterization.
+    /// `Some((0, 0))` means the renderer draws no ink for this glyph; `None` falls back to
+    /// font-level `ascent` / `line_height`.
+    fn ink_extents(&mut self, _cp: u32, _size: u16, _style: u8) -> Option<(i16, i16)> {
+        None
+    }
 }
 /// The returned bitmap borrows the font until the next mutable font call.
 pub trait RasterFont: Font {

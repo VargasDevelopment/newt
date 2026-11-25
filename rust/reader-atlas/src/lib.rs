@@ -111,6 +111,17 @@ impl Font for ReaderAtlas {
         let size = effective_size(px); let advance = i32::from(glyph(f,a,l).advance16);
         (rounded(advance+kern(f,a,l,r),size)-rounded(advance,size)) as i16
     }
+    fn ink_extents(&mut self, cp: u32, px: u16, style: u8) -> Option<(i16, i16)> {
+        let f = face(style); let a = added(style);
+        if semantic(f,a,cp) >= 0 { return Some((0, 0)); }
+        let found = glyph_index(cp); let index = if found < COUNT { found } else { (b'?' - 32) as usize };
+        let size = effective_size(px);
+        let g = shape(f,a,style,index,size);
+        if g.width == 0 || g.height == 0 { return Some((0, 0)); }
+        let h = resized(i32::from(g.height),size,g.px).max(1);
+        let top = resized(i32::from(g.top),size,g.px);
+        Some((top.max(0) as i16, (h - top).max(0) as i16))
+    }
 }
 /// What `draw` copies or resamples: a glyph's rows and the size they were
 /// rasterized at. Native rows are 1-bit (`packed`); the 30 px atlas keeps 2-bit coverage.

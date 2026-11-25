@@ -3,9 +3,10 @@
 #![forbid(unsafe_code)]
 
 // Pages written under v1 can contain split lines and duplicate character
-// starts; pages written under v2 can drop links past a page's link slots.
-// Regenerate them in place through normal cache admission.
-const VERSION: u32 = 3;
+// starts; v2 can drop links past a page's link slots; v3 can place oversized
+// inline runs over the previous line or past the top margin. Regenerate them
+// in place through normal cache admission.
+const VERSION: u32 = 4;
 
 pub const BLOCK_BYTES: u32 = 4096;
 pub const MANIFEST_BYTES: u32 = 64;

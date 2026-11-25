@@ -33,7 +33,7 @@ fn invalid_inspection_does_not_publish_a_payload() {
 fn older_envelope_versions_are_rejected() {
     let mut header = [0; 64];
     manifest(&mut header, 1, &[0; 32], 0, 0);
-    for older in [1u32, 2] {
+    for older in [1u32, 2, 3] {
         let mut old = header;
         old[4..8].copy_from_slice(&older.to_le_bytes());
         let checksum = crc(u32::MAX, &old[..60]) ^ u32::MAX;
