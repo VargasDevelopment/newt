@@ -19,7 +19,7 @@ pub(crate) fn drive<'io, 'm, 'p, 'scope, 'sdk, 'route, P: CardPort, F, N: nvs::N
     accepted_open: &mut bool, recovery: &mut Option<PendingRecovery>,
     book_identity: u64, saved: Progress, digest: Digest,
     producer: &ProducerCallbacks<'_>, producer_ledger: Option<&mut [u8; 256]>,
-    initialize: bool, paint_first: bool, route: Route, accepted_save: bool,
+    indexed: Option<&newt_phased_reader::index_build::Indexed>, paint_first: bool, route: Route, accepted_save: bool,
     visit_parts: Option<VisitParts<'_>>,
     _metadata: Option<&mut Option<newt_sdk_heap::Fixed<crate::reader_exit_metadata::ExitMetadata>>>,
     title_deferred: bool, mut saves: Option<&mut newt_core::save_notice::ReadingSaveNotice>,
@@ -32,6 +32,7 @@ where
 {
     #[cfg(feature = "checkpoint-fixture")]
     let mut metadata = _metadata;
+    let initialize = indexed.is_some();
     checkpoint.checkpoint.begin_operation();
     let (mut reader, mut owner, mut ui) = (reader, owner, ui);
     if initialize {
@@ -45,9 +46,9 @@ where
     let policy = request.policy;
     let opened_at = now();
     let mut action_at = opened_at;
-    let opened = if initialize {
+    let opened = if let Some(indexed) = indexed {
         let _action = StatsActionScope::new(request, crate::reader_action::ActionStage::OrdinaryFallback);
-        owner.open_physical(&mut reader, &mut *revision, book_identity, saved, policy,
+        owner.open_physical(indexed, &mut reader, &mut *revision, book_identity, saved, policy,
             opened_at, &mut resources.owner())
     } else { owner.state.opened() || owner.state.has_progress() };
     let result = if opened {

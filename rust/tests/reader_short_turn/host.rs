@@ -123,11 +123,14 @@ fn scenario(bytes: Vec<u8>, finished: bool) {
             pause_request: &|_, _| Some(Stop::Terminal), yield_now: None, wait: None };
         let mut pause = |_: reader_book::ProducerPause<'_, '_, '_, '_, Flash, card::Card>,
             _: &dyn Fn() -> bool| (Stop::Terminal, false);
+        let indexed = newt_phased_reader::index_build::open(&mut source, &digest, resources.storage,
+            resources.panel, &mut resources.parser, resources.pages, None,
+            newt_phased_reader::index_build::Verification::Verified).unwrap();
         let mut run = |ui: &mut ReaderUiState, initialize, paint_first, step: Option<BookStep>| {
             let mut step = step; let mut compositions = 0;
             let exit = reader_book::run::drive(io, &mut card, &request, &mut reader, &mut owner, ui,
                 &mut source, &mut resources, &mut prefs, &mut mounted, &hash, &mut statistics,
-                &mut accepted, &mut recovery, book, saved, digest, &callbacks, None, initialize,
+                &mut accepted, &mut recovery, book, saved, digest, &callbacks, None, if initialize { Some(&indexed) } else { None },
                 paint_first, reader_book::run::Route::Short, false, None, None, false, None,
                 |turn, _, _| {
                     if let Some(composed) = turn.composed { assert!(composed.is_ok()); compositions += 1; }

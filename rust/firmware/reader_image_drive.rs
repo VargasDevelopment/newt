@@ -12,6 +12,7 @@ use newt_reader_ui::{PhysicalOpen, SourceOperations, ViewSettings};
 pub(super) struct Opening {
     pub(super) accepted_save: bool,
     pub(super) at: u32,
+    pub(super) indexed: newt_phased_reader::index_build::Indexed,
 }
 
 pub(super) struct RunLoan<'op, 'm, 'p> {
@@ -26,8 +27,8 @@ pub(super) struct RunLoan<'op, 'm, 'p> {
     pub(super) settings: &'op mut ViewSettings,
 }
 #[derive(Clone, Copy)]
-pub(super) struct Turn {
-    pub(super) initialize: bool,
+pub(super) struct Turn<'a> {
+    pub(super) indexed: Option<&'a newt_phased_reader::index_build::Indexed>,
     pub(super) paint_first: bool,
     pub(super) accepted_save: bool,
     pub(super) step: Option<BookStep>,
@@ -75,7 +76,7 @@ impl RunLoan<'_, '_, '_> {
         pages: &mut ReaderPages<'_, OsNative<'io>>, source: &mut impl SourceOperations,
         request: &BookRequest<'_>, callbacks: &ProducerCallbacks<'_>,
         pause: &mut ProducerPauseFn<'_, 'io, Sdk552, FirmwareCard>,
-        visit: Option<(&mut [u8; 256], &mut u16)>, turn: Turn,
+        visit: Option<(&mut [u8; 256], &mut u16)>, turn: Turn<'_>,
         yielded: &dyn Fn(), observed: &dyn Fn(WorkEvent),
         saves: &mut newt_core::save_notice::ReadingSaveNotice, title_deferred: bool,
     ) -> Result<BookExit, BookFailure> {
@@ -105,7 +106,7 @@ impl RunLoan<'_, '_, '_> {
                 &mut book.owner, self.ui, source, &mut resources,
                 scope.preferences, &mut mounted, &crate::reader_hash::package_hash,
                 self.statistics, self.accepted, self.recovery, request.identity, request.saved, digest,
-                callbacks, ledger, turn.initialize, turn.paint_first, reader_book::run::Route::Short, turn.accepted_save,
+                callbacks, ledger, turn.indexed, turn.paint_first, reader_book::run::Route::Short, turn.accepted_save,
                 parts, Some(self.metadata), title_deferred, Some(saves), |between, _, _| {
                     if let Some(Err(status)) = between.composed { paint_failure = Some(status); }
                     next.take()

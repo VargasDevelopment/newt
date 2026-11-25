@@ -400,11 +400,14 @@ where
     let mut statistics = ReadingStatsRuntime::default();
     let mut accepted_open = false;
     let mut recovery = None;
+    let indexed = newt_phased_reader::index_build::open(&mut revision, &digest, resources.storage,
+        resources.panel, &mut resources.parser, resources.pages, on_yield,
+        newt_phased_reader::index_build::Verification::Verified).map_err(BookFailure::Open)?;
     let result = run::drive(io, card, request, &mut runtime.reader, &mut runtime.owner,
         &mut runtime.ui, &mut revision, &mut resources,
         preferences, checkpoint, stats_sha256, &mut statistics, &mut accepted_open,
         &mut recovery, book_identity, saved, digest, &producer, Some(producer_ledger),
-        true, true, run::Route::WholeLoop, true, None, None, false, None, next, pause);
+        Some(&indexed), true, run::Route::WholeLoop, true, None, None, false, None, next, pause);
     revision.reset();
     result
 }

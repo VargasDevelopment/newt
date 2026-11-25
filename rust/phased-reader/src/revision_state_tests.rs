@@ -88,9 +88,8 @@ impl Reader for Admission {
         Some(if self.result == Status::Ok { Ok(()) } else { Err(self.result) })
     }
 }
-struct NoCache { indexes: u32 }
+struct NoCache;
 impl Cache<Admission> for NoCache {
-    fn index(&mut self, _: &mut dyn BookSource, _: &Digest, _: &mut Admission) { self.indexes += 1; }
     fn build(&mut self, _: &mut dyn BookSource, _: &Digest, _: u32, _: &mut Admission) -> Build {
         panic!("prepared-open must not build a cache");
     }
@@ -155,12 +154,11 @@ fn admission_is_still_required_before_the_one_promotion() {
             block: None, scratch: &mut scratch,
         }) { Ok(revision) => revision, Err(_) => panic!("same live ports") };
         let mut reader = Admission { result, admitted: 0 };
-        let mut cache = NoCache { indexes: 0 };
+        let mut cache = NoCache;
         assert_eq!(Session { revision: &mut revision, reader: &mut reader, cache: &mut cache }
             .finish_prepared_open(), result);
         let state = revision.into_state();
         assert_eq!(reader.admitted, 1);
-        assert_eq!(cache.indexes, u32::from(result == Status::Ok));
         assert!(!state.provisional());
         assert_eq!(calls.seal.get(), u32::from(result == Status::Ok));
         assert_eq!(calls.abort.get(), u32::from(result != Status::Ok));
@@ -188,7 +186,7 @@ fn a_sealed_receipt_with_failed_final_guard_returns_failed_resulting_state() {
         block: None, scratch: &mut scratch,
     }) { Ok(revision) => revision, Err(_) => panic!("same live ports") };
     let mut reader = Admission { result: Status::Ok, admitted: 0 };
-    let mut cache = NoCache { indexes: 0 };
+    let mut cache = NoCache;
     assert_eq!(Session { revision: &mut revision, reader: &mut reader, cache: &mut cache }
         .finish_prepared_open(), Status::IoError);
     let state = revision.into_state();
@@ -246,38 +244,4 @@ fn wrong_scratch_returns_every_original_loan_without_consuming_state() {
     }) { Ok(revision) => revision, Err(_) => panic!("original scratch accepted") };
     drop(revision);
     assert_eq!(calls.abort.get(), 1);
-}
-
-#[test]
-fn all_open_routes_run_the_index_step_once() {
-    struct RouteCache(u32);
-    impl Cache<Admission> for RouteCache {
-        fn index(&mut self, _: &mut dyn BookSource, _: &Digest, _: &mut Admission) { self.0 += 1; }
-        fn stored(&mut self, _: &Digest, _: u32, _: &mut Admission) -> bool { false }
-        fn build(&mut self, _: &mut dyn BookSource, _: &Digest, _: u32, _: &mut Admission) -> Build { Build::Ready }
-    }
-    for route in 0..5 {
-        let calls = Calls::default();
-        let mut source = Source(&calls);
-        let mut store = Store::new(&calls);
-        let mut hash = Hash(&calls);
-        let mut block = Hash(&calls);
-        let mut scratch = [0; 256];
-        let mut revision = ImportedRevision::compact(&mut store, &mut hash, &mut block, &mut scratch);
-        assert!(revision.begin_import(&mut source));
-        let digest = *revision.digest();
-        if route >= 3 { assert!(revision.finish_import()); }
-        let mut reader = Admission { result: Status::Ok, admitted: 0 };
-        let mut cache = RouteCache(0);
-        let mut session = Session { revision: &mut revision, reader: &mut reader, cache: &mut cache };
-        let status = match route {
-            0 => session.finish_prepared_open(),
-            1 => session.finish_prepared_open_lent(&mut [0; 4096]),
-            2 => session.finish_prepared_import(),
-            3 => session.open_loaded_owned(digest, 0),
-            _ => session.open_selected_owned(digest, 0),
-        };
-        assert_eq!(status, Status::Ok, "route {route}");
-        assert_eq!(cache.0, 1, "route {route}");
-    }
 }

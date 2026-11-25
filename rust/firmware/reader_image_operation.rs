@@ -27,7 +27,8 @@ impl Runtime {
         paint_first: bool, profile: Option<&ReaderWorkProfile>,
         sleep_extras: Option<&newt_device_ui::SleepExtras>,
     ) -> Result<BookExit, BookFailure> {
-        let initialize = opening.is_some();
+        let indexed = opening.as_ref().map(|opening| &opening.indexed);
+        let initialize = indexed.is_some();
         let opened_at = opening.as_ref().map(|opening| opening.at);
         if matches!(step, Some(BookStep::Save | BookStep::ReflowCheckpoint { .. })) {
             self.selection.retire_checkpoint_metadata();
@@ -68,7 +69,7 @@ impl Runtime {
             && self.selection.selection_verified(&mut || true);
         let card_missing = self.selection.flags() & flag::CARD_MISSING != 0;
         let mut accepted = self.selection.flags() & flag::ACCEPTED_OPEN_OWED != 0;
-        let accepted_save = opening.is_some_and(|opening| opening.accepted_save)
+        let accepted_save = opening.as_ref().is_some_and(|opening| opening.accepted_save)
             && self.selection.flags() & flag::TITLE_DEFERRED == 0;
         let digest = *self.selection.digest();
         let book_identity = self.selection.book_id();
@@ -156,7 +157,7 @@ impl Runtime {
             let request = BookRequest { path, filename, open: BookOpen::Receipt(digest),
                 identity: book_identity, saved, policy, info: &info, cancel: &idle_cancel,
                 now: millis, sleep: scene.as_ref(), zone: scope.clock.zone() };
-            let run_turn = |prepared| super::drive::Turn { initialize, paint_first, accepted_save,
+            let run_turn = |prepared| super::drive::Turn { indexed, paint_first, accepted_save,
                 step, settings, open: if initialize && prepared { PhysicalOpen::Prepared }
                     else { PhysicalOpen::Selected { digest, spine: saved.locator.spine } } };
             // Only foreground composition owns the full repaint contract.
@@ -177,8 +178,9 @@ impl Runtime {
                             (unsafe { crate::reader_hash::hash_source(raw, &mut actual, &mut || yielded(), hash_observer) })
                                 && allowed() && actual == *expected
                         };
-                        let strict = if initialize { StrictSource::new(raw, &digest) }
-                            else { StrictSource::for_live_reader(raw, selection, &memory.runtime.owner,
+                        let strict = if let Some(indexed) = indexed {
+                            StrictSource::from_verified_digest(raw, &digest, *indexed.digest()).ok_or(BookFailure::Source)?
+                        } else { StrictSource::for_live_reader(raw, selection, &memory.runtime.owner,
                                 &mut memory.runtime.reader).ok_or(BookFailure::Source)? };
                         let allowed = || !cancel.cancelled();
                         let mut strict = strict.with_reopen_authorizer(&mut authorize, &allowed);
@@ -190,36 +192,38 @@ impl Runtime {
                                 None, run_turn(false), &yielded, &observed, saves, title_deferred)
                     }
                     super::sources::Source::Session(revision, verification) => {
-                    let prepared = verification.control().flags.prepared();
-                    if initialize { verification.control().flags.set_prepared(false); }
-                    if verification.state() == crate::reader_verification::Verification::Pending {
-                        let mut finish = |raw: &mut dyn newt_core::zip_window::source::BookSource,
-                            expected: &[u8; 32], scratch: &mut [u8], allowed: &dyn Fn() -> bool| {
-                            verification.finish_with_update(raw, expected, scratch, &mut || allowed(),
-                                &mut |hash, bytes| hash.borrow_with_yield(&yielded).update(bytes))
-                        };
-                        let allowed = || !cancel.cancelled();
-                        let mut pending = revision.with_verification_gate(saved.locator.spine, &mut finish, &allowed);
-                        super::drive::RunLoan { memory, ui: reader_ui, checkpoint, statistics, recovery,
-                            accepted: &mut accepted, metadata: exit_metadata, flags: None, settings: current_settings }
-                            .run(super::drive::Ports { io: scope.io, panel: &mut *scope.bus.panel,
-                                card: &mut *scope.card, preferences: &mut *scope.preferences,
-                                nvs: &mut *scope.nvs, facts: &mut *scope.facts }, pages, &mut pending, &request, &callbacks, &mut pause,
-                                None, run_turn(false), &yielded, &observed, saves, title_deferred)
-                    } else {
-                        if verification.state() != crate::reader_verification::Verification::Verified {
-                            return Err(BookFailure::Open(Status::Stale));
-                        }
-                        if !verification.producer_ready() { verification.reset_producer_visit(); }
-                        verification.with_producer_visit(|ledger, view|
+                        let prepared = verification.control().flags.prepared();
+                        if initialize { verification.control().flags.set_prepared(false); }
+                        let verified_now = indexed.is_some_and(|indexed| indexed.verified_now());
+                        if verified_now || verification.state() == crate::reader_verification::Verification::Pending {
+                            let mut finish = |raw: &mut dyn newt_core::zip_window::source::BookSource,
+                                expected: &[u8; 32], scratch: &mut [u8], allowed: &dyn Fn() -> bool| {
+                                verification.finish_with_update(raw, expected, scratch, &mut || allowed(),
+                                    &mut |hash, bytes| hash.borrow_with_yield(&yielded).update(bytes))
+                            };
+                            let allowed = || !cancel.cancelled();
+                            let mut pending = revision.with_verification_gate(saved.locator.spine, &mut finish, &allowed);
+                            if let Some(indexed) = indexed { pending.start_indexed(indexed); }
                             super::drive::RunLoan { memory, ui: reader_ui, checkpoint, statistics, recovery,
-                                accepted: &mut accepted, metadata: exit_metadata, flags: Some(selection.flags_mut()), settings: current_settings }
+                                accepted: &mut accepted, metadata: exit_metadata, flags: None, settings: current_settings }
                                 .run(super::drive::Ports { io: scope.io, panel: &mut *scope.bus.panel,
-                                card: &mut *scope.card, preferences: &mut *scope.preferences,
-                                nvs: &mut *scope.nvs, facts: &mut *scope.facts }, pages, revision, &request, &callbacks, &mut pause,
-                                    Some((ledger, view)), run_turn(prepared), &yielded, &observed, saves, title_deferred))
-                            .ok_or(BookFailure::Revision)?
-                    }
+                                    card: &mut *scope.card, preferences: &mut *scope.preferences,
+                                    nvs: &mut *scope.nvs, facts: &mut *scope.facts }, pages, &mut pending, &request, &callbacks, &mut pause,
+                                    None, run_turn(false), &yielded, &observed, saves, title_deferred)
+                        } else {
+                            if verification.state() != crate::reader_verification::Verification::Verified {
+                                return Err(BookFailure::Open(Status::Stale));
+                            }
+                            if !verification.producer_ready() { verification.reset_producer_visit(); }
+                            verification.with_producer_visit(|ledger, view|
+                                super::drive::RunLoan { memory, ui: reader_ui, checkpoint, statistics, recovery,
+                                    accepted: &mut accepted, metadata: exit_metadata, flags: Some(selection.flags_mut()), settings: current_settings }
+                                    .run(super::drive::Ports { io: scope.io, panel: &mut *scope.bus.panel,
+                                    card: &mut *scope.card, preferences: &mut *scope.preferences,
+                                    nvs: &mut *scope.nvs, facts: &mut *scope.facts }, pages, revision, &request, &callbacks, &mut pause,
+                                        Some((ledger, view)), run_turn(prepared), &yielded, &observed, saves, title_deferred))
+                                .ok_or(BookFailure::Revision)?
+                        }
                     }
                 })
         }).map_err(|_| BookFailure::Source).and_then(|result| result));

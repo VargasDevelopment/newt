@@ -364,8 +364,17 @@ impl Runtime {
             self.publish_notice_image(ui);
             return true;
         }
+        let indexed = match self.index_image(home, ui, events, profile) {
+            Ok(indexed) => indexed,
+            Err(error) => {
+                if !self.interrupted_open(home, events) { self.open_failed(error); }
+                self.observe_wake_attempt(newt_wake_evidence::Attempt::OpenFailed, attempted_policy);
+                self.publish_notice_image(ui);
+                return true;
+            }
+        };
         let result = self.operate_image(home, ui, logical, events, Some(super::drive::Opening {
-            accepted_save: !recovery_open || session_checkpoint, at }), None, true, profile, None);
+            accepted_save: !recovery_open || session_checkpoint, at, indexed }), None, true, profile, None);
         match result {
             Ok(exit) => {
                 self.restore_failure = newt_reader_ui::RestoreFailure::None;

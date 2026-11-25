@@ -156,6 +156,14 @@ impl<'source> ReaderSource<'source> {
     }
 }
 impl PendingReaderSource<'_, '_> {
+    /// The pass finished this same digest; preserve the pending operation route.
+    pub fn start_indexed(&mut self, indexed: &newt_phased_reader::index_build::Indexed) {
+        if indexed.verified_now() && *indexed.digest() == self.source.digest() {
+            self.verified = true;
+            self.pending = false;
+        }
+    }
+
     pub(crate) fn finish_verification(&mut self, scratch: &mut [u8],
         allowed: &dyn Fn() -> bool) -> bool {
         if !self.verified {

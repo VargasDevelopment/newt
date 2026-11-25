@@ -113,9 +113,7 @@ mod reader_hash {
     }
     pub unsafe fn hash_source(_: &mut dyn BookSource, _: &mut Digest, _: &mut dyn FnMut(), _: Option<&dyn SourceHashObserver>) -> bool { panic!("no strict-source fallback in source-loan fixture") }
 }
-mod reader_verification {
-    #[derive(Clone, Copy, PartialEq)] pub enum Verification { Pending, Verified }
-}
+#[path = "../../firmware/reader_verification.rs"] mod reader_verification;
 mod selected {
     use super::*;
     pub trait FileObserver {}
@@ -168,18 +166,7 @@ mod image {
         use super::*;
         #[path = "../../firmware/reader_image_source_loan.rs"] mod actual_loan;
         pub(crate) use actual_loan::{with_source, with_source_lent};
-        pub struct Flags;
-        impl Flags { pub fn prepared(&self) -> bool { false } pub fn set_prepared(&mut self, _: bool) {} }
-        pub struct Control { pub flags: Flags }
-        pub struct Verification { pub control: Control, pub ledger: [u8; 256], pub view: u16 }
-        impl Verification {
-            pub fn state(&self) -> crate::reader_verification::Verification { crate::reader_verification::Verification::Verified }
-            pub fn control(&mut self) -> &mut Control { &mut self.control }
-            pub fn producer_ready(&self) -> bool { true }
-            pub fn reset_producer_visit(&mut self) {}
-            pub fn with_producer_visit<R>(&mut self, work: impl FnOnce(&mut [u8;256], &mut u16) -> R) -> Option<R> { Some(work(&mut self.ledger, &mut self.view)) }
-            pub fn finish_with_update(&mut self, _: &mut dyn BookSource, _: &Digest, _: &mut [u8], _: &mut dyn FnMut() -> bool, _: &mut dyn FnMut(&mut reader_hash::MbedHasher, &[u8]) -> bool) -> bool { panic!("no pending verifier in source-loan fixture") }
-        }
+        pub type Verification = crate::reader_verification::ReaderVerification<reader_hash::MbedHasher>;
         pub struct Session {
             pub route: newt_native_storage::RouteState, pub receipt: sd_revision::SdRevisionState,
             pub pages: newt_native_storage::chapter_cache::ChapterCacheState,
@@ -225,8 +212,8 @@ mod image {
     }
     pub mod drive {
         use super::*;
-        pub struct Opening { pub accepted_save: bool, pub at: u32 }
-        #[derive(Clone, Copy)] pub struct Turn { pub initialize: bool, pub paint_first: bool, pub accepted_save: bool, pub step: Option<reader_book::BookStep>, pub settings: ViewSettings, pub open: newt_reader_ui::PhysicalOpen }
+        pub struct Opening { pub accepted_save: bool, pub at: u32, pub indexed: newt_phased_reader::index_build::Indexed }
+        #[derive(Clone, Copy)] pub struct Turn<'a> { pub indexed: Option<&'a newt_phased_reader::index_build::Indexed>, pub paint_first: bool, pub accepted_save: bool, pub step: Option<reader_book::BookStep>, pub settings: ViewSettings, pub open: newt_reader_ui::PhysicalOpen }
         pub struct Ports<'a,'io,'scope,'sdk> {
             pub io: &'io newt_native_io::UiIo, pub panel: &'a mut newt_c3_board::ReaderPanel<'scope,'sdk>,
             pub card: &'a mut card::Card, pub preferences: &'a mut home_startup::preferences::ReaderPreferences,
@@ -241,7 +228,7 @@ mod image {
         impl RunLoan<'_> {
             pub fn run<'io>(self, _: Ports<'_,'io,'_,'_>, _: &mut reader_pages::ReaderPages<'_, impl Native>,
                 source: &mut impl newt_reader_ui::SourceOperations, _: &reader_book::BookRequest<'_>, _: &reader_book::ProducerCallbacks<'_>,
-                _: &mut reader_book::ProducerPauseFn<'_,'io,Flash,card::Card>, _: Option<(&mut [u8;256],&mut u16)>, _: Turn,
+                _: &mut reader_book::ProducerPauseFn<'_,'io,Flash,card::Card>, _: Option<(&mut [u8;256],&mut u16)>, _: Turn<'_>,
                 _: &dyn Fn(), _: &dyn Fn(newt_core::admission::WorkEvent),
                 _: &mut Saves, _: bool,
             ) -> core::result::Result<reader_book::BookExit,BookFailure> {
@@ -255,6 +242,7 @@ mod image {
         }
     }
     fn millis() -> u32 { u32::MAX }
+    #[path = "../../firmware/reader_image_sources.rs"] mod sources;
     #[path = "../../firmware/reader_image_operation.rs"] mod operation;
     pub fn execute(runtime: &mut Runtime, home: &mut app_image::Home<'_>, ui: &mut app_image::Application<'_>, logical: &mut newt_core::frame::Frame, events: &mut app_image::Events<'_,'_>, step: reader_book::BookStep) {
         assert!(matches!(runtime.operate_image(home,ui,logical,events,None,Some(step),false,None,None), Err(BookFailure::Open(newt_core::zip_container::Status::Unsupported))));
@@ -287,7 +275,7 @@ fn main() {
     let mut session = Box::new(image::session::Session {
         route, receipt, pages:newt_native_storage::chapter_cache::ChapterCacheState::new(),
         whole:reader_hash::MbedHasher::default(), block:reader_hash::MbedHasher::default(), scratch:[0;256], source:None,
-        verification:image::session::Verification { control:image::session::Control { flags:image::session::Flags }, ledger:[0;256],view:0 },
+        verification:image::session::Verification::new(),
     });
     home.with_reader_io(|scope| {
         let mut native = scope.card.port(scope.io);

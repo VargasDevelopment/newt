@@ -48,51 +48,5 @@ pub fn trace_reader_details(sink: &mut (impl TraceSink + ?Sized), profile: &Read
             record.stream.calls.get(), record.stream.microseconds.get(), record.stream.produced.get(), record.stream.io_microseconds.get(),
             record.stream.read_bytes.get(), record.result.get(), u8::from(role == 0 && profile.member_active())));
     }
-    index_row(sink, profile);
     emit(sink, 64, format_args!("Reader rows: emitted={} expected=8191\n", mask));
-}
-
-// Two rows so each fits emit's 160 B line (worst case 154 and 122 B with
-// u32::MAX values). Kept out of line: the open profile inlines this module's
-// rows, and its local frame has a 672 B ceiling (tools/rust_open_stack.py).
-#[inline(never)]
-fn index_row(sink: &mut (impl TraceSink + ?Sized), p: &ReaderWorkProfile) {
-    if p.index[0].get() == u32::MAX { return; }
-    let ms = |slot: usize| p.index[slot].get() / 1000;
-    emit(sink, 160, format_args!("Reader index: outcome={} status={} census_ms={} central_ms={} opf_ms={} join_ms={} write_ms={} commit_ms={}\n",
-        p.index[0].get(), p.index[7].get(), ms(1), ms(2), ms(3), ms(4), ms(5), ms(6)));
-    emit(sink, 160, format_args!("Reader index io: members={} spine={} work_written={} work_read={} work_removed={}\n",
-        p.index[8].get(), p.index[9].get(), p.index[11].get(), p.index[12].get(), p.index[10].get()));
-}
-
-#[cfg(test)]
-mod tests {
-    extern crate std;
-    use super::*;
-    use crate::admission::{WorkEvent, WorkKind};
-    #[test]
-    fn index_rows_require_a_result_including_for_a_hit() {
-        #[derive(Default)]
-        struct Sink(std::vec::Vec<u8>);
-        impl TraceSink for Sink {
-            fn available_for_write(&mut self) -> i32 { 4096 }
-            fn write(&mut self, bytes: &[u8]) -> usize {
-                self.0.extend_from_slice(bytes); bytes.len()
-            }
-        }
-        let p = ReaderWorkProfile::default();
-        let mut sink = Sink::default();
-        trace_reader_details(&mut sink, &p, true);
-        assert!(!std::str::from_utf8(&sink.0).unwrap().contains("Reader index"));
-        p.event(&WorkEvent::new(WorkKind::IndexStage, 1), 10, 0);
-        sink.0.clear();
-        trace_reader_details(&mut sink, &p, true);
-        assert!(!std::str::from_utf8(&sink.0).unwrap().contains("Reader index"));
-        p.event(&WorkEvent::new(WorkKind::IndexResult, 0), 20, 0);
-        sink.0.clear();
-        trace_reader_details(&mut sink, &p, true);
-        let rows = std::str::from_utf8(&sink.0).unwrap();
-        assert!(rows.contains("Reader index: outcome=0 "));
-        assert!(rows.contains("Reader index io: "));
-    }
 }

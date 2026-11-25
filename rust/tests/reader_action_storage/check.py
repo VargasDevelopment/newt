@@ -81,19 +81,21 @@ def main():
     run([*command, positive, '-o', out / 'positive'])
     result = run([out / 'positive'])
     assert result.stdout.startswith('PASS whole actual operate_image:')
-    operation = ROOT / 'rust/firmware/reader_image_operation.rs'
-    source = operation.read_text()
+    sources = ROOT / 'rust/firmware/reader_image_sources.rs'
+    source = sources.read_text()
     before = 'session::with_source_lent(state, RevisionPorts'
-    after = '}, action_storage, |revision| {'
+    after = '}, action_storage,\n'
     assert source.count(before) == 1 and source.count(after) == 1
-    compact = source.replace(before, 'session::with_source(state, RevisionPorts').replace(after, '}, |revision| {')
-    replacement = out / 'compact-operation.rs'
-    replacement.write_text(paths(compact, operation.parent))
+    compact = source.replace(before, 'session::with_source(state, RevisionPorts').replace(after, '},\n')
+    replacement = out / 'compact-sources.rs'
+    replacement.write_text(paths(compact, sources.parent))
     control = out / 'compact-host.rs'
-    control.write_text(paths(fixture, HERE, {operation: replacement}))
+    control.write_text(paths(fixture, HERE, {sources: replacement}))
     run([*command, control, '-o', out / 'compact-control'])
     rejected = run([out / 'compact-control'], succeeds=False)
     assert rejected.returncode == 101 and 'real operate_image must lend whole-block action scratch exactly once' in rejected.stderr, rejected.stderr
+    operation = ROOT / 'rust/firmware/reader_image_operation.rs'
+    source = operation.read_text()
     always = source.replace('let action_storage = if initialize || paint_first',
                             'let action_storage = if true || initialize || paint_first', 1)
     assert always != source

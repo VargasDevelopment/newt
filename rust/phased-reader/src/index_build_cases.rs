@@ -129,9 +129,15 @@ fn spilled_build_is_deferred_and_removes_work_without_publication() {
 #[test]
 fn card_failure_leaves_no_work_or_published_index() {
     let mut card = Card { fail: true, ..Card::default() };
-    attempt(&mut card, 1, &mut zip(), None);
+    let mut shared = Box::new([0; crate::phase_storage::BANK_BYTES]);
+    let mut storage = Storage::new(&mut shared);
+    let mut loan = Loan(vec![0; crate::phase_storage::BANK_BYTES + 15]);
+    let result = open(&mut zip(), &[7;32], &mut storage, &mut loan,
+        &mut Parser { items: 1 }, &mut card, None, Verification::Verified);
+    assert!(matches!(result, Err(Status::IoError)));
     assert!(card.removed && card.work.is_empty() && card.file.is_empty());
 }
+
 #[test]
 fn cancelled_build_removes_work_and_never_publishes() {
     struct Cancel { spilled: std::rc::Rc<Cell<bool>>, cancelled: std::rc::Rc<Cell<bool>> }
@@ -186,7 +192,7 @@ fn pending_miss_finishes_once_before_build_and_hit_leaves_verification_alone() {
     let mut finish = |raw: &mut dyn BookSource, scratch: &mut [u8]| {
         finishes.set(finishes.get() + 1);
         assert!(!scratch.is_empty());
-        raw.read_at(0, &mut []) == 0
+        if raw.read_at(0, &mut []) == 0 { Ok(()) } else { Err(Status::IoError) }
     };
     let token = open(&mut source, &[7;32], &mut storage, &mut loan,
         &mut Parser { items: 1 }, &mut card, None, Verification::Pending(&mut finish)).unwrap();
@@ -208,8 +214,8 @@ fn failed_verification_never_enters_the_builder_or_mints_a_token() {
     let mut storage = Storage::new(&mut shared);
     let mut loan = Loan(vec![0; crate::phase_storage::BANK_BYTES + 15]);
     let result = open(&mut zip(), &[7;32], &mut storage, &mut loan,
-        &mut Parser { items: 1 }, &mut card, None, Verification::Pending(&mut |_, _| false));
-    assert!(matches!(result, Err(Status::Stale)));
+        &mut Parser { items: 1 }, &mut card, None, Verification::Pending(&mut |_, _| Err(Status::IoError)));
+    assert!(matches!(result, Err(Status::IoError)));
     assert_eq!((card.census, card.creates, card.writes), (0, 0, 0));
     assert!(card.file.is_empty() && card.work.is_empty());
 }

@@ -4,8 +4,7 @@ use super::{millis, selected, session};
 use crate::{reader_book::{self, BookFailure}, reader_hash::{MbedHasher, PackageHasher},
     reader_pages::ReaderPages, reader_verification::ReaderVerification, sd_revision::SdRevisionStorage};
 use newt_core::zip_window::source::BookSource;
-use newt_native_io::OsNative;
-use newt_native_storage::{Authority, RouteState, chapter_cache::{ChapterCacheStorage, ChapterCacheState}};
+use newt_native_storage::{Authority, Native, page_entries::PageEntries, RouteState, chapter_cache::{ChapterCacheStorage, ChapterCacheState}};
 use newt_phased_reader::imported_revision::RevisionPorts;
 use newt_reader_ui::ReaderSource;
 
@@ -14,12 +13,12 @@ pub(super) enum Source<'loan, 'source> {
     Session(&'loan mut ReaderSource<'source>, &'loan mut ReaderVerification<MbedHasher>),
 }
 
-pub(super) fn with_sources<'io, R>(context: Option<&mut session::Session>,
+pub(super) fn with_sources<R, N: Native + PageEntries>(context: Option<&mut session::Session>,
     selected: &mut selected::SelectedSource, filename: &str,
-    source_native: &mut OsNative<'io>, receipt_native: &mut OsNative<'io>, pages_native: &mut OsNative<'io>,
+    source_native: &mut N, receipt_native: &mut N, pages_native: &mut N,
     cancel: &dyn Authority, observer: Option<&dyn selected::FileObserver>, yielded: &dyn Fn(),
     action_storage: Option<&mut [u8]>,
-    operation: impl FnOnce(&mut ReaderPages<'_, OsNative<'io>>, Source<'_, '_>) -> Result<R, BookFailure>,
+    operation: impl FnOnce(&mut ReaderPages<'_, N>, Source<'_, '_>) -> Result<R, BookFailure>,
 ) -> Result<R, BookFailure> {
     let Some(context) = context else {
         let mut key = [0; 64];

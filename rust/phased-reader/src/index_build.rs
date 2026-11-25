@@ -15,6 +15,11 @@ pub trait Store: WorkFile + CacheStorage {
 
 /// Proof that this attempt found or published an index for the full digest.
 /// Only a successful index pass can construct it.
+///
+/// ```compile_fail
+/// use newt_phased_reader::index_build::Indexed;
+/// let _ = Indexed { digest: [0; 32], verified_now: true };
+/// ```
 #[derive(Debug)]
 pub struct Indexed { digest: [u8; 32], verified_now: bool }
 impl Indexed {
@@ -26,7 +31,7 @@ impl Indexed {
 /// the builder sees any bytes; scratch comes from the existing parse loan.
 pub enum Verification<'a> {
     Verified,
-    Pending(&'a mut dyn FnMut(&mut dyn BookSource, &mut [u8]) -> bool),
+    Pending(&'a mut dyn FnMut(&mut dyn BookSource, &mut [u8]) -> Result<(), Status>),
 }
 
 // Additional live adapter state is bounded independently of B2's 2,304-byte
@@ -44,10 +49,9 @@ pub fn open<B: ParserBackend + ?Sized, C: ReadScope + CachePresence>(
         Err(status) => { result(hook, 3, status, true); return Err(status); }
     };
     let verified_now = if let Verification::Pending(finish) = verification {
-        let verified = lender.with_parse(|scratch| finish(source, scratch))?;
-        if !verified {
-            result(hook, 3, Status::Stale, true);
-            return Err(Status::Stale);
+        if let Err(status) = lender.with_parse(|scratch| finish(source, scratch)).and_then(|result| result) {
+            result(hook, 3, status, true);
+            return Err(status);
         }
         true
     } else { false };

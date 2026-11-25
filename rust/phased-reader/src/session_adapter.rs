@@ -191,7 +191,6 @@ pub struct OperationCache<'op, 'mem, C> {
 impl<B: ParserBackend + ?Sized, C: CacheStorage + CachePresence>
     session::Cache<OperationReader<'_, '_, '_, '_, '_, '_, B>> for OperationCache<'_, '_, C>
 {
-    fn index(&mut self, _: &mut dyn BookSource, _: &Digest, _: &mut OperationReader<'_, '_, '_, '_, '_, '_, B>) {}
     fn build(
         &mut self,
         source: &mut dyn BookSource,

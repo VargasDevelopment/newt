@@ -8,6 +8,8 @@ use crate::zip_container::Status;
 
 #[path = "reader_work_profile/counters.rs"]
 mod counters;
+mod index;
+pub use index::IndexProfile;
 #[path = "reader_work_profile/rows.rs"]
 pub(crate) mod rows;
 #[path = "reader_work_profile/scalar.rs"]
@@ -38,9 +40,6 @@ enum Operation {
 /// it has no retained pointer, second diagnostic owner, lock or heap backing.
 #[repr(C)]
 pub struct ReaderWorkProfile {
-    index: [Scalar<u32>; 13],
-    index_stage: Scalar<u8>,
-    index_started: Scalar<u32>,
     phases: [Counters; 3],
     io: [IoCounters; 5],
     admission: [Timing; 3],
@@ -61,9 +60,6 @@ pub struct ReaderWorkProfile {
 impl Default for ReaderWorkProfile {
     fn default() -> Self {
         Self {
-            index: core::array::from_fn(|i| Scalar::new(if i == 0 { u32::MAX } else { 0 })),
-            index_stage: Scalar::new(0),
-            index_started: Scalar::new(0),
             phases: core::array::from_fn(|_| Counters::default()),
             io: core::array::from_fn(|_| IoCounters::default()),
             admission: core::array::from_fn(|_| Timing::default()),
@@ -150,35 +146,7 @@ impl ReaderWorkProfile {
 
     pub fn event(&self, event: &WorkEvent, us: u32, ms: u32) {
         match event.kind {
-            WorkKind::IndexStage => {
-                let next = event.result as u8;
-                if next != self.index_stage.get() {
-                    let previous = usize::from(self.index_stage.get());
-                    if (1..=6).contains(&previous) {
-                        self.index[previous].set(self.index[previous].get().saturating_add(us.wrapping_sub(self.index_started.get())));
-                    }
-                    self.index_stage.set(next);
-                    self.index_started.set(us);
-                }
-            }
-            WorkKind::IndexResult => {
-                let previous = usize::from(self.index_stage.get());
-                if (1..=6).contains(&previous) {
-                    self.index[previous].set(self.index[previous].get().saturating_add(us.wrapping_sub(self.index_started.get())));
-                }
-                self.index_stage.set(0);
-                self.index[0].set(event.result as u32);
-                self.index[7].set(event.compressed_bytes);
-                self.index[10].set(u32::from(event.method));
-            }
-            WorkKind::IndexIo => {
-                self.index[11].set(self.index[11].get().saturating_add(event.compressed_bytes));
-                self.index[12].set(self.index[12].get().saturating_add(event.expanded_bytes));
-            }
-            WorkKind::IndexCounts => {
-                self.index[8].set(event.compressed_bytes);
-                self.index[9].set(event.expanded_bytes);
-            }
+            WorkKind::IndexStage | WorkKind::IndexResult | WorkKind::IndexIo | WorkKind::IndexCounts => {},
             WorkKind::ActionBoundary | WorkKind::OpenRoute | WorkKind::CacheMiss => {},
             WorkKind::Phase => self.phase(event.phase, ms),
             WorkKind::InspectBegin => self.begin_stage(0, Operation::Inspect, us),
@@ -309,4 +277,4 @@ impl ReaderWorkProfile {
     }
 }
 
-const _: () = assert!(core::mem::size_of::<ReaderWorkProfile>() == 496);
+const _: () = assert!(core::mem::size_of::<ReaderWorkProfile>() == 436);
