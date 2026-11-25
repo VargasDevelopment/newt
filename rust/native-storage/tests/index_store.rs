@@ -8,120 +8,20 @@ pub use newt_native_storage::*;
 mod model;
 
 use chapter_cache::{ChapterCacheState, ChapterCacheStorage};
-use model::{Effect, Fault, Model, Op};
+use model::{Effect, Fault, Op};
 use newt_core::book_index::{self, Header, Identity, Member, Reader, SpineItem, WriteError, Writer, NONE, TITLE_BYTES};
 use newt_core::phased_metadata::BookLanguage;
 use newt_core::page_cache::CacheStorage;
 use newt_core::page_cache_access::VerifiedAccess;
 use newt_core::page_envelope::VerifiedStore;
-use std::collections::BTreeMap;
 
 const ROOT: &str = "/sd/Cache";
 const KEY: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const BOOK: Identity = Identity { digest: [0xa5; 32], policy: 1 };
 
-/// The FAT model plus what it lacks: file times for eviction order, a count
-/// of open files for the card's small descriptor budget, and a power cut that
-/// stops the card, so no cleanup runs between the cut and the next boot.
-#[derive(Default)]
-struct Card {
-    model: Model,
-    times: BTreeMap<String, i64>,
-    open: u32,
-    most_open: u32,
-    creates: u32,
-    cstr_opens: u32,
-    stats: u32,
-    fstats: u32,
-    writes: u32,
-    armed: bool,
-    off: bool,
-}
-impl Card {
-    fn live<T>(&mut self, op: impl FnOnce(&mut Model) -> Result<T>) -> Result<T> {
-        if self.off {
-            return Err(Error::Unavailable);
-        }
-        let result = op(&mut self.model);
-        self.off = self.armed && self.model.cut_after.is_none();
-        result
-    }
-    /// Cut power `steps` card operations from now.
-    fn cut_in(&mut self, steps: u32) {
-        self.model.cut_after = Some(self.model.steps + steps);
-        self.armed = true;
-    }
-    /// Boot again on what was durable at the cut.
-    fn boot(&mut self) {
-        (self.armed, self.off, self.open) = (false, false, 0);
-        self.model.power();
-    }
-}
-impl Native for Card {
-    fn open_cstr(&mut self, path: &core::ffi::CStr, mode: Open) -> Result<i32> {
-        self.cstr_opens += 1;
-        self.open(path.to_str().map_err(|_| Error::Other)?, mode)
-    }
-    fn open(&mut self, path: &str, mode: Open) -> Result<i32> {
-        if matches!(mode, Open::CreateExclusive) { self.creates += 1; }
-        let fd = self.live(|m| m.open(path, mode))?;
-        self.open += 1;
-        self.most_open = self.most_open.max(self.open);
-        Ok(fd)
-    }
-    fn close(&mut self, fd: i32) -> Result<()> {
-        self.live(|m| m.close(fd))?;
-        self.open -= 1;
-        Ok(())
-    }
-    fn read(&mut self, fd: i32, out: &mut [u8]) -> Result<usize> { self.live(|m| m.read(fd, out)) }
-    fn write(&mut self, fd: i32, input: &[u8]) -> Result<usize> { self.writes += 1; self.live(|m| m.write(fd, input)) }
-    fn seek(&mut self, fd: i32, offset: u32) -> Result<u64> { self.live(|m| m.seek(fd, offset)) }
-    fn truncate(&mut self, fd: i32, bytes: u32) -> Result<()> { self.live(|m| m.truncate(fd, bytes)) }
-    fn sync(&mut self, fd: i32) -> Result<()> { self.live(|m| m.sync(fd)) }
-    fn fstat(&mut self, fd: i32) -> Result<Stat> { self.fstats += 1; self.live(|m| m.fstat(fd)) }
-    fn stat(&mut self, path: &str, no_follow: bool) -> Result<Stat> {
-        self.stats += 1;
-        let mut stat = self.live(|m| m.stat(path, no_follow))?;
-        stat.seconds = self.times.get(path).copied().unwrap_or_default();
-        Ok(stat)
-    }
-    fn mkdir(&mut self, path: &str) -> Result<()> { self.live(|m| m.mkdir(path)) }
-    fn unlink(&mut self, path: &str) -> Result<()> { self.live(|m| m.unlink(path)) }
-    fn rename(&mut self, from: &str, to: &str) -> Result<()> { self.live(|m| m.rename(from, to)) }
-    fn next_nonce(&mut self) -> u32 { self.model.next_nonce() }
-}
-impl Directory for Card {
-    type Listing = u32;
-    fn open_dir(&mut self, path: &str) -> Result<u32> { self.live(|m| m.open_dir(path)) }
-    fn read_dir(&mut self, listing: &mut u32, name: &mut [u8]) -> Result<Option<usize>> {
-        self.live(|m| m.read_dir(listing, name))
-    }
-    fn close_dir(&mut self, listing: u32) -> Result<()> { self.live(|m| m.close_dir(listing)) }
-}
-impl page_entries::PageEntries for Card {
-    fn walk_entries(&mut self, folder: &core::ffi::CStr, sized: bool,
-        visit: &mut dyn FnMut(&mut Self, page_entries::PageEntry<'_>) -> bool,
-    ) -> bool { page_entries::walk_directory(self, folder, sized, visit) }
-}
-impl Card {
-    fn new() -> Self {
-        let mut card = Self::default();
-        card.model.dirs.extend(["/sd".into(), ROOT.into()]);
-        card
-    }
-    /// Files in Cache/Index, by leaf name.
-    fn indexes(&self) -> Vec<String> {
-        let folder = format!("{ROOT}/Index/");
-        self.model.files.keys().filter_map(|p| p.strip_prefix(&folder)).map(String::from).collect()
-    }
-    fn seed(&mut self, leaf: &str, bytes: usize, time: i64) {
-        let path = format!("{ROOT}/Index/{leaf}");
-        self.model.dirs.insert(format!("{ROOT}/Index"));
-        self.model.files.insert(path.clone(), model::File { durable: vec![0; bytes], readable: vec![0; bytes] });
-        self.times.insert(path, time);
-    }
-}
+#[path = "index_store/card.rs"]
+mod card;
+use card::Card;
 
 struct Never;
 impl Authority for Never {
@@ -226,7 +126,6 @@ fn complete(s: &mut dyn CacheStorage, reader: &Reader) -> bool {
 fn an_index_round_trips_with_one_open_file() {
     let mut card = Card::new();
     with_store(&mut card, |store| write(store, BOOK)).unwrap();
-    println!("INDEX PUBLISH stats={} fstats={} writes={}", card.stats, card.fstats, card.writes);
     assert_eq!(card.indexes(), [leaf(&BOOK.digest)]);
     assert_eq!(with_store(&mut card, |store| read(store, &BOOK, complete)), Some(true));
     assert_eq!((card.open, card.most_open), (0, 1));
@@ -335,7 +234,7 @@ fn the_census_evicts_the_oldest_unpinned_index_and_keeps_the_open_one() {
 fn a_rebuilt_index_and_its_backup_stay_evictable() {
     const MIB: usize = 1024 * 1024;
     let mut card = Card::new();
-    // A rebuild keeps the old copy as `.bak`, both written at time 0.
+    // A rebuild keeps the old copy as `.bak`, both written at time 1.
     with_store(&mut card, |store| write(store, BOOK)).unwrap();
     with_store(&mut card, |store| write(store, Identity { policy: 2, ..BOOK })).unwrap();
     let book = leaf(&BOOK.digest);
@@ -495,4 +394,19 @@ fn work_lend_creates_parent_and_spill_borrows_terminated_path() {
     });
     assert_eq!((card.creates, card.cstr_opens), (1, 1));
     assert!(card.indexes().is_empty());
+}
+
+#[test]
+fn index_publication_uses_the_fat_path_timestamp() {
+    let mut card = Card::new();
+    with_store(&mut card, |store| write(store, BOOK)).unwrap();
+    let path = format!("{ROOT}/Index/{}", leaf(&BOOK.digest));
+    let fd = card.open(&path, Open::ReadNonblock).unwrap();
+    let descriptor = card.fstat(fd).unwrap();
+    let named = card.stat(&path, false).unwrap();
+    assert_eq!((descriptor.seconds, descriptor.nanos), (0, 0));
+    assert_ne!((named.seconds, named.nanos), (0, 0));
+    card.close(fd).unwrap();
+    assert_eq!(with_store(&mut card, |store| read(store, &BOOK, complete)), Some(true));
+    assert_eq!(card.open, 0);
 }

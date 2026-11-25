@@ -253,15 +253,10 @@ impl<S: Native> Operation<'_, '_, S> {
             self.port.state.invalid = true;
             return false;
         }
-        // Index sync snapshots the held temporary. The following stable check
-        // still compares its path and descriptor before publication.
-        let descriptor_snapshot = exact && newt_core::cache_names::namespace::envelope_kind(
-            self.suffix().as_bytes()) == Some(newt_core::cache_names::namespace::Kind::Index);
-        let p = if descriptor_snapshot { d } else {
-            let Ok(p) = self.io(|s| s.stat(path, false)) else {
-                return self.settle(false);
-            };
-            p
+        // FAT fstat has no directory-entry time. Freshness must use the
+        // path timestamp here, as it does in stable().
+        let Ok(p) = self.io(|s| s.stat(path, false)) else {
+            return self.settle(false);
         };
         if p.kind != Kind::Regular || p.size != d.size || !self.allowed() {
             return self.settle(false);
