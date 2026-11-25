@@ -7,6 +7,10 @@ pub trait CacheStorage {
     fn file_size(&mut self, name: &[u8]) -> i64;
     fn read_at(&mut self, name: &[u8], offset: u32, dst: &mut [u8]) -> i32;
     fn begin_write(&mut self, name: &[u8]) -> bool;
+    /// Exact payload size, when known before the first write. Stores may reserve it.
+    fn begin_write_sized(&mut self, name: &[u8], _payload: u32) -> bool {
+        self.begin_write(name)
+    }
     fn write(&mut self, bytes: &[u8]) -> bool;
     fn end_write(&mut self) -> bool;
     /// Native stores lend this check to the final destination-safety boundary.

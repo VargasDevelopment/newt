@@ -102,6 +102,10 @@ impl<N: Native> CacheStorage for IndexBuildStore<'_, '_, N> {
         self.work.publish_position = None;
         self.cache.access().begin_write(name)
     }
+    fn begin_write_sized(&mut self, name: &[u8], payload: u32) -> bool {
+        self.work.publish_position = None;
+        self.cache.access().begin_index_write(name, payload)
+    }
     fn write(&mut self, bytes: &[u8]) -> bool {
         self.cache.access().write_indexed(bytes, &mut self.work.publish_position)
     }

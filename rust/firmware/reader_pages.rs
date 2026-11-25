@@ -125,6 +125,9 @@ impl<N: Native> CacheStorage for ReaderIndex<'_, '_, N> {
     fn file_size(&mut self, name: &[u8]) -> i64 { self.0.file_size(name) }
     fn read_at(&mut self, name: &[u8], at: u32, out: &mut [u8]) -> i32 { CacheStorage::read_at(&mut self.0, name, at, out) }
     fn begin_write(&mut self, name: &[u8]) -> bool { self.0.begin_write(name) }
+    fn begin_write_sized(&mut self, name: &[u8], payload: u32) -> bool {
+        self.0.begin_write_sized(name, payload)
+    }
     fn write(&mut self, bytes: &[u8]) -> bool { self.0.write(bytes) }
     fn end_write(&mut self) -> bool { self.0.end_write() }
     fn end_write_checked(&mut self, live: &mut dyn FnMut() -> bool) -> bool { self.0.end_write_checked(live) }

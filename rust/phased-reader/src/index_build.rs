@@ -195,6 +195,9 @@ impl CacheStorage for ObservedStore<'_, '_> {
     fn file_size(&mut self, name: &[u8]) -> i64 { self.inner.file_size(name) }
     fn read_at(&mut self, name: &[u8], at: u32, out: &mut [u8]) -> i32 { CacheStorage::read_at(self.inner, name, at, out) }
     fn begin_write(&mut self, name: &[u8]) -> bool { self.inner.begin_write(name) }
+    fn begin_write_sized(&mut self, name: &[u8], payload: u32) -> bool {
+        self.inner.begin_write_sized(name, payload)
+    }
     fn write(&mut self, bytes: &[u8]) -> bool { self.inner.write(bytes) }
     fn end_write(&mut self) -> bool { self.inner.end_write() }
     fn end_write_checked(&mut self, live: &mut dyn FnMut() -> bool) -> bool {

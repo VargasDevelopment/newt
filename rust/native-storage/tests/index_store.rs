@@ -504,16 +504,30 @@ fn consumed_block_damage_can_revoke_both_index_copies_across_cold_boot() {
     with_store(&mut card, |store| assert!(read(store, &BOOK, |_, _| ()).is_none()));
 }
 
+/// Drop only the reservation hint to measure allocation independently of batching.
+struct Unsized<'a, S: ?Sized>(&'a mut S);
+impl<S: CacheStorage + ?Sized> CacheStorage for Unsized<'_, S> {
+    fn remove(&mut self, name: &[u8]) -> bool { self.0.remove(name) }
+    fn file_size(&mut self, name: &[u8]) -> i64 { self.0.file_size(name) }
+    fn read_at(&mut self, name: &[u8], offset: u32, dst: &mut [u8]) -> i32 { self.0.read_at(name, offset, dst) }
+    fn begin_write(&mut self, name: &[u8]) -> bool { self.0.begin_write(name) }
+    fn write(&mut self, bytes: &[u8]) -> bool { self.0.write(bytes) }
+    fn end_write(&mut self) -> bool { self.0.end_write() }
+    fn end_write_checked(&mut self, live: &mut dyn FnMut() -> bool) -> bool { self.0.end_write_checked(live) }
+    fn read_back_at(&mut self, offset: u32, dst: &mut [u8]) -> i32 { self.0.read_back_at(offset, dst) }
+}
+
 #[test]
 fn publish_uses_larger_sequential_writes_without_changing_the_envelope() {
     let mut snapshots = Vec::new();
     let mut measurements = Vec::new();
-    for sequential in [false, true] {
+    for mode in 0..3 {
         let mut card = Card::default();
         with_store(&mut card, |cache| {
             let mut work = chapter_cache::IndexWorkState::new();
             let mut index = chapter_cache::IndexBuildStore::lend(cache, &mut work, &BOOK.digest).unwrap();
-            if sequential { write_records(&mut index, BOOK, &mut [0; 4096]).unwrap(); }
+            if mode == 2 { write_records(&mut index, BOOK, &mut [0; 4096]).unwrap(); }
+            else if mode == 1 { write_records(&mut Unsized(&mut index), BOOK, &mut [0; 4096]).unwrap(); }
             else {
                 drop(index);
                 write_records(&mut cache.access(), BOOK, &mut [0; 4096]).unwrap();
@@ -525,8 +539,36 @@ fn publish_uses_larger_sequential_writes_without_changing_the_envelope() {
         snapshots.push(card.model.files[&format!("{ROOT}/Index/{}", leaf(&BOOK.digest))].durable.clone());
     }
     assert_eq!(snapshots[0], snapshots[1]);
+    assert_eq!(snapshots[1], snapshots[2]);
     assert!(measurements[1].0 < measurements[0].0);
     assert!(measurements[1].1 < measurements[0].1);
     assert_eq!(measurements[1].2, measurements[0].2);
-    println!("INDEX IO legacy={:?} sequential={:?} (writes,seeks,path_lookups,extent_growth_calls)", measurements[0], measurements[1]);
+    assert_eq!(measurements[2].3, 1, "one allocation reserves the entire envelope");
+    assert!(measurements[2].3 < measurements[1].3);
+    assert_eq!(measurements[2].0, measurements[1].0);
+    assert_eq!(measurements[2].1, measurements[1].1);
+    assert_eq!(measurements[2].2, measurements[1].2);
+    println!("INDEX IO legacy={:?} sequential={:?} reserved={:?} (writes,seeks,path_lookups,extent_growth_calls)", measurements[0], measurements[1], measurements[2]);
+}
+
+#[test]
+fn reserved_index_retries_short_io_and_refuses_failed_allocation() {
+    for (op, effect, copies, success) in [
+        (Op::Write, Effect::Short(37), 1, true),
+        (Op::Write, Effect::Errno("EINTR"), 1, true),
+        (Op::Write, Effect::Errno("EINTR"), 4, false),
+        (Op::Write, Effect::Short(0), 1, false),
+        (Op::Truncate, Effect::Errno("ENOSPC"), 1, false),
+    ] {
+        let mut card = Card::default();
+        card.model.faults.push(Fault::new(op, 1, copies, effect, 0));
+        let result = with_store(&mut card, |cache| {
+            let mut work = chapter_cache::IndexWorkState::new();
+            let mut index = chapter_cache::IndexBuildStore::lend(cache, &mut work, &BOOK.digest).unwrap();
+            write_records(&mut index, BOOK, &mut [0; 4096])
+        });
+        assert_eq!(result.is_ok(), success, "{op:?} {effect:?} x{copies}");
+        card.boot();
+        assert_eq!(with_store(&mut card, |store| read(store, &BOOK, complete)), success.then_some(true));
+    }
 }

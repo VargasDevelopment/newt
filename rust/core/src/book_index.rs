@@ -309,7 +309,7 @@ impl<'b> Writer<'b> {
             return Err(WriteError::Invalid);
         }
         let file=*FileName::new(&header.identity.digest,FileKind::Index).as_bytes();
-        if !s.begin_write(&file) {
+        if !s.begin_write_sized(&file, payload) {
             return Err(WriteError::Storage);
         }
         buffer[..bytes.len()].copy_from_slice(&bytes);
