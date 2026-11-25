@@ -4,6 +4,8 @@ pub enum Kind {
     #[default]
     Unknown,
     Page,
+    /// A book index (`.fibx`): block envelope like a page, in its own folder.
+    Index,
     Semantic,
     Progress,
     Identity,
@@ -48,8 +50,8 @@ impl PageName {
             return Self::default();
         }
         let suffix = &text[65..bytes];
-        result.kind = if suffix.len() == 69 && hex(&suffix[..64]) && &suffix[64..] == b".fibp" {
-            Kind::Page
+        result.kind = if let Some(kind) = envelope_kind(suffix) {
+            kind
         } else if suffix.len() == 72
             && &suffix[..3] == b"pe-"
             && hex(&suffix[3..67])
@@ -84,11 +86,24 @@ pub fn add(total: &mut u64, bytes: u64) -> bool {
     *total = next;
     true
 }
+/// Block-envelope suffixes: 64 hex route bytes, then `.fibp` or `.fibx`.
+pub fn envelope_kind(suffix: &[u8]) -> Option<Kind> {
+    if suffix.len() != 69 || !hex(&suffix[..64]) {
+        return None;
+    }
+    match &suffix[64..] {
+        b".fibp" => Some(Kind::Page),
+        b".fibx" => Some(Kind::Index),
+        _ => None,
+    }
+}
+/// None is the writer's default folder (Pages).
 pub fn cache_folder(suffix: Option<&[u8]>) -> Option<&'static str> {
-    let page = suffix
-        .map(cstr)
-        .is_some_and(|s| s.len() == 69 && hex(&s[..64]) && &s[64..] == b".fibp");
-    if page { None } else { Some("Meta") }
+    match suffix.map(cstr).and_then(envelope_kind) {
+        Some(Kind::Page) => None,
+        Some(_) => Some("Index"),
+        None => Some("Meta"),
+    }
 }
 pub const PAGE_QUOTA: u64 = 32 * 1024 * 1024;
 pub const PAGE_CANDIDATE: u32 = crate::page_envelope::MAX_EXTENT;
@@ -98,6 +113,9 @@ pub const PAGE_ENTRY_CAP: u32 = 128;
 pub const PAGE_ENTRY_RESERVE: u32 = 8;
 pub const PAGE_ENTRY_GRANT: u8 = (PAGE_ENTRY_CAP - PAGE_ENTRY_RESERVE) as u8;
 pub const PAGE_SEGMENT_BATCH: u8 = 4;
+/// Book indexes have their own LRU quota, outside Pages: losing one costs a
+/// rebuild, so orphans of deleted books age out under pressure.
+pub const INDEX_QUOTA: u64 = 16 * 1024 * 1024;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PageNameSet {
     words: [u32; 8],
