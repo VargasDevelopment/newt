@@ -7,6 +7,7 @@ mod menu;
 mod identity;
 pub use identity::resolve_identity;
 pub mod metadata;
+pub mod index_mapping;
 pub mod probe;
 pub use menu::{MenuInfo, MenuRow};
 use newt_core::{utf8, zip_container::hash_path};
@@ -95,6 +96,13 @@ pub trait BookView {
     fn toc_count(&self) -> usize;
     fn toc_entry(&self, index: usize) -> Option<Declaration<'_>>;
     fn member(&self, href: &[u8]) -> Option<Member>;
+    /// Index-backed views can map all declarations in one member-table walk.
+    /// The default preserves the parser oracle's per-row rule.
+    fn declared_spines(&self, mapping: &mut [u32]) {
+        for (row, mapped) in mapping.iter_mut().enumerate() {
+            *mapped = declared_spine(self, row);
+        }
+    }
     /// Field access avoids resolving unrelated arena strings on lookup paths.
     fn toc_title(&self, index: usize) -> Option<&[u8]> {
         self.toc_entry(index).map(|entry| entry.title)
@@ -246,14 +254,14 @@ fn title_prefix(text: &[u8]) -> usize {
     }
     complete
 }
-pub fn usable_entry(book: &impl BookView, toc: usize) -> bool {
+pub fn usable_entry(book: &(impl BookView + ?Sized), toc: usize) -> bool {
     toc < book.toc_count()
         && toc < usize::from(NO_TOC)
         && book
             .toc_title(toc)
             .is_some_and(|title| title_prefix(title) != 0)
 }
-pub fn readable_spine(book: &impl BookView, href: &[u8]) -> u32 {
+pub fn readable_spine(book: &(impl BookView + ?Sized), href: &[u8]) -> u32 {
     let href = Href::new(href);
     if href.as_bytes().is_empty() {
         return NO_SPINE;
@@ -276,7 +284,7 @@ pub fn readable_spine(book: &impl BookView, href: &[u8]) -> u32 {
     }
     found
 }
-pub fn declared_spine(book: &impl BookView, toc: usize) -> u32 {
+pub fn declared_spine(book: &(impl BookView + ?Sized), toc: usize) -> u32 {
     if !usable_entry(book, toc) {
         return NO_SPINE;
     }
