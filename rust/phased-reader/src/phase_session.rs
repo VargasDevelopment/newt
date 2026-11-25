@@ -93,8 +93,8 @@ impl<B: ParserBackend + ?Sized, L: BuildLoan, C: ReadScope + CachePresence>
     #[inline(never)]
     fn index(&mut self, source: &mut dyn BookSource, digest: &Digest,
         r: &mut OperationPhased<'_, '_, '_, '_, B, L>) {
-        crate::index_build::open(source, digest, r.storage, r.lender, r.backend,
-            self.store, r.reader.on_yield);
+        let _ = crate::index_build::open(source, digest, r.storage, r.lender, r.backend,
+            self.store, r.reader.on_yield, crate::index_build::Verification::Verified);
     }
 
     fn stored(

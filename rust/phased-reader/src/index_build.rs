@@ -1,4 +1,4 @@
-//! Best-effort first-open index construction; reading still uses canonical metadata.
+//! One checked index pass before reader opening.
 #![forbid(unsafe_code)]
 use newt_core::{admission::{self, Yield}, book_index::{self, Identity},
     book_index_build::WorkFile, page_cache::CacheStorage, xml_session::ParserBackend,
@@ -13,21 +13,46 @@ pub trait Store: WorkFile + CacheStorage {
     fn release_pages(&mut self) -> bool;
 }
 
+/// Proof that this attempt found or published an index for the full digest.
+/// Only a successful index pass can construct it.
+#[derive(Debug)]
+pub struct Indexed { digest: [u8; 32], verified_now: bool }
+impl Indexed {
+    pub fn digest(&self) -> &[u8; 32] { &self.digest }
+    pub fn verified_now(&self) -> bool { self.verified_now }
+}
+
+/// A hit needs no full-source hash. A miss must finish verification before
+/// the builder sees any bytes; scratch comes from the existing parse loan.
+pub enum Verification<'a> {
+    Verified,
+    Pending(&'a mut dyn FnMut(&mut dyn BookSource, &mut [u8]) -> bool),
+}
+
 // Additional live adapter state is bounded independently of B2's 2,304-byte
 // builder budget; the 32 KiB run and 7,552-byte join state stay in the banks.
 const _: () = assert!(core::mem::size_of::<ObservedStore<'static, 'static>>() <= 40);
 pub fn open<B: ParserBackend + ?Sized, C: ReadScope + CachePresence>(
     source: &mut dyn BookSource, digest: &[u8; 32],
     storage: &mut Storage<'_>, lender: &mut impl BuildLoan, backend: &mut B,
-    store: &mut C, hook: Yield<'_>) {
+    store: &mut C, hook: Yield<'_>, verification: Verification<'_>) -> Result<Indexed, Status> {
     let identity = Identity { digest: *digest, policy: admission::POLICY_VERSION };
     stage(hook, 0);
     let existed = match probe(source, &identity, lender, store, hook) {
-        Ok((true, _)) => { result(hook, 0, Status::Ok, true); return; }
+        Ok((true, _)) => { result(hook, 0, Status::Ok, true); return Ok(Indexed { digest: *digest, verified_now: false }); }
         Ok((false, existed)) => existed,
-        Err(status) => { result(hook, 3, status, true); return; }
+        Err(status) => { result(hook, 3, status, true); return Err(status); }
     };
-    attempt(source, digest, identity, storage, lender, backend, store, hook, existed);
+    let verified_now = if let Verification::Pending(finish) = verification {
+        let verified = lender.with_parse(|scratch| finish(source, scratch))?;
+        if !verified {
+            result(hook, 3, Status::Stale, true);
+            return Err(Status::Stale);
+        }
+        true
+    } else { false };
+    attempt(source, digest, identity, storage, lender, backend, store, hook, existed)?;
+    Ok(Indexed { digest: *digest, verified_now })
 }
 
 // Out of line so the work state and the build's frames are not on the stack
@@ -35,12 +60,13 @@ pub fn open<B: ParserBackend + ?Sized, C: ReadScope + CachePresence>(
 #[inline(never)]
 fn attempt<B: ParserBackend + ?Sized, C: CachePresence>(source: &mut dyn BookSource, digest: &[u8; 32],
     identity: Identity, storage: &mut Storage<'_>, lender: &mut impl BuildLoan, backend: &mut B,
-    store: &mut C, hook: Yield<'_>, existed: bool) {
-    if store.with_index(digest, |store| {
+    store: &mut C, hook: Yield<'_>, existed: bool) -> Result<(), Status> {
+    store.with_index(digest, |store| {
         build(source, identity, storage, lender, backend, store, hook, existed)
-    }).is_none() {
+    }).unwrap_or_else(|| {
         result(hook, 3, Status::IoError, true);
-    }
+        Err(Status::IoError)
+    })
 }
 
 // Header scratch dies before census and the build take the same parse loan.
@@ -66,8 +92,8 @@ fn probe(source: &mut dyn BookSource, identity: &Identity, lender: &mut impl Bui
 
 fn build<B: ParserBackend + ?Sized>(source: &mut dyn BookSource, identity: Identity,
     storage: &mut Storage<'_>, lender: &mut impl BuildLoan, backend: &mut B,
-    store: &mut dyn Store, hook: Yield<'_>, existed: bool) {
-    if !store.release_pages() { result(hook, 3, Status::IoError, true); return; }
+    store: &mut dyn Store, hook: Yield<'_>, existed: bool) -> Result<(), Status> {
+    if !store.release_pages() { result(hook, 3, Status::IoError, true); return Err(Status::IoError); }
     stage(hook, 1);
     {
         let source = core::cell::RefCell::new(&mut *source);
@@ -84,9 +110,12 @@ fn build<B: ParserBackend + ?Sized>(source: &mut dyn BookSource, identity: Ident
     let removed = store.work_removed;
     store.release_pages();
     match built {
-        Ok((true, work_removed)) => result(hook, if existed { 2 } else { 1 }, Status::Ok, removed && work_removed),
-        Ok((false, _)) => result(hook, 4, Status::Ok, removed),
-        Err(status) => result(hook, 3, status, removed),
+        Ok((true, work_removed)) => {
+            result(hook, if existed { 2 } else { 1 }, Status::Ok, removed && work_removed);
+            Ok(())
+        }
+        Ok((false, _)) => { result(hook, 4, Status::Ok, removed); Err(Status::Unsupported) }
+        Err(status) => { result(hook, 3, status, removed); Err(status) }
     }
 }
 pub(crate) fn stage(hook: Yield<'_>, stage: i32) {

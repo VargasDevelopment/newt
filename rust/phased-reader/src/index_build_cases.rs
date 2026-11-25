@@ -89,7 +89,7 @@ fn attempt(card: &mut Card, items: usize, source: &mut Source, hook: Yield<'_>) 
     let mut shared = Box::new([0; crate::phase_storage::BANK_BYTES]);
     let mut storage = Storage::new(&mut shared);
     let mut loan = Loan(vec![0; crate::phase_storage::BANK_BYTES+15]);
-    open(source, &[7;32], &mut storage, &mut loan, &mut Parser { items }, card, hook);
+    let _ = open(source, &[7;32], &mut storage, &mut loan, &mut Parser { items }, card, hook, Verification::Verified);
 }
 #[test]
 fn first_open_publishes_second_hits_without_census_or_writes() {
@@ -173,4 +173,43 @@ fn trace_distinguishes_hit_build_rebuild_failure_and_deferred() {
     assert_eq!((counts.compressed_bytes, counts.expanded_bytes), (3, 1));
     assert!(outcomes.iter().all(|e| e.method == 1));
     assert!(events.iter().any(|e| e.kind == admission::WorkKind::IndexStage && e.result == 6));
+}
+
+#[test]
+fn pending_miss_finishes_once_before_build_and_hit_leaves_verification_alone() {
+    let mut card = Card::default();
+    let mut source = zip();
+    let mut shared = Box::new([0; crate::phase_storage::BANK_BYTES]);
+    let mut storage = Storage::new(&mut shared);
+    let mut loan = Loan(vec![0; crate::phase_storage::BANK_BYTES + 15]);
+    let finishes = Cell::new(0);
+    let mut finish = |raw: &mut dyn BookSource, scratch: &mut [u8]| {
+        finishes.set(finishes.get() + 1);
+        assert!(!scratch.is_empty());
+        raw.read_at(0, &mut []) == 0
+    };
+    let token = open(&mut source, &[7;32], &mut storage, &mut loan,
+        &mut Parser { items: 1 }, &mut card, None, Verification::Pending(&mut finish)).unwrap();
+    assert_eq!(token.digest(), &[7;32]);
+    assert!(token.verified_now());
+    assert_eq!(finishes.get(), 1);
+    let counts = (card.census, card.creates, card.writes);
+    let token = open(&mut source, &[7;32], &mut storage, &mut loan,
+        &mut Parser { items: 1 }, &mut card, None, Verification::Pending(&mut finish)).unwrap();
+    assert!(!token.verified_now());
+    assert_eq!(finishes.get(), 1);
+    assert_eq!((card.census, card.creates, card.writes), counts);
+}
+
+#[test]
+fn failed_verification_never_enters_the_builder_or_mints_a_token() {
+    let mut card = Card::default();
+    let mut shared = Box::new([0; crate::phase_storage::BANK_BYTES]);
+    let mut storage = Storage::new(&mut shared);
+    let mut loan = Loan(vec![0; crate::phase_storage::BANK_BYTES + 15]);
+    let result = open(&mut zip(), &[7;32], &mut storage, &mut loan,
+        &mut Parser { items: 1 }, &mut card, None, Verification::Pending(&mut |_, _| false));
+    assert!(matches!(result, Err(Status::Stale)));
+    assert_eq!((card.census, card.creates, card.writes), (0, 0, 0));
+    assert!(card.file.is_empty() && card.work.is_empty());
 }
