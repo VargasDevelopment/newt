@@ -24,11 +24,26 @@ sys.path.insert(0, str(ROOT / 'tools'))
 from gate_tier import negative_controls
 
 BINARY = 'dev_put'
-TESTS = 41
+TESTS = 43
 # Recovery's one rule: a marker the next FILE finds refuses.
 MARKED = '        if self.recovery_file(MARKER, "marker")? { return Err(Refused::Recovery("commit", 0)); }\n'
 # (what breaks, its file under rust/core/src, its text there, the broken text, the test that must fail)
 CONTROLS = (
+    ('packet gaps immediately sleep', '../../salamander/board/dev_usb.rs',
+     'const QUIET_US: u32 = 250;', 'const QUIET_US: u32 = 0;',
+     'receive_owner::packet_gaps_are_polled_but_a_stalled_sender_returns_promptly'),
+    ('empty packet polling exceeds its bound', '../../salamander/board/dev_usb.rs',
+     'const QUIET_US: u32 = 250;', 'const QUIET_US: u32 = 1_000;',
+     'receive_owner::packet_gaps_are_polled_but_a_stalled_sender_returns_promptly'),
+    ('a transient disconnected observation silently drops the exit row', '../../firmware/app_runtime/card_write_observation.rs',
+     'if !wire.connected() { wire.pause(); continue; }', 'if !wire.connected() { break; }',
+     'wire_deadlines::stalled_sender_exits_and_its_diagnostic_output_is_bounded'),
+    ('a stalled sender waits past its receive deadline', 'dev_put/lease.rs',
+     'wrapping_sub(activity) >= IDLE_MS', 'wrapping_sub(activity) >= IDLE_MS * 2',
+     'wire_deadlines::stalled_sender_exits_and_its_diagnostic_output_is_bounded'),
+    ('exit diagnostics wait past their output deadline', '../../firmware/app_runtime/card_write_observation.rs',
+     'wire.now().wrapping_sub(start) < 1_000', 'wire.now().wrapping_sub(start) < 2_000',
+     'wire_deadlines::stalled_sender_exits_and_its_diagnostic_output_is_bounded'),
     ('DATA write observation omitted', 'dev_put/lease.rs', '        self.wire.observe(Observation::Writing);\n', '',
      'twenty_mib_is_committed_only_after_full_readback'),
     ('timeout loses its typed cause', 'dev_put/lease.rs', '"timeout" => ExitReason::Timeout,', '"timeout" => ExitReason::Syntax,',

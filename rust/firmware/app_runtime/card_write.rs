@@ -83,16 +83,7 @@ impl LeaseWire<'_, '_, '_> {
         let mut row = crate::serial_console::Row::new(&mut bytes);
         if self.counters.row(self.channel.now(), &mut row).is_err() { return; }
         let count = row.length;
-        let mut sent = 0;
-        let start = self.channel.now();
-        // Best effort, bounded even when the host that caused the failure left.
-        while sent < count && self.channel.now().wrapping_sub(start) < 1_000 {
-            if !self.channel.connected() { break; }
-            let put = self.channel.write(&bytes[sent..count]);
-            if put > count - sent { break; }
-            sent += put;
-            if put == 0 { crate::app_power::delay_ms(1); }
-        }
+        observation::report(self, &bytes[..count]);
     }
 }
 

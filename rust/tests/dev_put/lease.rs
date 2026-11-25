@@ -7,6 +7,7 @@ mod commit;
 mod fakes;
 mod sha256;
 mod receive_owner;
+mod wire_deadlines;
 
 use fakes::{Event, FakeCard, FakeWire, HostHash, Node, FAILED};
 use newt_core::dev_put::{self, admit, name_allowed, Busy, End, Facts, Session, CHUNK_BYTES, IDLE_MS,

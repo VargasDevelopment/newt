@@ -2,7 +2,21 @@
 //! Numbers held only during a granted DEV PUT, never paths or payloads.
 #![forbid(unsafe_code)]
 use core::fmt::{self, Write};
-use newt_core::dev_put::{ExitReason, Observation};
+use newt_core::dev_put::{ExitReason, Observation, Wire};
+
+/// Best effort within the existing output budget. HWCDC can briefly report
+/// disconnected; allow recovery instead of silently dropping the exit row.
+pub fn report(wire: &mut dyn Wire, bytes: &[u8]) {
+    let mut sent = 0;
+    let start = wire.now();
+    while sent < bytes.len() && wire.now().wrapping_sub(start) < 1_000 {
+        if !wire.connected() { wire.pause(); continue; }
+        let put = wire.write(&bytes[sent..]);
+        if put > bytes.len() - sent { break; }
+        sent += put;
+        if put == 0 { wire.pause(); }
+    }
+}
 
 #[derive(Default)]
 pub struct Counters {

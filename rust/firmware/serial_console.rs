@@ -105,7 +105,10 @@ pub struct PutChannel<'a> {
 #[cfg(feature = "dev-usb")]
 impl PutChannel<'_> {
     pub fn connected(&mut self) -> bool { newt_c3_board::dev_usb::connected() }
-    pub fn read_byte(&mut self) -> i32 { self.rx.read_byte() }
+    pub fn read_byte(&mut self) -> i32 {
+        let clock = self.clock;
+        self.rx.read_byte(|| clock.micros())
+    }
     pub fn flush_tx_tail(&mut self) -> bool { newt_c3_board::dev_usb::flush_tx_tail() }
     pub fn write(&mut self, bytes: &[u8]) -> usize { newt_c3_board::dev_usb::write(bytes) }
     pub fn now(&mut self) -> u32 { self.clock.millis() }

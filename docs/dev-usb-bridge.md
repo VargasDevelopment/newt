@@ -182,6 +182,8 @@ The old 150-byte Base64 blocks came from HWCDC's default 256-byte RX queue:
 its ISR drops bytes when that queue fills. That queue stays unchanged.
 For a granted PUT only, an exclusive receive token masks the RX interrupt,
 drains bytes already in the SDK queue first, then polls the C3 hardware FIFO.
+An empty FIFO is polled for at most 250 microseconds before sleeping, so a
+short gap within a USB burst does not impose a millisecond sleep per packet.
 The FIFO applies USB backpressure while the lease fills its bounded buffer.
 TX and the SDK's TX interrupt handling are unchanged. HELLO, DIAG, FRAME and
 refused PUT requests keep their ordinary SDK receive path.
@@ -284,9 +286,10 @@ before closing; it sends no further command. A successful write is still proved
 only by the matching DONE response.
 
 A granted DEV lease emits a number-only `PUT_STATS` row on exit, best effort
-with a one-second output bound. Counters exist only on the active lease's
+with a one-second output bound, including a temporarily disconnected channel.
+No row is promised if the host remains gone or stops reading. Counters exist only on the active lease's
 stack, with no idle heap. It reports the current request ID, block offset,
-received/expected bytes, total bytes read, empty polls, pause count/time, DATA
+received/expected bytes, total bytes read, empty receive calls, pause count/time, DATA
 receive time, card-write phase time, ACK enqueue time and commit phase time.
 Times are milliseconds; phases include their ordinary code overhead, not just
 USB or SD hardware time. ACK enqueue is not host receipt. No hardware overflow
