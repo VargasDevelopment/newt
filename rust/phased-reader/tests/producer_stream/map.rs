@@ -4,7 +4,7 @@ struct MapStore<'a> {
     base: PassStore<'a>, id: u32, map_after: &'a Cell<u32>, map_bytes: &'a Cell<u32>,
 }
 impl CachePresence for MapStore<'_> {
-    fn with_index<R>(&mut self, _: &[u8; 32], _: impl FnOnce(&mut dyn newt_phased_reader::index_build::Store) -> R) -> Option<R> { None }
+    fn with_index<R>(&mut self, _: &[u8; 32], _: impl FnOnce(&mut dyn crate::index_build::Store) -> R) -> Option<R> { None }
     fn present(&mut self, n: &[u8], opening: bool) -> bool { self.base.present(n, opening) }
 }
 impl CacheStorage for MapStore<'_> {

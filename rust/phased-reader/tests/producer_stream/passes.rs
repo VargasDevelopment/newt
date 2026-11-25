@@ -33,7 +33,7 @@ impl BookSource for PassInput<'_> {
 }
 struct PassStore<'a> { t: &'a Trace, card: &'a RefCell<Card>, id: u32 }
 impl CachePresence for PassStore<'_> {
-    fn with_index<R>(&mut self, _: &[u8; 32], _: impl FnOnce(&mut dyn newt_phased_reader::index_build::Store) -> R) -> Option<R> { None }
+    fn with_index<R>(&mut self, _: &[u8; 32], _: impl FnOnce(&mut dyn crate::index_build::Store) -> R) -> Option<R> { None }
     fn present(&mut self, n: &[u8], opening: bool) -> bool {
         assert!(!opening); self.t.event(54); let n = name(n); let mut card = self.card.borrow_mut();
         let found = card.files.contains_key(n); card.named(54, n); card.io.push(found as u8); found
