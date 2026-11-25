@@ -278,7 +278,9 @@ There is no Home write at startup.
 Each file receipt keeps a bounded `protocol_progress`: the last sent request,
 last acknowledged DATA offset and ID, elapsed/write time, cumulative DATA
 frames/time, and the last valid response or transport error. It never stores
-DATA payloads or an unbounded per-frame log. A successful write is still proved
+DATA payloads or an unbounded per-frame log. After a failed PUT, the client
+keeps a read-only tail for at most 1.1 seconds to capture late lease statistics
+before closing; it sends no further command. A successful write is still proved
 only by the matching DONE response.
 
 A granted DEV lease emits a number-only `PUT_STATS` row on exit, best effort

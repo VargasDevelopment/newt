@@ -383,8 +383,28 @@ def lease_statistics_validation():
         assert decode_firmware_row(bad) is None
 
 
+def a_failure_keeps_its_late_statistics_without_writing_again():
+    row = (b'PUT_STATS reason=4 id=123 offset=0 received=17 expected=4096 bytes=123 '
+           b'empty=200 pauses=200 pause_ms=211 rx_ms=170 write_ms=0 ack_ms=2 commit_ms=0\n')
+    class Peer(LeasePeer):
+        def read_data(self, remaining):
+            if not self.pending and self.writes[-1:] == ['DATA'] and not getattr(self, 'stats_sent', False):
+                self.pending = row
+                self.stats_sent = True
+            return super().read_data(remaining)
+    peer = Peer(answers={'DATA': 'ERROR abandoned reason=timeout'})
+    report = session(peer, FILES[1:])
+    assert 'timeout' in report['error'] and report['firmware_rows'][0]['reason'] == 4
+    assert peer.writes[-1] == 'DATA' and peer.writes.count('DATA') == 1
+    assert report['put']['files'][0]['result'] == 'unchanged'
+    with patch.object(Peer, 'drain_responses', lambda self, seconds: None):
+        broken = session(Peer(answers={'DATA': 'ERROR abandoned reason=timeout'}), FILES[1:])
+        assert not broken['firmware_rows'], 'tail control must lose the delayed row'
+
+
 def main():
     lease_statistics_validation()
+    a_failure_keeps_its_late_statistics_without_writing_again()
     success()
     refusals_before_any_write()
     failures_before_done_leave_the_name_unchanged()

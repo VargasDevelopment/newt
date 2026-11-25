@@ -21,6 +21,7 @@ from dev_usb_put import card_target, plan, put_files
 RECORD = re.compile(rb'!N1 ([0-9]+) ([0-9]+) ([0-9]+) (.*) \*([0-9a-f]{8})\n\Z')
 MAX_AUDIT_RECORDS = 2048  # Covers both directions of 32 PRESSes and two full captures.
 RESYNC_QUIET_SECONDS = 4.1  # PUT's 3 s receive bound plus Bridge's 1 s partial-line bound.
+FAILURE_TAIL_SECONDS = 1.1  # Includes the firmware's bounded best-effort PUT_STATS output.
 CAPS = ('press,status,frame', 'press,status,frame,diag', 'press,status,frame,diag2',
         'press,status,frame,diag2,put')
 
@@ -188,14 +189,9 @@ class ProtocolClient:
             self.trace('request', *map(int, tokens[1:4]), tokens[4], text.split(' ', 4)[4])
         self.write_data(data, remaining)
 
-    def establish_session(self, expected_build):
-        try:
-            return self.hello(expected_build)
-        except (ProtocolDirty, ProtocolTimeout) as error:
-            self.trace('recovery', None, None, 0, 'RESYNC', str(error))
-        # Never replay an action or FILE/DATA/DONE. Let an interrupted payload
-        # lease expire, drain its replies, then delimit an ordinary partial line.
-        deadline = time.monotonic() + RESYNC_QUIET_SECONDS
+    def drain_responses(self, seconds):
+        """Read-only error tail; records remain in the audit and authorize nothing."""
+        deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             try:
                 self.record(deadline)
@@ -203,6 +199,15 @@ class ProtocolClient:
                 continue
             except ProtocolTimeout:
                 break
+
+    def establish_session(self, expected_build):
+        try:
+            return self.hello(expected_build)
+        except (ProtocolDirty, ProtocolTimeout) as error:
+            self.trace('recovery', None, None, 0, 'RESYNC', str(error))
+        # Never replay an action or FILE/DATA/DONE. Let an interrupted payload
+        # lease expire, drain its replies, then delimit an ordinary partial line.
+        self.drain_responses(RESYNC_QUIET_SECONDS)
         self.buffer.clear()
         self.write_data(b'\n', self.timeout)
         return self.hello(expected_build, recovering=True)
@@ -435,6 +440,13 @@ def run_session(client, args):
         report['error'] = str(error) or 'Interrupted by operator'
         if isinstance(error, KeyboardInterrupt) or isinstance(error.__cause__, KeyboardInterrupt):
             report['interrupted'] = True
+        elif args.mode == 'put':
+            # The failed lease emits its statistics after its error reply.
+            # Keep that bounded tail before closing, without sending anything.
+            try:
+                client.drain_responses(FAILURE_TAIL_SECONDS)
+            except (ValueError, OSError, KeyboardInterrupt) as tail:
+                report['failure_tail_error'] = str(tail) or 'Interrupted by operator'
     finally:
         try:
             client.close()
