@@ -54,7 +54,6 @@ fn publish(prepared: newt_core::book_index_build::Prepared<'_>, store: &mut dyn 
 /// Parsed values, the scan views and the parse loans leave the stack before
 /// publish, whose own frame is the deepest part of the build.
 #[inline(never)]
-#[allow(clippy::too_many_arguments)]
 fn prepare<'r, 'p, B: ParserBackend + ?Sized, S: BookSource + ?Sized>(
     run: &'r mut [u8], rest: &mut [u8], parse: &'p mut [u8],
     policy: Option<&dyn newt_core::xml_session::SourcePolicy>, backend: &mut B,
