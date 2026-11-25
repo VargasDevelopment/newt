@@ -241,7 +241,10 @@ impl Runtime {
         self.reading_refresh.reset();
         if self.idle.screen != Screen::EpubReading as u8 { self.idle.resume = None; }
         let was_active = self.selection.active();
-        if !self.picture_candidate_image(home, ui, owned, session_checkpoint) && owned {
+        let picture_candidate = self.picture_candidate_image(home, ui, owned, session_checkpoint);
+        #[cfg(feature = "wake-timing")]
+        home.bus.board.wake_stamp(newt_core::wake_timing::Stage::PictureCandidate);
+        if !picture_candidate && owned {
             let work = if was_active {
                 let name = self.selection.identity().filename;
                 let Ok(name) = CStr::from_bytes_until_nul(&name) else { return false; };
@@ -303,6 +306,8 @@ impl Runtime {
             None => self.prepare_image(home, ui, logical, events, name, Some(*self.selection.digest()), profile),
         }
         };
+        #[cfg(feature = "wake-timing")]
+        home.bus.board.wake_stamp(newt_core::wake_timing::Stage::SourceReady);
         if let Err(error) = prepared {
             if let Some(profile) = profile {
                 profile.terminal(newt_core::reader_work_profile::ReaderOpenTerminal::SourceUnavailable,

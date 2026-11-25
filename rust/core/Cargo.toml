@@ -8,6 +8,7 @@ publish = false
 
 [features]
 dev-usb = []
+wake-timing = []
 # Pinned-translation harnesses compare against oracles that never ran the
 # open-time member check, so they build unchecked members. Never on firmware.
 pinned-harness = []
@@ -38,4 +39,10 @@ test = false
 [[test]]
 name = "dev_usb_live_capture"
 path = "../tests/dev_usb_live_capture/capture.rs"
+test = false
+
+# Explicit off/on diagnostic harness, run by tests/wake_timing_test.py.
+[[test]]
+name = "wake_timing_bridge"
+path = "../tests/wake_timing/bridge.rs"
 test = false

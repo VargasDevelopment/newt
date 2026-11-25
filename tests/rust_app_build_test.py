@@ -233,6 +233,23 @@ class DailyConfiguration(unittest.TestCase):
             self.write(daily_firmware.generated_configuration(self.root, identifier, '2026-11-16'))
             daily_firmware.require_generated_configuration(self.root, self.output)
 
+    def test_wake_timing_is_explicit_and_cannot_be_a_publication_image(self):
+        self.assertNotIn('wake-timing', daily_firmware.FEATURES)
+        config = daily_firmware.generated_configuration(self.root, 'a' * 12, '2026-11-16')
+        self.assertNotIn('NEWT_WAKE_TIMING', config['env:newt_x3']['build_flags'])
+        config = daily_firmware.generated_configuration(self.root, 'a' * 12, '2026-11-16', wake_timing=True)
+        self.write(config)
+        daily_firmware.require_generated_configuration(self.root, self.output)
+        with self.assertRaises(ValueError):
+            daily_firmware.require_daily_image({'image': daily_firmware.IMAGE,
+                'features': [*daily_firmware.FEATURES, 'wake-timing']})
+        for flag in ('-DNEWT_WAKE_TIMING=0', '-DNEWT_WAKE_TIMING=1 -DNEWT_WAKE_TIMING=1'):
+            bad = daily_firmware.generated_configuration(self.root, 'a' * 12, '2026-11-16')
+            bad['env:newt_x3']['build_flags'] += '\n' + flag
+            self.write(bad)
+            with self.assertRaises(ValueError):
+                daily_firmware.require_generated_configuration(self.root, self.output)
+
     def test_extra_flags_scripts_dependencies_or_paths_are_rejected(self):
         for section, key, value in (
                 ('env:newt_x3', 'extra_scripts', 'post:unreviewed.py'),

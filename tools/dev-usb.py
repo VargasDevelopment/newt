@@ -16,6 +16,7 @@ from bench_lease import lease_port
 from dev_usb_panel_telemetry import (
     MAX_PRESS_TELEMETRY, collect_press_telemetry, decode_panel_ring)
 from dev_usb_firmware_rows import MAX_LISTEN_SECONDS, FirmwareRows, listen
+from dev_usb_wake import decode_wake_timing
 from dev_usb_put import card_target, plan, put_files
 
 RECORD = re.compile(rb'!N1 ([0-9]+) ([0-9]+) ([0-9]+) (.*) \*([0-9a-f]{8})\n\Z')
@@ -431,6 +432,8 @@ def run_session(client, args):
             report['status'] = client.request('STATUS')[0]
             if args.diagnostics:
                 report['diagnostics'] = client.diagnostics()
+            if getattr(args, 'wake_timing', False):
+                report['wake_timing'] = decode_wake_timing(client.request('WAKE')[0])
         if args.output:
             fields, pbm = client.capture()
             args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -477,6 +480,7 @@ def main():
                         default=[])
     parser.add_argument('--output', type=Path, help='host capture basename')
     parser.add_argument('--diagnostics', action='store_true', help='read boot/reader diagnostics after STATUS')
+    parser.add_argument('--wake-timing', action='store_true', help='read the frozen wake timeline from an opt-in diagnostic candidate')
     parser.add_argument('--listen', type=float, default=0, help='after the last press, read firmware rows (0–600 s)')
     # PUT validates every destination before opening the port.
     parser.add_argument('--folder', help='put: any card-relative directory (e.g. Newt/Books; . for card root); apps/update/dev are aliases')
@@ -487,6 +491,8 @@ def main():
         parser.error('Use a 0.1–30 second deadline, at most 32 button requests and 0–600 listening seconds')
     if not args.port or '://' in args.port or not args.expect_build or not args.port.startswith('/dev/'):
         parser.error('Live mode requires an explicit Linux --port and --expect-build')
+    if args.wake_timing and args.mode != 'live':
+        parser.error('--wake-timing belongs to live mode')
     if args.mode == 'panel-ring' and (args.press or args.output or args.diagnostics):
         parser.error('Panel ring read accepts no actions or capture')
     if (args.mode == 'put') != bool(args.folder or args.file or args.name):
@@ -500,7 +506,7 @@ def main():
                 card_target(args.folder, name)
         except (ValueError, OSError) as error:
             parser.error(str(error))
-    if 'sleep' in args.press and (args.press[-1] != 'sleep' or args.press.count('sleep') != 1 or args.output or args.diagnostics or args.listen):
+    if 'sleep' in args.press and (args.press[-1] != 'sleep' or args.press.count('sleep') != 1 or args.output or args.diagnostics or args.wake_timing or args.listen):
         parser.error('Live sleep must be the final request, with no subsequent capture; wake is physical only')
     with lease_port(args.port):
         client = SerialClient(approved_serial(), args.port, args.timeout)

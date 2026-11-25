@@ -48,6 +48,14 @@ impl Runtime {
         #[cfg(feature = "dev-usb")]
         if check == newt_core::resume_picture::Check::Differs { self.trace_picture_miss_image(home); }
         let covered = check == newt_core::resume_picture::Check::Covered;
+        #[cfg(feature = "wake-timing")]
+        let actual_page = self.reader_ui.panel == newt_reader_ui::ReaderPanel::Page
+            && self.reading().is_some_and(|view| view.opened && view.page.page_count != 0);
+        #[cfg(feature = "wake-timing")]
+        if actual_page && !covered {
+            home.bus.board.wake_stamp(newt_core::wake_timing::Stage::PageReady);
+            home.bus.board.wake_timeline().page(2);
+        }
         if !covered {
             let _display = events.action.scope(crate::reader_action::ActionStage::BlockingDisplay);
             if inverse { display::drive_from_inverse(&mut home.bus.board)?; }
@@ -57,6 +65,8 @@ impl Runtime {
         if ui.press == PressState::Accepted {
             ui.press = if full || inverse { PressState::AnsweredCleanup } else { PressState::AnsweredFast };
         } else if !covered { self.reading_refresh.painted(full || inverse); }
+        #[cfg(feature = "wake-timing")]
+        if actual_page && !covered { home.bus.board.wake_timeline().complete(home.bus.board.monotonic_clock().micros()); }
         ui.home_refresh.invalidate();
         ui.home_cover.release();
         #[cfg(feature = "dev-usb")]

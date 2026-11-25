@@ -120,6 +120,8 @@ pub mod update_mode_request;
 
 pub mod update_manifest;
 pub mod official_return;
+#[cfg(any(feature = "wake-timing", test))]
+pub mod wake_timing;
 
 pub mod update_release;
 

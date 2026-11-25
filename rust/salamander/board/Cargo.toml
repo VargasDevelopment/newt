@@ -21,4 +21,5 @@ newt-sdk-heap = { path = "../sdk-heap" }
 [features]
 default = ["rust-app"]
 rust-app = []
+wake-timing = ["newt-core/wake-timing"]
 embedded-sample = []

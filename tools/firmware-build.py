@@ -138,12 +138,13 @@ def main() -> None:
     parser.add_argument("--clean", action="store_true", help="clean build outputs before compiling")
     parser.add_argument("--check-config", action="store_true", help="read-only approved configuration preflight; no toolchain required")
     parser.add_argument("--health-report", action="store_true", help="verify the RAM/flash/stack ceilings and write a source-bound receipt; requires --clean")
+    parser.add_argument("--wake-timing", action="store_true", help="opt-in wake timeline diagnostic candidate; never a publication image")
     parser.add_argument("--dev-usb", "--regional-home", dest="retired", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.retired:
         parser.error("there is one firmware build (regional DEV); drop --dev-usb and --regional-home")
     if args.check_config:
-        if args.clean or args.health_report:
+        if args.clean or args.health_report or args.wake_timing:
             parser.error("--check-config checks only the authored configuration")
         require_configuration(ROOT)
         print("PASS: pinned full Rust daily dependency and build configuration")
@@ -164,7 +165,8 @@ def main() -> None:
     identifier = checkpoint + ("-dirty" if dirty else "")
     # About shows the captured revision's commit date, never the compile clock.
     date = git_output(ROOT, "show", "-s", "--format=%cs", release_source["git_revision"])
-    config = generated_configuration(ROOT, identifier, date)
+    features = FEATURES + (('wake-timing',) if args.wake_timing else ())
+    config = generated_configuration(ROOT, identifier, date, wake_timing=args.wake_timing)
     effective_config = generated_config_destination()
     stream = io.StringIO()
     config.write(stream)
@@ -202,7 +204,7 @@ def main() -> None:
             'NEWT_DEV_BUILD_ID': identifier,
             'NEWT_DEV_BUILD_DATE': date})
         build_archive(ROOT, rust_tools, rust_env, clean=args.clean,
-                      package='newt-app-image', features=','.join(FEATURES))
+                      package='newt-app-image', features=','.join(features))
         subprocess.run(command, cwd=ROOT, env=env, check=True)
         subprocess.run(nvs_guard, cwd=ROOT, env=env, check=True)
         subprocess.run(wifi_link, cwd=ROOT, env=env, check=True)
@@ -211,6 +213,16 @@ def main() -> None:
             report = build_report(ROOT, variant, effective_config, started_ns, expected_identity)
             write_text(ROOT, receipt, json.dumps(report, indent=2, sort_keys=True) + "\n")
             failures = check_resources(ROOT, baseline, variant)
+            if args.wake_timing:
+                # Unpublished bench measurements have no product RAM/flash
+                # allocation. All provenance, absolute and stack checks remain.
+                for name in ('ram_bytes', 'flash_bytes'):
+                    ceiling = baseline['resources'][variant][name]
+                    overage = f"{variant} {name}: {report[name]} exceeds reviewed ceiling {ceiling}"
+                    if overage in failures:
+                        failures.remove(overage)
+                        print("UNPUBLISHED diagnostic measurement: " + overage)
+
     if args.health_report:
         if failures:
             raise RuntimeError("Resource ratchet failed:\n" + "\n".join(failures))
@@ -218,12 +230,13 @@ def main() -> None:
             raise RuntimeError("Release source identity changed during compilation")
         image = OUTPUT + "/build/newt_x3/firmware.bin"
         release_receipt = {**release_source, "variant": variant, "build_id": identifier,
-                           'image': IMAGE, 'features': list(FEATURES),
+                           'image': IMAGE, 'features': list(features),
                            "binary_sha256": report["artifacts"][image],
                            "resource_identity": report["identity"]}
         write_text(ROOT, ROOT / f"artifacts/firmware-identity-{variant}.json",
                    json.dumps(release_receipt, indent=2, sort_keys=True) + "\n")
-        print(f"PASS: {variant} RAM/flash/selected static-stack ceilings; {receipt.relative_to(ROOT)}")
+        label = "MEASURED: unpublished wake-timing candidate" if args.wake_timing else f"PASS: {variant} RAM/flash/selected static-stack ceilings"
+        print(f"{label}; {receipt.relative_to(ROOT)}")
 
 
 if __name__ == "__main__":

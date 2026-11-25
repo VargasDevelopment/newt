@@ -59,6 +59,11 @@ impl Bridge {
         }
         self.last_id = id;
         self.session_activity = now;
+        #[cfg(feature = "wake-timing")]
+        if count == 5 && tokens[4] == "WAKE" {
+            self.wake_reply(id, device.wake_timing());
+            return;
+        }
         if count == 5 && tokens[4] == "DIAG" {
             let diagnostics = device.diagnostics();
             self.diagnostics(id, diagnostics);

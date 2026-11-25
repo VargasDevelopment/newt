@@ -84,6 +84,8 @@ impl Runtime {
             trace_picture(home, trace, "unverified", false, 0);
             return Ok(false);
         }
+        #[cfg(feature = "wake-timing")]
+        home.bus.board.wake_stamp(newt_core::wake_timing::Stage::PictureReady);
         newt_reader_ui::render_reader_chrome(&newt_reader_ui::ReaderFooter {
             spine: footer.spine, page: footer.page, pages: footer.pages,
             overall_known: footer.overall_known, overall_percent: footer.overall_percent,
@@ -96,6 +98,11 @@ impl Runtime {
         let full = !ui.displayed.valid || ui.displayed.grayscale
             || orientation != ui.displayed.orientation()
             || self.reading_refresh.needs_full(u32::from(binding.settings.refresh_pages));
+        #[cfg(feature = "wake-timing")]
+        {
+            home.bus.board.wake_stamp(newt_core::wake_timing::Stage::PageReady);
+            home.bus.board.wake_timeline().page(1);
+        }
         frame::to_native_frame(logical,
             home.bus.board.frame()?.try_into().map_err(|_| BoardError::Length)?, orientation);
         {
@@ -109,6 +116,8 @@ impl Runtime {
                 if full && !inverse { Refresh::Full } else { Refresh::Fast }, "resume-picture")?;
         }
         ui.displayed.completed(&mut home.bus.board, orientation, false, false, started, control);
+        #[cfg(feature = "wake-timing")]
+        home.bus.board.wake_timeline().complete(home.bus.board.monotonic_clock().micros());
         self.picture.shown(ui.displayed.generation, logical);
         ui.press = if full || inverse { PressState::AnsweredCleanup } else { PressState::AnsweredFast };
         self.note_idle_paint(ui.app.screen, ui.displayed.generation, false, home.bus.board.millis());

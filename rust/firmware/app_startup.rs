@@ -41,6 +41,9 @@ unsafe extern "C" {
 /// never move or replace its filled secret fields.
 // SAFETY: only the sole native image entry supplies these exclusive owners.
 pub unsafe fn run(display: *mut c_void, input: *mut c_void) -> ! {
+    #[cfg(feature = "wake-timing")]
+    // SAFETY: sole firmware entry, before Board or any other timing borrower.
+    unsafe { newt_c3_board::wake_timing::begin(); }
     // SAFETY: raw retained evidence is sampled before Serial or acquisition.
     let boot = match unsafe { crate::retained_runtime::snapshot_before_board() } {
         Ok(boot) => boot,
@@ -50,6 +53,9 @@ pub unsafe fn run(display: *mut c_void, input: *mut c_void) -> ! {
     };
     // SAFETY: the unique entry begins Serial once before any other serial user.
     let mut log = unsafe { crate::serial_console::SerialConsole::begin() };
+    #[cfg(feature = "wake-timing")]
+    // SAFETY: acquisition has not begun; this is the same sole entry task.
+    unsafe { newt_c3_board::wake_timing::serial_ready(); }
     let action = crate::reader_action::allocate();
     // SAFETY: caller grants sole initialized SDK/display/input access.
     let (mut board, pending, probe) = match unsafe { Board::acquire_x3_panel_deferred_input(display, input) } {
@@ -58,6 +64,8 @@ pub unsafe fn run(display: *mut c_void, input: *mut c_void) -> ! {
     };
     // SAFETY: the native app is excluded and no NVS owner was created yet.
     let nvs = unsafe { Sdk552::from_exclusive_firmware_lease() };
+    #[cfg(feature = "wake-timing")]
+    board.wake_timeline().boot(boot.reset, boot.cause, if probe.promoted != 0 { 2 } else { 1 });
     // SAFETY: sole firmware entry; no other logical frame loan exists.
     let failure = unsafe { newt_c3_board::app_frame::with_logical(|logical| {
         let _request = match update_boot::take(&mut board, boot.software_reset) {
@@ -79,6 +87,8 @@ pub unsafe fn run(display: *mut c_void, input: *mut c_void) -> ! {
                 Ok(()) | Err(newt_c3_board::Error::Io) => {}
                 Err(_) => stop(&mut log, Some((&mut board, logical)), "storage unavailable"),
             }
+            #[cfg(feature = "wake-timing")]
+            board.wake_stamp(newt_core::wake_timing::Stage::Sd);
             // SAFETY: this is the sole firmware startup thread and the native
             // owner's FnOnce callback, before queue/task creation. The guard
             // fails closed before any second reference can be formed. No other

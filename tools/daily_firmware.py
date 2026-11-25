@@ -31,7 +31,7 @@ def require_daily_image(receipt):
         raise ValueError('Publication requires the full Rust daily image with DEV USB, Wi-Fi and sample')
 
 
-def generated_configuration(root, build_id, date):
+def generated_configuration(root, build_id, date, *, wake_timing=False):
     """Only output paths, source identity and the pinned TLS input are generated."""
     root = Path(root)
     require_configuration(root)
@@ -50,6 +50,8 @@ def generated_configuration(root, build_id, date):
         '\n' + r'-DNEWT_DEV_BUILD_ID=\"' + build_id + r'\"'
         + '\n' + r'-DNEWT_DEV_BUILD_DATE=\"' + date + r'\"'
         + '\n' + r'-DNEWT_CRT_BUNDLE_PATH=\"' + str(bundle) + r'\"')
+    if wake_timing:
+        config['env:newt_x3']['build_flags'] += '\n-DNEWT_WAKE_TIMING=1'
     return config
 
 
@@ -63,7 +65,10 @@ def require_generated_configuration(root, path):
         if len(found) != 1:
             raise ValueError('Exactly one generated build ID and date are required')
         identifiers.append(found[0].removeprefix('-D' + name + '=').removeprefix('"').removesuffix('"'))
-    expected = generated_configuration(root, *identifiers)
+    diagnostic = [flag for flag in flags if flag.startswith('-DNEWT_WAKE_TIMING')]
+    if diagnostic not in ([], ['-DNEWT_WAKE_TIMING=1']):
+        raise ValueError('Wake timing requires exactly the opt-in diagnostic define')
+    expected = generated_configuration(root, *identifiers, wake_timing=bool(diagnostic))
     if {section: dict(config[section]) for section in config} != {
             section: dict(expected[section]) for section in expected}:
         raise ValueError('Generated daily configuration exceeds the reviewed build scope')

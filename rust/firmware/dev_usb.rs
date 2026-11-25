@@ -5,6 +5,9 @@
 
 #[path = "dev_usb/commands.rs"]
 mod commands;
+#[cfg(feature = "wake-timing")]
+#[path = "dev_usb/wake.rs"]
+mod wake;
 #[path = "dev_usb/panel.rs"]
 mod panel;
 #[path = "dev_usb/text.rs"]

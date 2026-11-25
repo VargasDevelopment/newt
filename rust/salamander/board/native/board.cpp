@@ -122,6 +122,9 @@ int32_t nb_input_begin(void *input) {
 }
 uint32_t nb_millis(void) { return millis(); }
 uint32_t nb_micros(void) { return micros(); }
+#if defined(NEWT_WAKE_TIMING) && NEWT_WAKE_TIMING
+extern "C" uint32_t nb_wake_cpu_mhz(void) { return getCpuFrequencyMhz(); }
+#endif
 int32_t nb_clock_read(uint8_t *out, size_t len) {
     return nb_clock_registers(Wire, BoardConfig::ACTIVE.sensors.rtcAddr, out, len, false);
 }
