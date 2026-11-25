@@ -88,10 +88,6 @@ def main():
              '-fsanitize=address,undefined', '-fno-sanitize-recover=all', *include,
              '-I', workspace / 'salamander/board/native', '-c', source, '-o', obj])
         objects.append(obj)
-    spec = importlib.util.spec_from_file_location('short_turn_fixtures', workspace / 'tests/reader_checkpoint/fixtures.py')
-    fixture = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(fixture)
-    epub = fixture.write(out / 'fixtures')
     command = [rustc, '--edition=2024', '--target', HOST, '-Copt-level=1',
                '-Clinker=' + str(clang), '-Clink-arg=--no-default-config',
                '-Clink-arg=--ld-path=/usr/bin/x86_64-linux-gnu-ld.bfd',
@@ -102,17 +98,28 @@ def main():
     command += ['-Clink-arg=-fsanitize=address,undefined', '-Clink-arg=-fno-sanitize-recover=all',
                 *['-Clink-arg=' + arg for arg in crypto_flags()[2:]]]
     run([*command, HERE / 'host.rs', '-o', out / 'positive'])
-    result = run([out / 'positive', epub])
-    assert result.stdout.startswith('PASS actual short open/action/finished')
 
-    def run_recovery(command, *, witness=None):
-        result = run(command, succeeds=witness is None)
+    def run_checked(argv, *, witness=None):
+        result = run(argv, succeeds=witness is None)
         if witness is not None:
             assert result.returncode == 101 and witness in result.stderr, result.stderr
         return result.stdout
 
-    check_recovery(run_recovery, command, workspace, out, out / 'positive', controls=True)
-    composition_controls(run, command, epub, workspace, out)
+    check_short_turn(run_checked, command, workspace, out, out / 'positive', controls=True)
+    check_recovery(run_checked, command, workspace, out, out / 'positive', controls=True)
+
+
+def check_short_turn(run, command, workspace, out, positive, *, controls):
+    spec = importlib.util.spec_from_file_location('short_turn_fixtures',
+                                                  workspace / 'tests/reader_checkpoint/fixtures.py')
+    fixture = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fixture)
+    epub = fixture.write(out / 'short-turn-fixtures')
+    short = run([positive, epub])
+    assert short.startswith('PASS actual short open/action/finished'), short
+    print(short, end='')
+    if controls:
+        composition_controls(run, command, epub, workspace, out)
 
 
 def check_recovery(run, command, workspace, out, positive, *, controls):
@@ -140,18 +147,35 @@ def composition_controls(run, command, epub, workspace, out):
     source = driver.read_text()
     # Mutate reached short-route code, without enabling the retired comparison.
     paint = source[source.index('Some(checkpoint.paint('):source.index(')) } else { None };') + 2]
-    guard = 'Route::Short => break Some(ReaderUiIntent::Repaint),'
+    repaint_guard = 'Route::Short => break Some(ReaderUiIntent::Repaint),'
+    mark_guard = 'Route::Short => break Some(ReaderUiIntent::MarkFinished),'
+    mark_step = source.index('BookStep::MarkFinished(mark) => {')
+    mark_step_end = source.index('BookStep::Sleep(plane) => {', mark_step)
     repaint = source.index('ReaderUiWork::Intent(ReaderUiIntent::Repaint) => {')
     mark = source.index('ReaderUiWork::Intent(ReaderUiIntent::MarkFinished) => {')
-    controls = {
-        'eager-open': source.replace('Route::Short => paint_first', 'Route::Short => initialize || paint_first', 1),
-        'eager-action': source[:repaint] + source[repaint:mark].replace(guard,
-            'Route::Short => { composed = ' + paint + '; },', 1) + source[mark:],
-        'eager-finished': source[:mark] + source[mark:].replace(guard,
-            'Route::Short => { composed = ' + paint + '; },', 1),
-    }
-    for name, changed in controls.items():
-        assert changed != source
+    controls = (
+        ('eager-open',
+         source.replace('Route::Short => paint_first', 'Route::Short => initialize || paint_first', 1),
+         'short open leaves composition'),
+        ('eager-action',
+         source[:repaint] + source[repaint:mark].replace(repaint_guard,
+             'Route::Short => { composed = ' + paint + '; },', 1) + source[mark:],
+         'short action must not compose'),
+        ('eager-finished',
+         source[:mark] + source[mark:].replace(mark_guard,
+             'Route::Short => { composed = ' + paint + '; },', 1),
+         'short action must not compose'),
+        ('mark-returns-repaint-early',
+         source[:mark] + source[mark:].replace(mark_guard, repaint_guard, 1),
+         'short mark-finished returns explicit intent before mark settles'),
+        ('eager-mark-step',
+         source[:mark_step] + source[mark_step:mark_step_end].replace(
+             'break Some(ReaderUiIntent::Repaint);', 'composed = ' + paint + '; continue;', 1)
+         + source[mark_step_end:],
+         'short mark-finished step must not compose before image paint'),
+    )
+    for name, changed, witness in controls:
+        assert changed != source, name
         child = out / name
         child.mkdir()
         replacement = child / 'driver.rs'
@@ -161,10 +185,8 @@ def composition_controls(run, command, epub, workspace, out):
         host = child / 'host.rs'
         host.write_text(paths((HERE / 'host.rs').read_text(), HERE, {book: generated_book}))
         run([*command, host, '-o', child / 'program'])
-        result = run([child / 'program', epub], succeeds=False)
-        assert result.returncode == 101 and ('short open leaves composition' in result.stderr
-                or 'short action must not compose' in result.stderr), result.stderr
-    print('PASS real firmware short-driver composition; 3 compiled duplicate-composition controls rejected')
+        run([child / 'program', epub], witness=witness)
+    print('PASS real firmware short-driver composition and MarkFinished intent; 5 compiled controls rejected')
 
 def recovery_controls(run, command, dense, workspace, out):
     policy = workspace / 'firmware/reader_restore_policy.rs'
