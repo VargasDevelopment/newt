@@ -11,8 +11,10 @@ impl<S: crate::page_entries::PageEntries> ChapterCacheStorage<'_, S> {
             && port.state.suffix_bytes == 69
             && port.state.path[..port.state.final_bytes].ends_with(".fibp"))
             .then(|| port.state.path[..port.state.final_bytes].rsplit('/').next()).flatten();
-        port.route.census(&mut *port.native, &crate::page_entry_census::PAGES, cancel, clock, wait,
-            pinned.map(str::as_bytes), need)
+        crate::page_entry_census::entry_census(&mut *port.native, crate::page_entry_census::Request {
+            policy: &crate::page_entry_census::PAGES, root: Some(port.route.root()), cancel, clock, wait,
+            pinned: pinned.map(str::as_bytes), need,
+        })
     }
     /// Book indexes: their own folder and quota. `pinned` is the open book's
     /// index file name in that folder (`<key>-<digest>.fibx`); it and its
@@ -24,7 +26,9 @@ impl<S: crate::page_entries::PageEntries> ChapterCacheStorage<'_, S> {
         wait: Option<fn()>, pinned: Option<&[u8]>,
     ) -> crate::page_entry_census::Grant {
         let port = &mut self.file;
-        port.route.census(&mut *port.native, &crate::page_entry_census::INDEXES, cancel, clock, wait,
-            pinned, None)
+        crate::page_entry_census::entry_census(&mut *port.native, crate::page_entry_census::Request {
+            policy: &crate::page_entry_census::INDEXES, root: Some(port.route.root()), cancel, clock, wait,
+            pinned, need: None,
+        })
     }
 }

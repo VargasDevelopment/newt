@@ -125,12 +125,10 @@ pub const INDEX_ENTRY_RESERVE: u32 = 8;
 pub const INDEX_ENTRY_GRANT: u8 = (INDEX_ENTRY_CAP - INDEX_ENTRY_RESERVE) as u8;
 /// Free credit for one largest index envelope, rounded up like pages.
 pub const INDEX_CANDIDATE: u32 = {
-    let Some(payload) = crate::book_index::payload_bytes(
-        crate::book_index::MAX_MEMBERS,
-        crate::book_index::MAX_SPINE,
-    ) else {
-        panic!("largest index layout")
-    };
+    let largest = crate::book_index::payload_bytes(crate::book_index::MAX_MEMBERS, crate::book_index::MAX_SPINE);
+    // Checked at compile time: the format's own limits always have a layout.
+    assert!(largest.is_some(), "largest index layout");
+    let payload = match largest { Some(payload) => payload, None => 0 };
     payload + 4 * crate::page_envelope::blocks(payload) + crate::page_envelope::MANIFEST_BYTES
 };
 pub const INDEX_REQUIRED_UNITS: u8 = (INDEX_CANDIDATE / PAGE_CREDIT_UNIT + 1) as u8;
