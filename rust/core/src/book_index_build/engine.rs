@@ -1,15 +1,17 @@
 //! Formation and joins of the six typed streams.
 use super::{*, records::{Record, Item, Reference, Joined, First, Spine},
-    runs::{self, Io, Stream, Region, Pool, View, Output, sort, reduce, poll, io}};
+    runs::{self, Cursor, CURSORS, Io, Stream, Region, Pool, View, Output, sort, reduce, poll, io}};
 
 pub(super) struct Engine<'a> {
     pub buffer: &'a mut [u8], pub io: Io, streams: [Stream; 6],
     pub min_read: usize, run_bytes: usize, members: usize, items: usize, references: usize, disk: bool,
 }
+pub const POSITION_WORDS: usize = MAX_SPINE as usize / 64;
+/// The raw spine positions that joined a manifest item, as a lent bit set.
 /// Positions are read back from the card before their run CRC is checked, so
 /// an out-of-range one is a misread: refuse it instead of indexing past the set.
-pub(super) struct Positions(pub(super) [u64; MAX_SPINE as usize / 64]);
-impl Positions {
+pub(super) struct Positions<'s>(pub(super) &'s mut [u64; POSITION_WORDS]);
+impl Positions<'_> {
     pub(super) fn mark(&mut self, position: u32) -> Result<(), Error> {
         *self.0.get_mut(position as usize / 64).ok_or_else(io)? |= 1 << (position % 64);
         Ok(())
@@ -72,25 +74,26 @@ impl<'a> Engine<'a> {
         }
         Ok(())
     }
-    pub fn join<W: WorkFile + ?Sized>(&mut self, work: &mut W, header: &mut Header,
-        toc: Option<u64>, cover_id: Option<u64>, nav: Option<Choice>, mut ncx: Option<Choice>, mut cover: Option<Choice>,
-        progress: &mut dyn FnMut(Progress) -> bool) -> Result<(), Error> {
+    pub fn join<W: WorkFile + ?Sized>(&mut self, work: &mut W, header: &mut Header, choices: Choices,
+        state: &mut JoinState<'_>, progress: &mut dyn FnMut(Progress) -> bool) -> Result<(), Error> {
+        let mut choices = choices;
         self.finish_input(work)?;
-        let mut positions = Positions([0; MAX_SPINE as usize / 64]);
-        self.join_items(work, toc, cover_id, &mut ncx, &mut cover, &mut positions, progress)?;
+        state.positions.fill(0);
+        let mut positions = Positions(&mut *state.positions);
+        self.join_items(work, &mut choices, &mut positions, &mut *state.cursors, progress)?;
         header.spine = positions.total();
         if header.spine == 0 { return Err(Error::Book(Status::NotEpub)); }
-        self.header_pass(work, header, nav, ncx, cover, &positions, progress)
+        self.header_pass(work, header, choices, &positions, &mut *state.cursors, progress)
     }
-    fn join_items<W: WorkFile + ?Sized>(&mut self, work: &mut W, toc: Option<u64>, cover_id: Option<u64>,
-        ncx: &mut Option<Choice>, cover: &mut Option<Choice>, positions: &mut Positions,
-        progress: &mut dyn FnMut(Progress) -> bool) -> Result<(), Error> {
+    /// Resolves the NCX and cover ids to their earliest manifest items on the way.
+    fn join_items<W: WorkFile + ?Sized>(&mut self, work: &mut W, choices: &mut Choices, positions: &mut Positions<'_>,
+        cursors: &mut [Cursor; CURSORS], progress: &mut dyn FnMut(Progress) -> bool) -> Result<(), Error> {
         let fan = (self.buffer.len() - Joined::BYTES) / self.min_read;
         let right = self.streams[2].slots().min(fan / 2).max(1);
-        reduce::<Item, W>(&mut self.streams[1], fan - right, self.buffer, self.min_read, work, &mut self.io, progress)?;
+        reduce::<Item, W>(&mut self.streams[1], fan - right, self.buffer, &mut Pool::new(&mut *cursors, 0, self.min_read), work, &mut self.io, progress)?;
         let left = self.streams[1].slots();
-        reduce::<Reference, W>(&mut self.streams[2], fan - left, self.buffer, self.min_read, work, &mut self.io, progress)?;
-        let mut pool = Pool::new(0, self.min_read);
+        reduce::<Reference, W>(&mut self.streams[2], fan - left, self.buffer, &mut Pool::new(&mut *cursors, 0, self.min_read), work, &mut self.io, progress)?;
+        let mut pool = Pool::new(&mut *cursors, 0, self.min_read);
         let mut items = pool.attach::<Item, W>(work, &mut self.io, self.streams[1])?;
         let mut refs = pool.attach::<Reference, W>(work, &mut self.io, self.streams[2])?;
         // A resident R region is reused in place for J1; spilled output gets the space after the cursors.
@@ -103,8 +106,8 @@ impl<'a> Engine<'a> {
         let mut done = 0;
         while let Some(first) = item {
             let choice = Choice { sequence: first.sequence, hash: first.href };
-            if Some(first.id) == toc { earlier(ncx, choice); }
-            if Some(first.id) == cover_id { earlier(cover, choice); }
+            if Some(first.id) == choices.toc { earlier(&mut choices.ncx, choice); }
+            if Some(first.id) == choices.cover_id { earlier(&mut choices.cover, choice); }
             while let Some(r) = reference.filter(|r| r.id <= first.id) {
                 if r.id == first.id {
                     positions.mark(r.position)?;
@@ -125,17 +128,18 @@ impl<'a> Engine<'a> {
         self.streams[3] = out.finish(&mut view, work, &mut self.io)?;
         Ok(())
     }
-    fn header_pass<W: WorkFile + ?Sized>(&mut self, work: &mut W, header: &mut Header, nav: Option<Choice>,
-        ncx: Option<Choice>, cover: Option<Choice>, positions: &Positions, progress: &mut dyn FnMut(Progress) -> bool) -> Result<(), Error> {
+    fn header_pass<W: WorkFile + ?Sized>(&mut self, work: &mut W, header: &mut Header, choices: Choices,
+        positions: &Positions<'_>, cursors: &mut [Cursor; CURSORS],
+        progress: &mut dyn FnMut(Progress) -> bool) -> Result<(), Error> {
         let f_bytes = self.min_read;
         let max_slots = (self.buffer.len() - f_bytes - 2 * Spine::BYTES) / self.min_read;
-        reduce::<Member, W>(&mut self.streams[0], max_slots - 1, self.buffer, self.min_read, work, &mut self.io, progress)?;
+        reduce::<Member, W>(&mut self.streams[0], max_slots - 1, self.buffer, &mut Pool::new(&mut *cursors, 0, self.min_read), work, &mut self.io, progress)?;
         let m_slots = if self.disk { self.streams[0].slots() } else { 0 };
         let available = self.buffer.len() - m_slots * self.min_read - f_bytes;
         let reserve = (self.buffer.len() / 4).min(available - self.min_read);
         let j_slots = (available - reserve) / self.min_read;
-        reduce::<Joined, W>(&mut self.streams[3], j_slots, self.buffer, self.min_read, work, &mut self.io, progress)?;
-        let mut pool = Pool::new(0, self.min_read);
+        reduce::<Joined, W>(&mut self.streams[3], j_slots, self.buffer, &mut Pool::new(&mut *cursors, 0, self.min_read), work, &mut self.io, progress)?;
+        let mut pool = Pool::new(&mut *cursors, 0, self.min_read);
         let mut members = pool.attach::<Member, W>(work, &mut self.io, self.streams[0])?;
         let mut joins = pool.attach::<Joined, W>(work, &mut self.io, self.streams[3])?;
         let start = self.io.end;
@@ -153,10 +157,10 @@ impl<'a> Engine<'a> {
         while let Some(member) = pool.next::<Member, W>(&mut members, &mut view, work, &mut self.io)? {
             if previous == Some(member.hash) { return Err(Error::Book(Status::Unsupported)); }
             previous = Some(member.hash);
-            if nav.or(ncx).is_some_and(|c| c.hash == member.hash) {
-                if nav.is_some() { header.nav = rank; } else { header.ncx = rank; }
+            if choices.nav.or(choices.ncx).is_some_and(|c| c.hash == member.hash) {
+                if choices.nav.is_some() { header.nav = rank; } else { header.ncx = rank; }
             }
-            if cover.is_some_and(|c| c.hash == member.hash) { header.cover = rank; }
+            if choices.cover.is_some_and(|c| c.hash == member.hash) { header.cover = rank; }
             let mut first_position = NONE;
             while let Some(j) = joined.filter(|j| j.href <= member.hash) {
                 let position = positions.rank(j.position)?;
@@ -186,17 +190,17 @@ impl<'a> Engine<'a> {
         Ok(())
     }
     pub fn publish<W: WorkFile + CacheStorage + ?Sized>(&mut self, store: &mut W, header: Header,
-        progress: &mut dyn FnMut(Progress) -> bool, receipt_live: &mut dyn FnMut() -> bool) -> Result<(), Error> {
+        state: &mut JoinState<'_>, progress: &mut dyn FnMut(Progress) -> bool, receipt_live: &mut dyn FnMut() -> bool) -> Result<(), Error> {
         use crate::book_index::{Writer, SpineItem};
         let fan = (self.buffer.len() - 384) / self.min_read;
-        reduce::<Member, W>(&mut self.streams[0], fan - 1, self.buffer, self.min_read, store, &mut self.io, progress)?;
-        reduce::<Spine, W>(&mut self.streams[5], fan, self.buffer, self.min_read, store, &mut self.io, progress)?;
+        reduce::<Member, W>(&mut self.streams[0], fan - 1, self.buffer, &mut Pool::new(&mut *state.cursors, 0, self.min_read), store, &mut self.io, progress)?;
+        reduce::<Spine, W>(&mut self.streams[5], fan, self.buffer, &mut Pool::new(&mut *state.cursors, 0, self.min_read), store, &mut self.io, progress)?;
         if self.disk && !store.sync_work() { return Err(io()); }
-        let mut saved = [0; 384];
-        saved.copy_from_slice(&self.buffer[..384]);
-        let (write_buffer, tail) = self.buffer.split_at_mut(384);
-        let mut view = View { prefix: &saved, tail };
-        let mut pool = Pool::new(384, self.min_read);
+        let JoinState { cursors, saved, .. } = state;
+        saved.copy_from_slice(&self.buffer[..WRITER_PREFIX]);
+        let (write_buffer, tail) = self.buffer.split_at_mut(WRITER_PREFIX);
+        let mut view = View { prefix: &saved[..], tail };
+        let mut pool = Pool::new(cursors, WRITER_PREFIX, self.min_read);
         let mut members = pool.attach::<Member, W>(store, &mut self.io, self.streams[0])?;
         let mut first = pool.attach::<First, W>(store, &mut self.io, self.streams[4])?;
         let mut f = pool.next::<First, W>(&mut first, &mut view, store, &mut self.io)?;
@@ -212,8 +216,7 @@ impl<'a> Engine<'a> {
             rank += 1; poll(progress, Phase::Publish, u64::from(rank), u64::from(header.members + header.spine))?;
         }
         if f.is_some() || rank != header.members { return Err(io()); }
-        drop(pool);
-        let mut pool = Pool::new(384, self.min_read);
+        let mut pool = Pool::new(cursors, WRITER_PREFIX, self.min_read);
         let mut spine = pool.attach::<Spine, W>(store, &mut self.io, self.streams[5])?;
         let mut before = 0;
         let mut count = 0;
@@ -226,16 +229,15 @@ impl<'a> Engine<'a> {
         writer.finish(store, receipt_live).map_err(Error::Write)
     }
 }
-pub(super) fn fixed_state_bytes() -> usize {
-    // Package is gone before positions and merge cursors are constructed.
-    core::mem::size_of::<Engine<'_>>() + core::mem::size_of::<Positions>() + core::mem::size_of::<Pool>()
-        + core::mem::size_of::<Header>() + 2 * core::mem::size_of::<runs::Group>()
-        + core::mem::size_of::<Output<Spine>>() + core::mem::size_of::<Output<First>>()
-        + core::mem::size_of::<(Option<Member>, Option<Joined>, Option<First>, Option<Choice>, Option<Choice>, u64, u32, u32, bool)>()
-}
-#[cfg(test)]
-pub(super) fn state_sizes() -> [usize; 7] {
-    [core::mem::size_of::<Engine<'_>>(), core::mem::size_of::<Positions>(), core::mem::size_of::<Pool>(),
-     core::mem::size_of::<Header>(), core::mem::size_of::<runs::Group>(), core::mem::size_of::<Output<Spine>>(),
-     core::mem::size_of::<(Option<Member>, Option<Joined>, Option<First>, Option<Choice>, Option<Choice>, u64, u32, u32, bool)>()]
-}
+/// What a join or publish keeps on the caller's stack: the engine, the header
+/// copies, the cursor pool handle, the merge groups and outputs, and the
+/// writer. Positions and cursors themselves are lent in JoinState.
+pub(super) const JOIN_STACK_BYTES: usize = {
+    use core::mem::size_of;
+    size_of::<Engine<'static>>() + 2 * size_of::<Header>() + size_of::<Pool<'static>>()
+        + 2 * size_of::<runs::Group>() + size_of::<Output<Spine>>() + size_of::<Output<First>>()
+        + size_of::<View<'static>>() + size_of::<crate::book_index::Writer<'static>>()
+        // Writer::begin encodes the header in a local before copying it out.
+        + crate::book_index::HEADER_BYTES as usize
+        + size_of::<(Option<Member>, Option<Joined>, Option<First>, Option<Choice>, Option<Choice>, u64, u32, u32, bool)>()
+};

@@ -40,11 +40,15 @@ fn agreement_variant(source: &mut impl BookSource, name: &str, buffer_bytes: usi
             &mut admission::ScheduledSource::new(parts.workflow.source, None, None), parse, &mut scan,
             |m| builder.visit(&mut store, m, &mut |_| true)), Status::Ok);
         let identity = index::Identity { digest: [17; 32], policy: 1 };
-        let prepared = builder.parse(&mut parts.workflow, &entry, &dir, identity, &mut store, &mut |_| true)
+        let (mut positions, mut cursors, mut saved) =
+            ([0; builder::POSITION_WORDS], [builder::Cursor::default(); builder::CURSORS], [0; builder::WRITER_PREFIX]);
+        let mut state = builder::JoinState::new(&mut positions, &mut cursors, &mut saved);
+        let prepared = builder.parse(parts.workflow.reborrow(), &entry, &dir, identity, &mut store, &mut |_| true)
+            .and_then(|parsed| parsed.join(&mut store, &mut state, &mut |_| true))
             .unwrap_or_else(|e| panic!("{name}: parse {e:?}"));
-        let report = prepared.publish(&mut store, &mut |_| true, &mut || true)
+        let report = prepared.publish(&mut store, &mut state, &mut |_| true, &mut || true)
             .unwrap_or_else(|e| panic!("{name}: publish {e:?}"));
-        assert!(store.work.is_empty());
+        assert!(report.work_removed && store.work.is_empty());
         if buffer_bytes < 1024 { assert!(report.statistics.runs > 0, "{name}: forced spill"); }
         let reader = index::Reader::open(&mut store, &identity).expect("index readback");
         let h = reader.header();
@@ -89,8 +93,8 @@ fn agreement_variant(source: &mut impl BookSource, name: &str, buffer_bytes: usi
         copy_display_title(&mut title, bytes(parts.result.metadata.title));
         assert_eq!(h.title, title, "{name}: title");
         assert_eq!(h.language, BookLanguage::from_opf(bytes(parts.result.metadata.language)), "{name}: language");
-        println!("INDEX {name} fixed={} buffer={} statistics={:?}", report.fixed_bytes, buffer_bytes, report.statistics);
-        report.fixed_bytes + buffer_bytes
+        println!("INDEX {name} buffer={} statistics={:?}", buffer_bytes, report.statistics);
+        builder::STACK_BYTES + builder::JOIN_STATE_BYTES + buffer_bytes
     })
 }
 

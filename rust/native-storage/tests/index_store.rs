@@ -351,12 +351,14 @@ fn spilling_build(card: &mut Card) -> core::result::Result<(), newt_core::book_i
     use newt_core::book_index_build::Error as BuildError;
     let mut work = IndexWorkState::new();
     let mut buffer = [0; 448];
+    let mut join = build_support::JoinBacking::new();
+    let mut state = join.state();
     // Sweep before creating a live work file, never between these two loans.
     with_store(card, |store| store.index_census(&Never, None, None, None));
     let source = card.open("/sd/source", Open::SourceReadOnly).map_err(|_| BuildError::Write(WriteError::Storage))?;
     let prepared = with_store(card, |store| {
         let mut store = IndexBuildStore::lend(store, &mut work, &BOOK.digest).unwrap();
-        build_support::prepare(&mut store, &mut buffer, 64, 8, 8, 8)
+        build_support::prepare(&mut store, &mut buffer, 64, 8, 8, 8, &mut state)
     });
     let closed = card.close(source).is_ok();
     with_store(card, |store| {
@@ -365,7 +367,7 @@ fn spilling_build(card: &mut Card) -> core::result::Result<(), newt_core::book_i
             newt_core::book_index_build::WorkFile::remove_work(&mut store);
             return Err(BuildError::Write(WriteError::Storage));
         }
-        prepared?.publish(&mut store, &mut |_| true, &mut || true).map(|_| ())
+        prepared?.publish(&mut store, &mut state, &mut |_| true, &mut || true).map(|_| ())
     })
 }
 fn built_index_complete(store: &mut dyn CacheStorage, reader: &Reader) -> bool {
@@ -410,7 +412,5 @@ fn spilling_build_cuts_every_card_step_and_uses_three_files() {
     }
     let work_bytes = core::mem::size_of::<IndexWorkState>();
     let view_bytes = core::mem::size_of::<IndexBuildStore<'_, '_, Card>>();
-    let fixed = newt_core::book_index_build::fixed_state_bytes() + work_bytes + view_bytes;
-    assert!(fixed + 32768 < 41693);
-    println!("SPILLING CARD cuts={steps} most_open={} work_state={work_bytes} view={view_bytes} fixed={fixed} bank_left={}", good.most_open, 41693 - 32768 - fixed);
+    println!("SPILLING CARD cuts={steps} most_open={} work_state={work_bytes} view={view_bytes}", good.most_open);
 }

@@ -2,6 +2,7 @@
 //! No allocation and no retained bank-derived references in reader state.
 use crate::{canonical, resources::*, styles};
 use core::mem::{align_of, size_of};
+use newt_core::book_index_build::{Cursor, CURSORS, JoinState, POSITION_WORDS, WRITER_PREFIX};
 use newt_core::member_check::Checked;
 use newt_core::{
     chapter_layout::types::{self as layout, LineBreak},
@@ -88,6 +89,13 @@ impl<'a> Parts<'a> {
             .try_into()
             .map_err(|_| Status::OutOfMemory)
     }
+}
+// Each piece is carved in place, so no 7.5 KB temporary lands on the stack.
+fn carve_join_state<'a>(parts: &mut Parts<'a>) -> Result<JoinState<'a>, Status> {
+    let positions = parts.array::<u64>(POSITION_WORDS)?.try_into().map_err(|_| Status::OutOfMemory)?;
+    let cursors = parts.array::<Cursor>(CURSORS)?.try_into().map_err(|_| Status::OutOfMemory)?;
+    let saved = parts.fixed::<WRITER_PREFIX>()?;
+    Ok(JoinState::new(positions, cursors, saved))
 }
 // Only Parts initializes typed tail backing, using the same checked lane.
 fn tail_array<'storage, T: Copy + Default>(
@@ -339,6 +347,21 @@ pub struct Phase<'a> {
     held: &'a mut bool,
 }
 impl Phase<'_> {
+    /// The index builder's join and publish state, carved from the parse bank
+    /// after the OPF pass. It borrows the whole Phase, and every inflate and
+    /// XML resource is carved through `&mut self` too, so none can coexist
+    /// with it:
+    ///
+    /// ```compile_fail,E0499
+    /// fn overlap(phase: &mut newt_phased_reader::phase_storage::Phase<'_>) {
+    ///     let state = phase.join_state();
+    ///     let parse_again = phase.join_state();
+    ///     drop((state, parse_again));
+    /// }
+    /// ```
+    pub fn join_state(&mut self) -> Result<JoinState<'_>, Status> {
+        carve_join_state(&mut Parts(&mut *self.parse))
+    }
     pub(crate) fn stream<B: ParserBackend + ?Sized, R>(
         &mut self,
         backend: &mut B,
@@ -928,6 +951,22 @@ mod empty_array_tests;
 #[cfg(test)]
 #[path = "phase_storage_cache_cases.rs"]
 mod cache_scope_tests;
+
+#[cfg(test)]
+mod join_state_tests {
+    use super::*;
+    #[test]
+    fn the_index_join_state_leaves_most_of_the_parse_bank_free() {
+        #[repr(align(16))]
+        struct Bank([u8; BANK_BYTES]);
+        let mut bank = Bank([0; BANK_BYTES]);
+        let mut parts = Parts(&mut bank.0);
+        assert!(carve_join_state(&mut parts).is_ok());
+        // 4,096 B positions + 64 x 48 B cursors + 384 B writer prefix, no padding.
+        assert_eq!(BANK_BYTES - parts.0.len(), newt_core::book_index_build::JOIN_STATE_BYTES);
+        assert_eq!(parts.0.len(), 41_600);
+    }
+}
 
 #[path = "producer_storage.rs"]
 pub mod producer;

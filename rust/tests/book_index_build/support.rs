@@ -1,5 +1,5 @@
 //! Synthetic metadata events for the bounded builder's fault/card/limit models.
-use super::core_api::{book_index::{self, Identity, Member}, book_index_build::{Builder, Error, Prepared, WorkFile},
+use super::core_api::{book_index::{self, Identity, Member}, book_index_build::{Builder, Cursor, CURSORS, Error, JoinState, POSITION_WORDS, Prepared, WRITER_PREFIX, WorkFile},
     member_check::Checked, package_parsers::Workflow, xml_session::{Attributes, Handler, ParserBackend},
     zip_container::Status, zip_window::source::BookSource};
 pub const IDENTITY: Identity = Identity { digest: [0xa5; 32], policy: 1 };
@@ -39,8 +39,14 @@ impl ParserBackend for Backend {
         true
     }
 }
+/// Host backing for the merge state the device lends from its parse bank.
+pub struct JoinBacking { positions: [u64; POSITION_WORDS], cursors: [Cursor; CURSORS], saved: [u8; WRITER_PREFIX] }
+impl JoinBacking {
+    pub fn new() -> Self { Self { positions: [0; POSITION_WORDS], cursors: [Cursor::default(); CURSORS], saved: [0; WRITER_PREFIX] } }
+    pub fn state(&mut self) -> JoinState<'_> { JoinState::new(&mut self.positions, &mut self.cursors, &mut self.saved) }
+}
 pub fn prepare<'a>(work: &mut impl WorkFile, buffer: &'a mut [u8], run_bytes: usize,
-    members: u32, manifests: u32, spine: u32) -> Result<Prepared<'a>, Error> {
+    members: u32, manifests: u32, spine: u32, state: &mut JoinState<'_>) -> Result<Prepared<'a>, Error> {
     let min_read = if buffer.len() == 32768 { 512 } else { 32 };
     let mut builder = Builder::new(buffer, min_read, run_bytes)?;
     for i in 0..members {
@@ -49,7 +55,8 @@ pub fn prepare<'a>(work: &mut impl WorkFile, buffer: &'a mut [u8], run_bytes: us
         if status != Status::Ok { return Err(Error::Book(status)); }
     }
     let (mut source, mut backend, mut input) = (Source, Backend { manifests, spine }, [0; 2048]);
-    let mut workflow = Workflow { source: &mut source, backend: &mut backend, decoder: None,
+    let workflow = Workflow { source: &mut source, backend: &mut backend, decoder: None,
         buffer: Some(&mut input), filter: None, policy: None };
-    builder.parse(&mut workflow, &Checked::raw(1), b"", IDENTITY, work, &mut |_| true)
+    builder.parse(workflow, &Checked::raw(1), b"", IDENTITY, work, &mut |_| true)?
+        .join(work, state, &mut |_| true)
 }

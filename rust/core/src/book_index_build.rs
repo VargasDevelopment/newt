@@ -13,7 +13,8 @@ mod records;
 mod engine;
 use engine::Engine;
 use records::{Item, Reference};
-pub use runs::Statistics;
+pub use engine::POSITION_WORDS;
+pub use runs::{Cursor, CURSORS, Statistics};
 const TEXT: u32 = 1;
 const NAV: u32 = 2;
 const NCX: u32 = 4;
@@ -44,10 +45,53 @@ fn earlier(target: &mut Option<Choice>, candidate: Choice) {
     if target.is_none_or(|old| candidate.sequence < old.sequence) { *target = Some(candidate); }
 }
 
-/// Lent for one build only. `parse` returns without retaining the source loan.
+/// Writer::begin borrows this prefix of the run buffer; publish saves it in JoinState.
+pub const WRITER_PREFIX: usize = crate::book_index::HEADER_BYTES as usize;
+/// Exact bytes a JoinState borrows, before alignment padding.
+pub const JOIN_STATE_BYTES: usize = core::mem::size_of::<[u64; POSITION_WORDS]>()
+    + core::mem::size_of::<[Cursor; CURSORS]>() + WRITER_PREFIX;
+/// The most builder state any phase keeps on the caller's stack. The OPF pass
+/// holds the builder and the package handler; join and publish hold the engine
+/// and their merge handles.
+pub const STACK_BYTES: usize = {
+    let package = core::mem::size_of::<Builder<'static>>()
+        + core::mem::size_of::<Package<'static, 'static, dyn WorkFile>>();
+    if package > engine::JOIN_STACK_BYTES { package } else { engine::JOIN_STACK_BYTES }
+};
+// Both budgets sit just above today's host sizes (7,552 B and 2,264 B), so
+// any growth is a decision, not a silent stack overflow or bank overrun: the
+// reader task had about 6.1 KB of stack free on a normal open (SLICE0).
+const _: () = assert!(JOIN_STATE_BYTES <= 7_552, "JoinState outgrew its parse-bank share");
+const _: () = assert!(STACK_BYTES <= 2_304, "index builder stack state outgrew its budget");
+
+/// Merge state for join and publish, lent from the parse bank once the OPF
+/// pass has released inflate and XML: the joined-position set, the cursor
+/// pool and the writer's saved prefix. Lent in pieces so the caller can carve
+/// each in place.
+pub struct JoinState<'p> {
+    positions: &'p mut [u64; POSITION_WORDS],
+    cursors: &'p mut [Cursor; CURSORS],
+    saved: &'p mut [u8; WRITER_PREFIX],
+}
+impl<'p> JoinState<'p> {
+    pub fn new(positions: &'p mut [u64; POSITION_WORDS], cursors: &'p mut [Cursor; CURSORS],
+        saved: &'p mut [u8; WRITER_PREFIX]) -> Self {
+        Self { positions, cursors, saved }
+    }
+}
+
+/// Lent for one build only.
 pub struct Builder<'a> { engine: Engine<'a>, members: u32 }
+/// The OPF pass is over. Nothing here borrows the parse bank, so the caller
+/// can lend that bank as a JoinState.
+pub struct Parsed<'a> { engine: Engine<'a>, header: Header, choices: Choices }
 pub struct Prepared<'a> { engine: Engine<'a>, header: Header }
-pub struct Report { pub header: Header, pub statistics: Statistics, pub fixed_bytes: usize }
+/// `work_removed == false` means the index is published but the work file is
+/// left for the next census to sweep; the open still succeeds.
+pub struct Report { pub header: Header, pub statistics: Statistics, pub work_removed: bool }
+/// Navigation and cover candidates the OPF pass found, resolved by the join.
+#[derive(Clone, Copy)]
+struct Choices { toc: Option<u64>, cover_id: Option<u64>, nav: Option<Choice>, ncx: Option<Choice>, cover: Option<Choice> }
 impl<'a> Builder<'a> {
     pub fn new(buffer: &'a mut [u8], min_read: usize, run_bytes: usize) -> Result<Self, Error> {
         Ok(Self { engine: Engine::new(buffer, min_read, run_bytes)?, members: 0 })
@@ -63,16 +107,18 @@ impl<'a> Builder<'a> {
         })();
         match result { Ok(()) => Status::Ok, Err(error) => { work.remove_work(); error.status() } }
     }
+    /// The OPF pass. It consumes the workflow, so its inflate and XML loans
+    /// end here and `Parsed` keeps none of them.
     pub fn parse<S: BookSource + ?Sized, B: ParserBackend + ?Sized, W: WorkFile + ?Sized>(self,
-        workflow: &mut Workflow<'_, S, B>, entry: &Checked, dir: &[u8], identity: Identity,
-        work: &mut W, progress: &mut dyn FnMut(Progress) -> bool) -> Result<Prepared<'a>, Error> {
+        workflow: Workflow<'_, S, B>, entry: &Checked, dir: &[u8], identity: Identity,
+        work: &mut W, progress: &mut dyn FnMut(Progress) -> bool) -> Result<Parsed<'a>, Error> {
         let result = self.parse_inner(workflow, entry, dir, identity, work, progress);
         if result.is_err() { work.remove_work(); }
         result
     }
     fn parse_inner<S: BookSource + ?Sized, B: ParserBackend + ?Sized, W: WorkFile + ?Sized>(mut self,
-        workflow: &mut Workflow<'_, S, B>, entry: &Checked, dir: &[u8], identity: Identity,
-        work: &mut W, progress: &mut dyn FnMut(Progress) -> bool) -> Result<Prepared<'a>, Error> {
+        mut workflow: Workflow<'_, S, B>, entry: &Checked, dir: &[u8], identity: Identity,
+        work: &mut W, progress: &mut dyn FnMut(Progress) -> bool) -> Result<Parsed<'a>, Error> {
         let mut package = Package {
             engine: &mut self.engine, work, progress, path: [0; 512], capture: TextCapture::default(),
             nav: None, ncx: None, image: None, dir,
@@ -86,13 +132,20 @@ impl<'a> Builder<'a> {
         if package.error != Status::Ok { return Err(Error::Book(package.error)); }
         if package.raw_items == 0 || package.raw_refs == 0 { return Err(Error::Book(Status::NotEpub)); }
         if !package.title_set { copy_display_title(&mut package.title, None); }
-        let mut header = Header { identity, members: self.members, spine: 0, spine_bytes: 0,
+        let header = Header { identity, members: self.members, spine: 0, spine_bytes: 0,
             nav: NONE, ncx: NONE, cover: NONE, title: package.title, language: package.language };
-        let (toc, cover_id) = (package.toc, package.cover);
-        let (nav, ncx, cover) = (package.nav, package.ncx, package.image);
-        drop(package);
-        self.engine.join(work, &mut header, toc, cover_id, nav, ncx, cover, progress)?;
-        Ok(Prepared { engine: self.engine, header })
+        let choices = Choices { toc: package.toc, cover_id: package.cover,
+            nav: package.nav, ncx: package.ncx, cover: package.image };
+        Ok(Parsed { engine: self.engine, header, choices })
+    }
+}
+impl<'a> Parsed<'a> {
+    /// Joins manifest, spine and members through the lent merge state.
+    pub fn join<W: WorkFile + ?Sized>(mut self, work: &mut W, state: &mut JoinState<'_>,
+        progress: &mut dyn FnMut(Progress) -> bool) -> Result<Prepared<'a>, Error> {
+        let result = self.engine.join(work, &mut self.header, self.choices, state, progress);
+        if let Err(error) = result { work.remove_work(); return Err(error); }
+        Ok(Prepared { engine: self.engine, header: self.header })
     }
 }
 struct Package<'a, 'b, W: WorkFile + ?Sized> {
@@ -178,8 +231,8 @@ impl<W: WorkFile + ?Sized> Handler for Package<'_, '_, W> {
             self.spine_depth += 1;
             if self.toc.is_none() { self.toc = atts.local(b"toc").map(name_hash); }
         } else if self.metadata_depth > 0 && local_is(name, b"meta") {
-            if atts.local(b"name") == Some(b"cover") {
-                if let Some(id) = atts.local(b"content") { self.cover = Some(name_hash(id)); }
+            if atts.local(b"name") == Some(b"cover") && let Some(id) = atts.local(b"content") {
+                self.cover = Some(name_hash(id));
             }
         } else if self.metadata_depth > 0 {
             self.field = if local_is(name, b"title") { 1 }
@@ -230,18 +283,15 @@ impl<W: WorkFile + ?Sized> Handler for Package<'_, '_, W> {
 
 impl Prepared<'_> {
     /// Call only after closing the source. The store owns work and index FDs together.
-    pub fn publish<W: WorkFile + CacheStorage + ?Sized>(mut self, store: &mut W,
+    /// Once the index is published, a failed work-file removal is reported, not
+    /// fatal: like a failed eviction, the census sweeps the file later.
+    pub fn publish<W: WorkFile + CacheStorage + ?Sized>(mut self, store: &mut W, state: &mut JoinState<'_>,
         progress: &mut dyn FnMut(Progress) -> bool, receipt_live: &mut dyn FnMut() -> bool) -> Result<Report, Error> {
-        let result = self.engine.publish(store, self.header, progress, receipt_live);
-        let removed = store.remove_work();
+        let result = self.engine.publish(store, self.header, state, progress, receipt_live);
+        let work_removed = store.remove_work();
         result?;
-        if !removed { return Err(Error::Book(Status::IoError)); }
-        Ok(Report { header: self.header, statistics: self.engine.io.stats, fixed_bytes: fixed_state_bytes() })
+        Ok(Report { header: self.header, statistics: self.engine.io.stats, work_removed })
     }
-}
-/// Upper bound on all simultaneously owned fixed builder backing, excluding the run buffer.
-pub fn fixed_state_bytes() -> usize {
-    engine::fixed_state_bytes().max(core::mem::size_of::<Package<'_, '_, dyn WorkFile>>() + core::mem::size_of::<Engine<'_>>())
 }
 
 #[cfg(test)]

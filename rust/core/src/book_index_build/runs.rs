@@ -4,7 +4,7 @@ use crate::{page_envelope::crc, zip_container::Status};
 use core::marker::PhantomData;
 const HEADER: usize = 24;
 const NONE: u32 = u32::MAX;
-pub(super) const CURSORS: usize = 64;
+pub const CURSORS: usize = 64;
 
 pub(super) fn io() -> Error { Error::Book(Status::IoError) }
 pub(super) fn poll(progress: &mut dyn FnMut(Progress) -> bool, phase: Phase, done: u64, total: u64) -> Result<(), Error> {
@@ -75,8 +75,9 @@ impl Stream {
 }
 #[derive(Clone, Copy, Default)]
 struct Run { start: u32, count: u32, checked: u32 }
+/// One merge input. Its 64-slot pool lives in JoinState, lent from the parse bank.
 #[derive(Clone, Copy, Default)]
-struct Cursor {
+pub struct Cursor {
     start: u32, remaining: u32, expected: u32, checked: u32,
     used: u16, available: u16, head: [u8; 24], ready: bool,
 }
@@ -131,12 +132,14 @@ impl View<'_> {
 pub(super) struct Group {
     first: usize, count: usize, memory: Option<Region>, forward: Option<(u32, u32)>, forward_live: bool,
 }
-pub(super) struct Pool { cursor: [Cursor; CURSORS], used: usize, pub base: usize, pub min_read: usize }
-impl Pool {
-    pub fn new(base: usize, min_read: usize) -> Self {
-        Self { cursor: [Cursor::default(); CURSORS], used: 0, base, min_read }
+pub(super) struct Pool<'s> { cursor: &'s mut [Cursor; CURSORS], used: usize, pub base: usize, pub min_read: usize }
+impl<'s> Pool<'s> {
+    pub fn new(cursor: &'s mut [Cursor; CURSORS], base: usize, min_read: usize) -> Self {
+        Self { cursor, used: 0, base, min_read }
     }
     pub fn bytes(&self) -> usize { self.base + self.used * self.min_read }
+    /// Frees every slot for the next merge; cursors are rewritten on attach.
+    fn clear(&mut self) { self.used = 0; }
     pub fn attach<T: Record, W: WorkFile + ?Sized>(&mut self, work: &mut W, io_state: &mut Io, stream: Stream) -> Result<Group, Error> {
         if let Some(region) = stream.memory { return Ok(Group { memory: Some(region), ..Group::default() }); }
         let count = stream.slots();
@@ -185,8 +188,8 @@ impl Pool {
         let mut best: Option<(usize, T)> = None;
         for i in group.first..group.first + group.count {
             let record = self.cursor[i].peek::<T, W>(work, io_state, view.slice(self.base + i * self.min_read, self.min_read))?;
-            if let Some(record) = record {
-                if best.is_none_or(|(_, old)| record.key() < old.key()) { best = Some((i, record)); }
+            if let Some(record) = record && best.is_none_or(|(_, old)| record.key() < old.key()) {
+                best = Some((i, record));
             }
         }
         if let Some((i, record)) = best { self.cursor[i].ready = false; Ok(Some(record)) } else { Ok(None) }
@@ -248,7 +251,8 @@ impl<T: Record> Output<T> {
 }
 /// Reduce only an overflowing list, and copy only enough runs to meet its share.
 pub(super) fn reduce<T: Record, W: WorkFile + ?Sized>(stream: &mut Stream, wanted: usize, buffer: &mut [u8],
-    min_read: usize, work: &mut W, io_state: &mut Io, progress: &mut dyn FnMut(Progress) -> bool) -> Result<(), Error> {
+    pool: &mut Pool<'_>, work: &mut W, io_state: &mut Io, progress: &mut dyn FnMut(Progress) -> bool) -> Result<(), Error> {
+    let min_read = pool.min_read;
     if stream.memory.is_some() || stream.forward.is_some() { return Ok(()); }
     let fan = ((buffer.len() - T::BYTES) / min_read).min(CURSORS);
     if wanted == 0 || fan < 2 { return Err(Error::Book(Status::MetadataTooLarge)); }
@@ -268,7 +272,7 @@ pub(super) fn reduce<T: Record, W: WorkFile + ?Sized>(stream: &mut Stream, wante
         stream.list.last = scan;
         stream.list.runs -= count as u32;
         stream.list.records -= batch.records;
-        let mut pool = Pool::new(0, min_read);
+        pool.clear();
         let mut group = pool.attach::<T, W>(work, io_state, Stream { list: batch, ..Stream::default() })?;
         let start = io_state.end;
         let out_start = pool.bytes();
