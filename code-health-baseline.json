@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3987776,
+      "flash_bytes": 3988384,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "3c23c8626a1463b22d0406087d96dd0f99281087",
-      "before": 3982384,
-      "after": 3987776,
-      "reason": "#20 return to the official release: exact source/target receipt, cold validation, shared eligibility/installer guard, explicit older-version confirmation. Measured main 38654935 3,982,384 -> 3,987,776 B (+5,392), clean pinned-Python firmware-build.py --clean --health-report of committed 3c23c8626a1463b22d0406087d96dd0f99281087. RAM unchanged at 124,096 B; RTC 300 -> 300 B; lent Wi-Fi 22,528 B unchanged. Selected compiler frames measure 0/16/32/48/480 B, within existing 0/16/32/48/656 B ceilings; stack ceilings unchanged. No new idle heap; owner exists only in update boot. Floors unchanged. Real Wi-Fi return acceptance remains pending.",
-      "reviewer": "Newt Lead (cross-family review: Opus 5.5 xhigh, CLEAN logic task b9f11dea-a334-437c-b41a-f0ae4f63822c and copy delta task 09863e8d-9ecb-4614-b816-1b0cadc8493b; rebased source unchanged except portable test count)"
+      "source_revision": "a99f9fe0e5b21bd170003e06f19af1962b640521",
+      "before": 3987776,
+      "after": 3988384,
+      "reason": "#124 changed-book reimport interrupt handling: snapshot prior selection/progress before reimport and roll back cleanly when Back/Confirm+Back interrupts prepare_image or open_selected_profile, clearing transient ReaderIssue/notices without revoking Home cover eligibility or leaving stale candidate digests. Measured main 00267409 3,987,776 -> 3,988,384 B (+608 B), clean pinned-Python firmware-build.py --clean --health-report of committed a99f9fe0e5b21bd170003e06f19af1962b640521. RAM unchanged at 124,096 B; RTC unchanged at 300 B (.rtc_noinit 208 B); lent Wi-Fi unchanged at 22,528 B; selected compiler stack frames and floors unchanged.",
+      "reviewer": "Newt Lead (2026-11-25; cross-family review: Astra)"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
