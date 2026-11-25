@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3975136,
+      "flash_bytes": 3976576,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "6f661d87e276afce7f512de9f4e310cfa0c4a2af",
-      "before": 3975104,
-      "after": 3975136,
-      "reason": "+32 B over the 3,975,104 B ceiling (main 57251ee8): release 0.5.0 adds the Nov 25, 2026 What's new entry (six plain-words lines), drops the oldest Nov 24 entry that no longer fits About, and moves the version label 0.4.1 -> 0.5.0 (rust/device-ui/whats_new_notes.h, firmware_version.h). No code change. Clean regional DEV USB builds: main 57251ee8 3,975,104 B; 6f661d87 3,975,136 B (CI run 45520546225 and local clean build agree; 56.7% of the 7,016,448 B usable app flash). RAM, RTC (300 -> 300 B), lent Wi-Fi RAM and selected stack frames within unchanged ceilings.",
-      "reviewer": "Newt Lead (cross-family review: Astra)"
+      "source_revision": "b71f081d03f28a1b96cd7182ef3a702c574d27f3",
+      "before": 3975136,
+      "after": 3976576,
+      "reason": "+1,440 B for DEV PUT at validated card-relative paths, u64 lengths and 4 KiB raw DATA, preserving sync, card read-back SHA-256 and atomic replacement. The C3 RX loan masks only RX, drains queued bytes before FIFO polling and restores the prior RX bit on every exit; the 256 B SDK queue and TX path stay unchanged. Released main a59fe9b1: 3,975,136 B (release clean record, CI 45520546225) -> fresh clean rebased PUT 3,976,576 B. RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi 22,528 -> 22,528 B; selected static frames 0/16/32/48/480 -> 0/16/32/48/480 B. Each RX native leaf has a 16 B static frame; runtime evidence is separate.",
+      "reviewer": "Newt Lead (cross-family review: Gemini)"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
