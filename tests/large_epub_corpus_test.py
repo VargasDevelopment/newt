@@ -54,6 +54,10 @@ INDEX_STYLE_CONTROL = (
     "if next.position & (1 << 16) != 0 { member.flags |= crate::book_index::STYLESHEET; }",
     "if false { member.flags |= crate::book_index::STYLESHEET; }", "stylesheet-application",
 )
+INDEX_STYLE_HEADER_CONTROL = (
+    "the index drops its any-stylesheet header bit", "core/src/book_index_build.rs",
+    "stylesheets: package.stylesheets", "stylesheets: false", "stylesheet-application",
+)
 INDEX_NAME_CONTROL = (
     "an indexed hash hit skips its exact local-name comparison", "core/src/member_check_indexed.rs",
     "|| expected.is_some_and(|expected|", "|| false && expected.is_some_and(|expected|", "indexed-local-name",
@@ -493,18 +497,10 @@ def run_controls(binary, run, workspace, target, support, epubs_dir, output):
     manifest = Path(run.env["NEWT_LARGE_EPUB_MANIFEST"])
     baseline = run_clean_cases(binary, run, workspace, support, manifest)
     support.require("INDEX stylesheet-application " in baseline, "stylesheet oracle baseline absent")
-    run_control(run, workspace, target, support, manifest, {"stylesheet-application"}, builds,
-                *INDEX_STYLE_CONTROL)
-    binary = test_binary(run, workspace, target)
-    builds.admit(binary, None)
-    run_control(run, workspace, target, support, manifest, {"indexed-local-name"}, builds,
-                *INDEX_NAME_CONTROL)
-    binary = test_binary(run, workspace, target)
-    builds.admit(binary, None)
-    run_control(run, workspace, target, support, manifest, {"toc-declared-missing"}, builds,
-                *INDEX_TOC_CONTROL)
-    binary = test_binary(run, workspace, target)
-    builds.admit(binary, None)
+    for control in (INDEX_STYLE_CONTROL, INDEX_STYLE_HEADER_CONTROL, INDEX_NAME_CONTROL, INDEX_TOC_CONTROL):
+        run_control(run, workspace, target, support, manifest, {control[-1]}, builds, *control)
+        binary = test_binary(run, workspace, target)
+        builds.admit(binary, None)
     unit_binary = test_binary(run, workspace, target, unit=True)
     recovery_test = "navigation_indexed::tests::consumed_index_damage_removes_the_header_hit_for_the_next_open"
     recovery = run.run([unit_binary, recovery_test, "--nocapture"], workspace)
@@ -514,6 +510,15 @@ def run_controls(binary, run, workspace, target, support, epubs_dir, output):
                 "a consumed index failure leaves a reusable header", "phased-reader/src/reader_indexed.rs",
                 "if damaged { store.invalidate_index(digest); }", "if false && damaged { store.invalidate_index(digest); }",
                 "index-recovery", unit=True, test_filter=recovery_test)
+    unit_binary = test_binary(run, workspace, target, unit=True)
+    margin_test = "navigation_indexed::tests::chapter_bind_at_the_bound_batches_and_above_it_preserves_rows_and_marks_the_fallback"
+    margin = run.run([unit_binary, margin_test, "--nocapture"], workspace)
+    support.require("test result: ok. 1 passed; 0 failed" in margin, "Contents margin baseline absent")
+    builds.admit(unit_binary, None)
+    run_control(run, workspace, target, support, manifest, {"contents-margin"}, builds,
+                "menu binding retains the finished sort loan", "phased-reader/src/phase_navigation_indexed.rs",
+                "Parts(&mut *parts.0).array::<index_mapping::HashRow>(toc.len())?",
+                "parts.array::<index_mapping::HashRow>(toc.len())?", "contents-margin", unit=True, test_filter=margin_test)
     cache_limit_cases(run, workspace, target, support, builds=builds)
     by_name, verified = {}, set()
     prepare_control_baselines(binary, run, workspace, epubs_dir, output, support, by_name, verified, CONTROLS)
@@ -574,7 +579,7 @@ def main(argv=None):
             binary = test_binary(run, workspace, target)
             if args.negative_controls:
                 run_controls(binary, run, workspace, target, support, epubs_dir, output)
-                print(f"PASS large-EPUB corpus controls ({len(CONTROLS) + len(CACHE_LIMIT_CONTROLS) + 4} controls; "
+                print(f"PASS large-EPUB corpus controls ({len(CONTROLS) + len(CACHE_LIMIT_CONTROLS) + 6} controls; "
                       f"total {time.perf_counter() - started:.2f}s)", flush=True)
                 return
             exec_t0 = time.perf_counter()

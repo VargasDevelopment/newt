@@ -104,7 +104,8 @@ fn bind_indexed<C: ReadScope>(parse: &mut [u8], source: &mut dyn BookSource,
         lookup: &lookup, progress };
     let batch = if toc.len() <= CONTENTS_BATCH_ROWS {
         let mapping = parts.array::<u32>(toc.len())?;
-        let rows = parts.array::<index_mapping::HashRow>(toc.len())?;
+        // Sorting ends before menu binding, which reuses this scratch.
+        let rows = Parts(&mut *parts.0).array::<index_mapping::HashRow>(toc.len())?;
         let mut access = access.borrow_mut();
         let (source, store, query) = &mut *access;
         crate::reader::query_book_index(*source, *store, digest, query, |index, store| {
@@ -198,6 +199,12 @@ mod tests {
             if count <= CONTENTS_BATCH_ROWS { assert_eq!(store.scopes, 1); }
             else { assert!(store.scopes >= count); }
             assert_eq!(trace.0.get(), cfg!(feature = "dev-usb") && count > CONTENTS_BATCH_ROWS);
+            bank[BANK_BYTES - 8192..].fill(0xa5);
+            bind_indexed(&mut bank, &mut Source, &mut store, &identity.digest, &index,
+                Default::default(), &arena, &vec![entry; count], &mut navigation,
+                Some((Section::default(), 0)), Some(&trace)).unwrap();
+            assert!(bank[BANK_BYTES - 8192..].iter().all(|&byte| byte == 0xa5),
+                "contents-margin: menu binding preserves the stated 8 KiB scratch margin");
         }
     }
     #[test]
