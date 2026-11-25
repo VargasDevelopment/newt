@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[3]
 HERE = Path(__file__).resolve().parent
@@ -79,23 +80,27 @@ def main():
     positive = out / 'host.rs'
     positive.write_text(paths(fixture, HERE))
     run([*command, positive, '-o', out / 'positive'])
-    result = run([out / 'positive'])
+    book = out / 'generated.epub'
+    with zipfile.ZipFile(book, 'w', compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr('META-INF/container.xml', '<container><rootfiles><rootfile full-path="package.opf"/></rootfiles></container>')
+        archive.writestr('package.opf', '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>')
+        archive.writestr('chapter.xhtml', '<html><body><p>' + 'generated ' * 1500 + '</p></body></html>')
+    result = run([out / 'positive', book, 'synthetic.epub'])
+    run([out / 'positive', book, ':Shelf:Nested:synthetic.epub'])
     assert result.stdout.startswith('PASS whole actual operate_image:')
-    sources = ROOT / 'rust/firmware/reader_image_sources.rs'
-    source = sources.read_text()
-    before = 'session::with_source_lent(state, RevisionPorts'
-    after = '}, action_storage,\n'
-    assert source.count(before) == 1 and source.count(after) == 1
-    compact = source.replace(before, 'session::with_source(state, RevisionPorts').replace(after, '},\n')
-    replacement = out / 'compact-sources.rs'
-    replacement.write_text(paths(compact, sources.parent))
-    control = out / 'compact-host.rs'
-    control.write_text(paths(fixture, HERE, {sources: replacement}))
-    run([*command, control, '-o', out / 'compact-control'])
-    rejected = run([out / 'compact-control'], succeeds=False)
-    assert rejected.returncode == 101 and 'real operate_image must lend whole-block action scratch exactly once' in rejected.stderr, rejected.stderr
     operation = ROOT / 'rust/firmware/reader_image_operation.rs'
     source = operation.read_text()
+    before = 'session::with_source_lent(state, RevisionPorts'
+    after = '}, action_storage, |revision| {'
+    assert source.count(before) == 1 and source.count(after) == 1
+    compact = source.replace(before, 'session::with_source(state, RevisionPorts').replace(after, '}, |revision| {')
+    replacement = out / 'compact-operation.rs'
+    replacement.write_text(paths(compact, operation.parent))
+    control = out / 'compact-host.rs'
+    control.write_text(paths(fixture, HERE, {operation: replacement}))
+    run([*command, control, '-o', out / 'compact-control'])
+    rejected = run([out / 'compact-control', book, 'synthetic.epub'], succeeds=False)
+    assert rejected.returncode == 101 and 'real operate_image must lend whole-block action scratch exactly once' in rejected.stderr, rejected.stderr
     always = source.replace('let action_storage = if initialize || paint_first',
                             'let action_storage = if true || initialize || paint_first', 1)
     assert always != source
@@ -104,9 +109,19 @@ def main():
     control = out / 'idle-lending-host.rs'
     control.write_text(paths(fixture, HERE, {operation: replacement}))
     run([*command, control, '-o', out / 'idle-lending-control'])
-    rejected = run([out / 'idle-lending-control'], succeeds=False)
+    rejected = run([out / 'idle-lending-control', book, 'synthetic.epub'], succeeds=False)
     assert rejected.returncode == 101 and 'idle keeps compact scratch' in rejected.stderr, rejected.stderr
-    print('PASS actual operate_image action/idle frame loans; compiled compact and idle-lending controls rejected')
+    loans = ROOT / 'rust/firmware/reader_image_sources.rs'
+    drift = loans.read_text().replace('reader_book::CACHE_ROOT', '"/newt-sd/Newt/OtherCache"')
+    assert drift != loans.read_text()
+    replacement = out / 'wrong-route-sources.rs'
+    replacement.write_text(paths(drift, loans.parent))
+    control = out / 'wrong-route-host.rs'
+    control.write_text(paths(fixture, HERE, {loans: replacement}))
+    run([*command, control, '-o', out / 'wrong-route-control'])
+    rejected = run([out / 'wrong-route-control', book, 'synthetic.epub'], succeeds=False)
+    assert rejected.returncode == 101 and 'index and operate_image must lend the same cache route' in rejected.stderr, rejected.stderr
+    print('PASS actual operate_image action/idle loans and index loan agreement on both branches and encoded nested names; compact, idle-lending and route-drift controls rejected')
     common = [cargo, 'test', '--offline', '--frozen', '--locked',
               '--manifest-path', ROOT / 'rust/Cargo.toml', '--target', HOST,
               '--target-dir', target, '--jobs', '2']

@@ -73,7 +73,8 @@ pub enum StatsCondition {
 pub const CACHE_ROOT: &str = "/newt-sd/Newt/Cache";
 
 pub struct BookRequest<'a> {
-    /// The card path to open.
+    /// Only the whole-book fixture opens a path; short operations hold a source.
+    #[cfg(feature = "checkpoint-fixture")]
     pub path: &'a str,
     /// The catalog filename; its SHA-256 names the cache route (cacheRouteKey).
     pub filename: &'a str,

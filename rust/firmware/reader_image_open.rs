@@ -364,7 +364,7 @@ impl Runtime {
             self.publish_notice_image(ui);
             return true;
         }
-        let indexed = match self.index_image(home, ui, events, profile) {
+        let indexed = match self.index_image(home, logical, events, profile) {
             Ok(indexed) => indexed,
             Err(error) => {
                 if !self.interrupted_open(home, events) { self.open_failed(error); }

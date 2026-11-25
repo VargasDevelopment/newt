@@ -99,7 +99,9 @@ fn scenario(bytes: Vec<u8>, finished: bool) {
         let mut source = StrictSource::new(&mut raw, &digest).with_reopen_authorizer(&mut authorize, &|| true);
         let book = u64::from_le_bytes(digest[..8].try_into().unwrap());
         let info = DeviceInfo::default(); let saved = Progress { book, ..Progress::default() };
-        let request = BookRequest { path: "/newt-sd/Books/generated.epub", filename: "generated.epub",
+        let request = BookRequest {
+            #[cfg(feature = "checkpoint-fixture")]
+            path: "/newt-sd/Books/generated.epub", filename: "generated.epub",
             open: reader_book::BookOpen::Receipt(digest), identity: book, saved, policy: RestorePolicy::ExactPage,
             info: &info, cancel: &Never, now, sleep: None, zone: newt_core::time_zone::TimeZone::Utc };
         let mut prefs = home_startup::preferences::ReaderPreferences::default();

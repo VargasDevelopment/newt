@@ -93,7 +93,6 @@ mod reader_hash {
     #[derive(Default)] pub struct MbedHasher(Vec<u8>);
     pub struct Loan<'a>(&'a mut MbedHasher);
     impl MbedHasher { pub fn borrow_with_yield(&mut self, _: &dyn Fn()) -> Loan<'_> { Loan(self) } }
-    impl Loan<'_> { pub fn update(&mut self, input: &[u8]) -> bool { RevisionHasher::update(self, input) } }
     impl RevisionHasher for MbedHasher {
         fn begin(&mut self) -> bool { self.0.clear(); true }
         fn update(&mut self, input: &[u8]) -> bool { self.0.extend_from_slice(input); true }
@@ -174,7 +173,7 @@ mod image {
             pub source: Option<ReaderSourceState>, pub verification: Verification,
         }
     }
-    pub struct Memory { pub runtime: newt_c3_board::reader_memory::Runtime<'static,'static> }
+    pub struct Memory { pub runtime: newt_c3_board::reader_memory::Runtime<'static,'static>, pub probe: &'static [u8] }
     impl Memory {
         pub fn external_mut(&mut self) -> Option<&mut Self> { Some(self) }
         pub fn lend<R>(&mut self, work: impl FnOnce(&mut Self) -> R) -> R { work(self) }
@@ -226,7 +225,7 @@ mod image {
             pub metadata: &'a mut Option<Fixed<reader_exit_metadata::ExitMetadata>>, pub flags: Option<&'a mut u16>, pub settings: &'a mut ViewSettings,
         }
         impl RunLoan<'_> {
-            pub fn run<'io>(self, _: Ports<'_,'io,'_,'_>, _: &mut reader_pages::ReaderPages<'_, impl Native>,
+            pub fn run<'io>(self, _: Ports<'_,'io,'_,'_>, pages: &mut reader_pages::ReaderPages<'_, impl Native>,
                 source: &mut impl newt_reader_ui::SourceOperations, _: &reader_book::BookRequest<'_>, _: &reader_book::ProducerCallbacks<'_>,
                 _: &mut reader_book::ProducerPauseFn<'_,'io,Flash,card::Card>, _: Option<(&mut [u8;256],&mut u16)>, _: Turn<'_>,
                 _: &dyn Fn(), _: &dyn Fn(newt_core::admission::WorkEvent),
@@ -235,6 +234,10 @@ mod image {
                 let mut first = [0;4096]; let mut second = [0;4096];
                 assert_eq!(source.read_at(0,&mut first),4096); assert_eq!(source.read_at(0,&mut second),4096);
                 assert_eq!(first,second);
+                let mut probe = [0;17];
+                assert_eq!(newt_core::page_cache::CacheStorage::read_at(pages,self.memory.probe,0,&mut probe),17,
+                    "index and operate_image must lend the same cache route");
+                assert_eq!(probe,first[..17],"index and operate_image must lend the same selected bytes");
                 // Typed stop after consumption; the actual guard must restore
                 // source state even when its consumer returns an error.
                 Err(BookFailure::Open(newt_core::zip_container::Status::Unsupported))
@@ -244,6 +247,11 @@ mod image {
     fn millis() -> u32 { u32::MAX }
     #[path = "../../firmware/reader_image_sources.rs"] mod sources;
     #[path = "../../firmware/reader_image_operation.rs"] mod operation;
+    #[path = "../reader_action_storage/index_loans.rs"] pub(crate) mod index_loans;
+    pub fn execute_open(runtime: &mut Runtime, home: &mut app_image::Home<'_>, ui: &mut app_image::Application<'_>, logical: &mut newt_core::frame::Frame, events: &mut app_image::Events<'_,'_>, indexed: newt_phased_reader::index_build::Indexed) {
+        let opening=drive::Opening { accepted_save:false,at:0,indexed };
+        assert!(matches!(runtime.operate_image(home,ui,logical,events,Some(opening),None,false,None,None), Err(BookFailure::Open(newt_core::zip_container::Status::Unsupported))));
+    }
     pub fn execute(runtime: &mut Runtime, home: &mut app_image::Home<'_>, ui: &mut app_image::Application<'_>, logical: &mut newt_core::frame::Frame, events: &mut app_image::Events<'_,'_>, step: reader_book::BookStep) {
         assert!(matches!(runtime.operate_image(home,ui,logical,events,None,Some(step),false,None,None), Err(BookFailure::Open(newt_core::zip_container::Status::Unsupported))));
     }
@@ -262,12 +270,14 @@ fn main() {
     let card = card::Card::default();
     card.seed("/newt-sd/Newt/Cache/.keep", vec![]);
     let mut home = home_startup::HomeRuntime::restore_durable(board_clock::BoardBus { board, log: Log },Flash,card);
-    let bytes:Vec<u8> = (0..8192).map(|i| ((i*37+(i>>8))&255) as u8).collect();
+    let bytes = std::fs::read(std::env::args().nth(1).expect("generated EPUB")).unwrap();
     let reads = Rc::new(RefCell::new(Vec::new()));
     let mut source = Box::new(selected::SelectedSource { bytes, reads:reads.clone() });
     let mut digest = [0;32]; assert!(reader_hash::package_hash(&source.bytes,&mut digest));
-    let route = newt_native_storage::RouteState::new(reader_book::CACHE_ROOT,
-        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+    let filename = std::env::args().nth(2).expect("catalog name");
+    let mut key = [0;64];
+    let key = reader_book::route_key(&filename,&mut reader_hash::PackageHasher::from_live_sdk(),&mut key).unwrap();
+    let route = newt_native_storage::RouteState::new(reader_book::CACHE_ROOT,key);
     let receipt = home.with_reader_io(|scope| {
         let mut native = scope.card.port(scope.io);
         sd_revision::SdRevisionState::new(&mut native,&route.lend(&Never,now))
@@ -291,9 +301,9 @@ fn main() {
     let text=Box::leak(Box::new([0;newt_phased_sink::TEXT]));
     let plan=Box::leak(Box::new(newt_phased_sink::Plan::new(runs,text)));
     let mut selection = SelectionAuthority::new();
-    assert!(selection.publish_candidate(c"synthetic.epub",digest,&mut || {},&mut || {}));
+    assert!(selection.publish_candidate(&std::ffi::CString::new(filename).unwrap(),digest,&mut || {},&mut || {}));
     let mut runtime=image::Runtime {
-        memory:image::Memory { runtime:newt_c3_board::reader_memory::Runtime::new(selections,plan) },
+        memory:image::Memory { runtime:newt_c3_board::reader_memory::Runtime::new(selections,plan), probe:b"unwritten" },
         reader_ui:newt_reader_ui::ReaderUiState::default(), selection,
         saved:Progress::default(), title:Box::leak(Box::new([0;256])), home:Box::leak(Box::new(newt_device_ui::HomeData::default())),
         source:Some(source), session:Some(session), checkpoint:ReaderCheckpoint::new(reader_book::CheckpointRestore::Latest),
@@ -308,6 +318,10 @@ fn main() {
     let mut control=();let queue=app_image::Queue;
     let mut events=app_image::Events { control:&mut control,queue:&queue,action:reader_action::Trace,task:PhantomData };
     let mut logical=[0xa5;newt_core::frame::FRAME_BYTES];
+    image::index_loans::index(&mut runtime,&mut home,&mut logical);
+    assert!(runtime.session.as_ref().unwrap().source.is_some(),"index loans retain the operation's revision owner");
+    logical.fill(0xa5);
+    reads.borrow_mut().clear();
     image::execute(&mut runtime,&mut home,&mut ui,&mut logical,&mut events,reader_book::BookStep::Action(newt_core::app::Action::Next));
     assert_eq!(&*reads.borrow(),&[4096],"real operate_image must lend whole-block action scratch exactly once");
     let retained_at = newt_phased_reader::imported_revision::BLOCK_BYTES
@@ -330,6 +344,19 @@ fn main() {
         reader_book::BookStep::Idle { checkpoint:false, admitted:false });
     assert_eq!(reads.borrow().as_slice(),&[256;32],"idle keeps compact scratch");
     assert!(logical.iter().all(|b|*b==0x7d),"idle must preserve the published logical frame");
+    // Distinct probe names prevent a session record from hiding standalone
+    // route drift. Return the session's descriptor before withdrawing its owner.
+    let mut session=runtime.session.take().unwrap();
+    home.with_reader_io(|scope| {
+        let mut native=scope.card.port(scope.io);let route=session.route.lend(&Never,now);
+        assert!(session.pages.close(&mut native,&route).unwrap().clean);
+    }).unwrap();
+    drop(session);
+    let indexed=image::index_loans::index(&mut runtime,&mut home,&mut logical);
+    logical.fill(0xa5);
+    reads.borrow_mut().clear();
+    image::execute_open(&mut runtime,&mut home,&mut ui,&mut logical,&mut events,indexed);
+    assert_eq!(reads.borrow().as_slice(),&[4096,4096],"standalone operation uses the source seen by the index pass");
     println!("PASS whole actual operate_image: caller frame loan, whole-block retention and original-scratch withdrawal; RunLoan is a typed host consumer");
 }
 
