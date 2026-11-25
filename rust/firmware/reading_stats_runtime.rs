@@ -180,11 +180,12 @@ impl ReadingStatsRuntime {
         now: u32,
         zone: TimeZone,
         opening: bool,
+        mark: StatsMark,
         page_unconfirmed: bool,
         mut read_clock: impl FnMut() -> (StatsClock, u32),
         sha256: Sha256<'_>,
     ) {
-        let finish = ui.finish != ReaderFinishRow::Undo;
+        let finish = mark == StatsMark::Finished;
         let Some(book) = book else {
             ui.notice = if opening {
                 ReaderUiNotice::FinishOpening

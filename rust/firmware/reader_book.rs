@@ -166,7 +166,7 @@ pub enum BookStep {
     ReflowCheckpoint,
     /// Mark as finished / not finished after verification and any owed
     /// selection/progress commit have settled.
-    MarkFinished,
+    MarkFinished(newt_core::reading_stats::StatsMark),
     Sleep(newt_device_ui::HomePlane),
 }
 
@@ -473,7 +473,7 @@ enum StatsOperation {
     Lease { idle: bool },
     Fold,
     Idle,
-    Mark { opening: bool },
+    Mark { opening: bool, mark: newt_core::reading_stats::StatsMark },
 }
 
 impl<N: nvs::Native> MountedCheckpoint<'_, N> {
@@ -670,7 +670,7 @@ impl<N: nvs::Native> MountedCheckpoint<'_, N> {
                 Some(&mut cancelled),
                 sha256,
             ),
-            StatsOperation::Mark { opening } => {
+            StatsOperation::Mark { opening, mark } => {
                 runtime.mark(
                     &mut store,
                     book.as_ref(),
@@ -679,6 +679,7 @@ impl<N: nvs::Native> MountedCheckpoint<'_, N> {
                     now,
                     request.zone(),
                     opening,
+                    mark,
                     self.checkpoint.page_unconfirmed(),
                     &mut clock,
                     sha256,

@@ -294,6 +294,47 @@ def mark_finished_immediately_across_open_paths(binary):
             return 'book open with unseeded stats failed to seed and mark finished'
 
 
+def last_page_fast_open_preserves_requested_mark(binary):
+    """Warm-reopening an unfinished book at its last page and selecting Mark as finished must not
+    let BookStep::Save's ReadingEnd::Reached lease flip ui.finish and reverse the mark to NotFinished."""
+    def seed_last_page_unfinished(directory):
+        options = preview_driver.parse(['--library-fixture', 'healthy'])
+        preview_driver.world(binary, directory, options)
+        preview_driver.write_conf(directory, {'telemetry': 'sample'})
+        rust_preview.run(binary, directory, (CONFIRM, CONFIRM, *(RIGHT,) * 15, WAIT_MINUTE, *QUEUED_EXIT_HOME))
+        preview_driver.fresh(directory)
+        rust_preview.run(binary, directory, (BACK, *QUEUED_MENU_MARK, BACK, *QUEUED_EXIT_HOME))
+
+    with tempfile.TemporaryDirectory(prefix='newt-finish-last-ref-') as td:
+        d = Path(td)
+        seed_last_page_unfinished(d)
+        preview_driver.write_conf(d, {'telemetry': ''})
+        preview_driver.fresh(d)
+        rust_preview.run(binary, d, (BACK, *QUEUED_MENU_OPEN))
+        before_unfinished = (d / 'frame.pbm').read_bytes()
+
+    with tempfile.TemporaryDirectory(prefix='newt-finish-last-') as td:
+        d = Path(td)
+        seed_last_page_unfinished(d)
+        preview_driver.write_conf(d, {'telemetry': ''})
+        preview_driver.fresh(d)
+        rust_preview.run(binary, d, (BACK, *QUEUED_MENU_MARK))
+        after_finished = (d / 'frame.pbm').read_bytes()
+        if after_finished == before_unfinished or finish_row_strip(after_finished) == finish_row_strip(before_unfinished):
+            return 'last-page fast-open Mark as finished reversed to unfinished after prerequisite save'
+        cold_frame, cold_screen = cold_boot_menu(binary, d)
+        if cold_screen != 4 or cold_frame != after_finished:
+            return 'cold restart after last-page Mark as finished did not preserve finished state'
+        # Toggle back to not finished on a fresh warm-reopen at the last page.
+        preview_driver.fresh(d)
+        rust_preview.run(binary, d, QUEUED_EXIT_HOME)
+        preview_driver.fresh(d)
+        rust_preview.run(binary, d, (BACK, *QUEUED_MENU_MARK))
+        after_unmarked = (d / 'frame.pbm').read_bytes()
+        if after_unmarked != before_unfinished:
+            return 'last-page fast-open Mark as not finished did not restore unfinished state'
+
+
 def books_no_nb_commits_progress_and_destination(binary):
     """Books fast-open with warm Pages/ cache and no nb*.nrs commits progress and NWBR despite synthetic zero ack."""
     with tempfile.TemporaryDirectory(prefix='newt-finish-ref-nonb-') as ref_td:
@@ -548,6 +589,7 @@ def cancelled_and_error_notices_stay_honest(binary):
 
 CASES = (
     mark_finished_immediately_across_open_paths,
+    last_page_fast_open_preserves_requested_mark,
     books_no_nb_commits_progress_and_destination,
     books_open_after_idle_verify_commits_selection,
     menu_does_not_stall_background_verification,
@@ -561,6 +603,9 @@ CONTROLS = (
     (mark_finished_immediately_across_open_paths, 'reader_image_action.rs',
      '        if progress_owed {',
      '        if self.checkpoint.acknowledged_for(&before_digest).is_none() {'),
+    (last_page_fast_open_preserves_requested_mark, 'reading_stats_runtime.rs',
+     '        let finish = mark == StatsMark::Finished;',
+     '        let finish = ui.finish != ReaderFinishRow::Undo;'),
     (books_no_nb_commits_progress_and_destination, 'reader_image_action.rs',
      '        if progress_owed {',
      '        if self.checkpoint.acknowledged_for(&before_digest).is_none() {'),

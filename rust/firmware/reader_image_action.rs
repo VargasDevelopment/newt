@@ -136,6 +136,13 @@ impl Runtime {
         use newt_core::selection_authority::flag;
         if exit.intent != Some(ReaderUiIntent::MarkFinished) { return; }
         let before_digest = *self.selection.digest();
+        // Capture the requested finish direction before prerequisite saves run:
+        // a BookStep::Save lease on the last page can auto-finish and flip ui.finish.
+        let requested_mark = if self.reader_ui.finish == newt_reader_ui::ReaderFinishRow::Undo {
+            newt_core::reading_stats::StatsMark::NotFinished
+        } else {
+            newt_core::reading_stats::StatsMark::Finished
+        };
         let pending = self.session.as_ref().is_some_and(|session|
             session.verification.state() == crate::reader_verification::Verification::Pending);
         // Capture explicit commit debt before verification runs: committing a
@@ -210,7 +217,7 @@ impl Runtime {
             }
         }
         match self.operate_image(home, ui, logical, events, None,
-            Some(BookStep::MarkFinished), false, None, None) {
+            Some(BookStep::MarkFinished(requested_mark)), false, None, None) {
             Ok(marked) => *exit = marked,
             Err(error) => {
                 self.open_failed(error);

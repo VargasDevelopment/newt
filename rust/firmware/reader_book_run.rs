@@ -112,7 +112,7 @@ where
             let settings = resources.settings;
             let action = match step {
                 BookStep::Action(action) => action,
-                BookStep::MarkFinished => {
+                BookStep::MarkFinished(mark) => {
                     checkpoint.stats(
                         io,
                         card,
@@ -128,6 +128,7 @@ where
                         at,
                         StatsOperation::Mark {
                             opening: accepted_open_owed || revision.source_verification_pending(),
+                            mark,
                         },
                     );
                     break Some(ReaderUiIntent::Repaint);
@@ -346,6 +347,11 @@ where
                                 at,
                                 StatsOperation::Mark {
                                     opening: accepted_open_owed || revision.source_verification_pending(),
+                                    mark: if ui.finish == ReaderFinishRow::Undo {
+                                        newt_core::reading_stats::StatsMark::NotFinished
+                                    } else {
+                                        newt_core::reading_stats::StatsMark::Finished
+                                    },
                                 },
                             );
                             // Parsing may have lent the logical frame as scratch.
