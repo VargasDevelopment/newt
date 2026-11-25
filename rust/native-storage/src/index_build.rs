@@ -5,7 +5,7 @@ use crate::{Error, Open};
 use newt_core::book_index_build::WorkFile;
 
 /// Caller-owned only for one build, relended to the same native card and book.
-/// Census before the first loan; close the source between parse and publication.
+/// Census before building; resident publication may keep the source open.
 /// End every attempt with WorkFile::remove_work, including admission failures.
 pub struct IndexWorkState {
     path: [u8; 256], path_bytes: usize, fd: Option<i32>, bytes: u32,
@@ -32,6 +32,13 @@ impl<'op, 'a, N: Native> IndexBuildStore<'op, 'a, N> {
         work.path = path;
         work.path_bytes = name.len();
         Some(Self { cache, work })
+    }
+    pub fn spilled(&self) -> bool { self.work.fd.is_some() }
+    pub fn release_pages(&mut self) -> bool { self.cache.access().release_for_admission() }
+    pub fn census(&mut self, cancelled: &dyn Fn() -> bool) where N: crate::page_entries::PageEntries {
+        struct Live<'a>(&'a dyn Fn() -> bool);
+        impl crate::Authority for Live<'_> { fn cancelled(&self) -> bool { (self.0)() } }
+        self.cache.index_census(&Live(cancelled), None, None, None);
     }
     /// The live work descriptor, creating the file on first use.
     fn open(&mut self) -> Option<i32> {

@@ -22,7 +22,7 @@ pub struct Scene<'a> {
     pub extras: &'a SleepExtras,
 }
 
-impl<N: Native> Resources<'_, '_, '_, '_, '_, N> {
+impl<N: Native + newt_native_storage::page_entries::PageEntries> Resources<'_, '_, '_, '_, '_, N> {
     /// #285: repaint the complete raw destination after every parse and for
     /// every plane. Only then may the bank prefix and frame be lent together.
     pub(super) fn paint_sleep(

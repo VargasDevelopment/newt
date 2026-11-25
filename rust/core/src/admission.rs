@@ -3,6 +3,8 @@ use crate::member_check::Checked;
 use crate::zip_container::{self as zip, Directory, Entry, InflateScratch, Reader, Status};
 use crate::zip_record_rules::*;
 use crate::zip_window::{arena::Arena, source::BookSource, window::ZipDirectoryWindow};
+/// Bump with any admission rule change.
+pub const POLICY_VERSION: u32 = 1;
 pub const EXTERNAL_MAX_BYTES: u64 = 64 * 1024 * 1024;
 pub const SOURCE_READ_BYTES: usize = 32768;
 pub const INFLATE_SLACK: u64 = 65536;
@@ -32,6 +34,10 @@ pub enum WorkKind {
     ActionBoundary,
     OpenRoute,
     CacheMiss,
+    IndexStage,
+    IndexResult,
+    IndexCounts,
+    IndexIo,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WorkEvent {

@@ -29,6 +29,8 @@ struct Card {
     times: BTreeMap<String, i64>,
     open: u32,
     most_open: u32,
+    creates: u32,
+    writes: u32,
     armed: bool,
     off: bool,
 }
@@ -54,6 +56,7 @@ impl Card {
 }
 impl Native for Card {
     fn open(&mut self, path: &str, mode: Open) -> Result<i32> {
+        if matches!(mode, Open::CreateExclusive) { self.creates += 1; }
         let fd = self.live(|m| m.open(path, mode))?;
         self.open += 1;
         self.most_open = self.most_open.max(self.open);
@@ -65,7 +68,7 @@ impl Native for Card {
         Ok(())
     }
     fn read(&mut self, fd: i32, out: &mut [u8]) -> Result<usize> { self.live(|m| m.read(fd, out)) }
-    fn write(&mut self, fd: i32, input: &[u8]) -> Result<usize> { self.live(|m| m.write(fd, input)) }
+    fn write(&mut self, fd: i32, input: &[u8]) -> Result<usize> { self.writes += 1; self.live(|m| m.write(fd, input)) }
     fn seek(&mut self, fd: i32, offset: u32) -> Result<u64> { self.live(|m| m.seek(fd, offset)) }
     fn truncate(&mut self, fd: i32, bytes: u32) -> Result<()> { self.live(|m| m.truncate(fd, bytes)) }
     fn sync(&mut self, fd: i32) -> Result<()> { self.live(|m| m.sync(fd)) }
@@ -413,4 +416,32 @@ fn spilling_build_cuts_every_card_step_and_uses_three_files() {
     let work_bytes = core::mem::size_of::<IndexWorkState>();
     let view_bytes = core::mem::size_of::<IndexBuildStore<'_, '_, Card>>();
     println!("SPILLING CARD cuts={steps} most_open={} work_state={work_bytes} view={view_bytes}", good.most_open);
+}
+
+#[test]
+fn resident_publication_keeps_source_and_receipt_open_with_three_files() {
+    let mut card = build_card();
+    let source = card.open("/sd/source", Open::SourceReadOnly).unwrap();
+    let receipt = card.open("/sd/receipt", Open::SourceReadOnly).unwrap();
+    let mut work = IndexWorkState::new();
+    let mut buffer = [0; 32768];
+    let mut join = build_support::JoinBacking::new();
+    let mut state = join.state();
+    with_store(&mut card, |cache| {
+        let mut store = IndexBuildStore::lend(cache, &mut work, &BOOK.digest).unwrap();
+        let prepared = build_support::prepare(&mut store, &mut buffer, 32768, 8, 8, 8, &mut state).unwrap();
+        assert!(!store.spilled());
+        assert!(store.release_pages());
+        let report = prepared.publish(&mut store, &mut state, &mut |_| true, &mut || true).unwrap();
+        assert!(report.work_removed);
+    });
+    let writes = (card.creates, card.writes);
+    assert_eq!(writes.0, 1, "one native index temporary, no work file");
+    assert!(writes.1 > 0);
+    assert_eq!(with_store(&mut card, |s| read(s, &BOOK, built_index_complete)), Some(true));
+    assert_eq!(with_store(&mut card, |s| read(s, &BOOK, built_index_complete)), Some(true));
+    assert_eq!((card.creates, card.writes), writes, "repeat hits do not write");
+    assert_eq!((card.open, card.most_open), (2, 3));
+    card.close(source).unwrap();
+    card.close(receipt).unwrap();
 }

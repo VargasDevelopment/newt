@@ -285,7 +285,8 @@ impl<W: WorkFile + ?Sized> Handler for Package<'_, '_, W> {
 
 
 impl Prepared<'_> {
-    /// Call only after closing the source. The store owns work and index FDs together.
+    /// With the source open, publish only a resident build: the work file and
+    /// index temporary must not both be open alongside source and receipt.
     /// After an error the unfinished index temp stays with the store; closing the
     /// cache owner (or its next begin_write) removes it, as for any failed cache write.
     /// Once the index is published, a failed work-file removal is reported, not

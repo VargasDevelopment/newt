@@ -69,6 +69,7 @@ impl ReadScope for Store {
     }
 }
 impl CachePresence for Store {
+    fn with_index<R>(&mut self, _: &[u8; 32], _: impl FnOnce(&mut dyn newt_phased_reader::index_build::Store) -> R) -> Option<R> { None }
     fn present(&mut self, name: &[u8], _: bool) -> bool { self.name == name && !self.file.is_empty() }
 }
 

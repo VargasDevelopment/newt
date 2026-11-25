@@ -39,7 +39,8 @@ impl CacheStorage for StorageOut<'_>{
  fn write(&mut self,b:&[u8])->bool{self.0.event(51);self.0.event(b.len() as u32);if self.0.id==21{return false;}let mut o=self.0.out.borrow_mut();let at=o.bytes as usize;assert!(at+b.len()<=o.data.len());o.data[at..at+b.len()].copy_from_slice(b);o.bytes+=b.len() as u32;true}
  fn end_write(&mut self)->bool{self.0.event(52);self.0.out.borrow_mut().ends+=1;true}
 }
-impl CachePresence for StorageOut<'_>{fn present(&mut self,_:&[u8],_:bool)->bool{false}}
+impl CachePresence for StorageOut<'_>{
+    fn with_index<R>(&mut self, _: &[u8; 32], _: impl FnOnce(&mut dyn crate::index_build::Store) -> R) -> Option<R> { None }fn present(&mut self,_:&[u8],_:bool)->bool{false}}
 struct Native<'a>{t:&'a Trace,xml:Expat}
 impl ParserBackend for Native<'_>{
     fn producer_backend(&mut self) -> Option<&mut dyn ProducerBackend> { Some(self) }

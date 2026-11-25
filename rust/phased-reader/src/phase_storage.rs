@@ -1006,3 +1006,5 @@ pub(crate) fn with_writer_index<R>(
 
 #[path = "producer_cache_read.rs"]
 mod producer_cache_read;
+
+include!("phase_index.rs");

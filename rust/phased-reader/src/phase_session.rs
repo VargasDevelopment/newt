@@ -89,6 +89,15 @@ pub struct PhasedChapterCache<'a, C> {
 impl<B: ParserBackend + ?Sized, L: BuildLoan, C: ReadScope + CachePresence>
     session::Cache<OperationPhased<'_, '_, '_, '_, B, L>> for PhasedChapterCache<'_, C>
 {
+    fn index(&mut self, source: &mut dyn BookSource, digest: &Digest,
+        r: &mut OperationPhased<'_, '_, '_, '_, B, L>) {
+        if self.store.with_index(digest, |store| {
+            crate::index_build::open(source, digest, r.storage, r.lender, r.backend, store, r.reader.on_yield)
+        }).is_none() {
+            crate::index_build::result(r.reader.on_yield, 3, Status::IoError, true);
+        }
+    }
+
     fn stored(
         &mut self,
         digest: &Digest,

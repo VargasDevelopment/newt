@@ -14,7 +14,7 @@ pub(crate) struct Resources<'r, 'scope, 'sdk, 'route, 'bank, N: Native> {
     pub(crate) recovery: Option<PendingRecovery>,
 }
 
-impl<'scope, 'sdk, 'route, 'bank, N: Native> Resources<'_, 'scope, 'sdk, 'route, 'bank, N> {
+impl<'scope, 'sdk, 'route, 'bank, N: Native + newt_native_storage::page_entries::PageEntries> Resources<'_, 'scope, 'sdk, 'route, 'bank, N> {
     pub(super) fn owner(
         &mut self,
     ) -> PhysicalOwner<'_, 'bank, '_, Expat, ReaderPanel<'scope, 'sdk>, ReaderPages<'route, N>>

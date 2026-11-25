@@ -37,7 +37,8 @@ impl CacheStorage for Cache{
  fn end_write(&mut self)->bool{self.ends+=1;true}
  fn remove(&mut self,_:&[u8])->bool{true}
 }
-impl CachePresence for Cache{fn present(&mut self,_:&[u8],_:bool)->bool{false}}
+impl CachePresence for Cache{
+    fn with_index<R>(&mut self, _: &[u8; 32], _: impl FnOnce(&mut dyn crate::index_build::Store) -> R) -> Option<R> { None }fn present(&mut self,_:&[u8],_:bool)->bool{false}}
 struct Hash;
 impl RevisionHasher for Hash{
  fn hash(&mut self,_:&[u8],_:&mut[u8;32])->bool{panic!("one-file stream does not name a segment")}

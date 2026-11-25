@@ -87,3 +87,18 @@ impl nvs::Inventory for Flash {
         Ok(())
     }
 }
+
+impl newt_native_storage::Directory for Port {
+    type Listing = u32;
+    fn open_dir(&mut self, path: &str) -> Result<u32> { self.0.0.borrow_mut().open_dir(path) }
+    fn read_dir(&mut self, listing: &mut u32, name: &mut [u8]) -> Result<Option<usize>> {
+        self.0.0.borrow_mut().read_dir(listing, name)
+    }
+    fn close_dir(&mut self, listing: u32) -> Result<()> { self.0.0.borrow_mut().close_dir(listing) }
+}
+impl newt_native_storage::page_entries::PageEntries for Port {
+    fn walk_entries(&mut self, folder: &CStr, sized: bool,
+        visit: &mut dyn FnMut(&mut Self, newt_native_storage::page_entries::PageEntry<'_>) -> bool) -> bool {
+        newt_native_storage::page_entries::walk_directory(self, folder, sized, visit)
+    }
+}

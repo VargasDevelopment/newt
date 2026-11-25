@@ -14,6 +14,11 @@ struct StoredChapter<'op, 'cache, C> {
 impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence>
     Cache<OperationPhased<'_, '_, '_, '_, B, L>> for StoredChapter<'_, '_, C>
 {
+    fn index(&mut self, source: &mut dyn BookSource, digest: &Digest,
+        reader: &mut OperationPhased<'_, '_, '_, '_, B, L>) {
+        self.cache.index(source, digest, reader);
+    }
+
     fn stored(&mut self, digest: &Digest, spine: u32,
         reader: &mut OperationPhased<'_, '_, '_, '_, B, L>) -> bool {
         let _action = reader.reader.action_scope(ActionStage::CacheQuery);

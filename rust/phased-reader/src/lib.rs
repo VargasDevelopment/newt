@@ -38,3 +38,5 @@ pub mod producer_store;
 pub mod producer_writer;
 
 pub mod producer_probe;
+
+pub mod index_build;

@@ -40,7 +40,12 @@ impl<N: Native> CacheStorage for ReaderPages<'_, N> {
 
 /// presentIn: a presence probe inside its own read scope, so a file over the
 /// opening cap is not cached for the opening.
-impl<N: Native> CachePresence for ReaderPages<'_, N> {
+impl<N: Native + newt_native_storage::page_entries::PageEntries> CachePresence for ReaderPages<'_, N> {
+    fn with_index<R>(&mut self, digest: &[u8; 32], operation: impl FnOnce(&mut dyn newt_phased_reader::index_build::Store) -> R) -> Option<R> {
+        let mut work = newt_native_storage::chapter_cache::IndexWorkState::new();
+        let inner = newt_native_storage::chapter_cache::IndexBuildStore::lend(&mut self.0, &mut work, digest)?;
+        Some(operation(&mut ReaderIndex(inner)))
+    }
     fn present(&mut self, name: &[u8], opening: bool) -> bool {
         let mut access = self.0.access();
         if !access.begin_page_read(opening, None) {
@@ -117,4 +122,28 @@ impl<N: Native> newt_phased_reader::producer_probe::ProducerProbe for ReaderPage
     fn release_for_admission(&mut self) -> bool {
         self.0.access().release_for_admission()
     }
+}
+
+
+struct ReaderIndex<'op, 'route, N: Native>(newt_native_storage::chapter_cache::IndexBuildStore<'op, 'route, N>);
+impl<N: Native + newt_native_storage::page_entries::PageEntries> newt_phased_reader::index_build::Store for ReaderIndex<'_, '_, N> {
+    fn census(&mut self, cancelled: &dyn Fn() -> bool) { self.0.census(cancelled); }
+    fn spilled(&self) -> bool { self.0.spilled() }
+    fn release_pages(&mut self) -> bool { self.0.release_pages() }
+}
+impl<N: Native> newt_core::book_index_build::WorkFile for ReaderIndex<'_, '_, N> {
+    fn append(&mut self, bytes: &[u8]) -> bool { self.0.append(bytes) }
+    fn read_at(&mut self, at: u32, out: &mut [u8]) -> bool { newt_core::book_index_build::WorkFile::read_at(&mut self.0, at, out) }
+    fn sync_work(&mut self) -> bool { self.0.sync_work() }
+    fn remove_work(&mut self) -> bool { self.0.remove_work() }
+}
+impl<N: Native> CacheStorage for ReaderIndex<'_, '_, N> {
+    fn remove(&mut self, name: &[u8]) -> bool { self.0.remove(name) }
+    fn file_size(&mut self, name: &[u8]) -> i64 { self.0.file_size(name) }
+    fn read_at(&mut self, name: &[u8], at: u32, out: &mut [u8]) -> i32 { CacheStorage::read_at(&mut self.0, name, at, out) }
+    fn begin_write(&mut self, name: &[u8]) -> bool { self.0.begin_write(name) }
+    fn write(&mut self, bytes: &[u8]) -> bool { self.0.write(bytes) }
+    fn end_write(&mut self) -> bool { self.0.end_write() }
+    fn end_write_checked(&mut self, live: &mut dyn FnMut() -> bool) -> bool { self.0.end_write_checked(live) }
+    fn read_back_at(&mut self, at: u32, out: &mut [u8]) -> i32 { self.0.read_back_at(at, out) }
 }

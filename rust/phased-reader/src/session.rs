@@ -86,6 +86,7 @@ pub enum Build {
 }
 /// Cache owns no Reader reference; the owner passes disjoint loans at each call.
 pub trait Cache<R: Reader> {
+    fn index(&mut self, source: &mut dyn BookSource, digest: &Digest, reader: &mut R);
     fn build(
         &mut self,
         source: &mut dyn BookSource,
@@ -117,8 +118,9 @@ impl<'source, R: Reader, C: Cache<R> + ?Sized> Session<'_, 'source, R, C> {
         route(self.reader, ReaderOpenRoute::StrictAdmission);
         let mut status = self.reader.strict_open(self.revision);
         if status == Status::Ok {
-            status = Status::NotFound;
             let digest = *self.revision.digest();
+            self.cache.index(self.revision, &digest, self.reader);
+            status = Status::NotFound;
             for spine in 0..self.reader.spine_count() {
                 match self.cache.build(self.revision, &digest, spine, self.reader) {
                     Build::Empty => continue,
@@ -160,6 +162,8 @@ impl<'source, R: Reader, C: Cache<R> + ?Sized> Session<'_, 'source, R, C> {
         route(self.reader, ReaderOpenRoute::StrictAdmission);
         let mut status = self.reader.strict_open(self.revision);
         if status == Status::Ok {
+            let digest = *self.revision.digest();
+            self.cache.index(self.revision, &digest, self.reader);
             let sealed = self.revision.finish_import();
             route(self.reader, if sealed { ReaderOpenRoute::SealSucceeded } else { ReaderOpenRoute::SealFailed });
             if !sealed { status = Status::IoError; }
@@ -187,6 +191,8 @@ impl<'source, R: Reader, C: Cache<R> + ?Sized> Session<'_, 'source, R, C> {
             route(self.reader, ReaderOpenRoute::StrictAdmission);
             let mut status = self.reader.strict_open(&mut action);
             if status == Status::Ok {
+                let digest = *action.digest();
+                self.cache.index(&mut action, &digest, self.reader);
                 let sealed = action.finish_import();
                 route(self.reader, if sealed { ReaderOpenRoute::SealSucceeded } else { ReaderOpenRoute::SealFailed });
                 if !sealed { status = Status::IoError; }
@@ -241,6 +247,8 @@ impl<'source, R: Reader, C: Cache<R> + ?Sized> Session<'_, 'source, R, C> {
         let status = self.stage_owned(spine);
         if status == Status::Ok {
             self.reader.commit(spine);
+            self.cache.index(self.revision, &expected, self.reader);
+            if !self.held_source_live() { return self.reject(Status::Stale); }
         }
         if status != Status::Ok && before == stamp(self.revision) {
             return self.reject(status);
@@ -279,6 +287,8 @@ impl<'source, R: Reader, C: Cache<R> + ?Sized> Session<'_, 'source, R, C> {
         route(self.reader, if warm == Status::Ok { ReaderOpenRoute::WarmHit } else { ReaderOpenRoute::WarmMiss });
         if warm == Status::Ok {
             self.reader.commit(spine);
+            self.cache.index(self.revision, &expected, self.reader);
+            if !self.held_source_live() { return self.reject(Status::Stale); }
             return warm;
         }
         // bindWarm: a stage that reloaded or reset the revision left a
