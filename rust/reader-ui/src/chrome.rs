@@ -71,6 +71,102 @@ fn field(
         right - left,
     );
 }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FooterSlots {
+    pub battery_max_w: i32,
+    pub chapter_left: i32,
+    pub chapter_right: i32,
+    pub page_left: i32,
+    pub page_right: i32,
+    pub overall_left: i32,
+    pub overall_right: i32,
+}
+/// Chapter-wide upper bound for any valid page counter in this chapter, derived
+/// directly from the font atlas's digit advances and kerning (never a
+/// hand-picked digit) and independent of the current page number.
+fn chapter_page_max_width(page: &[u8]) -> i32 {
+    use newt_ui_canvas::atlas;
+    let bytes = cstr(page);
+    let Some(slash) = bytes.iter().position(|&b| b == b'/') else {
+        return width(page, 14, false);
+    };
+    let total = &bytes[slash + 1..];
+    let digits = total.len().min(10) as i32;
+    if digits == 0 {
+        return width(page, 14, false);
+    }
+    let f = atlas::face(14, false);
+    let mut max_first = 0i32;
+    let mut max_step = 0i32;
+    let mut max_slash_kern = atlas::kern(f, u32::from(b'0'), u32::from(b'/'));
+    for a in u32::from(b'0')..=u32::from(b'9') {
+        max_first = max_first.max(i32::from(atlas::glyph(f, a, 0).advance));
+        max_slash_kern = max_slash_kern.max(atlas::kern(f, a, u32::from(b'/')));
+        for b in u32::from(b'0')..=u32::from(b'9') {
+            let step = i32::from(atlas::glyph(f, b, 0).advance) + atlas::kern(f, a, b);
+            max_step = max_step.max(step);
+        }
+    }
+    let num_w = max_first
+        .saturating_add((digits - 1).saturating_mul(max_step))
+        .saturating_add(max_slash_kern);
+    let tail_w = atlas::width64(Some(&bytes[slash..]), f);
+    atlas::pixels(num_w.saturating_add(tail_w), f, 14)
+}
+fn footer_slots_for(
+    w: i32,
+    m: i32,
+    battery_text: &[u8],
+    percent: &[u8],
+    need_w: i32,
+) -> FooterSlots {
+    let radius = if w == newt_core::frame::WIDTH as i32 { 70 } else { 100 };
+    let (mut cl, mut cr) = (w / 2 - radius, w / 2 + radius);
+    let overall_right = w - m;
+    let overall_left = overall_right - width(b"UNSAVED", 16, false);
+    let mut page_right = overall_left - 20;
+    let battery_left = m + 24;
+    let default_slot = page_right - (cr + 12);
+    if need_w > default_slot {
+        let percent_w = width(b"100%", 16, false).max(width(percent, 16, false));
+        page_right = (overall_right - percent_w - 12).max(page_right);
+        let min_cl = battery_left + width(battery_text, 16, false) + 12;
+        let min_cr = (min_cl + width(b"PG SAVE ERR", 14, false)).min(cr);
+        let max_cr = page_right - 12 - need_w;
+        if max_cr < cr {
+            let new_cr = max_cr.max(min_cr);
+            let shift = cr - new_cr;
+            cr = new_cr;
+            cl = (cl - shift).max(min_cl);
+        }
+    }
+    FooterSlots {
+        battery_max_w: cl - battery_left - 12,
+        chapter_left: cl,
+        chapter_right: cr,
+        page_left: cr + 12,
+        page_right,
+        overall_left,
+        overall_right,
+    }
+}
+pub fn footer_slots(
+    w: i32,
+    m: i32,
+    battery_text: &[u8],
+    page: &[u8],
+    pages: u32,
+    percent: &[u8],
+) -> FooterSlots {
+    // Keep chapters whose worst-case counter fits the default slot untouched,
+    // and expand consistently across the chapter once a 4+ digit counter overflows.
+    let need_w = if pages != 0 {
+        chapter_page_max_width(page)
+    } else {
+        width(page, 14, false)
+    };
+    footer_slots_for(w, m, battery_text, percent, need_w)
+}
 pub fn render_reader_chrome(
     f: &ReaderFooter<'_>,
     info: &DeviceInfo<'_>,
@@ -144,10 +240,12 @@ pub fn render_reader_chrome(
     } else {
         let _ = write!(Buffer::new(&mut percent), "--");
     }
-    let radius = if w == newt_core::frame::WIDTH as i32 { 70 } else { 100 };
-    let (cl, cr) = (w / 2 - radius, w / 2 + radius);
-    let overall_left = w - m - width(b"UNSAVED", 16, false);
-    let page_right = overall_left - 20;
+    let active_pages = if ready && f.pages != 0 && f.page < f.pages {
+        f.pages
+    } else {
+        0
+    };
+    let slots = footer_slots(w, m, &battery_text, &page, active_pages, &percent);
     let battery_left = m + 24;
     c.outline(m, fy + 2, 18, 10);
     c.rect(m + 18, fy + 5, 2, 4, true);
@@ -161,11 +259,11 @@ pub fn render_reader_chrome(
         &battery_text,
         16,
         false,
-        cl - battery_left - 12,
+        slots.battery_max_w,
     );
-    field(&mut c, cl, cr, &mut chapter, true, fy);
-    field(&mut c, cr + 12, page_right, &mut page, false, fy);
-    field(&mut c, overall_left, w - m, &mut percent, false, fy);
+    field(&mut c, slots.chapter_left, slots.chapter_right, &mut chapter, true, fy);
+    field(&mut c, slots.page_left, slots.page_right, &mut page, false, fy);
+    field(&mut c, slots.overall_left, slots.overall_right, &mut percent, false, fy);
     if settings.slim_progress_bar && ready && f.overall_known {
         c.outline(m, g.bar_y.into(), w - 2 * m, 3);
         c.rect(
@@ -242,4 +340,52 @@ pub fn render_verification_notice(
         return;
     };
     c.fixed_complete_paragraph(m, bottom - 64, Some(line), 21, w - 2 * m, bottom);
+}
+
+#[cfg(test)]
+mod footer_bound_tests {
+    use super::*;
+
+    fn chosen_size(label: &[u8], slot_w: i32) -> u32 {
+        let mut p = 16;
+        while p > 14 && width(label, p, false) > slot_w {
+            p -= 1;
+        }
+        p
+    }
+
+    fn adjacent_2011_steady(slots_of: impl Fn(&[u8]) -> FooterSlots) -> bool {
+        let labels: [&[u8]; 3] = [b"2003/2011", b"2004/2011", b"2005/2011"];
+        let first = slots_of(labels[0]);
+        let first_w = first.page_right - first.page_left;
+        let first_p = chosen_size(labels[0], first_w);
+        for label in labels {
+            let s = slots_of(label);
+            let sw = s.page_right - s.page_left;
+            if s != first || chosen_size(label, sw) != first_p || width(label, first_p, false) > sw
+            {
+                return false;
+            }
+        }
+        true
+    }
+
+    #[test]
+    fn old_eight_bound_control_fails_adjacent_2011_steady_check() {
+        let g = newt_core::preferences::geometry(ViewSettings {
+            orientation: Orientation::Portrait,
+            ..ViewSettings::default()
+        });
+        let (w, m) = (i32::from(g.width), i32::from(g.margin));
+        // Real atlas-derived bound holds steady across 2003/2011 -> 2004/2011 -> 2005/2011.
+        assert!(adjacent_2011_steady(|label| {
+            footer_slots(w, m, b"100%", label, 2011, b"100%")
+        }));
+        // Negative control: the old '8'-filled bound underestimates '0'/'4' in the
+        // pinned Inter atlas, so 2004/2011 jumps right and changes font size.
+        assert!(!adjacent_2011_steady(|label| {
+            let old_need = width(label, 14, false).max(width(b"8888/2011", 14, false));
+            footer_slots_for(w, m, b"100%", b"100%", old_need)
+        }));
+    }
 }
