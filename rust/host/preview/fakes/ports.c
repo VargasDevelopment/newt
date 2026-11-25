@@ -514,31 +514,37 @@ void preview_io_open(int32_t fd, const char *path) {
 }
 /* "open.back=TEXT", "open.eio=TEXT" or "open.slow=TEXT": once a wake has
  * refreshed the panel (its picture or working page), the first card read of a
- * path holding TEXT presses Back as a hand would while that open still reads
- * the book (Confirm first with "open.confirm=1"), fails that one read with
- * EIO, or takes past the open's 20 s budget, as a stalled card would. */
+ * path holding TEXT presses Back (or "open.button=N", Confirm first with
+ * "open.confirm=1") as a hand would while that open still reads the book,
+ * fails that one read with EIO, or takes past the open's 20 s budget, as a
+ * stalled card would. */
 static int open_fault_used;
 static int open_fault(const char *path) {
     if (open_fault_used || !refreshes || preview_boot_kind() != 2) return 0;
     const char *back = preview_conf("open.back"), *eio = preview_conf("open.eio"),
-        *slow = preview_conf("open.slow"), *confirm = preview_conf("open.confirm");
+        *slow = preview_conf("open.slow"), *confirm = preview_conf("open.confirm"),
+        *button = preview_conf("open.button");
     if (eio && *eio && strstr(path, eio)) { open_fault_used = 1; return 1; }
     if (slow && *slow && strstr(path, slow)) { open_fault_used = 1; preview_advance(20001); return 0; }
     if (!back || !*back || !strstr(path, back) || !task_started || task_suspended) return 0;
     open_fault_used = 1;
     open_back_refreshes = refreshes;
     if (confirm && strcmp(confirm, "1") == 0) press(1);
-    press(0);
+    press(button && *button ? atoi(button) : 0);
     return 0;
 }
-/* "card.back=TEXT": the first card read of a path holding TEXT presses Back,
+/* "card.back=TEXT": the first card read of a path holding TEXT presses Back
+ * (or "card.button=N"), optionally once refreshes >= "card.after_refresh",
  * as a hand would while that work still reads, on any boot. */
 static int card_back_used;
 static void card_back(const char *path) {
     const char *text = preview_conf("card.back");
+    const char *after = preview_conf("card.after_refresh");
     if (card_back_used || !text || !*text || !strstr(path, text) || !task_started || task_suspended) return;
+    if (after && *after && refreshes < (unsigned)atoi(after)) return;
+    const char *button = preview_conf("card.button");
     card_back_used = 1;
-    press(0);
+    press(button && *button ? atoi(button) : 0);
 }
 /* "card-write:PATH" or "card-sync:PATH": 0 go on, 1 refuse, 2 drop the sync. */
 int preview_io_fault(const char *operation, int32_t fd) {

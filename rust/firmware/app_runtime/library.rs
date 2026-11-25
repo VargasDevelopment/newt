@@ -9,6 +9,7 @@ use crate::{
 };
 use newt_c3_board::{Error, MonotonicClock};
 use newt_core::{app::Screen, frame::Frame};
+use newt_input_policy::UiControl;
 use newt_library_current::{Catalog, LibraryStatus, scan::{self, FirmwareProgress, PaceNative, Report}};
 use newt_native_io::LibraryFiles;
 use newt_sdk_heap::Fixed;
@@ -23,7 +24,9 @@ pub struct LibraryPaint {
 impl Application<'_> {
     /// browse has already ended the reader's physical use before entering.
     /// The catalog is its sole fallible owner, retained only until book open.
-    pub fn scan_library(&mut self, home: &mut Home<'_>, reader: &mut impl Reader, logical: &mut Frame, trace: Trace<'_>) -> Result<(), Error> {
+    pub fn scan_library(&mut self, home: &mut Home<'_>, reader: &mut impl Reader, logical: &mut Frame,
+        control: &UiControl<'_>, trace: Trace<'_>,
+    ) -> Result<(), Error> {
         self.library.message = None;
         self.library.no_card = false;
         newt_library_current_ui::invalidate_frame(&mut self.library);
@@ -43,7 +46,7 @@ impl Application<'_> {
         let result = home.with_storage_io(|home, io| {
             io.with_library_folders(|folders| {
                 let mut files = LibraryFiles::new(io);
-                let mut native = ScanPace { clock, home, ui: self, reader, logical, trace, error: None };
+                let mut native = ScanPace { clock, home, ui: self, reader, logical, control, trace, error: None };
                 let mut pace = FirmwareProgress { native: &mut native, yielded: 0, loading_pending: true };
                 let status = scan::scan(b"/newt-sd\0", &mut catalog, &mut report, folders, &mut files,
                     Some(&mut |kept, copy| crate::reader_image::same_books(io, kept, copy)), &mut pace, false);
@@ -83,6 +86,7 @@ impl Application<'_> {
         force: bool,
         composition: super::display::Composition<'_>,
         shelf_state: ShelfCoverState,
+        control: &UiControl<'_>,
     ) -> Result<Option<LibraryPaint>, Error> {
         if self.app.screen != Screen::Library { return Ok(None); }
         let started = super::display::refresh_start(&mut home.bus.board);
@@ -117,30 +121,31 @@ impl Application<'_> {
         let panels = Some(&mut *self.panels);
         #[cfg(not(feature = "dev-usb"))]
         let panels = None;
-        self.displayed.binary(&mut home.bus.board, logical, &mut self.ui_refresh, panels, force, started, composition)?;
+        self.displayed.binary(&mut home.bus.board, logical, &mut self.ui_refresh, panels, force, started, composition, control)?;
         #[cfg(feature = "dev-usb")]
         self.runtime_lows.painted(self.app.screen);
         Ok(Some(painted))
     }
 }
 
-struct ScanPace<'a, 'home, 'app, R> {
+struct ScanPace<'a, 'home, 'app, 'task, R> {
     clock: MonotonicClock,
     home: &'a mut Home<'home>,
     ui: &'a mut Application<'app>,
     reader: &'a mut R,
     logical: &'a mut Frame,
+    control: &'a UiControl<'task>,
     trace: Trace<'a>,
     error: Option<Error>,
 }
-impl<R: Reader> PaceNative for ScanPace<'_, '_, '_, R> {
+impl<R: Reader> PaceNative for ScanPace<'_, '_, '_, '_, R> {
     fn milliseconds(&mut self) -> u32 { self.clock.millis() }
     fn delay_one_millisecond(&mut self) { crate::app_power::delay_ms(1); }
     fn loading(&mut self) {
         self.ui.app.screen = Screen::Library;
         self.ui.library.loading = true;
         self.ui.press = crate::app_image::PressState::Idle;
-        match self.ui.paint_library(self.home, self.logical, false, super::display::Composition::scoped(self.trace), ShelfCoverState::default()) {
+        match self.ui.paint_library(self.home, self.logical, false, super::display::Composition::scoped(self.trace), ShelfCoverState::default(), self.control) {
             Ok(Some(painted)) => self.reader.note_library_paint(painted.view, painted.any_making, self.clock.millis()),
             Ok(None) => {}
             Err(error) => self.error = Some(error),

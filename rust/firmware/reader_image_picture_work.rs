@@ -28,7 +28,7 @@ pub(super) fn answer_slow(scope: &mut ReaderScope<'_, '_, '_, '_, SerialConsole,
     #[cfg(not(feature = "dev-usb"))]
     let panels = None;
     let cleanup = match display::working_panel(scope.bus.panel, &mut ui.displayed, work,
-        &bar, settings, logical, panels, started, trace) {
+        &bar, settings, logical, panels, started, control, trace) {
         Ok(cleanup) => cleanup, Err(_) => crate::app_power::stop(),
     };
     ui.press = if cleanup { PressState::AnsweredCleanup } else { PressState::AnsweredFast };
@@ -47,7 +47,7 @@ impl super::Runtime {
     ) {
         if ui.press != PressState::Deferred { return; }
         ui.press = PressState::Accepted;
-        let shown = match self.show_picture_image(home, ui, logical, trace) {
+        let shown = match self.show_picture_image(home, ui, logical, control, trace) {
             Ok(shown) => shown, Err(_) => crate::app_power::stop(),
         };
         if !shown {
@@ -55,7 +55,7 @@ impl super::Runtime {
             let present = core::ffi::CStr::from_bytes_until_nul(&name).ok()
                 .is_some_and(|name| self.receipt_present_image(home, name));
             self.acknowledge_work_image(home, ui, logical,
-                if self.selection.active() && !present { SlowWork::FirstOpen } else { SlowWork::Opening }, trace);
+                if self.selection.active() && !present { SlowWork::FirstOpen } else { SlowWork::Opening }, control, trace);
         }
         control.restart(home.bus.board.millis());
     }

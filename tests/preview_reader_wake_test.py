@@ -249,10 +249,88 @@ def cold_picture_is_checked(binary):
         return 'power-on does not replace a stale picture with the real page'
 
 
+@functools.cache
+def play_cw(binary, keys, **conf):
+    """Same fresh SD-library world as play(), configured for clockwise landscape."""
+    with tempfile.TemporaryDirectory(prefix='newt-wake-cw-') as scratch:
+        directory = Path(scratch)
+        options = preview_driver.parse(['--library-fixture', 'healthy', '--reader-orientation', 'landscape-cw'])
+        preview_driver.world(binary, directory, options)
+        preview_driver.write_conf(directory, conf)
+        frames, log = rust_preview.run(binary, directory, keys, 'power-on')
+        return frames[-1], log
+
+
+def clockwise_wake_open_buttons(binary):
+    """In clockwise landscape, once a wake publishes its clockwise working frame,
+    front 1 (Back) is Page forward and must not cancel the open, while front 4
+    (Right) cancels the open and goes cleanly Home."""
+    page1, _ = play_cw(binary, WAKE_IN_BOOK)
+    page2, _ = play_cw(binary, (*WAKE_IN_BOOK, BACK))
+    if page2 == page1:
+        return 'clockwise front 1 does not advance after wake'
+    after_front1, log = play_cw(binary, WAKE_IN_BOOK, **BACK_AT_OPEN)
+    if after_front1 != page2:
+        return 'clockwise front 1 during wake open does not advance to page 2'
+    tail = log.split(' DIAG ')[-1]
+    if 'STATUS screen=4 ' not in tail or 'orientation=landscape-cw ' not in tail:
+        return 'clockwise front 1 during wake open did not stay on clockwise reading screen'
+    home, log = play_cw(binary, WAKE_IN_BOOK, **BACK_AT_OPEN, **{'open.button': str(RIGHT)})
+    if eligible(log) is not True or 'STATUS screen=0 ' not in log.split(' DIAG ')[-1]:
+        return 'Home hides the cover or did not open after clockwise front 4 cancels the wake open'
+    flashed, _ = play_cw(binary, WAKE_IN_BOOK, **BACK_AT_OPEN,
+                         **{'open.button': str(RIGHT), 'freeze': 'open.back'})
+    if flashed != home:
+        return 'clockwise front 4 cancel paints a frame before Home'
+
+
+@functools.cache
+def reopen_cw_from_home(binary, keys, **conf):
+    """Open a clockwise book once to populate warm pages and resume.pic, leave
+    to portrait Home via front 4 (Right), then boot onto Home and run `keys`."""
+    with tempfile.TemporaryDirectory(prefix='newt-home-cw-') as scratch:
+        directory = Path(scratch)
+        options = preview_driver.parse(['--library-fixture', 'healthy', '--reader-orientation', 'landscape-cw'])
+        preview_driver.world(binary, directory, options)
+        preview_driver.write_conf(directory, {'telemetry': 'sample'})
+        rust_preview.run(binary, directory, (CONFIRM, CONFIRM, RIGHT), 'power-on')
+        assert (directory / PICTURE).is_file(), 'clockwise exit to Home did not save resume.pic'
+        preview_driver.write_conf(directory, {'telemetry': 'sample', **conf})
+        frames, log = rust_preview.run(binary, directory, keys, 'power-on')
+        return frames[-1], log
+
+
+def clockwise_reopen_from_home_picture_buttons(binary):
+    """Reopening a clockwise book from portrait Home publishes its clockwise
+    resume picture inside with_open before the reader finishes loading. Front 1
+    pressed in that window must advance to page 2 (not cancel), while front 4
+    must cancel the open and return Home."""
+    home, _ = reopen_cw_from_home(binary, ())
+    page1, log = reopen_cw_from_home(binary, (BACK,))
+    if SHOWN not in log:
+        return 'reopen from Home did not publish the clockwise resume picture'
+    page2, _ = reopen_cw_from_home(binary, (BACK, BACK))
+    if page2 == page1:
+        return 'clockwise front 1 does not advance after reopen from Home'
+    after_front1, log = reopen_cw_from_home(
+        binary, (BACK,), **{'card.back': '/Pages/', 'card.after_refresh': '2', 'card.button': str(BACK)})
+    if SHOWN not in log or after_front1 != page2:
+        return 'clockwise front 1 after resume picture publish during Home reopen did not advance to page 2'
+    cancelled_home, log = reopen_cw_from_home(
+        binary, (BACK,), **{'card.back': '/Pages/', 'card.after_refresh': '2', 'card.button': str(RIGHT)})
+    if SHOWN not in log or cancelled_home != home or eligible(log) is not True:
+        return 'clockwise front 4 after resume picture publish did not cancel cleanly to Home'
+    if not re.search(r'Reader route: [^\n]*ready=0 [^\n]*cancel=1 active=1', log):
+        return 'clockwise front 4 did not cancel the in-flight open'
+
+
 # The reader trusts any shown picture without comparing it with the real page.
 UNCHECKED = ('reader_image_paint.rs',
              '        let covered = check == newt_core::resume_picture::Check::Covered;',
              '        let covered = check != newt_core::resume_picture::Check::None;')
+PUBLISH_BACK_SYNC = ('app_runtime/display.rs',
+                     '        control.set_clockwise_back(orientation == Orientation::LandscapeCw);',
+                     '        let _ = control;')
 RELEASE = ('reader_image_session.rs',
            '        if self.close_runtime(home).is_err() { crate::app_power::stop(); }\n'
            '        self.memory = ReaderBacking::Interrupted;',
@@ -298,6 +376,8 @@ CASES = [
          '        let holds = !self.picture.stale() && home.with_storage_io(|_, io| {',
          '        let holds = home.with_storage_io(|_, io| {')]),
     (cold_picture_is_checked, [UNCHECKED]),
+    (clockwise_wake_open_buttons, [PUBLISH_BACK_SYNC]),
+    (clockwise_reopen_from_home_picture_buttons, [PUBLISH_BACK_SYNC]),
 ]
 
 

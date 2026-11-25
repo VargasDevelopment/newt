@@ -63,7 +63,7 @@ impl Runtime {
 
     #[inline(never)]
     pub(super) fn show_picture_image(&mut self, home: &mut Home<'_>,
-        ui: &mut Application<'_>, logical: &mut Frame, trace: Trace<'_>,
+        ui: &mut Application<'_>, logical: &mut Frame, control: &newt_input_policy::UiControl<'_>, trace: Trace<'_>,
     ) -> Result<bool, BoardError> {
         if ui.press != PressState::Accepted || ui.app.screen != Screen::EpubReading { return Ok(false); }
         let Some(binding) = self.picture_binding_image() else { return Ok(false); };
@@ -94,7 +94,7 @@ impl Runtime {
         let orientation = binding.settings.orientation;
         let inverse = ui.displayed.valid && ui.displayed.overlay;
         let full = !ui.displayed.valid || ui.displayed.grayscale
-            || orientation != ui.displayed.orientation
+            || orientation != ui.displayed.orientation()
             || self.reading_refresh.needs_full(u32::from(binding.settings.refresh_pages));
         frame::to_native_frame(logical,
             home.bus.board.frame()?.try_into().map_err(|_| BoardError::Length)?, orientation);
@@ -108,7 +108,7 @@ impl Runtime {
             display::blocking_binary(&mut home.bus.board, panels,
                 if full && !inverse { Refresh::Full } else { Refresh::Fast }, "resume-picture")?;
         }
-        ui.displayed.completed(&mut home.bus.board, orientation, false, false, started);
+        ui.displayed.completed(&mut home.bus.board, orientation, false, false, started, control);
         self.picture.shown(ui.displayed.generation, logical);
         ui.press = if full || inverse { PressState::AnsweredCleanup } else { PressState::AnsweredFast };
         self.note_idle_paint(ui.app.screen, ui.displayed.generation, false, home.bus.board.millis());

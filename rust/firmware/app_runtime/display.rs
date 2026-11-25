@@ -13,13 +13,14 @@ use newt_core::{
     refresh::UiRefresh,
     sd_resume::SdResumeRecord,
 };
+use newt_input_policy::UiControl;
 use newt_stage_home::{HeaderInfo, HomeData, HomeFocusStyle, HomePlane, HomeStyle};
 
 /// Frozen display_receipt.h: current only after a blocking display return.
 #[derive(Default)]
 pub struct DisplayReceipt {
     pub generation: u32,
-    pub orientation: Orientation,
+    orientation: Orientation,
     pub valid: bool,
     pub grayscale: bool,
     pub overlay: bool,
@@ -53,15 +54,37 @@ impl Drop for Composition<'_> {
     }
 }
 impl DisplayReceipt {
-    pub fn completed(&mut self, board: &mut Board<'_>, orientation: Orientation, gray: bool, overlay: bool, started: u32) {
+    pub fn orientation(&self) -> Orientation { self.orientation }
+
+    pub fn completed(&mut self, board: &mut Board<'_>, orientation: Orientation, gray: bool, overlay: bool,
+        started: u32, control: &UiControl<'_>,
+    ) {
         #[cfg(feature = "dev-usb")]
         let refresh_ms = board.millis().wrapping_sub(started);
         #[cfg(not(feature = "dev-usb"))]
         let refresh_ms = { let _ = (board, started); 0 };
-        self.completed_at(orientation, gray, overlay, refresh_ms);
+        self.completed_at(orientation, gray, overlay, refresh_ms, control);
     }
 
-    pub fn completed_at(&mut self, orientation: Orientation, gray: bool, overlay: bool, refresh_ms: u32) {
+    /// Single frame-publication boundary for the app: keeps the input producer's
+    /// clockwise Back button synchronized with the orientation shown on the panel.
+    pub fn completed_at(&mut self, orientation: Orientation, gray: bool, overlay: bool,
+        refresh_ms: u32, control: &UiControl<'_>,
+    ) {
+        self.finish(orientation, gray, overlay, refresh_ms);
+        control.set_clockwise_back(orientation == Orientation::LandscapeCw);
+    }
+
+    /// Portrait-only completion for update mode, which has no book orientation.
+    pub fn completed_portrait(&mut self, board: &mut Board<'_>, gray: bool, overlay: bool, started: u32) {
+        #[cfg(feature = "dev-usb")]
+        let refresh_ms = board.millis().wrapping_sub(started);
+        #[cfg(not(feature = "dev-usb"))]
+        let refresh_ms = { let _ = (board, started); 0 };
+        self.finish(Orientation::Portrait, gray, overlay, refresh_ms);
+    }
+
+    fn finish(&mut self, orientation: Orientation, gray: bool, overlay: bool, refresh_ms: u32) {
         self.orientation = orientation;
         self.grayscale = gray;
         self.overlay = gray && overlay;
@@ -76,7 +99,7 @@ impl DisplayReceipt {
     /// Caller has completed the pure renderer; every SDK scratch loan ended.
     pub fn binary(&mut self, board: &mut Board<'_>, logical: &Frame,
         budget: &mut UiRefresh, panels: Option<&mut PanelRing>, force: bool, started: u32,
-        composition: Composition<'_>,
+        composition: Composition<'_>, control: &UiControl<'_>,
     ) -> Result<(), Error> {
         let full = force || !self.valid || self.grayscale
             || self.orientation != Orientation::Portrait || budget.needs_full();
@@ -91,7 +114,7 @@ impl DisplayReceipt {
                 if inverse { "leave-overlay-inverse" } else { "ui" })?;
         }
         budget.painted(full);
-        self.completed(board, Orientation::Portrait, false, false, started);
+        self.completed(board, Orientation::Portrait, false, false, started, control);
         Ok(())
     }
 }
@@ -119,22 +142,22 @@ const FOCUS: [NativeRegion; 3] = [
 /// eventual destination. It does not advance either existing paint budget.
 pub fn working(board: &mut Board<'_>, shown: &mut DisplayReceipt, work: newt_reader_ui::SlowWork,
     bar: &newt_system_ui::SystemBar, settings: newt_core::preferences::ViewSettings,
-    logical: &mut Frame, panels: Option<&mut PanelRing>, started: u32, trace: Trace<'_>,
+    logical: &mut Frame, panels: Option<&mut PanelRing>, started: u32, control: &UiControl<'_>, trace: Trace<'_>,
 ) -> Result<bool, Error> {
-    working_common(board, shown, work, bar, settings, logical, panels, started, trace)
+    working_common(board, shown, work, bar, settings, logical, panels, started, control, trace)
 }
 
 /// Working publication between synchronous source/frame loans.
 pub fn working_panel(panel: &mut ReaderPanel<'_, '_>, shown: &mut DisplayReceipt, work: newt_reader_ui::SlowWork,
     bar: &newt_system_ui::SystemBar, settings: newt_core::preferences::ViewSettings,
-    logical: &mut Frame, panels: Option<&mut PanelRing>, started: u32, trace: Trace<'_>,
+    logical: &mut Frame, panels: Option<&mut PanelRing>, started: u32, control: &UiControl<'_>, trace: Trace<'_>,
 ) -> Result<bool, Error> {
-    working_common(panel, shown, work, bar, settings, logical, panels, started, trace)
+    working_common(panel, shown, work, bar, settings, logical, panels, started, control, trace)
 }
 
 fn working_common(board: &mut impl BinaryPanel, shown: &mut DisplayReceipt, work: newt_reader_ui::SlowWork,
     bar: &newt_system_ui::SystemBar, settings: newt_core::preferences::ViewSettings,
-    logical: &mut Frame, panels: Option<&mut PanelRing>, started: u32, trace: Trace<'_>,
+    logical: &mut Frame, panels: Option<&mut PanelRing>, started: u32, control: &UiControl<'_>, trace: Trace<'_>,
 ) -> Result<bool, Error> {
     use newt_reader_ui::SlowWork;
     let orientation = if matches!(work, SlowWork::FirstOpen) { Orientation::Portrait }
@@ -171,7 +194,7 @@ fn working_common(board: &mut impl BinaryPanel, shown: &mut DisplayReceipt, work
     let refresh_ms = board.millis().wrapping_sub(started);
     #[cfg(not(feature = "dev-usb"))]
     let refresh_ms = { let _ = started; 0 };
-    shown.completed_at(orientation, false, false, refresh_ms);
+    shown.completed_at(orientation, false, false, refresh_ms, control);
     Ok(!fast)
 }
 
@@ -185,7 +208,7 @@ pub fn home(
     budget: &mut UiRefresh, shown: &mut DisplayReceipt, info: &HeaderInfo,
     data: HomeData<'_>, logical: &mut Frame, style: &HomeStyle<'_>,
     cover: &mut HomeCover, identity: Option<&SdResumeRecord>, force: bool, status_only: bool,
-    mut panels: Option<&mut PanelRing>,
+    mut panels: Option<&mut PanelRing>, control: &UiControl<'_>,
 ) -> Result<Option<HomePaintUpdate>, Error> {
     let marker = home.clock.begin_paint();
     if !policy.needs_paint(runtime.rest.app, info, &data, home.clock.shown(marker), force) || status_only { return Ok(None); }
@@ -202,7 +225,7 @@ pub fn home(
                 let data = HomeData { clock: home.clock.shown(marker), ..data };
                 policy.remember(runtime.rest.app, info, &data);
                 budget.painted(false);
-                shown.completed(&mut home.bus.board, Orientation::Portrait, true, shown.overlay, started);
+                shown.completed(&mut home.bus.board, Orientation::Portrait, true, shown.overlay, started, control);
                 return Ok(Some(HomePaintUpdate { grayscale: true, full: false, overlay: shown.overlay }));
             }
         }
@@ -217,7 +240,7 @@ pub fn home(
     };
     policy.remember(runtime.rest.app, info, &data);
     budget.painted(true);
-    shown.completed(board, Orientation::Portrait, gray, overlay, started);
+    shown.completed(board, Orientation::Portrait, gray, overlay, started, control);
     // One number-only row per full Home composition: why a cover is absent.
     #[cfg(feature = "dev-usb")]
     {

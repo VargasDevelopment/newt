@@ -9,7 +9,7 @@ impl Runtime {
     pub(super) fn save_reader_settings_image(&mut self, home: &mut Home<'_>,
         ui: &mut Application<'_>, logical: &mut Frame, events: &mut Events<'_, '_>, at: u32,
     ) {
-        self.acknowledge_work_image(home, ui, logical, SlowWork::Applying, events.action);
+        self.acknowledge_work_image(home, ui, logical, SlowWork::Applying, events.control, events.action);
         if self.recovery.is_some() && !self.opened() {
             self.open_selected_image(home, ui, logical, events, false);
             if self.opened() && self.saves.unconfirmed() {

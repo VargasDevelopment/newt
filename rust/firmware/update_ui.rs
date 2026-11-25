@@ -237,7 +237,7 @@ impl Parts<'_, '_> {
         let panels = None;
         display::blocking_binary(board, panels, if full { Refresh::Full } else { Refresh::Fast }, "ui")?;
         self.budget.painted(full);
-        self.displayed.completed(board, Orientation::Portrait, false, false, started);
+        self.displayed.completed_portrait(board, false, false, started);
         Ok(())
     }
 
