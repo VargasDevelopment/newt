@@ -4,6 +4,17 @@ use core::ops::{Deref, DerefMut};
 
 /// Dropped before the backing bytes can be reused, including on unwinding.
 /// The initializer's temporary exists only before the caller's work starts.
+/// T itself stays live through that work. Its bytes cannot be lent to any
+/// other phase until this guard drops; caller-owned disjoint banks may be used.
+///
+/// ```compile_fail,E0499
+/// use newt_phased_reader::phase_storage::{scratch_value, Storage, BANK_BYTES};
+/// let mut bank = [0u8; BANK_BYTES];
+/// let mut owner = scratch_value(&mut bank, || Ok(1u32)).unwrap();
+/// let mut builder = Storage::new(&mut bank);
+/// *owner = 2;
+/// drop(builder);
+/// ```
 ///
 /// ```compile_fail
 /// use newt_phased_reader::phase_storage::scratch_value;

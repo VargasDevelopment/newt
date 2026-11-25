@@ -38,7 +38,9 @@ struct Standalone {
 }
 
 // Both owners occupy the existing logical-frame loan, not the build's stack.
-// scratch_value also outlines their construction before the consumer starts.
+// They stay live through the consumer. IndexPass receives only the separate
+// ReaderMemory shared bank and Board primary-frame parse loan, never these
+// logical-frame bytes. scratch_value outlines construction, not owner lifetime.
 #[inline(never)]
 fn without_session<R, N: Native + PageEntries>(selected: &mut selected::SelectedSource,
     filename: &str, source_native: &mut N, pages_native: &mut N, scratch: &mut [u8],

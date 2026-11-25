@@ -41,8 +41,9 @@ pub struct ParseResources<'a, B: ParserBackend + ?Sized> {
 }
 
 // This cursor is private to this file, used only to initialize the concrete
-// phase arrays below. Taking a prefix removes it permanently from the cursor;
-// no reset, raw-pointer escape, or overlapping view API.
+// phase arrays below. Each aligned prefix is removed permanently: no reset,
+// raw-pointer escape, or overlapping view. Dropless views use one/array;
+// scratch_value instead keeps the byte loan until its initialized T is dropped.
 struct Parts<'a>(&'a mut [u8]);
 impl<'a> Parts<'a> {
     fn bytes(&mut self, count: usize, alignment: usize) -> Result<&'a mut [u8], Status> {
