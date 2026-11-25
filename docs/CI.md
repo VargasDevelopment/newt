@@ -152,7 +152,12 @@ the public repository, by visibility and name. The build job reads
 than in the tool lock, whose hash keys the toolchain caches;
 `tests/public_ci_test.py` checks every pin there.
 
-**Parts.** The `check` job is a matrix of eight parts: seven shards of the host
+**Parts.** The PR checks list shows `Host tests (part 1 of 7)` through
+`Host tests (part 7 of 7)` and `Firmware build`. These are display names only:
+the job ID stays `check`, with internal parts `0/7` through `6/7` and `native`.
+The required check names stay exactly `gate` and `pr-title`.
+
+The `check` job is a matrix of eight parts: seven shards of the host
 gate (`tools/ci_gate.py --part I/7`, which runs `tools/check.py --shard I/7`)
 and `native`, the plain clean compile and the one clean
 `firmware-build.py --clean --health-report` build. The `gate` job runs whenever
