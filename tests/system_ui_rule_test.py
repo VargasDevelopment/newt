@@ -45,10 +45,13 @@ SCREENS = {
     "zone-list-top": ZONE_LIST,
     "zone-list-middle": ZONE_LIST + ",next" * 7,
     "zone-list-bottom": ZONE_LIST + ",next" * 14,
-    # Sleep screen (#202): three rows, all Off; Select toggles the focused row.
+    # Sleep screen (#202, #128): three toggle rows plus Holiday outfits submenu.
     "sleep-screen": SETTINGS + ",next,next,activate",
-    "sleep-screen-last-row": SETTINGS + ",next,next,activate,next,next",
+    "sleep-screen-last-row": SETTINGS + ",next,next,activate,next,next,next",
     "sleep-screen-week-on": SETTINGS + ",next,next,activate,next,activate",
+    "holiday-outfits": SETTINGS + ",next,next,activate,next,next,next,activate",
+    "holiday-outfits-last-row": SETTINGS + ",next,next,activate,next,next,next,activate,next,next",
+    "holiday-outfits-halloween-on": SETTINGS + ",next,next,activate,next,next,next,activate,activate",
     "diagnostics": SETTINGS + ",next,next,next,activate",
     "about": SETTINGS + ",next,next,next,activate,activate",
     "about-whats-new-row": SETTINGS + ",next,next,next,activate,activate,next",
@@ -229,6 +232,7 @@ class SystemUiRuleTests(unittest.TestCase):
                             ("library", "previous"), ("library-last", "next"),
                             ("settings", "previous"), ("settings-last-row", "next"),
                             ("sleep-screen", "previous"), ("sleep-screen-last-row", "next"),
+                            ("holiday-outfits", "previous"), ("holiday-outfits-last-row", "next"),
                             ("pocket-pause-one-enabled", "next"), ("pocket-pause-one-enabled", "previous"),
                             ("pocket-pause-none-enabled", "next"),
                             # About's Version Select only counts toward the first newt.
@@ -253,6 +257,8 @@ class SystemUiRuleTests(unittest.TestCase):
         self.assertEqual(self.screen("update-check-row", "activate"), self.screen("update-wifi"))
         # Back from What's new returns to About with focus on its row.
         self.assertEqual(self.screen("whats-new", "back"), self.screen("about-whats-new-row"))
+        # Back from Holiday outfits returns to Sleep screen with focus on its row.
+        self.assertEqual(self.screen("holiday-outfits", "back"), self.screen("sleep-screen-last-row"))
         self.assertNotEqual(self.screen("zone-list-middle", "next"), self.screen("zone-list-middle"))
 
     def test_the_developer_unlock(self):

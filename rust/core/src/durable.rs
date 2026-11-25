@@ -429,6 +429,8 @@ scalar_codec!(TimeZoneCodec, "newt_zone", 0x5a54_574e, 14);
 scalar_codec!(SleepScreenCodec, "newt_sleep", 0x5054_574e, 7);
 // Developer page "Test builds": 0 Off, 1 On. Update mode reads it too.
 scalar_codec!(TestBuildsCodec, "newt_builds", 0x5554_574e, 1);
+// Sleep screen "Holiday outfits": bit 0 Halloween, bit 1 Thanksgiving, bit 2 Christmas.
+scalar_codec!(HolidayOutfitsCodec, "newt_holiday", 0x4854_574e, 7);
 
 /// Restore the durable preference independently of reading/resume state. The
 /// caller supplies the product default; missing or corrupt storage is not repaired.

@@ -73,7 +73,7 @@ impl<'sdk, R: Reader> firmware_switch::Ports<'sdk> for SwitchPorts<'_, '_, '_, '
         *self.press = PressState::Idle;
         newt_device_ui::render_device_ui(app, info, &bar, Some(self.logical), self.home.clock.zone(),
             None, None, crate::app_dev::build_identity(),
-            self.home.clock.sleep_screen(), self.home.clock.test_builds());
+            self.home.clock.sleep_screen(), self.home.clock.test_builds(), self.home.clock.holiday_outfits());
         if self.displayed.binary(&mut self.home.bus.board, self.logical, self.budget, self.panels.as_deref_mut(), false, started, composition, self.events.control).is_err() {
             crate::app_power::stop();
         }

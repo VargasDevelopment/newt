@@ -470,11 +470,12 @@ pub fn render_sleep_screen_settings(
     choices: SleepScreenChoices,
     notice: SettingsNotice,
 ) {
-    let pos = focus.min(2);
+    let pos = focus.min(3);
+    let confirm = if pos == 3 { b"Open".as_slice() } else { b"Switch" };
     let mut page = SystemPage::new(
         frame,
         bar,
-        clamped_list_buttons(Some(b"Back"), Some(b"Switch"), pos, 3),
+        clamped_list_buttons(Some(b"Back"), Some(confirm), pos, 4),
         Some(b"Sleep screen"),
     );
     let on = [choices.progress, choices.week, choices.habit];
@@ -489,10 +490,12 @@ pub fn render_sleep_screen_settings(
         );
         page.row(SYSTEM_BODY_TOP, i as u32, Some(&buf), i as u32 == pos);
     }
+    page.row(SYSTEM_BODY_TOP, 3, Some(b"Holiday outfits"), pos == 3);
     let notes = [
         "Shows your book's title and progress. Anyone who sees the device can read it.",
         "Dots for the last 7 days, filled on days you read. A full week also shows your streak.",
         "A mug, sun or moon for the time of day you read most, once you've read 30 minutes. Night readers get a dark screen.",
+        "Choose which holidays the sleeping newt dresses up for. All off by default.",
     ];
     let failed = [
         SettingsNotice::SleepProgressSaveFailed,
@@ -500,7 +503,7 @@ pub fn render_sleep_screen_settings(
         SettingsNotice::SleepHabitSaveFailed,
     ];
     let i = pos as usize;
-    let note = if notice == failed[i] {
+    let note = if i < 3 && notice == failed[i] {
         let _ = write!(
             Buffer::new(&mut buf),
             "Could not confirm the save. {} stays {}; after a restart it may change.",
@@ -511,5 +514,5 @@ pub fn render_sleep_screen_settings(
     } else {
         notes[i].as_bytes()
     };
-    para(page.canvas(), 50, 301, note, 21, 428, 430);
+    para(page.canvas(), 50, 344, note, 21, 428, 473);
 }

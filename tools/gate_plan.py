@@ -205,6 +205,7 @@ def plan(profile: str, fresh_objects: bool, controls=None) -> list[Phase]:
     test("preview_reader_finish_test.py", preview, after=("compile newt-preview",))
     test("preview_reader_reimport_test.py", preview, after=("compile newt-preview",))
     test("preview_reader_reflow_test.py", preview, after=("compile newt-preview",))
+    test("preview_holiday_outfits_test.py", preview, after=("compile newt-preview",))
     test("preview_card_app_test.py", preview, after=("compile newt-preview",))
     test("preview_cover_test.py", preview, after=("compile newt-preview",))
     test("preview_cover_status_test.py", preview, after=("compile newt-preview",))

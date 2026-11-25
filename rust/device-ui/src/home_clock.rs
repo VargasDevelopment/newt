@@ -55,16 +55,18 @@ const TWELVE_HOUR: u8 = 2;
 // The Sleep screen record's bits (progress 1, week 2, habit 4), shifted.
 const SLEEP_SHIFT: u32 = 2;
 const SLEEP_BITS: u8 = 7 << SLEEP_SHIFT;
+const ZONE_MASK: u8 = 0x1f;
+mod holiday_outfits;
 mod test_builds;
 
 /// The published Home clock. The latch, format, Sleep screen and Test builds
-/// choices share one byte and the zone another, so the reader and snapshot
-/// are the only other state: 12 bytes on RV32, as the original.
+/// choices share `flags`, and TimeZone shares `zone_holidays` with Holiday
+/// outfits: 12 bytes on RV32, as the original.
 pub struct HomeClockSource<C> {
     reader: Option<ClockReader<C>>,
     text: [u8; 6],
     flags: u8,
-    zone: TimeZone,
+    zone_holidays: u8,
 }
 
 const _: () = assert!(
@@ -78,12 +80,16 @@ impl<C> HomeClockSource<C> {
             reader: None,
             text: *b"--:--\0",
             flags: 0,
-            zone: TimeZone::Utc,
+            zone_holidays: TimeZone::Utc as u8,
         }
     }
 
     pub const fn zone(&self) -> TimeZone {
-        self.zone
+        TimeZone::from_raw_or_utc(self.zone_holidays & ZONE_MASK)
+    }
+
+    fn set_zone(&mut self, zone: TimeZone) {
+        self.zone_holidays = (self.zone_holidays & !ZONE_MASK) | ((zone as u8) & ZONE_MASK);
     }
 
     pub const fn format(&self) -> ClockFormat {
@@ -123,13 +129,14 @@ impl<C> HomeClockSource<C> {
         self.begin_reader(ctx, reader);
     }
 
-    /// Restore the four durable choices in the pinned order. The firmware
+    /// Restore the five durable choices in the pinned order. The firmware
     /// can end every store loan before borrowing the Board for its Boot read.
     pub fn restore_preferences<B: Backend>(&mut self, store: &mut B) {
         self.restore_time_zone(store);
         self.restore_clock_format(store);
         self.restore_sleep_screen(store);
         self.restore_test_builds(store);
+        self.restore_holiday_outfits(store);
     }
 
     /// Finish startup after restore_preferences; performs exactly one Boot read.
@@ -184,7 +191,7 @@ impl<C> HomeClockSource<C> {
         );
         bar.radio_on = radio_on;
         if let (Some(read), Some(digits)) = (self.reader, bar.clock.first_chunk_mut::<5>()) {
-            read(ctx, ClockReason::System, self.zone, self.format(), digits);
+            read(ctx, ClockReason::System, self.zone(), self.format(), digits);
         }
         bar
     }
@@ -203,30 +210,19 @@ impl<C> HomeClockSource<C> {
             reader: self.reader.map(|_| reader),
             text: self.text,
             flags: self.flags,
-            zone: self.zone,
+            zone_holidays: self.zone_holidays,
         };
-        struct Context<'a, C, D> {
-            original: &'a mut HomeClockSource<C>,
-            lent: HomeClockSource<D>,
-        }
+        struct Context<'a, C, D> { original: &'a mut HomeClockSource<C>, lent: HomeClockSource<D> }
         impl<C, D> Drop for Context<'_, C, D> {
             fn drop(&mut self) {
                 // A verified commit cannot be rolled back by a caught panic.
-                let HomeClockSource {
-                    reader: _,
-                    text,
-                    flags,
-                    zone,
-                } = &self.lent;
+                let HomeClockSource { reader: _, text, flags, zone_holidays } = &self.lent;
                 self.original.text = *text;
                 self.original.flags = *flags;
-                self.original.zone = *zone;
+                self.original.zone_holidays = *zone_holidays;
             }
         }
-        let mut loan = Context {
-            original: self,
-            lent,
-        };
+        let mut loan = Context { original: self, lent };
         scope(&mut loan.lent)
     }
 
@@ -235,7 +231,7 @@ impl<C> HomeClockSource<C> {
     #[inline(never)]
     fn restore_time_zone<B: Backend>(&mut self, store: &mut B) {
         let id = restore::<B, TimeZoneCodec, 20>(store, TimeZone::Utc as u32);
-        self.zone = TimeZone::from_id(id).unwrap_or(TimeZone::Utc);
+        self.set_zone(TimeZone::from_id(id).unwrap_or(TimeZone::Utc));
     }
 
     /// Missing, damaged or unreadable storage shows 24-hour, unrepaired.
@@ -256,9 +252,9 @@ impl<C> HomeClockSource<C> {
     /// An explicit UTC is written, so it supersedes an older durable zone.
     #[inline(never)]
     pub fn commit_time_zone<B: Backend>(&mut self, store: &mut B, zone: TimeZone) -> Commit {
-        let committed = commit::<B, TimeZoneCodec>(store, zone as u32, self.zone as u32);
+        let committed = commit::<B, TimeZoneCodec>(store, zone as u32, self.zone() as u32);
         if committed == Commit::Saved {
-            self.zone = zone;
+            self.set_zone(zone);
         }
         committed
     }
@@ -294,7 +290,7 @@ impl<C> HomeClockSource<C> {
     }
 
     fn read_snapshot(&mut self, ctx: &mut C, read: ClockReader<C>, reason: ClockReason) {
-        let (zone, format) = (self.zone, self.format());
+        let (zone, format) = (self.zone(), self.format());
         if let Some(digits) = self.text.first_chunk_mut::<5>() {
             read(ctx, reason, zone, format, digits);
         }

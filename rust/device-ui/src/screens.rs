@@ -470,6 +470,7 @@ pub fn render_device_ui(
     build: BuildIdentity<'_>,
     sleep: SleepScreenChoices,
     test_builds: TestBuilds,
+    holidays: HolidayOutfits,
 ) {
     match device_page(state) {
         DevicePage::Settings => {
@@ -545,6 +546,7 @@ pub fn render_device_ui(
         }
         DevicePage::FirstNewt => crate::first_newt::first_newt(frame, bar),
         DevicePage::Developer => crate::developer::developer(frame, bar, test_builds, state.settings_notice),
+        DevicePage::HolidayOutfits => crate::holiday_outfits::holiday_outfits(frame, bar, state.list_focus.into(), holidays, state.settings_notice),
         DevicePage::Diagnostics => diagnostics(frame, bar, info),
     }
 }

@@ -14,7 +14,7 @@ def reply(raw, commands):
             start=2 if op=='D' else 1
             if len(t)!=start+13:raise ValueError('state shape')
             if op=='D':number(t[1],1)
-            for word,maximum in zip(t[start:],[7,7,2**32-1,2**32-1,255,4,1,1,9,1,255,10,7]):number(word,maximum)
+            for word,maximum in zip(t[start:],[7,7,2**32-1,2**32-1,255,4,1,1,9,1,255,10,9]):number(word,maximum)
         elif op=='H':
             if len(t)!=4 or t[2]not in ('Books','Apps','Settings'):raise ValueError('home shape')
             number(t[1],2);number(t[3],6)

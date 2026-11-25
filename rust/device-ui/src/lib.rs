@@ -5,6 +5,7 @@
 mod assets;
 mod developer;
 mod first_newt;
+mod holiday_outfits;
 pub mod home_clock;
 mod screens;
 mod sleep;
@@ -68,6 +69,23 @@ pub struct SleepScreenChoices {
     pub week: bool,
     pub habit: bool,
 }
+/// Published Sleep screen holiday outfit choices; every outfit is off by default.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct HolidayOutfits {
+    pub halloween: bool,
+    pub thanksgiving: bool,
+    pub christmas: bool,
+}
+impl HolidayOutfits {
+    pub const fn allows(self, hat: HolidayHat) -> bool {
+        match hat {
+            HolidayHat::None => false,
+            HolidayHat::Witch => self.halloween,
+            HolidayHat::Thanksgiving => self.thanksgiving,
+            HolidayHat::Christmas => self.christmas,
+        }
+    }
+}
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum FirmwareSwitch {
     #[default]
@@ -116,6 +134,10 @@ impl HolidayHat {
         } else {
             Self::None
         }
+    }
+    pub fn chosen(today: newt_core::stats_clock::StatsClock, outfits: HolidayOutfits) -> Self {
+        let hat = Self::on(today);
+        if outfits.allows(hat) { hat } else { Self::None }
     }
 }
 /// Borrowed presentation snapshot. Storage and save publication remain owner-controlled.

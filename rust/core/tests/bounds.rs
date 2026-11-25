@@ -10,7 +10,7 @@ fn independent_checksum_vectors() {
 #[test]
 fn hostile_lengths_never_index_before_validation() {
     for length in 0..320 {
-        for tag in [b"NWTR", b"NWTP", b"NWTZ", b"NWTC"] {
+        for tag in [b"NWTR", b"NWTP", b"NWTZ", b"NWTC", b"NWTH"] {
             let mut bytes = [0xff; 320];
             bytes[..4].copy_from_slice(tag);
             let _ = Progress::decode(&bytes[..length]);
@@ -19,6 +19,7 @@ fn hostile_lengths_never_index_before_validation() {
             let _ = ClockFormatCodec::decode(&bytes[..length]);
             let _ = SleepScreenCodec::decode(&bytes[..length]);
             let _ = TestBuildsCodec::decode(&bytes[..length]);
+            let _ = HolidayOutfitsCodec::decode(&bytes[..length]);
         }
     }
 }

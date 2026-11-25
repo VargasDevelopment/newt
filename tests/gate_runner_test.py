@@ -418,6 +418,7 @@ class PlanTests(unittest.TestCase):
                                'preview_owners_test.py', 'preview_update_test.py', 'preview_reader_wake_test.py',
                                'preview_reader_finish_test.py', 'preview_reader_reimport_test.py',
                                'preview_reader_reflow_test.py',
+                               'preview_holiday_outfits_test.py',
                                'preview_card_app_test.py', 'preview_cover_test.py', 'preview_cover_status_test.py',
                                'gate_previews.py')]
                     pairs += [(f'compile {name}', name) for _, name in gate_plan.UNIT_TESTS]
