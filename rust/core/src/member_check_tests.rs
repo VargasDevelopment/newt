@@ -76,7 +76,7 @@ fn archive(m: &Member<'_>) -> Vec<u8> {
 }
 
 /// Catalog the archive, then run the open-time check on its one member.
-fn checked(m: &Member<'_>, fail_at: Option<u64>) -> Result<Checked, Status> {
+fn checked(m: &Member<'_>, fail_at: Option<u64>) -> Result<(Checked, u64), Status> {
     let mut source = Bytes { data: archive(m), fail_at: None };
     let mut storage = [0; 2048];
     let mut arena = Arena::new(&mut storage);
@@ -92,9 +92,10 @@ fn checked(m: &Member<'_>, fail_at: Option<u64>) -> Result<Checked, Status> {
 
 #[test]
 fn matching_member_is_checked_without_its_arena_name() {
-    let ok = checked(&Member::default(), None).unwrap();
-    assert_eq!(ok.entry().name, None);
-    assert_eq!(ok.entry().uncompressed_size, BODY.len() as u32);
+    let (ok, data) = checked(&Member::default(), None).unwrap();
+    assert_eq!(ok.name, None);
+    assert_eq!(data, 30 + 13);
+    assert_eq!(ok.uncompressed_size, BODY.len() as u32);
 }
 
 #[test]

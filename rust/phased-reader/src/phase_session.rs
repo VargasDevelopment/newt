@@ -48,7 +48,7 @@ impl<B: ParserBackend + ?Sized, L: BuildLoan> session::Reader
         _source: &mut dyn BookSource,
         _spine: u32,
         _plain: bool,
-    ) -> Result<Entry, Status> {
+    ) -> Result<newt_core::member_check::Checked, Status> {
         // The legacy external-lease API cannot compose the SDK owner safely.
         // Session::stage_owned is the supported route for this adapter.
         Err(Status::Unsupported)

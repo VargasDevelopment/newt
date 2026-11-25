@@ -905,6 +905,8 @@ struct SourceScan<'a, 'b, 'c, 'd, 's> {
     style_depth: u32,
     head: u8,
     links: usize,
+    /// Catalog index of each resolved link, checked after the scan.
+    members: [u16; 4],
     stop: bool,
 }
 impl SourceScan<'_, '_, '_, '_, '_> {
@@ -938,7 +940,7 @@ impl SourceScan<'_, '_, '_, '_, '_> {
                 }
             }
             if css && !contradictory {
-                if let Some((_, entry)) = self.book.catalog.and_then(|z| z.find(path)) {
+                if let Some((index, entry)) = self.book.catalog.and_then(|z| z.find(path)) {
                     if matches!(entry.method, 0 | 8) {
                         out.link = if entry.method == 0
                             && entry.compressed_size != entry.uncompressed_size
@@ -952,6 +954,7 @@ impl SourceScan<'_, '_, '_, '_, '_> {
                             Link::Resolved
                         };
                         if out.link == Link::Resolved {
+                            self.members[self.links] = index as u16;
                             out.compressed_size = entry.compressed_size;
                             out.uncompressed_size = entry.uncompressed_size;
                             out.local_header_offset = entry.local_header_offset;
@@ -1115,6 +1118,7 @@ pub fn resolve<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
         style_depth: 0,
         head: 0,
         links: 0,
+        members: [0; 4],
         stop: false,
     };
     let mut status = match crate::admission::ChapterSource::open(
@@ -1148,6 +1152,20 @@ pub fn resolve<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
             status
         }
     };
+    // The scan cannot read members while the chapter streams, so stylesheets
+    // are checked here. A damaged one is skipped, as a missing one is.
+    if let Some(catalog) = book.catalog {
+        let SourceScan { out, members, links, .. } = &mut handler;
+        for (member, &index) in out.links[..*links].iter_mut().zip(members.iter()) {
+            let damaged = member.link == Link::Resolved
+                && catalog
+                    .entry(usize::from(index))
+                    .is_none_or(|entry| catalog.check(&mut tracked, entry).is_err());
+            if damaged {
+                *member = Member { link: Link::Damaged, ..Member::default() };
+            }
+        }
+    }
     if handler.status != Status::Ok {
         status = handler.status;
     } else if status == Status::ParseError

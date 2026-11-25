@@ -5,9 +5,10 @@ use crate::{
     admission::{self, Observer, ScheduledSource},
     canonical::{self, Resources},
     xml_session::ParserBackend,
-    zip_container::{Entry, Status},
+    zip_container::Status,
     zip_window::{arena::Arena, source::BookSource},
 };
+use newt_core::member_check::Checked;
 pub struct MetadataReader<'a, 'storage, 'resources, B: ParserBackend + ?Sized> {
     pub catalog: &'a mut Arena<'storage>,
     pub parse: &'a mut Arena<'storage>,
@@ -88,14 +89,14 @@ impl<B: ParserBackend + ?Sized> Reader for MetadataReader<'_, '_, '_, B> {
         source: &mut dyn BookSource,
         spine: u32,
         _plain: bool,
-    ) -> Result<Entry, Status> {
+    ) -> Result<Checked, Status> {
         self.staged = None;
         self.catalog.reset();
         // Book cannot survive a source Action withdrawal. Reborrow all its
         // owners and copy only the canonical ZIP descriptor before dropping it.
         let mut scheduled = ScheduledSource::new(source, self.on_yield, None);
         let result = (|| {
-            let book = canonical::open(
+            let mut book = canonical::open(
                 &mut scheduled,
                 self.catalog,
                 self.resources,
@@ -111,10 +112,9 @@ impl<B: ParserBackend + ?Sized> Reader for MetadataReader<'_, '_, '_, B> {
             if !newt_core::phased_metadata::admissible_href(href, 512) {
                 return Err(Status::Unsupported);
             }
-            let (_, mut entry) = book.catalog().find(href).ok_or(Status::NotFound)?;
-            // No arena handle may escape the short-lived canonical Book.
-            entry.name = None;
-            Ok(entry)
+            let (_, entry) = book.catalog().find(href).ok_or(Status::NotFound)?;
+            // Checked drops the arena name, which must not escape the Book.
+            book.check(&entry)
         })();
         self.catalog.reset();
         if result.is_ok() {
