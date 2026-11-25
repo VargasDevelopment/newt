@@ -151,6 +151,9 @@ def native_receive(run, workspace, output, support):
     if not negative_controls(__file__):
         return
     for name, before, after in [
+        ('RX mask read outside critical section',
+         '    portENTER_CRITICAL(&lock);\n    uint32_t previous = usb_serial_jtag_ll_get_intr_ena_status() & USB_SERIAL_JTAG_INTR_SERIAL_OUT_RECV_PKT;',
+         '    uint32_t previous = usb_serial_jtag_ll_get_intr_ena_status() & USB_SERIAL_JTAG_INTR_SERIAL_OUT_RECV_PKT;\n    portENTER_CRITICAL(&lock);'),
         ('restore removed', 'if (previous) usb_serial_jtag_ll_ena_intr_mask(USB_SERIAL_JTAG_INTR_SERIAL_OUT_RECV_PKT);', 'if (previous) { (void)previous; }'),
         ('queued bytes skipped', 'if (nsc_port_available(Serial) > 0) return nsc_port_read_byte(Serial);', ''),
         ('begin clears BUS_RESET',

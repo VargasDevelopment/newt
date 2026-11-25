@@ -11,11 +11,15 @@ extern "C" fn nsc_put_rx_begin() -> u32 { RX.swap(0, Ordering::SeqCst) }
 #[unsafe(no_mangle)]
 extern "C" fn nsc_put_rx_end(previous: u32) { RX.store(previous, Ordering::SeqCst); }
 #[unsafe(no_mangle)]
-extern "C" fn nsc_put_rx_read_byte() -> i32 { -1 }
+extern "C" fn nsc_put_rx_read_byte() -> i32 {
+    assert_eq!(RX.load(Ordering::SeqCst), 0);
+    -1
+}
 
 fn guarded(owner: &mut usb::ReceiveOwner, card: &mut FakeCard, host: &mut Host) -> Outcome {
-    let _receive = owner.receive();
+    let mut receive = owner.receive();
     assert_eq!(RX.load(Ordering::SeqCst), 0);
+    assert_eq!(receive.read_byte(), -1);
     lease(card, host)
 }
 #[test]

@@ -2,7 +2,9 @@
 #pragma once
 // Extracted by the harness from the pinned ESP32-C3 HAL; no copied bit values.
 #include "pinned-usb-irq.h"
-inline uint32_t usb_serial_jtag_ll_get_intr_ena_status() { return fake_mask; }
+inline uint32_t usb_serial_jtag_ll_get_intr_ena_status() {
+    assert(fake_critical == 1); return fake_mask;
+}
 inline void usb_serial_jtag_ll_disable_intr_mask(uint32_t bits) {
     assert(fake_critical == 1); fake_mask &= ~bits;
 }

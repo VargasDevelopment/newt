@@ -87,12 +87,10 @@ class Lease:
             raise ValueError('Session request IDs exhausted; request a fresh handshake')
         identity = client.boot, client.session, client.request_id
         data = f'N1 {client.boot} {client.session} {client.request_id} {body}\n'.encode('ascii')
-        if len(data) > LINE_BYTES + 1:
-            raise ValueError('Lease line exceeds its bound')
         if len(data) + len(payload) > LINE_BYTES + 1:
             raise ValueError('Lease frame exceeds its bound')
         data += payload
-        if kind != 'DATA':  # thousands of DATA lines are summarised, not traced
+        if kind != 'DATA':  # thousands of DATA frames are summarised, not traced
             client.trace('request', *identity, kind, body)
         deadline = time.monotonic() + seconds
         self.written = False
@@ -128,7 +126,7 @@ def put_file(lease, folder, name, data, timeout):
             raise ValueError('Wrong DATA acknowledgement')
     client = lease.client
     client.trace('request', client.boot, client.session, client.request_id, 'DATA',
-                 f'{len(chunks)} lines, {len(data)} bytes, each acknowledged in order')
+                 f'{len(chunks)} frames, {len(data)} bytes, each acknowledged in order')
     try:
         reply = lease.exchange('DONE', max(timeout, FILE_SECONDS) + len(data) / READ_BACK_RATE, 'DONE')
     except Refused:
