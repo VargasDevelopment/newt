@@ -4,8 +4,8 @@
 The preview is the real firmware built for the host over C fakes
 (rust/host/preview/fakes). Each case drives it with presses from a fixture
 world (rust/host/preview/update_fixtures.py) and checks what the firmware
-did: its serial log, its frames and what it wrote. Every case has at least
-one negative control: the same build with one firmware line changed in its
+did: its serial log, its frames and what it wrote. Safeguard cases have
+negative controls: the same build with one firmware line changed in its
 generated copy (never in rust/firmware). Each control must fail its case.
 
 These are host facts only. They say nothing about the X3's radio, TLS,
@@ -180,7 +180,7 @@ def official_return(binary):
 
 def official_return_refusals(binary):
     """Missing, corrupt, foreign-source and replaced-target receipts cannot erase."""
-    for failure in ('missing', 'corrupt', 'source', 'target', 'unconfirmed'):
+    for failure in ('missing', 'corrupt', 'source', 'target', 'unconfirmed', 'test-builds-on'):
         with tempfile.TemporaryDirectory() as scratch:
             directory = Path(scratch)
             world(directory, binary, update='official-return')
@@ -199,6 +199,8 @@ def official_return_refusals(binary):
                 payload = update_fixtures.newt_image('0.5.0+changed')
                 (folder / 'newt.bin').write_bytes(payload)
                 (folder / 'newt.manifest').write_bytes(update_fixtures.manifest('0.5.0+changed', payload))
+            if failure == 'test-builds-on':
+                rust_preview.run(binary, directory, SWITCH_TEST_BUILDS)
             before = {name: (directory / 'partitions' / name).read_bytes() for name in ('app1.bin', 'otadata.bin')}
             _, log = rust_preview.run(binary, directory, [*settings_row(UPDATE_ROW), CONFIRM, CONFIRM, CONFIRM])
             if failure == 'unconfirmed' and check_result(checked) == READY:
@@ -209,8 +211,30 @@ def official_return_refusals(binary):
                 return f'{failure} receipt changed flash'
 
 
+def other_firmware_labels(binary):
+    """A lower-version Other file has the same Install footer and explanatory
+    note as a higher-version Other file. Only its first row names a version."""
+    opening = [*settings_row(UPDATE_ROW), CONFIRM]
+    frames = []
+    for fixture in ('firmware-lower', 'firmware-higher'):
+        with tempfile.TemporaryDirectory() as scratch:
+            directory = Path(scratch)
+            world(directory, binary, update=fixture)
+            rust_preview.run(binary, directory, opening)
+            header, size, pixels = (directory / 'frame.pbm').read_bytes().split(b'\n', 2)
+            if header != b'P4' or size != b'528 792' or len(pixels) != 528 * 792 // 8:
+                return 'the logical update frame is missing'
+            frames.append(pixels)
+    lower, higher = frames
+    if lower[200 * 66:] != higher[200 * 66:]:
+        return 'a lower-version Other file changed the Install note or footer'
+
+
 # (case, generated firmware file, exact text, replacement)
 CASES = [
+    (official_return_refusals, 'update_mode.rs',
+     'let channel = ui.clock.test_builds();',
+     'let channel = newt_core::update_online::TestBuilds::Off;'),
     (official_return, 'update_mode.rs',
      '.map(update::ReturnOffer::Offered).unwrap_or_default();',
      '.map(|_| update::ReturnOffer::None).unwrap_or_default();'),
@@ -256,7 +280,7 @@ CASES = [
 def main():
     # The gate passes its one preview build; controls relink from it.
     binary = rust_preview.FIRMWARE if len(sys.argv) == 2 else rust_preview.build()
-    flows = list(dict.fromkeys(case for case, *_ in CASES))  # a flow may have several controls
+    flows = [*dict.fromkeys(case for case, *_ in CASES), other_firmware_labels]
     for case in flows:
         problem = case(binary)
         assert problem is None, f'{case.__name__}: {problem}'

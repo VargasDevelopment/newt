@@ -11,14 +11,14 @@ fn target() -> UpdateManifest {
 #[test]
 fn only_compatible_latest_official_on_the_off_channel_can_issue_a_return() {
     let current = source(); let candidate = target();
-    assert!(ReturnAuthorization::from_check(&current, &candidate, TestBuilds::Off).is_some());
-    assert!(ReturnAuthorization::from_check(&current, &candidate, TestBuilds::On).is_none());
+    assert!(ReturnAuthorization::from_check(&current, &candidate, TestBuilds::Off).is_ok());
+    assert!(ReturnAuthorization::from_check(&current, &candidate, TestBuilds::On).is_err());
     for version in [c"0.5.1", c"0.5.1-alpha", c"0.5.1-dev.invalid", c"0.5.1-dev.20261125.0"] {
-        assert!(ReturnAuthorization::from_check(&newt_app_identity(version, Some(c"0123456789ab")), &candidate, TestBuilds::Off).is_none());
+        assert!(ReturnAuthorization::from_check(&newt_app_identity(version, Some(c"0123456789ab")), &candidate, TestBuilds::Off).is_err());
     }
     for version in [b"0.4.1".as_slice(), b"0.5.1-dev.20261124.1", b"0.5.1", b"0.6.0"] {
         let mut wrong = candidate; wrong.version.fill(0); wrong.version[..version.len()].copy_from_slice(version);
-        assert!(ReturnAuthorization::from_check(&current, &wrong, TestBuilds::Off).is_none());
+        assert!(ReturnAuthorization::from_check(&current, &wrong, TestBuilds::Off).is_err());
     }
 }
 

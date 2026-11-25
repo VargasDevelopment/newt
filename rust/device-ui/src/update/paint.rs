@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 use super::*;
 use super::dispatch::{can_check, connect_focused, firmware, forget_focused, network_rows, order, present_count,
-    sets_up_wifi};
+    returning, sets_up_wifi};
 use crate::{Buffer, cstr};
 use core::fmt::Write;
 use newt_core::update_card::FILE_BYTES;
@@ -45,7 +45,7 @@ fn offer_note<P, S>(view: &UpdateView<'_, P, S>, offer: &UpdateOffer, note: &mut
     if !offer.readable { joined(note, &[b"Its manifest is not a Newt update file."]); return; }
     let newer = order(view, offer);
     joined(note, &[b"Build ", &offer.manifest.build, b". This X3 has ", view.running.to_bytes(), b".",
-        if newer < 0 && newt_core::update_manifest::semver2_is_nightly(Some(view.running)) { b" Check again for the official release." } else if newer < 0 { b" Use USB to install an older version." } else if newer == 0 { b" It is installed." } else { b"" }]);
+        if newer < 0 && newt_core::update_manifest::semver2_is_nightly(Some(view.running)) { b" Turn Test builds Off, then Check again." } else if newer < 0 { b" Use USB to install an older version." } else if newer == 0 { b" It is installed." } else { b"" }]);
 }
 fn render_list<P, S>(view: &UpdateView<'_, P, S>, bar: &SystemBar, frame: Option<&mut Frame>) {
     let offer = focused_offer(view);
@@ -53,7 +53,7 @@ fn render_list<P, S>(view: &UpdateView<'_, P, S>, bar: &SystemBar, frame: Option
     let install = offer.is_some_and(|index| update_choice(view, index) != UpdateChoice::None);
     let check = check_focused(view);
     let wifi = sets_up_wifi(view);
-    let returning = offer.is_some_and(|index| order(view, &view.offers[index]) < 0 && install);
+    let returning = offer.is_some_and(|index| returning(view, &view.offers[index]));
     let confirm = if returning { Some(b"Return".as_slice()) } else if install { Some(b"Install".as_slice()) } else if check && can_check(view) { Some(b"Check".as_slice()) }
         else if check && wifi { Some(b"Open".as_slice()) } else { None };
     let mut page = SystemPage::new(frame, bar, clamped_list_buttons(Some(b"Back"), confirm,
@@ -167,7 +167,7 @@ fn render_password<P: Password, S>(view: &UpdateView<'_, P, S>, bar: &SystemBar,
     }
 }
 fn render_confirm<P, S>(view: &UpdateView<'_, P, S>, bar: &SystemBar, frame: Option<&mut Frame>) {
-    let returning = focused_offer(view).is_some_and(|index| !firmware(&view.offers[index]) && order(view, &view.offers[index]) < 0);
+    let returning = focused_offer(view).is_some_and(|index| returning(view, &view.offers[index]));
     let mut page = SystemPage::new(frame, bar, SystemButtons { back: Some(b"Back"), confirm: Some(if returning { b"Return" } else { b"Install" }),
         ..SystemButtons::default() }, Some(b"Update"));
     let Some(index) = focused_offer(view) else { return; };
@@ -179,9 +179,11 @@ fn render_confirm<P, S>(view: &UpdateView<'_, P, S>, bar: &SystemBar, frame: Opt
     };
     let mut text = [0; 160]; let other = firmware_title(view.target_name);
     if !firmware(offer) {
-        if order(view, offer) < 0 {
-            joined(&mut text, &[b"Return to official release? ", view.running.to_bytes(), b" -> ", &offer.manifest.version, b". This version is older. Back keeps you here."]);
+        if returning {
+            joined(&mut text, &[b"Return to official release? ", view.running.to_bytes(), b" -> ", &offer.manifest.version, b". This version is older. Back keeps this Newt."]);
             paragraph(&text, 24);
+            joined(&mut text, &[b"Saved data needs Newt ", newt_core::official_return::MINIMUM.to_bytes(), b" or newer."]);
+            paragraph(&text, 21);
             if view.target == SlotImage::Other {
                 joined(&mut text, &[b"This replaces ", other, b" on this X3."]); paragraph(&text, 21);
             }

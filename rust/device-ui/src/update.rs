@@ -63,9 +63,6 @@ impl ReturnOffer {
     fn confirm(&mut self) {
         if let Self::Offered(value) = *self { *self = Self::Confirmed(value.confirm()); }
     }
-    fn cancel_confirmation(&mut self) {
-        if let Self::Confirmed(value) = *self { *self = Self::Offered(value.authorization()); }
-    }
 }
 
 /// One actual update-boot owner. P and S are the existing required Secret

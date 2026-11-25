@@ -123,6 +123,9 @@ def update_world(name):
         # needs an empty other slot.
         if name == 'same':
             world['app1'] = None
+    elif name in ('firmware-lower', 'firmware-higher'):
+        version = '0.4.0' if name == 'firmware-lower' else '1.2.0'
+        world.update(offer=None, files={'other.bin': image('CrossInk', version)})
     elif name in ('firmware', 'firmware-other-slot', 'firmware-empty-slot'):
         world['files'] = CARD_FILES
         world['app1'] = {'firmware': newt_image(RUNNING), 'firmware-other-slot': 'other',

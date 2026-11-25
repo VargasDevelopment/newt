@@ -7,6 +7,10 @@ pub(super) fn firmware(offer: &UpdateOffer) -> bool { offer.manifest.kind == Upd
 pub(super) fn order<P, S>(view: &UpdateView<'_, P, S>, offer: &UpdateOffer) -> i32 {
     semver2_compare(CStr::from_bytes_until_nul(&offer.manifest.version).ok(), Some(view.running))
 }
+/// Only Check's source/target-bound authorization labels an offer as a return.
+pub(super) fn returning<P, S>(view: &UpdateView<'_, P, S>, offer: &UpdateOffer) -> bool {
+    view.official_return.authorization().is_some_and(|grant| grant.targets(view.running, &offer.manifest))
+}
 pub(super) fn present_count<P, S>(view: &UpdateView<'_, P, S>) -> u32 {
     view.offers.iter().filter(|offer| offer.present).count() as u32
 }
@@ -113,7 +117,7 @@ fn dispatch_page<P: Password, S>(view: &mut UpdateView<'_, P, S>, action: Action
             return if action == Action::Sleep { UpdateIntent::Exit } else { UpdateIntent::None };
         }
         UpdatePage::Confirm => {
-            if action == Action::Back { view.official_return.cancel_confirmation(); view.page = UpdatePage::List; return UpdateIntent::Repaint; }
+            if action == Action::Back { view.page = UpdatePage::List; return UpdateIntent::Repaint; }
         }
         UpdatePage::List => {
             if action == Action::Back { return UpdateIntent::Exit; }
@@ -133,7 +137,10 @@ fn dispatch_page<P: Password, S>(view: &mut UpdateView<'_, P, S>, action: Action
         view.page = UpdatePage::Confirm; return UpdateIntent::Repaint;
     }
     if choice == UpdateChoice::None { return UpdateIntent::None; }
-    if view.page == UpdatePage::Confirm { view.official_return.confirm(); }
+    if view.page == UpdatePage::Confirm
+        && focused_offer(view).is_some_and(|index| returning(view, &view.offers[index])) {
+        view.official_return.confirm();
+    }
     view.page = UpdatePage::Installing; view.checking = true; view.percent = 0;
     UpdateIntent::Install
 }
@@ -160,11 +167,8 @@ pub fn update_choice<P, S>(view: &UpdateView<'_, P, S>, index: usize) -> UpdateC
     let Some(offer) = view.offers.get(index).filter(|offer| offer.present && offer.readable) else { return UpdateChoice::None; };
     if firmware(offer) { return UpdateChoice::Confirm; }
     let newer = order(view, offer);
-    if newer < 0 {
-        if view.official_return.authorization().is_some_and(|permission| permission.targets(view.running, &offer.manifest)) {
-            UpdateChoice::Confirm
-        } else { UpdateChoice::None }
-    }
+    if returning(view, offer) { UpdateChoice::Confirm }
+    else if newer < 0 { UpdateChoice::None }
     else if newer == 0 || view.target == SlotImage::Other { UpdateChoice::Confirm } else { UpdateChoice::Install }
 }
 pub fn update_consent<P, S>(view: &UpdateView<'_, P, S>, index: usize) -> Option<InstallConsent> {

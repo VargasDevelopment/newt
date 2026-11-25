@@ -41,13 +41,13 @@ pub fn fetch_online_update_with_http<H: Http + ?Sized>(http: &mut H, card: &mut 
         return OnlineCheck::WrongFile;
     }
     let running_version = running.and_then(|source| CStr::from_bytes_until_nul(&source.version).ok());
-    let returning = running.and_then(|source| crate::official_return::ReturnAuthorization::from_check(source, manifest, test_builds));
+    let returning = match running.map(|source| crate::official_return::ReturnAuthorization::from_check(source, manifest, test_builds)).transpose() {
+        Ok(value) => value,
+        Err(crate::official_return::ReturnIssue::Incompatible) => return OnlineCheck::ReturnIncompatible,
+        Err(crate::official_return::ReturnIssue::CheckAgain) => None,
+    };
     if semver2_compare(version, running_version) <= 0 && returning.is_none() {
-        return if test_builds == TestBuilds::Off
-            && crate::update_manifest::semver2_is_nightly(running_version)
-            && semver2_compare(version, Some(crate::official_return::MINIMUM)) < 0 {
-            OnlineCheck::ReturnIncompatible
-        } else { OnlineCheck::Latest };
+        return OnlineCheck::Latest;
     }
     for tries in 1..=3 {
         progress(http, 0, manifest.size);

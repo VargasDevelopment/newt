@@ -39,16 +39,16 @@ fn compatible(source: &NewtAppIdentity, target: &UpdateManifest, channel: TestBu
 }
 impl ReturnAuthorization {
     /// Called only after the Off-channel latest endpoint supplied this manifest.
-    pub(crate) fn from_check(source: &NewtAppIdentity, target: &UpdateManifest, channel: TestBuilds) -> Option<Self> {
-        compatible(source, target, channel).ok()?;
-        Some(Self { source: *source, image: target.sha256 })
+    pub(crate) fn from_check(source: &NewtAppIdentity, target: &UpdateManifest, channel: TestBuilds) -> Result<Self, ReturnIssue> {
+        compatible(source, target, channel)?;
+        Ok(Self { source: *source, image: target.sha256 })
     }
     pub fn matches(&self, source: &NewtAppIdentity, target: &UpdateManifest, channel: TestBuilds) -> bool {
         self.source == *source && self.image == target.sha256 && compatible(source, target, channel).is_ok()
     }
     pub fn targets(&self, running: &CStr, target: &UpdateManifest) -> bool {
         CStr::from_bytes_until_nul(&self.source.version).ok() == Some(running)
-            && self.matches(&self.source, target, TestBuilds::Off)
+            && self.image == target.sha256 && compatible(&self.source, target, TestBuilds::Off).is_ok()
     }
     pub fn receipt(&self) -> [u8; RECEIPT_BYTES] {
         let mut out = [0; RECEIPT_BYTES];
@@ -62,11 +62,11 @@ impl ReturnAuthorization {
     pub fn restore(bytes: &[u8], source: &NewtAppIdentity, target: &UpdateManifest, channel: TestBuilds) -> Result<Self, ReturnIssue> {
         if bytes.len() != RECEIPT_BYTES || &bytes[..4] != b"NWOR" || get32(bytes, 4) != 1
             || get32(bytes, 80) != crc32(&bytes[..80]) { return Err(ReturnIssue::CheckAgain); }
-        compatible(source, target, channel)?;
         let mut saved = Self { source: NewtAppIdentity::default(), image: [0; 32] };
         saved.source.version.copy_from_slice(&bytes[8..32]);
         saved.source.build.copy_from_slice(&bytes[32..48]); saved.image.copy_from_slice(&bytes[48..80]);
-        if !saved.matches(source, target, channel) { return Err(ReturnIssue::CheckAgain); }
+        if saved.source != *source || saved.image != target.sha256 { return Err(ReturnIssue::CheckAgain); }
+        compatible(source, target, channel)?;
         Ok(saved)
     }
     pub fn confirm(self) -> ConfirmedReturn { ConfirmedReturn(self) }

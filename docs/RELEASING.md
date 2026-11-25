@@ -469,6 +469,13 @@ its issues for at least three years, and archiving makes issues read-only.
 
 ## Nightly test builds
 
+Devices with the hidden Test builds setting on read
+`GET /repos/VargasDevelopment/newt/releases?per_page=1`, the newest release,
+pre-releases included, instead of `/releases/latest`. CI gives them a nightly
+test build of `main`: a GitHub pre-release with the same three assets as a
+release. Every other device never sees it, because `/releases/latest` skips
+pre-releases. A nightly has had no bench or hardware check.
+
 **Saved-data compatibility for return.** Before changing a durable writer or
 the meaning of its payload, review `official_return::MINIMUM` in
 `rust/core/src/official_return.rs` and its compatibility vectors. This includes
@@ -478,13 +485,6 @@ minimum to the first compatible release and update the vectors in the same
 change. Until that release is published, Check must refuse a return and keep
 the nightly. Review all authoritative formats (preferences, progress, resume,
 statistics, scalar settings, Wi-Fi, apps and sample state), not layout caches.
-
-Devices with the hidden Test builds setting on read
-`GET /repos/VargasDevelopment/newt/releases?per_page=1`, the newest release,
-pre-releases included, instead of `/releases/latest`. CI gives them a nightly
-test build of `main`: a GitHub pre-release with the same three assets as a
-release. Every other device never sees it, because `/releases/latest` skips
-pre-releases. A nightly has had no bench or hardware check.
 
 **When.** Public CI's `nightly` job runs after the `gate` job passes on an
 owner push to `main`, and by hand (Actions, "Public CI", Run workflow on

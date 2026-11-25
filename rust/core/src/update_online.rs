@@ -59,8 +59,8 @@ pub trait CardDownload {
     /// not authority for the policy to erase or retry this possibly durable pair.
     fn finish(&mut self, manifest: &[u8]) -> bool;
     /// A return offer is usable only after its target-bound sidecar is durable.
-    /// A port without that capability must refuse, not silently finish normally.
-    fn finish_return(&mut self, _manifest: &[u8], _authorization: &crate::official_return::ReturnAuthorization) -> bool { false }
+    /// A port must explicitly confirm that capability or refuse.
+    fn finish_return(&mut self, manifest: &[u8], authorization: &crate::official_return::ReturnAuthorization) -> bool;
     fn abort(&mut self);
 }
 pub trait Hash {
