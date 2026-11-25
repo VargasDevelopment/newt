@@ -113,7 +113,7 @@ pub(crate) fn physical_handoffs(home:&mut app_image::Home<'_>,bytes:&[u8],digest
             }
         }
     }
-    for cut in [0,5,8,9,10,11] {
+    for (cut, session_mode) in [(0,false),(5,false),(8,false),(9,false),(10,false),(11,false),(0,true)] {
         let old_files=home.card.0.borrow().model.files.clone();
         home.card.seed(path,bytes.to_vec());
         home.card.seed("/newt-sd/Newt/Cache/handoff-receipt",vec![1]);
@@ -137,7 +137,16 @@ pub(crate) fn physical_handoffs(home:&mut app_image::Home<'_>,bytes:&[u8],digest
                 let result=source.with_index_source(&mut source_native,name.as_bytes_with_nul(),&mut logical,Some(&crate::Never),None,|raw| {
                     let result=index_build::open_releasing(raw,digest,&mut storage,scope.bus.panel,
                         &mut Metadata {items:1500},&mut pages,Some(hook),Verification::Verified);
-                    let result=super::index_reopen::complete(result,&mut pages,raw,digest,None,&|| {});
+                    let mut verification=crate::reader_verification::ReaderVerification::new();
+                    let result=super::index_reopen::complete(result,&mut pages,raw,digest,
+                        session_mode.then_some(&mut verification),&|| {});
+                    if cut==0 {assert!(result.is_ok(),"publication must bind the bytes digest");}
+                    if session_mode {
+                        assert_eq!(verification.state(),crate::reader_verification::Verification::Pending,
+                            "session reopen must restart verification");
+                        assert!(verification.finish_with_update(raw,digest,&mut[0;4096],&mut||true,&mut|hash,bytes|
+                            newt_phased_reader::imported_revision::RevisionHasher::update(hash,bytes)));
+                    }
                     if cut==10 {assert!(result.is_err(),"changed reopened bytes must fail verification");}
                     if let Ok(indexed)=&result {
                         assert!(indexed.source_reopened());
@@ -178,6 +187,7 @@ pub(crate) fn physical_handoffs(home:&mut app_image::Home<'_>,bytes:&[u8],digest
             }
             drop(pages);assert!(state.close(&mut native,&route).unwrap().clean);found
         }).unwrap();
+        if cut==0 {assert!(present,"publication must bind the bytes digest");}
         assert_eq!(present,!matches!(cut,5|9|10|11),"failed or missing reopened source must revoke its index");
         let mut state=home.card.0.borrow_mut();assert!(state.handles.is_empty());
         state.model.files=old_files;

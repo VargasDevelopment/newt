@@ -511,7 +511,7 @@ def run_controls(binary, run, workspace, target, support, epubs_dir, output):
                 "if damaged { store.invalidate_index(digest); }", "if false && damaged { store.invalidate_index(digest); }",
                 "index-recovery", unit=True, test_filter=recovery_test)
     unit_binary = test_binary(run, workspace, target, unit=True)
-    margin_test = "navigation_indexed::tests::chapter_bind_at_the_bound_batches_and_above_it_preserves_rows_and_marks_the_fallback"
+    margin_test = "navigation_indexed::tests::chapter_bind_batches_at_bound_and_refuses_oversized_toc_without_queries"
     margin = run.run([unit_binary, margin_test, "--nocapture"], workspace)
     support.require("test result: ok. 1 passed; 0 failed" in margin, "Contents margin baseline absent")
     builds.admit(unit_binary, None)
@@ -523,11 +523,19 @@ def run_controls(binary, run, workspace, target, support, epubs_dir, output):
     opens = run.run([unit_binary, margin_test, "--nocapture"], workspace)
     support.require("test result: ok. 1 passed; 0 failed" in opens, "index open-count baseline absent")
     builds.admit(unit_binary, None)
-    run_control(run, workspace, target, support, manifest, {"index-opens"}, builds,
-                "per-href lookup reopens the index", "phased-reader/src/phase_navigation_indexed.rs",
-                "query_index_store(*source, *store, digest, query, |store| {\n            index.find",
-                "query_book_index(*source, *store, digest, query, |index, store| {\n            index.find",
-                "index-opens", unit=True, test_filter=margin_test)
+    oversized_guard = "if toc.len() > CONTENTS_BATCH_ROWS { return Err(Status::OutOfMemory); }"
+    for reopen, witness in [(False, "contents-scope-bound"), (True, "index-opens")]:
+        query = "query_book_index" if reopen else "query_index_store"
+        callback = "|index, store|" if reopen else "|store|"
+        per_row = ("if toc.len() > CONTENTS_BATCH_ROWS {\n"
+                   "        for _ in toc { crate::reader::" + query +
+                   "(source, store, digest, parse, " + callback +
+                   " { index.member(store, 0).ok_or(Status::IoError) })?; }\n"
+                   "        return Err(Status::OutOfMemory); }")
+        run_control(run, workspace, target, support, manifest, {witness}, builds,
+                    "oversized Contents queries once per row" + (" and reopens the header" if reopen else ""),
+                    "phased-reader/src/phase_navigation_indexed.rs", oversized_guard, per_row,
+                    witness, unit=True, test_filter=margin_test)
     cache_limit_cases(run, workspace, target, support, builds=builds)
     by_name, verified = {}, set()
     prepare_control_baselines(binary, run, workspace, epubs_dir, output, support, by_name, verified, CONTROLS)
@@ -588,7 +596,7 @@ def main(argv=None):
             binary = test_binary(run, workspace, target)
             if args.negative_controls:
                 run_controls(binary, run, workspace, target, support, epubs_dir, output)
-                print(f"PASS large-EPUB corpus controls ({len(CONTROLS) + len(CACHE_LIMIT_CONTROLS) + 7} controls; "
+                print(f"PASS large-EPUB corpus controls ({len(CONTROLS) + len(CACHE_LIMIT_CONTROLS) + 8} controls; "
                       f"total {time.perf_counter() - started:.2f}s)", flush=True)
                 return
             exec_t0 = time.perf_counter()

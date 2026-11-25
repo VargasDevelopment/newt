@@ -174,7 +174,8 @@ impl<'a> Engine<'a> {
         let mut styles = pool.attach::<StyleItem, W>(work, &mut self.io, style_stream)?;
         let mut joins = pool.attach::<Joined, W>(work, &mut self.io, self.streams[3])?;
         let start = self.io.end;
-        // Resident F and J2 reuse the I and J1 regions; spilled ones follow the cursors.
+        // Each F push consumes at least one I item, so resident output never
+        // overwrites an unread item. F/J2 reuse I/J1; spilled output follows cursors.
         let (f_region, j_region) = match (self.streams[1].memory, self.streams[3].memory) {
             (Some(items), Some(joined)) => (items, joined),
             _ => (Region { start: pool.bytes(), bytes: f_bytes },

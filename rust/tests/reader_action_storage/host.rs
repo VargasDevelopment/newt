@@ -221,6 +221,7 @@ mod image {
         pub fn restore_policy_image(&self) -> newt_reader_ui::RestorePolicy { newt_reader_ui::RestorePolicy::ExactPage }
         pub fn refuse_checkpoint_image(&mut self, _: u32, _: bool) { panic!("no requested save in source-loan fixture") }
     }
+    #[path = "../../firmware/reader_standalone_open.rs"] pub(crate) mod standalone_open;
     #[path = "../../firmware/reader_index_reopen.rs"] pub(crate) mod index_reopen;
     #[path = "../../firmware/reader_index_invalidation.rs"] pub(crate) mod index_invalidation;
     pub mod drive {
@@ -288,6 +289,12 @@ fn main() {
     let reads = Rc::new(RefCell::new(Vec::new()));
     let mut source = Box::new(selected::SelectedSource { bytes, reads:reads.clone() });
     let mut digest = [0;32]; assert!(reader_hash::package_hash(&source.bytes,&mut digest));
+    assert_eq!(image::standalone_open::verify(&mut *source,Some(digest),&|| {},&||true,None).unwrap(),digest);
+    source.bytes[100]^=1;
+    assert!(matches!(image::standalone_open::verify(&mut *source,Some(digest),&|| {},&||true,None),
+        Err(BookFailure::Open(newt_core::zip_container::Status::Stale))),
+        "strict prepare hash must reject changed bytes");
+    source.bytes[100]^=1;
     image::index_loans::physical_handoffs(&mut home,&source.bytes,&digest);
     let filename = std::env::args().nth(2).expect("catalog name");
     let mut key = [0;64];

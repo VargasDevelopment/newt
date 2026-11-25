@@ -126,6 +126,7 @@ pub const PAGE_SEGMENT_BATCH: u8 = 4;
 pub const INDEX_QUOTA: u64 = 16 * 1024 * 1024;
 /// Every FAT lookup scans the folder. Bound that per-file cost while keeping
 /// the full census; it runs before a new index, never on a repeat open.
+/// The grant keeps the folder at 24 entries or fewer; 32 bounds deletions per census.
 pub const INDEX_ENTRY_CAP: u32 = 32;
 pub const INDEX_ENTRY_RESERVE: u32 = 8;
 pub const INDEX_ENTRY_GRANT: u8 = (INDEX_ENTRY_CAP - INDEX_ENTRY_RESERVE) as u8;

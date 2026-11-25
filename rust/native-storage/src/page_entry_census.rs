@@ -142,7 +142,8 @@ impl<'a, 'folder> Census<'a, 'folder> {
             && newt_core::book_index::FileName::parse(name).is_none();
         // Only bench cards had long index names. They are never read; sweep
         // nonmatching names in this dedicated folder, at most one victim bank
-        // per build, while still scanning every entry for the census.
+        // per build to bound migration work and cancellation latency. All names still
+        // count, so a large legacy folder can evict rebuildable current indexes.
         let parsed=if obsolete_index {PageName {kind:NameKind::Index,form:Form::Temporary,canonical_bytes:name.len()}}
             else {PageName::parse(Some(name))};
         if parsed.kind==NameKind::Unknown { return false; }

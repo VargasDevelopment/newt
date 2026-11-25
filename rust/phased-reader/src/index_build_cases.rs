@@ -93,12 +93,6 @@ fn attempt(card: &mut Card, items: usize, source: &mut Source, hook: Yield<'_>) 
 }
 #[test]
 fn first_open_publishes_second_hits_without_census_or_writes() {
-    std::println!("index state: builder={} parsed={} prepared={} core_stack={} join={} inflate={} filter={}",
-        core::mem::size_of::<newt_core::book_index_build::Builder<'_>>(),
-        core::mem::size_of::<newt_core::book_index_build::Parsed<'_>>(),
-        core::mem::size_of::<newt_core::book_index_build::Prepared<'_>>(),
-        newt_core::book_index_build::STACK_BYTES, newt_core::book_index_build::JOIN_STATE_BYTES,
-        core::mem::size_of::<newt_core::inflate::State>(), core::mem::size_of::<newt_core::xml_input::EntityFilter>());
     let mut card = Card::default(); let mut source = zip();
     attempt(&mut card, 1, &mut source, None);
     let index = header(&mut card).expect("first open publishes");

@@ -6,6 +6,8 @@ use core::ops::{Deref, DerefMut};
 /// The initializer's temporary exists only before the caller's work starts.
 /// T itself stays live through that work. Its bytes cannot be lent to any
 /// other phase until this guard drops; caller-owned disjoint banks may be used.
+/// Drop scrubs the typed extent, including padding. `mem::forget` skips that
+/// scrub: the bank must not be reread as bytes unless it is reinitialized.
 ///
 /// ```compile_fail,E0499
 /// use newt_phased_reader::phase_storage::{scratch_value, Storage, BANK_BYTES};
@@ -56,6 +58,15 @@ impl<T> Drop for ScratchValue<'_, T> {
     fn drop(&mut self) {
         // SAFETY: this guard is created only after initialization and owns the
         // only T loan. The backing bytes stay borrowed through this drop.
+        struct Scrub(*mut u8, usize);
+        impl Drop for Scrub {
+            fn drop(&mut self) {
+                // SAFETY: the typed extent remains exclusively borrowed until
+                // this cleanup ends, even if T's destructor unwinds.
+                unsafe { self.0.write_bytes(0, self.1); }
+            }
+        }
+        let _scrub = Scrub(core::ptr::from_mut(self.0).cast(), size_of::<T>());
         unsafe { core::ptr::drop_in_place(self.0); }
     }
 }
@@ -87,6 +98,28 @@ mod tests {
         assert!(panic.is_err());
         assert_eq!(dropped.get(), 2);
         assert_eq!(bytes[0], 0xa5);
+    }
+    #[test]
+    fn padded_values_are_scrubbed_even_when_the_destructor_unwinds() {
+        #[repr(C)]
+        struct Padded { small: u8, wide: u32, panic: bool }
+        impl Drop for Padded {
+            fn drop(&mut self) { if self.panic { panic!("destructor failure"); } }
+        }
+        #[repr(align(16))]
+        struct Bank([u8; 64]);
+        for panic in [false, true] {
+            let mut bank = Bank([0xa5; 64]);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let value = scratch_value(&mut bank.0, || Ok(Padded { small: 1, wide: 2, panic })).unwrap();
+                assert_eq!(value.wide, 2);
+                drop(value);
+            }));
+            assert_eq!(result.is_err(), panic);
+            let extent = size_of::<Padded>();
+            assert!(bank.0[..extent].iter().all(|&byte| byte == 0));
+            assert!(bank.0[extent..].iter().all(|&byte| byte == 0xa5));
+        }
     }
     #[test]
     fn denied_extent_and_failed_initialization_never_enter_work() {

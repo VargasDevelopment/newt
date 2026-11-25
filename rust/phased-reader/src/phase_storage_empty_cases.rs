@@ -23,23 +23,3 @@
         assert_eq!((arena.capacity(), arena.used()), (66, 66));
         assert!(tail_array::<Entry>(&mut arena, 1).is_err());
     }
-
-#[test]
-fn contents_batch_bound_leaves_query_and_margin_and_falls_back_above_it() {
-    use super::{BANK_BYTES, CONTENTS_BATCH_ROWS, CONTENTS_QUERY_BYTES, Phase};
-    let mut shared = [0; BANK_BYTES];
-    let mut parse = [0; BANK_BYTES];
-    let mut held = false;
-    let mut phase = Phase { policy: None, shared: &mut shared, parse: &mut parse, held: &mut held };
-    for count in [0, CONTENTS_BATCH_ROWS, CONTENTS_BATCH_ROWS + 1] {
-        phase.with_contents_mapping(count, |batch, query| {
-            assert_eq!(query.len(), CONTENTS_QUERY_BYTES);
-            assert_eq!(batch.is_some(), count <= CONTENTS_BATCH_ROWS);
-            if let Some((mapping, rows)) = batch {
-                assert_eq!((mapping.len(), rows.len()), (count, count));
-                let used = core::mem::size_of_val(mapping) + core::mem::size_of_val(rows) + query.len();
-                assert!(used + 8192 <= BANK_BYTES);
-            }
-        }).unwrap();
-    }
-}

@@ -401,6 +401,9 @@ where
     let mut statistics = ReadingStatsRuntime::default();
     let mut accepted_open = false;
     let mut recovery = None;
+    // Fixture-only: the imported revision owns this source loan; BookSource
+    // cannot release its descriptor. Missing indexes that spill are refused;
+    // product opens use SelectedSource::with_index_source/open_releasing.
     let indexed = newt_phased_reader::index_build::open(&mut revision, &digest, resources.storage,
         resources.panel, &mut resources.parser, resources.pages, on_yield,
         newt_phased_reader::index_build::Verification::Verified).map_err(BookFailure::Open)?;

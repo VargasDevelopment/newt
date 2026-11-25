@@ -70,6 +70,9 @@ impl<'scope, 'sdk, 'route, 'bank, N: Native + newt_native_storage::page_entries:
                 spine: saved.locator.spine,
             }
         };
+        // Fixture-only: the imported revision owns this source loan; BookSource
+        // cannot release its descriptor. Missing indexes that spill are refused;
+        // product opens use SelectedSource::with_index_source/open_releasing.
         let indexed = newt_phased_reader::index_build::open(source, digest, self.storage,
             self.panel, &mut self.parser, self.pages, reader.on_yield,
             newt_phased_reader::index_build::Verification::Verified);

@@ -2,8 +2,8 @@
 use crate::{BookView, Declaration, Item, Member, NO_SPINE, ProgressInputs, usable_entry};
 use newt_core::{book_index::Header, package_parsers::TocEntry, zip_window::arena::{Arena, CStringRef}};
 
-/// A batch map lasts through bind. Above the scratch bound, `lookup` supplies
-/// the same per-row answer under its own checked index-read scope.
+/// A batch map lasts through bind. Without one, `lookup` supplies a row
+/// through the caller's checked index-read scope.
 pub struct IndexedBook<'a, 'storage> {
     pub header: &'a Header,
     pub arena: &'a Arena<'storage>,

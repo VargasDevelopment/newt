@@ -75,6 +75,8 @@ mod picture;
 mod picture_native;
 #[path = "reader_image_picture_work.rs"]
 mod picture_work;
+#[path = "reader_standalone_open.rs"]
+mod standalone_open;
 #[path = "reader_image_open.rs"]
 mod open;
 #[path = "reader_image_work.rs"]

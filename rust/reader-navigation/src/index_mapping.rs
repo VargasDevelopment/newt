@@ -41,8 +41,9 @@ pub fn declared_spines(
     let mut used = 0;
     for row in 0..count {
         if usable_entry(book, row) {
-            scratch[used] = HashRow::new(
-                book_index::name_hash(book.toc_href(row).expect("usable declaration")), row);
+            let href = book.toc_href(row).expect("usable declaration");
+            if href.first().is_none_or(|&byte| byte == 0) { continue; }
+            scratch[used] = HashRow::new(book_index::name_hash(href), row);
             used += 1;
         }
     }

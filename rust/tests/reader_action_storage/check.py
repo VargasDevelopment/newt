@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import zipfile
 
@@ -140,27 +141,58 @@ def main():
     rejected = run([out / 'keep-index-control', book, 'synthetic.epub'], succeeds=False)
     assert rejected.returncode == 101 and 'failed verification must remove the derived index' in rejected.stderr, rejected.stderr
     reopen = ROOT / 'rust/firmware/reader_index_reopen.rs'
-    loans = HERE / 'index_loans.rs'
     controls = [
+        ('skip-prepare-hash', ROOT / 'rust/firmware/reader_standalone_open.rs',
+         'let hashed = unsafe { reader_hash::hash_source(raw, &mut digest, &mut || yielded(), observer) };',
+         'digest=expected.unwrap_or_default(); let hashed=true;',
+         'strict prepare hash must reject changed bytes'),
+        ('skip-session-reopened-verification', reopen,
+         'Some(verification) => restart_verification(verification, raw)', 'Some(verification) => true',
+         'session reopen must restart verification'),
         ('skip-reopened-verification', reopen,
          'None => verify_standalone_reopen(raw, digest, yielded)', 'None => true',
          'changed reopened bytes must fail verification'),
         ('trust-orphan', reopen,
          'pages.0.invalidate_index(digest);', '/* retain orphan */',
          'failed or missing reopened source must revoke its index'),
-        ('stale-published-digest', loans,
-         'index_build::open_releasing(raw,digest,', 'index_build::open_releasing(raw,&[0;32],',
+        ('stale-published-digest', ROOT / 'rust/phased-reader/src/index_build.rs',
+         'Identity { digest: *digest, policy:', 'Identity { digest: [0;32], policy:',
          'publication must bind the bytes digest'),
     ]
     for name, source_file, before, after, witness in controls:
         source_text = source_file.read_text()
         assert before in source_text
-        replacement = out / (name + '.rs')
-        replacement.write_text(paths(source_text.replace(before, after, 1), source_file.parent))
-        control = out / (name + '-host.rs')
-        control.write_text(paths(fixture, HERE, {source_file: replacement}))
-        run([*command, control, '-o', out / name])
-        rejected = run([out / name, book, 'synthetic.epub'], succeeds=False)
+        if name == 'stale-published-digest':
+            assert source_text.count(before) == 1
+            mutant = out / 'mutant-rust'
+            shutil.copytree(ROOT / 'rust', mutant, ignore=shutil.ignore_patterns('target', '__pycache__'))
+            (mutant / source_file.relative_to(ROOT / 'rust')).write_text(source_text.replace(before, after, 1))
+            wire = run([cargo, 'build', '--lib', '-p', 'newt-c3-board', '-p', 'newt-device-ui',
+                        '-p', 'newt-library-current', '--features', 'newt-phased-reader/dev-usb',
+                        '--target', HOST, '--manifest-path', mutant / 'Cargo.toml',
+                        '--offline', '--frozen', '--locked', '--jobs', '2', '--target-dir', target,
+                        '--message-format=json'])
+            mutant_libraries = {}
+            for line in wire.stdout.splitlines():
+                item = json.loads(line)
+                if item.get('reason') == 'compiler-artifact':
+                    for file in item['filenames']:
+                        if file.endswith('.rlib'):
+                            mutant_libraries[item['target']['name']] = Path(file)
+            mutant_command = list(command)
+            for i, arg in enumerate(mutant_command):
+                if i and mutant_command[i - 1] == '--extern':
+                    package = arg.split('=', 1)[0]
+                    mutant_command[i] = package + '=' + str(mutant_libraries[package])
+            run([*mutant_command, positive, '-o', out / name])
+            rejected = run([out / name, book, 'synthetic.epub'], succeeds=False)
+        else:
+            replacement = out / (name + '.rs')
+            replacement.write_text(paths(source_text.replace(before, after, 1), source_file.parent))
+            control = out / (name + '-host.rs')
+            control.write_text(paths(fixture, HERE, {source_file: replacement}))
+            run([*command, control, '-o', out / name])
+            rejected = run([out / name, book, 'synthetic.epub'], succeeds=False)
         assert rejected.returncode == 101 and witness in rejected.stderr, rejected.stderr
     print('PASS changed reopened bytes, byte-digest publication and missing-source revocation; skip-verification, stale-digest and trusted-orphan controls rejected')
     print('PASS actual operation/index loans, physical spill release/reopen, reopen refusal, power-cut cold reads and verification revocation; compact, idle-lending, route-drift and retained-index controls rejected')

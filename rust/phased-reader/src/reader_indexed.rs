@@ -32,6 +32,9 @@ pub(crate) fn query_index_store<C: ReadScope, R>(
     };
     let damaged = matches!(result, Err(Status::Damaged | Status::IoError))
         || matches!(result, Err(Status::Stale)) && validate(source, bytes) == Status::Ok;
+    // A persistent read error must not leave a header-only hit that bricks the
+    // book. Invalidation does not rebuild: index_image runs once per open, and
+    // failed builds/reads end at open_failed, so at most one rebuild is attempted.
     if damaged { store.invalidate_index(digest); }
     result
 }

@@ -439,7 +439,10 @@ fn batch_contents_matches_oracle_and_reads_each_member_at_most_once() {
     book.spines.push(Some(chapter(b"one"))); // Repeated spine is ambiguous.
     book.spines.push(Some(Item { href: Some(b"front"), media: Some(b"image/png") }));
     book.members[2].1.method = 99;
+    book.spines.push(Some(chapter(b"")));
+    book.members.push((b"", Member { method: 0, uncompressed: 10 }));
     book.toc.extend([
+        declaration(b"Empty href", b"", b"", 0),
         declaration(b"Missing", b"missing", b"", 0),
         declaration(b"Unsupported", b"two", b"", 0),
         declaration(b"Image", b"front", b"", 0),

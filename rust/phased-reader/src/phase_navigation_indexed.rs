@@ -82,47 +82,29 @@ fn parse_toc<B: ParserBackend + ?Sized>(parse: &mut [u8], source: &mut dyn BookS
 fn bind_indexed<C: ReadScope>(parse: &mut [u8], source: &mut dyn BookSource,
     store: &mut C, digest: &[u8; 32], index: &BookIndex, progress: ProgressInputs,
     arena: &Arena<'_>, toc: &[TocEntry], navigation: &mut Navigation,
-    menu: Option<(Section<'_>, u32)>, hook: newt_core::admission::Yield<'_>,
+    menu: Option<(Section<'_>, u32)>, _hook: newt_core::admission::Yield<'_>,
 ) -> Result<(), Status> {
+    // Above the bounded map, use the caller's capacity fallback rather than
+    // attaching a verified storage scope for every href on each bind pass.
+    if toc.len() > CONTENTS_BATCH_ROWS { return Err(Status::OutOfMemory); }
     let mut parts = Parts(parse);
     let query = parts.bytes(CONTENTS_QUERY_BYTES, 16)?;
-    // At the chapter-change bind, 2000 * (12-byte rows + 4-byte map) and
-    // the 8256-byte verified query leave at least 8 KiB in the parse bank.
-    const _: () = assert!(CONTENTS_BATCH_ROWS * (12 + 4) + CONTENTS_QUERY_BYTES + 8192 <= BANK_BYTES);
-    let failed = core::cell::Cell::new(None);
-    let access = core::cell::RefCell::new((source, store, query));
-    let lookup = |href: &[u8]| {
-        if failed.get().is_some() { return book_index::NONE; }
-        let mut access = access.borrow_mut();
-        let (source, store, query) = &mut *access;
-        let result = crate::reader::query_index_store(*source, *store, digest, query, |store| {
-            index.find(store, book_index::name_hash(href)).map(|hit| hit.map_or(book_index::NONE,
-                |(_, member)| member.contents_spine)).map_err(|_| Status::IoError)
-        });
-        match result { Ok(spine) => spine, Err(error) => { failed.set(Some(error)); book_index::NONE } }
-    };
+    let mapping = parts.array::<u32>(toc.len())?;
+    let lookup = |_: &[u8]| book_index::NONE;
     let mut book = IndexedBook { header: index.header(), arena, toc, mapping: None,
         lookup: &lookup, progress };
-    let batch = if toc.len() <= CONTENTS_BATCH_ROWS {
-        let mapping = parts.array::<u32>(toc.len())?;
+    {
         // Sorting ends before menu binding, which reuses this scratch.
         let rows = Parts(&mut *parts.0).array::<index_mapping::HashRow>(toc.len())?;
-        let mut access = access.borrow_mut();
-        let (source, store, query) = &mut *access;
-        crate::reader::query_index_store(*source, *store, digest, query, |store| {
+        crate::reader::query_index_store(source, store, digest, query, |store| {
             index_mapping::declared_spines(&book, index, store, mapping, rows).map_err(|_| Status::IoError)
         })?;
-        Some(mapping)
-    } else {
-        crate::admission::open_route(hook, newt_core::reader_work_profile::ReaderOpenRoute::ContentsPerRow);
-        None
-    };
-    book.mapping = batch.as_deref();
+    }
+    book.mapping = Some(mapping);
     let bound = if let Some((current, focus)) = menu {
         let mapping = parts.array::<u32>(toc.len())?;
         navigation.bind_menu(&book, current, focus, mapping)
     } else { navigation.bind(&book, progress.index) };
-    if let Some(error) = failed.get() { return Err(error); }
     if bound { Ok(()) } else { Err(Status::OutOfMemory) }
 }
 
@@ -185,24 +167,35 @@ mod tests {
         (identity, store, index)
     }
     #[test]
-    fn chapter_bind_at_the_bound_batches_and_above_it_preserves_rows_and_marks_the_fallback() {
+    fn chapter_bind_batches_at_bound_and_refuses_oversized_toc_without_queries() {
         let (identity, mut store, index) = fixture();
         let mut bytes = [0; 32]; let mut arena = Arena::new(&mut bytes);
         let entry = TocEntry { title: arena.copy_nul_ref(Some(b"Chapter")), href: arena.copy_nul_ref(Some(b"c")), ..Default::default() };
         let mut bank = vec![0; BANK_BYTES];
-        for count in [CONTENTS_BATCH_ROWS, CONTENTS_BATCH_ROWS + 1] {
+        for count in [CONTENTS_BATCH_ROWS, CONTENTS_BATCH_ROWS + 1, 5000] {
             let trace = Trace(core::cell::Cell::new(false));
             let mut navigation = Navigation::default();
             store.scopes = 0;
             store.opens = 0;
-            bind_indexed(&mut bank, &mut Source, &mut store, &identity.digest, &index,
+            let result = bind_indexed(&mut bank, &mut Source, &mut store, &identity.digest, &index,
                 ProgressInputs { index: 0, count: 1, total: 1, current: 1, valid: true, ..Default::default() },
-                &arena, &vec![entry; count], &mut navigation, None, Some(&trace)).unwrap();
+                &arena, &vec![entry; count], &mut navigation, None, Some(&trace));
+            if count > CONTENTS_BATCH_ROWS {
+                assert_eq!(store.opens, 0, "index-opens: oversized Contents never reopens the index");
+                assert_eq!(store.scopes, 0, "contents-scope-bound: oversized Contents must not query per row");
+                assert_eq!(result, Err(Status::OutOfMemory));
+                let result = bind_indexed(&mut bank, &mut Source, &mut store, &identity.digest, &index,
+                    Default::default(), &arena, &vec![entry; count], &mut navigation,
+                    Some((Section::default(), 0)), Some(&trace));
+                assert_eq!(store.scopes, 0, "contents-scope-bound: oversized menu must not query per row");
+                assert_eq!(result, Err(Status::OutOfMemory));
+                continue;
+            }
+            result.unwrap();
             assert_eq!(navigation.section(0).spine, 0);
-            if count <= CONTENTS_BATCH_ROWS { assert_eq!(store.scopes, 1); }
-            else { assert!(store.scopes >= count); }
+            assert_eq!(store.scopes, 1);
             assert_eq!(store.opens, 0, "index-opens: binding reuses the pass reader");
-            assert_eq!(trace.0.get(), cfg!(feature = "dev-usb") && count > CONTENTS_BATCH_ROWS);
+            assert!(!trace.0.get());
             bank[BANK_BYTES - 8192..].fill(0xa5);
             bind_indexed(&mut bank, &mut Source, &mut store, &identity.digest, &index,
                 Default::default(), &arena, &vec![entry; count], &mut navigation,

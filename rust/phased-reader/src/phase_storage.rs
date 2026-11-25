@@ -41,8 +41,8 @@ pub struct ParseResources<'a, B: ParserBackend + ?Sized> {
 }
 
 // This cursor is private to this file, used only to initialize the concrete
-// phase arrays below. Each aligned prefix is removed permanently: no reset,
-// raw-pointer escape, or overlapping view. Dropless views use one/array;
+// phase arrays below. Each prefix is disjoint while its typed loan is live;
+// a short reborrow may reuse its bytes after those views end. Dropless views use one/array;
 // scratch_value instead keeps the byte loan until its initialized T is dropped.
 struct Parts<'a>(&'a mut [u8]);
 impl<'a> Parts<'a> {
@@ -1000,18 +1000,6 @@ include!("phase_index.rs");
 pub const CONTENTS_BATCH_ROWS: usize = 2000;
 const CONTENTS_QUERY_BYTES: usize = 4160 + 4096;
 const _: () = assert!(CONTENTS_BATCH_ROWS * (12 + 4) + CONTENTS_QUERY_BYTES + 8192 <= BANK_BYTES);
-impl Phase<'_> {
-    pub fn with_contents_mapping<R>(&mut self, count: usize,
-        operation: impl FnOnce(Option<(&mut [u32], &mut [newt_reader_navigation::index_mapping::HashRow])>, &mut [u8]) -> R,
-    ) -> Result<R, Status> {
-        let mut parts = Parts(self.parse);
-        let query = parts.bytes(CONTENTS_QUERY_BYTES, 16)?;
-        if count > CONTENTS_BATCH_ROWS { return Ok(operation(None, query)); }
-        let mapping = parts.array::<u32>(count)?;
-        let rows = parts.array::<newt_reader_navigation::index_mapping::HashRow>(count)?;
-        Ok(operation(Some((mapping, rows)), query))
-    }
-}
 
 #[path = "phase_navigation_indexed.rs"]
 mod navigation_indexed;

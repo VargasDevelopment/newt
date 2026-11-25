@@ -188,8 +188,8 @@ impl Runtime {
                             (unsafe { crate::reader_hash::hash_source(raw, &mut actual, &mut || yielded(), hash_observer) })
                                 && allowed() && actual == *expected
                         };
-                        let strict = if let Some(indexed) = indexed {
-                            StrictSource::from_verified_digest(raw, &digest, *indexed.digest()).ok_or(BookFailure::Source)?
+                        let strict = if indexed.is_some() {
+                            StrictSource::from_hashed_descriptor(raw, &digest)
                         }
                             else { StrictSource::for_live_reader(raw, selection, &memory.runtime.owner,
                                 &mut memory.runtime.reader).ok_or(BookFailure::Source)? };

@@ -126,16 +126,8 @@ impl Runtime {
                 super::picture_work::answer_slow(&mut scope, ui, logical, settings, key,
                     events.control, events.action, idle, wake);
                 return source.with_source_observed(&mut native, Some(&cancel), file_observer, |raw| {
-                    let mut digest = [0; 32];
-                    // SAFETY: this Home owns the pinned SDK; raw is the same
-                    // selected physical descriptor throughout the bounded hash.
-                    let hashed = unsafe { crate::reader_hash::hash_source(raw, &mut digest,
-                        &mut || duty.yield_now(), hash_observer) };
-                    if !hashed || cancel.cancelled() { return Err(BookFailure::Source); }
-                    if expected.is_some_and(|expected| digest != expected) {
-                        return Err(BookFailure::Open(Status::Stale));
-                    }
-                    Ok(digest)
+                    super::standalone_open::verify(raw, expected, &|| duty.yield_now(),
+                        &|| !cancel.cancelled(), hash_observer)
                 }).map_err(|_| BookFailure::Source)?;
             };
             let context = &mut **context;
