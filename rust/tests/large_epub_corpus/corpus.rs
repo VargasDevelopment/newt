@@ -294,6 +294,9 @@ struct OpenMetrics {
     fibp_bytes: usize,
     cache_ms: f64,
     source_navigation_ok: Option<bool>,
+    chapter_status: Option<Status>,
+    rereads_first: Option<bool>,
+    styled: Option<bool>,
 }
 
 fn run_open_phased(path: &Path, mode: &str) -> OpenMetrics {
@@ -346,6 +349,24 @@ fn run_open_phased(path: &Path, mode: &str) -> OpenMetrics {
                 let row = view.row(menu.first + offset);
                 row.valid && !row.label.is_empty() && row.index == menu.first + offset
             }));
+    } else if mode == "damaged" {
+        // Chapter 1 reads, chapter 3 is refused alone, and chapter 1 still reads after.
+        let mut breaker = linebreak::NativeBreak;
+        let mut capture = |spine| reader.capture_phased(&mut source, spine, 0, Target::Page, &mut storage, &mut loan, &mut backend, &mut breaker);
+        let first = capture(0);
+        m.chapter_status = Some(capture(2));
+        m.rereads_first = Some(first == Status::Ok && capture(0) == Status::Ok);
+    } else if mode == "styled" {
+        // Chapter 0 links the stylesheet; chapter 1 is the same text without it.
+        let mut frame: Box<Frame> = vec![0u8; FRAME_BYTES].into_boxed_slice().try_into().unwrap();
+        let mut breaker = linebreak::NativeBreak;
+        let mut second_page = |spine| {
+            let status = reader.capture_phased(&mut source, spine, 1, Target::Page, &mut storage, &mut loan, &mut backend, &mut breaker);
+            assert_eq!(status, Status::Ok, "styled chapter {spine} must reach page 2");
+            assert_eq!(reader.publish(&mut source, &mut frame), Status::Ok);
+            reader.info().char_start
+        };
+        m.styled = Some(second_page(0) != second_page(1));
     } else if mode == "anchors" {
         let (ok, p, stored, bytes, ms) = measure_cache(path);
         assert!(ok, "anchor policy cache build must succeed");
@@ -441,7 +462,7 @@ fn large_epub_corpus_boundaries() {
     let mut failures = Vec::new();
     for line in manifest.lines().filter(|l| !l.trim().is_empty()) {
         let cols: Vec<&str> = line.split('\t').collect();
-        assert_eq!(cols.len(), 13, "manifest row needs 13 tab-separated columns: {line}");
+        assert_eq!(cols.len(), 15, "manifest row needs 15 tab-separated columns: {line}");
         let (name, path_str, want_admit, want_open, mode) = (cols[0], cols[1], cols[2], cols[3], cols[4]);
         let (want_menu_valid, want_authored) = (parse_opt_bool(cols[5]), parse_opt_bool(cols[6]));
         let (want_menu_count, want_anchors) = (parse_opt_u32(cols[7]), parse_opt_u32(cols[8]));
@@ -462,6 +483,9 @@ fn large_epub_corpus_boundaries() {
             open.pages_seen, open.anchors_stored, flag(open.sync_6chunk_ok), flag(open.small_32chunk_ok),
             open.fibp_bytes, open.cache_ms,
         );
+        if let Some(status) = open.chapter_status {
+            println!("CHAPTER {name} chapter3={} rereads_first={}", status.name(), flag(open.rereads_first));
+        }
         if want_admit != "*" && admit_status.name() != want_admit {
             failures.push(format!("{name}: admit got {}, expected {want_admit}", admit_status.name()));
         }
@@ -500,6 +524,15 @@ fn large_epub_corpus_boundaries() {
         }
         if let Some((lo, hi)) = want_pages && !(lo..=hi).contains(&open.pages_seen) {
             failures.push(format!("{name}: pages {} outside {lo}..={hi}", open.pages_seen));
+        }
+        if cols[13] != "-" && open.chapter_status.map(Status::name) != Some(cols[13]) {
+            failures.push(format!("{name}: chapter 3 got {:?}, expected {}", open.chapter_status, cols[13]));
+        }
+        if open.rereads_first == Some(false) {
+            failures.push(format!("{name}: chapter 1 did not read before and after chapter 3"));
+        }
+        if let Some(expected) = parse_opt_bool(cols[14]) && open.styled != Some(expected) {
+            failures.push(format!("{name}: styled got {:?}, expected {expected}", open.styled));
         }
     }
     assert!(failures.is_empty(), "corpus mismatches:\n{}", failures.join("\n"));

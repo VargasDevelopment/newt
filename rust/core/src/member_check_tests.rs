@@ -138,3 +138,21 @@ fn unreadable_header_or_name_is_an_io_error() {
     assert_eq!(checked(&Member::default(), Some(0)), Err(Status::IoError));
     assert_eq!(checked(&Member::default(), Some(30)), Err(Status::IoError));
 }
+
+#[test]
+fn cover_discovery_reads_only_a_checked_cover() {
+    use crate::cover::{Member as Cover, MetadataStatus};
+    let locate = |m: &Member<'_>| {
+        let mut source = Bytes { data: archive(m), fail_at: None };
+        let mut cover = Cover::default();
+        (crate::cover::discovery::locate(&mut source, b"OEBPS/c.xhtml", &mut cover), cover.data)
+    };
+    assert_eq!(locate(&Member::default()), (MetadataStatus::Ok, 30 + 13));
+    // A damaged cover gives no art, as before; its bytes are never read as an image.
+    for m in [
+        Member { local_name: b"OEBPS/C.xhtml", ..Member::default() },
+        Member { local_method: 8, ..Member::default() },
+    ] {
+        assert_eq!(locate(&m), (MetadataStatus::Malformed, 0));
+    }
+}
