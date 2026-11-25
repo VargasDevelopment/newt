@@ -70,10 +70,10 @@ fn publish(prepared: newt_core::book_index_build::Prepared<'_>, store: &mut dyn 
 /// Parsed values, the scan views and the parse loans leave the stack before
 /// publish, whose own frame is the deepest part of the build.
 #[inline(never)]
-fn prepare<'r, 'p, B: ParserBackend + ?Sized, S: BookSource + ?Sized>(
+fn prepare<'r, 'p, 's, 'o, B: ParserBackend + ?Sized>(
     run: &'r mut [u8], rest: &mut [u8], parse: &'p mut [u8],
     policy: Option<&dyn newt_core::xml_session::SourcePolicy>, backend: &mut B,
-    live: &core::cell::RefCell<&mut newt_core::admission::ScheduledSource<'_, S>>,
+    live: &core::cell::RefCell<&mut newt_core::admission::ScheduledSource<'s, dyn crate::index_build::ReleasableSource + 'o>>,
     identity: newt_core::book_index::Identity, store: &mut dyn crate::index_build::Store,
     progress: &mut dyn FnMut(newt_core::book_index_build::Progress) -> bool,
     hook: newt_core::admission::Yield<'_>,
@@ -88,7 +88,7 @@ fn prepare<'r, 'p, B: ParserBackend + ?Sized, S: BookSource + ?Sized>(
     let mut builder = Builder::new(run, 512, 32768).map_err(index_error)?;
     stage(hook, 2);
     let mut view = IndexSource(live);
-    let mut central = ScheduledSource::new(&mut view, None, policy);
+    let mut central = ScheduledSource::new(&mut view as &mut dyn BookSource, None, policy);
     let status = admission::inspect_with_visitor(&mut central,
         &mut Arena::new(&mut *parse), scan, |member| builder.visit(store, member, &mut *progress));
     if status != Status::Ok { return Err(status); }
@@ -100,7 +100,7 @@ fn prepare<'r, 'p, B: ParserBackend + ?Sized, S: BookSource + ?Sized>(
         let mut parts = Parts(&mut *parse);
         let mut r = io(&mut parts, &mut *backend)?;
         let mut source = live.borrow_mut();
-        let mut workflow = Workflow { source: &mut **source, backend: r.backend,
+        let mut workflow = Workflow { source: &mut **source as &mut dyn BookSource, backend: r.backend,
             decoder: r.decoder.take(), buffer: r.xml_buffer.take(), filter: r.filter.take(), policy };
         let status = package_parsers::parse_container(&mut workflow, &container, &mut paths, &mut path);
         if status != Status::Ok { return Err(status); }
@@ -114,7 +114,7 @@ fn prepare<'r, 'p, B: ParserBackend + ?Sized, S: BookSource + ?Sized>(
         // Source reads and builder progress alternate. Progress probes the
         // original source, so do not hold a RefCell loan across XML callbacks.
         let mut view = IndexSource(live);
-        builder.parse(Workflow { source: &mut view, backend: r.backend,
+        builder.parse(Workflow { source: &mut view as &mut dyn BookSource, backend: r.backend,
             decoder: r.decoder.take(), buffer: r.xml_buffer.take(), filter: r.filter.take(), policy },
             &entry, xml_input::c_bytes(directory), identity, store, &mut *progress).map_err(index_error)?
     };
@@ -123,21 +123,21 @@ fn prepare<'r, 'p, B: ParserBackend + ?Sized, S: BookSource + ?Sized>(
     let prepared = parsed.join(store, &mut state, &mut *progress).map_err(index_error)?;
     Ok((prepared, state))
 }
-struct IndexSource<'a, 'b, S: ?Sized>(&'a core::cell::RefCell<&'b mut S>);
-impl<S: crate::zip_window::source::BookSource + ?Sized> crate::zip_window::source::BookSource for IndexSource<'_, '_, S> {
+struct IndexSource<'a, 'b, 's, 'o>(&'a core::cell::RefCell<&'b mut newt_core::admission::ScheduledSource<'s, dyn crate::index_build::ReleasableSource + 'o>>);
+impl BookSource for IndexSource<'_, '_, '_, '_> {
     fn size(&self) -> u64 { self.0.borrow().size() }
     fn read_at(&mut self, at: u64, out: &mut [u8]) -> i32 { self.0.borrow_mut().read_at(at, out) }
 }
 fn index_error(error: newt_core::book_index_build::Error) -> Status {
     match error { newt_core::book_index_build::Error::Book(status) => status, _ => Status::IoError }
 }
-fn index_member<S: crate::zip_window::source::BookSource + ?Sized>(
-    source: &mut newt_core::admission::ScheduledSource<'_, S>, parse: &mut [u8],
+fn index_member(
+    source: &mut dyn BookSource, parse: &mut [u8],
     scan: &mut [u8; 4099], path: &[u8],
 ) -> Result<Checked, Status> {
     use newt_core::{admission, book_index, zip_container, member_check};
     let mut found = None;
-    let status = admission::inspect_with_visitor(source, &mut Arena::new(parse), scan, |m| {
+    let status = admission::inspect_with_visitor(&mut newt_core::admission::ScheduledSource::new(source, None, None), &mut Arena::new(parse), scan, |m| {
         if found.is_none() && m.hash == book_index::name_hash(path) { found = Some(m); }
         Status::Ok
     });
