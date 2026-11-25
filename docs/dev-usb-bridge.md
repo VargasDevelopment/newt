@@ -23,6 +23,12 @@ python3 tools/firmware-build.py --clean
 
 The one firmware build includes the bridge and writes `.pio/regional-dev-usb/` output with the approved toolchain, SDK and preservation guard. `--dev-usb` is retired. Neither command uploads. There is no host simulation mode.
 
+Run this tool with `.toolchain/platformio/penv/bin/python -B`, including on a
+machine where system `python3` has pySerial installed. The tool checks its
+interpreter and approved pySerial before taking the device lease or inspecting
+the USB port. A mismatch names the exact project interpreter to use; no device
+access occurs. `--help` remains available without the project interpreter.
+
 After a separately approved installation and explicit authorization to access the selected device, the live runner can use the already approved project-local pyserial 3.5:
 
 ```sh
