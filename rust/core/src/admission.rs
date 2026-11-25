@@ -163,6 +163,16 @@ pub fn inspect<S: BookSource + ?Sized>(
     parse: &mut Arena<'_>,
     scan: &mut [u8; 4099],
 ) -> Status {
+    inspect_with_visitor(source, parse, scan, |_| Status::Ok)
+}
+
+/// Shares admission's central walk; the ordinary call eliminates the visitor.
+pub fn inspect_with_visitor<S: BookSource + ?Sized>(
+    source: &mut ScheduledSource<'_, S>,
+    parse: &mut Arena<'_>,
+    scan: &mut [u8; 4099],
+    mut visit: impl FnMut(crate::book_index::Member) -> Status,
+) -> Status {
     let mut d = Directory::default();
     let status = zip::locate(source, scan, &mut d);
     if status != Status::Ok {
@@ -225,6 +235,7 @@ pub fn inspect<S: BookSource + ?Sized>(
             ZipCentralRecordRule::Unsupported => return Status::Unsupported,
             ZipCentralRecordRule::Ok => (),
         }
+        let mut hash = crate::book_index::NameHash::new();
         let mut n = 0u64;
         while n < u64::from(name) {
             let mut a = [0; 64];
@@ -235,8 +246,14 @@ pub fn inspect<S: BookSource + ?Sized>(
             if a[..take].contains(&0) {
                 return Status::Unsupported;
             }
+            hash.add(&a[..take]);
             n += take as u64;
         }
+        let status = visit(crate::book_index::Member {
+            hash: hash.finish(), local_offset: le32(&h, 42), compressed,
+            uncompressed, method, flags, first_spine: crate::book_index::NONE,
+        });
+        if status != Status::Ok { return status; }
         at += record;
     }
     if at == end {

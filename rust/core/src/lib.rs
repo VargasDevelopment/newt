@@ -102,6 +102,7 @@ pub mod book_semantic_index;
 pub mod page_cache;
 pub mod page_envelope;
 pub mod book_index;
+pub mod book_index_build;
 pub mod page_cache_access;
 
 pub mod cache_names;
