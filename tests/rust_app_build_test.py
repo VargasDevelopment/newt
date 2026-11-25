@@ -3,6 +3,7 @@ import configparser
 import hashlib
 from contextlib import nullcontext, redirect_stderr
 import io
+import json
 import importlib.util
 import os
 from pathlib import Path
@@ -275,6 +276,32 @@ class DailyConfiguration(unittest.TestCase):
         self.bundle.write_bytes(b'changed bundle')
         with self.assertRaisesRegex(ValueError, 'certificate bundle changed'):
             daily_firmware.generated_configuration(self.root, 'a' * 12, '2026-11-16')
+
+
+class DiagnosticMeasurement(unittest.TestCase):
+    def test_same_overage_fails_product_but_diagnostics_only_measure(self):
+        spec = importlib.util.spec_from_file_location('wake_build_driver', ROOT/'tools/firmware-build.py')
+        driver = importlib.util.module_from_spec(spec); spec.loader.exec_module(driver)
+        report = {'ram_bytes': 124192, 'flash_bytes': 3990400}
+        errors = ['regional-dev-usb ram_bytes: 124192 exceeds reviewed ceiling 124096',
+                  'regional-dev-usb flash_bytes: 3990400 exceeds reviewed ceiling 3988384']
+        def exercise(writer):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory); receipt = root/'report.json'
+                with patch.object(driver, 'ROOT', root), \
+                     patch('code_health_resources.check_resources', return_value=errors) as compare:
+                    with self.assertRaisesRegex(RuntimeError, 'Resource ratchet failed'):
+                        writer(receipt, report, {}, 'regional-dev-usb', diagnostic=False)
+                    compare.assert_called_once_with(root, {}, 'regional-dev-usb')
+                    compare.reset_mock()
+                    writer(receipt, report, {}, 'regional-dev-usb', diagnostic=True)
+                    compare.assert_not_called()
+                    self.assertEqual(json.loads(receipt.read_text()), report)
+        exercise(driver.write_resource_report)
+        def bypass(*args, **kwargs):
+            kwargs['diagnostic'] = True
+            return driver.write_resource_report(*args, **kwargs)
+        with self.assertRaises(AssertionError): exercise(bypass)
 
 
 class PinnedHarness(unittest.TestCase):

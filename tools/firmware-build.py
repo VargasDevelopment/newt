@@ -133,6 +133,16 @@ def prepare_daily_lane(environment: dict[str, str]) -> None:
                        cwd=ROOT, env=environment, check=True)
 
 
+def write_resource_report(receipt, report, baseline, variant, *, diagnostic):
+    """Diagnostics measure only; product builds keep the existing ratchet."""
+    from code_health_resources import check_resources
+    write_text(ROOT, receipt, json.dumps(report, indent=2, sort_keys=True) + "\n")
+    if not diagnostic:
+        failures = check_resources(ROOT, baseline, variant)
+        if failures:
+            raise RuntimeError("Resource ratchet failed:\n" + "\n".join(failures))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--clean", action="store_true", help="clean build outputs before compiling")
@@ -176,7 +186,7 @@ def main() -> None:
     if args.health_report:
         receipt = owned_file(ROOT, ROOT / f"artifacts/code-health-{variant}.json", create_parents=True)
         from code_health import base_failures, read_baseline
-        from code_health_resources import build_identity, build_report, check_resources
+        from code_health_resources import build_identity, build_report
         baseline = read_baseline(ROOT)
         moved = base_failures(ROOT, baseline)
         if moved:
@@ -211,21 +221,8 @@ def main() -> None:
         subprocess.run(next_boot, cwd=ROOT, env=env, check=True)
         if args.health_report:
             report = build_report(ROOT, variant, effective_config, started_ns, expected_identity)
-            write_text(ROOT, receipt, json.dumps(report, indent=2, sort_keys=True) + "\n")
-            failures = check_resources(ROOT, baseline, variant)
-            if args.wake_timing:
-                # Unpublished bench measurements have no product RAM/flash
-                # allocation. All provenance, absolute and stack checks remain.
-                for name in ('ram_bytes', 'flash_bytes'):
-                    ceiling = baseline['resources'][variant][name]
-                    overage = f"{variant} {name}: {report[name]} exceeds reviewed ceiling {ceiling}"
-                    if overage in failures:
-                        failures.remove(overage)
-                        print("UNPUBLISHED diagnostic measurement: " + overage)
-
+            write_resource_report(receipt, report, baseline, variant, diagnostic=args.wake_timing)
     if args.health_report:
-        if failures:
-            raise RuntimeError("Resource ratchet failed:\n" + "\n".join(failures))
         if source_identity(ROOT) != release_source:
             raise RuntimeError("Release source identity changed during compilation")
         image = OUTPUT + "/build/newt_x3/firmware.bin"

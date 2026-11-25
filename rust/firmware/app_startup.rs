@@ -42,8 +42,7 @@ unsafe extern "C" {
 // SAFETY: only the sole native image entry supplies these exclusive owners.
 pub unsafe fn run(display: *mut c_void, input: *mut c_void) -> ! {
     #[cfg(feature = "wake-timing")]
-    // SAFETY: sole firmware entry, before Board or any other timing borrower.
-    unsafe { newt_c3_board::wake_timing::begin(); }
+    newt_c3_board::wake_timing::begin();
     // SAFETY: raw retained evidence is sampled before Serial or acquisition.
     let boot = match unsafe { crate::retained_runtime::snapshot_before_board() } {
         Ok(boot) => boot,
@@ -54,8 +53,7 @@ pub unsafe fn run(display: *mut c_void, input: *mut c_void) -> ! {
     // SAFETY: the unique entry begins Serial once before any other serial user.
     let mut log = unsafe { crate::serial_console::SerialConsole::begin() };
     #[cfg(feature = "wake-timing")]
-    // SAFETY: acquisition has not begun; this is the same sole entry task.
-    unsafe { newt_c3_board::wake_timing::serial_ready(); }
+    newt_c3_board::wake_timing::serial_ready();
     let action = crate::reader_action::allocate();
     // SAFETY: caller grants sole initialized SDK/display/input access.
     let (mut board, pending, probe) = match unsafe { Board::acquire_x3_panel_deferred_input(display, input) } {

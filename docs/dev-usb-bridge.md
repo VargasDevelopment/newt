@@ -322,7 +322,10 @@ measurement candidate. This switch is separate from `dev-usb` and is off in the
 normal build. Normal publication rejects its extra Cargo feature. Product
 resource ceilings remain unchanged; the diagnostic build reports its clean
 RAM/flash measurements without claiming they meet product RAM/flash ceilings.
-Provenance, absolute capacity and selected stack checks still apply.
+The default build still passes the full product resource gate. Diagnostic
+reports retain clean-build provenance and list their measured stacks and
+capacity; they do not run the product-ceiling comparison. Bench candidates
+retain their normal image/partition limits.
 
 The optional `WAKE` command follows the same fresh session and request-ID rules
 as `DIAG`. It performs no input, display, card or clock-setting work. Use

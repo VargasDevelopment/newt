@@ -64,7 +64,7 @@ def rust_checks():
             path = workspace/'core/src/wake_timing.rs'; original = path.read_text()
             controls = (
                 ('freeze removed', 'if self.frozen()', 'if false'),
-                ('non-page can complete', 'pub fn complete(&self, now: u32) {\n        if self.frozen() || self.metadata[2].get() & PAGE == 0 { return; }',
+                ('non-page can complete', 'pub fn complete(&self, now: u32) {\n        if self.frozen() || self.metadata[2].load(Ordering::Relaxed) & PAGE == 0 { return; }',
                  'pub fn complete(&self, now: u32) {\n        if self.frozen() { return; }'),
             )
             for name, good, bad in controls:
