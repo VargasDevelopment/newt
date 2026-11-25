@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3990928,
+      "flash_bytes": 3993888,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "8d65a52087e60d08c9f249dce6fc16ace5c5f817",
-      "before": 3990912,
-      "after": 3990928,
-      "reason": "+16 B over the 3,990,912 B ceiling (main 9d3c1fd9): #60 (NEWT-166) slice B2 adds the book index builder, not yet called by the reader. The only linked change is admission's central walk: inspect now calls inspect_with_visitor, which hashes each member name as it is read and hands a Member to a visitor; the ordinary call passes a no-op visitor. ELF symbols: newt_core::admission::inspect 1,168 B is gone and newt_core::admission::inspect_with_visitor is 1,186 B (+18 B); every other symbol change is a paired move that cancels out. The builder engine, work file and join state are not linked until a caller exists. First measured +16 B over main 96380e74 (3,989,712 -> 3,989,728 B at 4d73e019); rebased onto main 9d3c1fd9 with no source change (b3bf1ac7 3,990,928 B); the builder's test support then moved into the core crate (test-only, flash unchanged). Clean regional DEV USB build with the pinned Python: main 9d3c1fd9 3,990,912 B (its record); 8d65a520 3,990,928 B. RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, selected stack frames unchanged (0/16/32/48/480 B within 0/16/32/48/656 B ceilings; 330 frames).",
-      "reviewer": "Newt Lead (2026-11-25; cross-family review: Opus xhigh)"
+      "source_revision": "cc9dc1e8597f9223b450fd22426b1c1247fc5bf8",
+      "before": 3990928,
+      "after": 3993888,
+      "reason": "+2,960 B over the 3,990,928 B ceiling (main 5470842a): #128 (NEWT-189) makes the sleeping newt's holiday outfits opt-in (off by default) under Settings -> Sleep screen -> Holiday outfits with individual Halloween, Thanksgiving and Christmas rows. Linked cost is the new HolidayOutfitsCodec SD scalar record (newt_holiday, magic NWTH; RecordStore load/save + HomeClockSource restore/commit packed into zone_holidays with 0 B RAM growth), the 4th Sleep screen row and Holiday outfits submenu renderer and approved copy (+424 B .rodata), DevicePage::HolidayOutfits routing in app.rs, and HolidayHat::chosen gating in sleep_extras_image. Clean regional DEV USB build with the pinned Python: main 5470842a 3,990,928 B (its record); cc9dc1e8 3,993,888 B. RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, selected stack frames 0/16/32/48/480 B (within 0/16/32/48/656 B ceilings; 330 frames).",
+      "reviewer": "pending cross-family review"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
