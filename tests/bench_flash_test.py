@@ -489,7 +489,10 @@ except ValueError as error:
     def test_usb_stop_is_checked_before_serial_open(self):
         self.unit_dir.mkdir(parents=True)
         (self.unit_dir / 'STOP').write_text('{}')
-        with patch.object(safety, 'port_serial', return_value=MAC), patch.object(bridge, 'SerialClient') as client:
+        approved = (bridge.ROOT / '.toolchain/platformio/penv').resolve()
+        serial = SimpleNamespace(__version__='3.5', __file__=str(approved/'lib/serial/__init__.py'))
+        with patch.object(sys, 'prefix', str(approved)), patch.dict(sys.modules, serial=serial), \
+             patch.object(safety, 'port_serial', return_value=MAC), patch.object(bridge, 'SerialClient') as client:
             with patch.object(sys, 'argv', ['dev-usb.py', 'live', '--port', IDENTITY['port'], '--expect-build', REVISION[:12]]):
                 with self.assertRaisesRegex(ValueError, 'Bench stopped'):
                     bridge.main()
