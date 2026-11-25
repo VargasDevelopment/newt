@@ -839,3 +839,7 @@ fn get32(bytes: &[u8]) -> u32 {
 
 #[path = "chapter_cache_census.rs"]
 mod census;
+
+#[path = "index_build.rs"]
+mod index_build;
+pub use index_build::{IndexBuildStore, IndexWorkState};

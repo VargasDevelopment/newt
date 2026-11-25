@@ -341,3 +341,76 @@ fn a_rebuilt_index_and_its_backup_stay_evictable() {
     assert_eq!(grant.outcome, MissingProbe::Ready);
     assert_eq!(card.indexes(), [pinned.clone(), format!("{pinned}.bak")]);
 }
+
+use newt_core as core_api;
+#[path = "../../tests/book_index_build/support.rs"]
+mod build_support;
+use chapter_cache::{IndexBuildStore, IndexWorkState};
+
+fn spilling_build(card: &mut Card) -> core::result::Result<(), newt_core::book_index_build::Error> {
+    use newt_core::book_index_build::Error as BuildError;
+    let mut work = IndexWorkState::new();
+    let mut buffer = [0; 448];
+    // Sweep before creating a live work file, never between these two loans.
+    with_store(card, |store| store.index_census(&Never, None, None, None));
+    let source = card.open("/sd/source", Open::SourceReadOnly).map_err(|_| BuildError::Write(WriteError::Storage))?;
+    let prepared = with_store(card, |store| {
+        let mut store = IndexBuildStore::lend(store, &mut work, &BOOK.digest).unwrap();
+        build_support::prepare(&mut store, &mut buffer, 64, 8, 8, 8)
+    });
+    let closed = card.close(source).is_ok();
+    with_store(card, |store| {
+        let mut store = IndexBuildStore::lend(store, &mut work, &BOOK.digest).unwrap();
+        if !closed {
+            newt_core::book_index_build::WorkFile::remove_work(&mut store);
+            return Err(BuildError::Write(WriteError::Storage));
+        }
+        prepared?.publish(&mut store, &mut |_| true, &mut || true).map(|_| ())
+    })
+}
+fn built_index_complete(store: &mut dyn CacheStorage, reader: &Reader) -> bool {
+    let h = reader.header();
+    if (h.members, h.spine, h.spine_bytes) != (8, 8, 80) { return false; }
+    (0..8).all(|i| {
+        let Some(s) = reader.spine(store, i) else { return false; };
+        let Some(m) = reader.member(store, s.member) else { return false; };
+        s.before == u64::from(i) * 10 && m.local_offset == i * 64 && m.first_spine == i
+    })
+}
+fn build_card() -> Card {
+    let mut card = Card::new();
+    for path in ["/sd/source", "/sd/receipt"] {
+        card.model.files.insert(path.into(), model::File { durable: vec![0], readable: vec![0] });
+    }
+    card
+}
+#[test]
+fn spilling_build_cuts_every_card_step_and_uses_three_files() {
+    let mut good = build_card();
+    let receipt = good.open("/sd/receipt", Open::SourceReadOnly).unwrap();
+    let start = good.model.steps;
+    spilling_build(&mut good).unwrap();
+    let steps = good.model.steps - start;
+    good.close(receipt).unwrap();
+    assert_eq!(good.most_open, 3);
+    assert_eq!(with_store(&mut good, |s| read(s, &BOOK, built_index_complete)), Some(true));
+    for cut in 1..=steps {
+        let mut card = build_card();
+        card.open("/sd/receipt", Open::SourceReadOnly).unwrap();
+        card.cut_in(cut);
+        let _ = spilling_build(&mut card);
+        assert!(card.most_open <= 3, "cut {cut}");
+        card.boot();
+        let found = with_store(&mut card, |s| read(s, &BOOK, built_index_complete));
+        assert!(matches!(found, None | Some(true)), "cut {cut}: partial index");
+        with_store(&mut card, |s| s.index_census(&Never, None, None, None));
+        assert!(card.indexes().iter().all(|n| !n.ends_with(".tmp")), "cut {cut}: leftover");
+        spilling_build(&mut card).unwrap();
+        assert_eq!(with_store(&mut card, |s| read(s, &BOOK, built_index_complete)), Some(true), "cut {cut}: rebuild");
+    }
+    let work_bytes = core::mem::size_of::<IndexWorkState>();
+    let view_bytes = core::mem::size_of::<IndexBuildStore<'_, '_, Card>>();
+    let fixed = newt_core::book_index_build::fixed_state_bytes() + work_bytes + view_bytes;
+    assert!(fixed + 32768 < 41693);
+    println!("SPILLING CARD cuts={steps} most_open={} work_state={work_bytes} view={view_bytes} fixed={fixed} bank_left={}", good.most_open, 41693 - 32768 - fixed);
+}

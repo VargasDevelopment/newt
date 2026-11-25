@@ -2,10 +2,17 @@
 use super::*;
 use newt_core::{book_index::{self as index, NONE}, book_index_build as builder,
     canonical, package_parsers, phased_metadata::{copy_display_title, BookLanguage},
-    xml_input::{dir_name, TextCapture}};
+    xml_input::dir_name};
 use newt_reader_navigation::{metadata::Metadata, Navigation};
 
 pub fn agreement(source: &mut impl BookSource, name: &str) -> usize {
+    let mut peak = 0;
+    for (bytes, read, run, variant) in [(32768, 512, 32768, "normal"), (512, 32, 128, "spill"), (448, 32, 64, "tiny")] {
+        peak = peak.max(agreement_variant(source, &format!("{name}/{variant}"), bytes, read, run));
+    }
+    peak
+}
+fn agreement_variant(source: &mut impl BookSource, name: &str, buffer_bytes: usize, min_read: usize, run_bytes: usize) -> usize {
     let mut host = HostScratch::new();
     host.with_resources(|catalog, parse, resources| {
         assert_eq!(admission::inspect(&mut admission::ScheduledSource::new(source, None, None),
@@ -25,25 +32,20 @@ pub fn agreement(source: &mut impl BookSource, name: &str) -> usize {
         assert!(dir_name(opf, &mut dir));
         let entry = view.find(opf).unwrap().1;
         let entry = view.check(parts.workflow.source, &entry).unwrap();
-        let mut members = vec![index::Member::default(); view.len()];
-        let mut collect = builder::Members::new(&mut members);
+        let mut buffer = vec![0; buffer_bytes];
+        let mut store = BuildStore::default();
+        let mut builder = builder::Builder::new(&mut buffer, min_read, run_bytes).unwrap();
         let mut scan = [0; 4099];
         assert_eq!(admission::inspect_with_visitor(
             &mut admission::ScheduledSource::new(parts.workflow.source, None, None), parse, &mut scan,
-            |m| collect.visit(m)), Status::Ok);
-        let members = collect.finish().unwrap();
-        let mut manifest = vec![builder::Manifest::default(); 32768];
-        let mut idrefs = vec![0; 32768];
-        let mut spine = vec![index::SpineItem::default(); 32768];
-        let mut path = [0; 512];
-        let mut capture = TextCapture::default();
-        let mut buffer = [0; 384];
-        let mut store = MemStore { bytes: Vec::new() };
+            |m| builder.visit(&mut store, m, &mut |_| true)), Status::Ok);
         let identity = index::Identity { digest: [17; 32], policy: 1 };
-        let report = builder::build(&mut parts.workflow, &entry, &dir, identity, members,
-            builder::Scratch { manifest: &mut manifest, idrefs: &mut idrefs, spine: &mut spine,
-                path: &mut path, capture: &mut capture }, &mut store, &mut buffer, &mut || true)
-            .unwrap_or_else(|e| panic!("{name}: builder {e:?}"));
+        let prepared = builder.parse(&mut parts.workflow, &entry, &dir, identity, &mut store, &mut |_| true)
+            .unwrap_or_else(|e| panic!("{name}: parse {e:?}"));
+        let report = prepared.publish(&mut store, &mut |_| true, &mut || true)
+            .unwrap_or_else(|e| panic!("{name}: publish {e:?}"));
+        assert!(store.work.is_empty());
+        if buffer_bytes < 1024 { assert!(report.statistics.runs > 0, "{name}: forced spill"); }
         let reader = index::Reader::open(&mut store, &identity).expect("index readback");
         let h = reader.header();
         assert_eq!(h.spine as usize, parts.result.spine_count, "{name}: spine count");
@@ -54,7 +56,7 @@ pub fn agreement(source: &mut impl BookSource, name: &str) -> usize {
             assert_eq!(member.map(|m| (m.local_offset, m.compressed, m.uncompressed, m.method, m.flags)),
                 entry.map(|e| (e.local_header_offset, e.compressed_size, e.uncompressed_size, e.method, e.flags)), "{name}: member");
         };
-        let read_member = |store: &mut MemStore, n| if n == NONE { None } else { Some(reader.member(store, n).unwrap()) };
+        let read_member = |store: &mut BuildStore, n| if n == NONE { None } else { Some(reader.member(store, n).unwrap()) };
         let metadata = Metadata { arena: parts.arena, package: &parts.result,
             manifest: parts.manifest, spine: parts.spine, toc: &[], entries: parts.entries,
             directory_offset: parts.directory_offset };
@@ -87,8 +89,8 @@ pub fn agreement(source: &mut impl BookSource, name: &str) -> usize {
         copy_display_title(&mut title, bytes(parts.result.metadata.title));
         assert_eq!(h.title, title, "{name}: title");
         assert_eq!(h.language, BookLanguage::from_opf(bytes(parts.result.metadata.language)), "{name}: language");
-        println!("INDEX {name} peak_bytes={}", report.peak_bytes);
-        report.peak_bytes
+        println!("INDEX {name} fixed={} buffer={} statistics={:?}", report.fixed_bytes, buffer_bytes, report.statistics);
+        report.fixed_bytes + buffer_bytes
     })
 }
 
@@ -212,4 +214,27 @@ pub fn small_cases() {
     missing_member_keeps_spine_and_invalidates_progress();
     navigation_choices_and_covers_agree();
     distinct_32_bit_collision_names_agree();
+}
+
+#[derive(Default)]
+struct BuildStore { work: Vec<u8>, cache: Vec<u8>, pending: Vec<u8> }
+impl builder::WorkFile for BuildStore {
+    fn append(&mut self, bytes: &[u8]) -> bool { self.work.extend_from_slice(bytes); true }
+    fn read_at(&mut self, at: u32, out: &mut [u8]) -> bool {
+        let Some(input) = self.work.get(at as usize..at as usize + out.len()) else { return false; };
+        out.copy_from_slice(input); true
+    }
+    fn remove_work(&mut self) -> bool { self.work.clear(); true }
+    fn sync_work(&mut self) -> bool { true }
+}
+impl CacheStorage for BuildStore {
+    fn remove(&mut self, _: &[u8]) -> bool { self.cache.clear(); true }
+    fn file_size(&mut self, _: &[u8]) -> i64 { self.cache.len() as i64 }
+    fn read_at(&mut self, _: &[u8], at: u32, out: &mut [u8]) -> i32 {
+        let Some(input) = self.cache.get(at as usize..at as usize + out.len()) else { return -1; };
+        out.copy_from_slice(input); out.len() as i32
+    }
+    fn begin_write(&mut self, _: &[u8]) -> bool { self.pending.clear(); true }
+    fn write(&mut self, bytes: &[u8]) -> bool { self.pending.extend_from_slice(bytes); true }
+    fn end_write(&mut self) -> bool { self.cache = std::mem::take(&mut self.pending); true }
 }
