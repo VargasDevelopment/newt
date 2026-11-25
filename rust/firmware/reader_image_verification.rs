@@ -65,6 +65,9 @@ impl Runtime {
         if !self.session.as_ref().is_some_and(|s| s.verification.state() == Verification::Pending) {
             return false;
         }
+        // `due` deliberately ignores the battery gate: 30 s durable checkpoints
+        // require a verified source (most needed on low battery against sudden
+        // power-off), and this runs at most once per warm-open session.
         let due = millis().wrapping_sub(self.last_progress.get()) >= 30000;
         let optional = ui.displayed.valid
             && ((ui.info.charging_known && ui.info.charging)
