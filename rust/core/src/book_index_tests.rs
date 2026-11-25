@@ -271,3 +271,11 @@ fn storage_faults_never_publish() {
     assert!(s.files.is_empty());
     assert_eq!(Reader::open(&mut s, &BOOK), None);
 }
+
+#[test]
+fn schema_name_hash_vectors() {
+    assert_eq!(name_hash(b""), 0xefd01f60ba992926);
+    assert_eq!(name_hash(b"a"), 0x82a2a958a9bece5b);
+    assert_eq!(name_hash(b"OEBPS/chapter.xhtml"), 0x7edbfdbcb01ee0f8);
+    assert_eq!(name_hash(b"a\0ignored"), 0x82a2a958a9bece5b);
+}

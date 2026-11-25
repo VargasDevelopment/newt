@@ -10,6 +10,32 @@ use crate::page_envelope::MAX_PAYLOAD;
 use crate::phased_metadata::BookLanguage;
 use crate::zip_record_rules::EPUB_MAX_EXPANDED_BYTES;
 
+/// Name hashing is fixed by `SCHEMA`: FNV-1a 64 followed by fmix64.
+/// Bytes after the first NUL do not participate.
+pub fn name_hash(name: &[u8]) -> u64 {
+    let mut hash = NameHash::new();
+    hash.add(name);
+    hash.finish()
+}
+
+pub(crate) struct NameHash(u64);
+impl NameHash {
+    pub(crate) fn new() -> Self { Self(0xcbf29ce484222325) }
+    pub(crate) fn add(&mut self, bytes: &[u8]) {
+        for &byte in bytes.iter().take_while(|&&b| b != 0) {
+            self.0 = (self.0 ^ u64::from(byte)).wrapping_mul(0x100000001b3);
+        }
+    }
+    pub(crate) fn finish(self) -> u64 {
+        let mut h = self.0;
+        h ^= h >> 33;
+        h = h.wrapping_mul(0xff51afd7ed558ccd);
+        h ^= h >> 33;
+        h = h.wrapping_mul(0xc4ceb9fe1a85ec53);
+        h ^ (h >> 33)
+    }
+}
+
 /// Bump when the payload layout or meaning changes; older indexes rebuild.
 pub const SCHEMA: u32 = 1;
 pub const HEADER_BYTES: u32 = 384;

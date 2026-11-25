@@ -283,6 +283,9 @@ def run_clean_cases(binary, run, workspace, support, manifest):
     run.env["NEWT_LARGE_EPUB_MANIFEST"] = str(manifest)
     out = run.run([binary, "--nocapture"], workspace)
     support.require("test result: ok. 1 passed; 0 failed; 0 ignored" in out, "corpus runner failed")
+    for line in out.splitlines():
+        if line.startswith("INDEX "):
+            print(line, flush=True)
     return out
 
 

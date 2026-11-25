@@ -7,6 +7,8 @@
 //! plus the built-in sample's bounded chapter layout for image fallback.
 //!
 //! Driven by `tests/large_epub_corpus_test.py` via `NEWT_LARGE_EPUB_MANIFEST`.
+mod index_agreement;
+
 use newt_core::{
     admission,
     chapter_layout::types as layout,
@@ -508,6 +510,7 @@ fn parse_opt_u32(s: &str) -> Option<u32> {
 
 #[test]
 fn large_epub_corpus_boundaries() {
+    index_agreement::small_cases();
     println!(
         "SIZES ptr_bits={} bank={} Entry={} ManifestItem={} TocEntry={} CssRule={} State={} EntityFilter={}",
         usize::BITS, BANK_BYTES, size_of::<Entry>(), size_of::<ManifestItem>(),
@@ -530,6 +533,9 @@ fn large_epub_corpus_boundaries() {
         });
         let path = Path::new(path_str);
         let (admit_status, cat_hw, parse_hw, admit_ms) = run_admit(path);
+        if admit_status == Status::Ok {
+            index_agreement::agreement(&mut FileSource::open(path), name);
+        }
         let open = run_open_phased(path, mode);
         let open_status = open.open_status.unwrap();
         let flag = |opt: Option<bool>| opt.map_or("-", |v| if v { "1" } else { "0" });
