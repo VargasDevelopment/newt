@@ -152,6 +152,26 @@ def failures_before_done_leave_the_name_unchanged():
 
 
 def an_unknown_commit_is_never_retried():
+    class InterruptedPeer(LeasePeer):
+        def write_data(self, data, remaining):
+            super().write_data(data, remaining)
+            if self.writes[-1] == kind and phase == 'write':
+                raise KeyboardInterrupt()
+
+        def read_data(self, remaining):
+            if self.writes[-1] == kind and phase == 'read':
+                raise KeyboardInterrupt()
+            return super().read_data(remaining)
+
+    for kind in ('DATA', 'DONE'):
+        for phase in ('write', 'read'):
+            peer = InterruptedPeer()
+            report = session(peer, FILES[1:])
+            assert report['interrupted']
+            files = report['put']['files']
+            assert len(files) == 1
+            assert files[0]['protocol_progress']['error'] == 'Interrupted by operator'
+            assert peer.writes.count(kind) == 1 and peer.writes.count('PUT') == 1
     for broken, written in (({'silent': 'DONE'}, True), ({'short': 'DONE'}, False),
                             ({'answers': {'DONE': 'DONE size=1 sha256=' + '0' * 64}}, True)):
         peer = LeasePeer(**broken)
