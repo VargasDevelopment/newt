@@ -201,6 +201,15 @@ def recovery_controls(run, command, dense, workspace, out):
          'durable.map(|settings| settings.orientation).or(Some(if self.reader_settings & 1 != 0 '
          '{ Orientation::LandscapeCcw } else { Orientation::Portrait }))',
          ['--restore-policy'], 'wake diagnostics report retained'),
+        # #111: an admitted sleep record overwrites newer durable progress without comparing sequence.
+        (record, 'stale-rtc-replaces-durable',
+         'if expected.durable_present\n'
+         '            && progress.supersedes(&retained, record.checkpoint_saved != 0, record.attempted_sequence())\n'
+         '        {',
+         'if false && expected.durable_present\n'
+         '            && progress.supersedes(&retained, record.checkpoint_saved != 0, record.attempted_sequence())\n'
+         '        {',
+         [dense, '--boot-resume'], 'warm stale-RTC: newer durable progress supersedes stale RTC'),
     ):
         source = target.read_text()
         assert source.count(original) == 1

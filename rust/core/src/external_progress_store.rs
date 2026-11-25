@@ -30,6 +30,7 @@ pub struct ExternalProgressStore<'a, B: Backend> {
     namespace: [u8; 15],
     book: u64,
     status: Status,
+    attempted_sequence: Option<u32>,
 }
 impl<'a, B: Backend> ExternalProgressStore<'a, B> {
     pub fn new(store: &'a mut B, digest: Option<&[u8; 32]>) -> Self {
@@ -39,6 +40,7 @@ impl<'a, B: Backend> ExternalProgressStore<'a, B> {
             namespace: [0; 15],
             book: 0,
             status: Status::Ready,
+            attempted_sequence: None,
         };
         let Some(digest) = digest else {
             owner.status = Status::UnsupportedIdentity;
@@ -69,6 +71,9 @@ impl<'a, B: Backend> ExternalProgressStore<'a, B> {
     }
     pub fn status(&self) -> Status {
         self.status
+    }
+    pub fn attempted_sequence(&self) -> Option<u32> {
+        self.attempted_sequence
     }
     fn supported(&mut self) -> bool {
         if self.book == 0 {
@@ -179,6 +184,7 @@ impl<'a, B: Backend> ExternalProgressStore<'a, B> {
         strict: bool,
         admission: Option<&mut Admission<'_>>,
     ) -> Commit {
+        self.attempted_sequence = None;
         if !self.supported() {
             return Commit::Unconfirmed;
         }
@@ -187,15 +193,19 @@ impl<'a, B: Backend> ExternalProgressStore<'a, B> {
             return Commit::Unconfirmed;
         }
         let namespace = self.namespace;
-        let mut checked = Checked::new(self, admission);
-        let mut progress = ProgressStore::in_namespace(
-            &mut checked,
-            core::str::from_utf8(&namespace).expect("hex"),
-        );
-        let result = match peers {
-            Some(peers) => progress.save_with_peers(value, peers, protected, strict),
-            None => progress.save(value, protected, strict),
+        let (result, attempted) = {
+            let mut checked = Checked::new(self, admission);
+            let mut progress = ProgressStore::in_namespace(
+                &mut checked,
+                core::str::from_utf8(&namespace).expect("hex"),
+            );
+            let result = match peers {
+                Some(peers) => progress.save_with_peers(value, peers, protected, strict),
+                None => progress.save(value, protected, strict),
+            };
+            (result, progress.attempted_sequence())
         };
+        self.attempted_sequence = attempted;
         if result == Commit::Saved {
             self.status = Status::Saved;
         } else if self.status == Status::Ready {

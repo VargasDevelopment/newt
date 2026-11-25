@@ -63,9 +63,13 @@ void preview_freeze_at(const char *point) {
  * hold a substring of `what`: refuse fails the call (nothing moved, so "not
  * saved"); drop lets the bytes land but fails the sync or commit (an
  * unconfirmed commit). 0 ok, 1 refuse, 2 drop. */
-int preview_store_fault(const char *what) {
+int preview_store_fault_at(const char *what, size_t step) {
     const char *refuse = preview_conf("store.refuse"), *drop = preview_conf("store.drop");
-    if (refuse && *refuse && strstr(what, refuse)) return 1;
+    long after = preview_conf_long("store.refuse.after", 0);
+    if (refuse && *refuse && (long)step >= after && strstr(what, refuse)) return 1;
     if (drop && *drop && strstr(what, drop)) return 2;
     return 0;
+}
+int preview_store_fault(const char *what) {
+    return preview_store_fault_at(what, 0);
 }

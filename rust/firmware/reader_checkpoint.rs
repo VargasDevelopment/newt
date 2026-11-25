@@ -45,6 +45,8 @@ pub enum CheckpointRestore {
 pub struct ReaderCheckpoint {
     acknowledged: Option<Progress>,
     acknowledged_digest: Option<[u8; 32]>,
+    attempted_book: u64,
+    attempted_sequence: Option<u32>,
     restore: CheckpointRestore,
     loaded: Load<()>,
     result: CheckpointResult,
@@ -56,6 +58,8 @@ impl ReaderCheckpoint {
         Self {
             acknowledged: None,
             acknowledged_digest: None,
+            attempted_book: 0,
+            attempted_sequence: None,
             restore,
             loaded: Load::Failed,
             result: CheckpointResult {
@@ -108,13 +112,58 @@ impl ReaderCheckpoint {
         self.uncertain = u8::from(page) | (u8::from(destination) << 1);
     }
 
+    fn note_attempted(&mut self, book: u64, sequence: u32) {
+        if book == 0 {
+            return;
+        }
+        if self.attempted_book == book
+            && let Some(current) = self.attempted_sequence
+            && sequence.wrapping_sub(current) >= 0x8000_0000
+        {
+            return;
+        }
+        self.attempted_book = book;
+        self.attempted_sequence = Some(sequence);
+    }
+
+    pub(crate) fn restore_attempted(&mut self, book: u64, sequence: u32) {
+        self.note_attempted(book, sequence);
+    }
+
+    pub(crate) fn reset_attempted(&mut self, book: u64, sequence: u32) {
+        self.attempted_book = book;
+        self.attempted_sequence = (book != 0).then_some(sequence);
+    }
+
+    pub fn attempted_sequence_for(&self, progress: &Progress) -> u32 {
+        if progress.book != 0
+            && self.attempted_book == progress.book
+            && let Some(attempted) = self.attempted_sequence
+            && attempted.wrapping_sub(progress.sequence) < 0x8000_0000
+        {
+            attempted
+        } else {
+            progress.sequence
+        }
+    }
+
     /// A committed selection starts its digest-specific checkpoint epoch,
     /// including commits completed after verification or storage retries.
     pub fn selection_committed<B: Backend>(&mut self, store: &mut B,
         digest: &[u8; 32], page_uncertain: bool, destination_uncertain: bool,
     ) {
+        let book = u64::from_le_bytes([
+            digest[0], digest[1], digest[2], digest[3],
+            digest[4], digest[5], digest[6], digest[7],
+        ]);
+        let prior = (page_uncertain && self.attempted_book == book)
+            .then_some(self.attempted_sequence)
+            .flatten();
         *self = Self::new(CheckpointRestore::Latest);
         self.restore_uncertainty(page_uncertain, destination_uncertain);
+        if let Some(sequence) = prior {
+            self.restore_attempted(book, sequence);
+        }
         self.restore(store, digest);
     }
 
@@ -156,11 +205,16 @@ impl ReaderCheckpoint {
         };
         if progress_ready {
             let mut proposed = candidate;
-            if newt_core::progress_store::ProgressStore::new(store)
-                .save(&mut proposed, None, false) == Commit::Saved {
+            let mut progress_store = newt_core::progress_store::ProgressStore::new(store);
+            let commit = progress_store.save(&mut proposed, None, false);
+            let attempted = progress_store.attempted_sequence();
+            if commit == Commit::Saved {
                 self.acknowledged = Some(proposed);
                 self.acknowledged_digest = None;
+                self.reset_attempted(proposed.book, proposed.sequence);
                 result.progress = Outcome::Verified;
+            } else if let Some(attempted) = attempted {
+                self.note_attempted(candidate.book, attempted);
             }
         }
         self.observe(result);
@@ -248,6 +302,9 @@ impl ReaderCheckpoint {
         if self.loaded == Load::Empty {
             self.acknowledged = Some(initial);
             self.acknowledged_digest = Some(*digest);
+            if self.attempted_book != book || !self.page_unconfirmed() {
+                self.reset_attempted(book, 0);
+            }
         }
         if self.loaded != Load::Loaded(()) {
             return initial;
@@ -272,6 +329,11 @@ impl ReaderCheckpoint {
         }
         self.acknowledged = Some(restored);
         self.acknowledged_digest = Some(*digest);
+        if self.attempted_book == book && self.page_unconfirmed() {
+            self.note_attempted(book, restored.sequence);
+        } else {
+            self.reset_attempted(book, restored.sequence);
+        }
         restored
     }
 
@@ -353,16 +415,21 @@ impl ReaderCheckpoint {
         if deferred(&mut admission) { return CheckpointResult::default(); }
         let Some(protected) = protected else { self.observe(result); return result; };
         let mut proposed = candidate;
-        if ExternalProgressStore::new(store, Some(digest)).save(
+        let mut progress_store = ExternalProgressStore::new(store, Some(digest));
+        let commit = progress_store.save(
             &mut proposed,
             peers,
             protected,
             true,
             admission.as_deref_mut(),
-        ) != Commit::Saved
-        {
+        );
+        let attempted = progress_store.attempted_sequence();
+        if commit != Commit::Saved {
             if admission.as_ref().is_some_and(|admission| admission.deferred) {
                 return CheckpointResult::default();
+            }
+            if let Some(attempted) = attempted {
+                self.note_attempted(candidate.book, attempted);
             }
             self.observe(result);
             return result;
@@ -370,6 +437,7 @@ impl ReaderCheckpoint {
         // The durable store may stamp sequence; runtime session time stays live.
         self.acknowledged = Some(proposed);
         self.acknowledged_digest = Some(*digest);
+        self.reset_attempted(proposed.book, proposed.sequence);
         result.progress = Outcome::Verified;
         if commit_reading {
             let intent = Self::reading_intent(&proposed, settings);

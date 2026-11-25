@@ -48,7 +48,12 @@ impl<'scope, 'sdk, 'route, 'bank, N: Native> Resources<'_, 'scope, 'sdk, 'route,
         now: u32,
         cancel: &dyn Authority,
     ) -> bool {
-        self.recovery = Some(PendingRecovery { progress: saved, settings, policy });
+        self.recovery = Some(PendingRecovery {
+            progress: saved,
+            attempted_sequence: saved.sequence,
+            settings,
+            policy,
+        });
         owner.settings_committed(reader, settings);
         self.settings = settings;
         let selected = self

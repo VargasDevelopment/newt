@@ -286,7 +286,7 @@ impl Runtime {
             }
             let _ = self.with_store(home, |this, store| this.load_progress(store, events.action));
         }
-        let attempted_policy = self.restore_policy_image();
+        let mut attempted_policy = self.restore_policy_image();
         let name = self.selection.identity().filename;
         let Ok(name) = CStr::from_bytes_until_nul(&name) else { return false; };
         // prepareSource closes the reader before selected file/session work.
@@ -332,14 +332,18 @@ impl Runtime {
         }
         // The saved page settles after source preparation, before its picture
         // or reader backing can publish (frozen loadReaderProgress(false)).
-        if !session_checkpoint && attempted_policy.reloads_saved_progress() {
-            let ready = self.with_store(home, |this, store| {
+        if !session_checkpoint && (attempted_policy.reloads_saved_progress() || !self.progress_ready) {
+            let (ready, loaded) = self.with_store(home, |this, store| {
                 let _load = events.action.scope(crate::reader_action::ActionStage::ProgressLoad);
                 let loaded = this.selection.load_progress(store, &mut this.saved);
                 this.progress_ready = matches!(loaded, Load::Loaded(()) | Load::Empty);
                 this.saves.set_progress_unavailable(!this.progress_ready);
-                this.progress_ready
-            }).unwrap_or(false);
+                (this.progress_ready, loaded == Load::Loaded(()))
+            }).unwrap_or((false, false));
+            if loaded {
+                self.reconcile_recovery_progress();
+                attempted_policy = self.restore_policy_image();
+            }
             if self.recovery.is_none() && !ready {
                 self.saves.set_progress_unavailable(true);
                 self.publish_notice_image(ui);
@@ -405,6 +409,17 @@ impl Runtime {
         })?;
         self.memory = ReaderBacking::External(memory);
         Ok(())
+    }
+
+    #[inline(never)]
+    pub(super) fn reconcile_recovery_progress(&mut self) {
+        let Some(pending) = self.recovery.as_mut() else { return; };
+        if pending.reconcile_durable(self.saved, self.saves.checkpoint_saved()) {
+            self.saves.set_checkpoint_saved(true);
+            self.saves.restore(self.saves.retained() & !4, false, false);
+            self.checkpoint.restore_uncertainty(false, self.saves.destination_unconfirmed());
+            self.checkpoint.reset_attempted(self.saved.book, self.saved.sequence);
+        }
     }
 
     pub(super) fn restore_policy_image(&self) -> RestorePolicy {

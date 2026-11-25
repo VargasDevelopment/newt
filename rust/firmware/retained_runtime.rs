@@ -11,7 +11,7 @@ pub mod wake;
 use newt_core::app::AppState;
 use newt_core::preferences::ViewSettings;
 use newt_core::progress::Progress;
-use record::{BootReport, BootSnapshot, SleepRecord};
+use record::{BootReport, BootSnapshot, RestoreExpectation, SleepRecord};
 use newt_c3_board::{Board, Boot, Error as BoardError, retained::RetainedError};
 use newt_core::sd_resume::SdResumeRecord;
 
@@ -51,6 +51,8 @@ pub unsafe fn snapshot_before_board() -> Result<BootSnapshot, SnapshotError> {
 /// Home's published durable settings include the product defaults on missing
 /// or corrupt storage. RTC settings are validated for resume compatibility,
 /// but cannot replace that authority, even after an eligible warm wake.
+/// When `expected.durable_present` is true, `*progress` holds the loaded
+/// durable record and cannot be replaced by an older RTC sleep record.
 /// Call before reader reopen and Quick Start selection; SD choices stay on
 /// HomeClockSource and are never reconstructed from retained words.
 pub fn restore_after_durable(
@@ -59,8 +61,7 @@ pub fn restore_after_durable(
     state: &mut AppState,
     progress: Option<&mut Progress>,
     durable_settings: ViewSettings,
-    expected_book: u64,
-    expected_sd_source: bool,
+    expected: RestoreExpectation,
 ) -> BootReport {
     let mut resume_settings = durable_settings;
     record::restore_boot(
@@ -69,8 +70,7 @@ pub fn restore_after_durable(
         state,
         progress,
         Some(&mut resume_settings),
-        expected_book,
-        expected_sd_source,
+        expected,
     )
 }
 
@@ -108,8 +108,7 @@ impl<L: core::fmt::Write, N: crate::nvs::Native, P: crate::home_startup::CardPor
         consumed: &mut SleepRecord,
         state: &mut AppState,
         progress: Option<&mut Progress>,
-        expected_book: u64,
-        expected_sd_source: bool,
+        expected: RestoreExpectation,
     ) -> BootReport {
         restore_after_durable(
             snapshot,
@@ -117,8 +116,7 @@ impl<L: core::fmt::Write, N: crate::nvs::Native, P: crate::home_startup::CardPor
             state,
             progress,
             self.preferences.settings(),
-            expected_book,
-            expected_sd_source,
+            expected,
         )
     }
 }
