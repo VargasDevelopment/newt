@@ -30,7 +30,20 @@ impl<'op, 'a, N: Native> IndexBuildStore<'op, 'a, N> {
         let mut path = [0; 256];
         path[..name.len()].copy_from_slice(name.as_bytes());
         let (parent, _) = name.rsplit_once('/')?;
-        if !matches!(cache.file.native.mkdir(parent), Ok(()) | Err(Error::Exists)) { return None; }
+        match cache.file.native.mkdir(parent) {
+            Ok(()) | Err(Error::Exists) => {},
+            Err(Error::Missing) => {
+                // A fresh card may not have the cache root yet. Create its
+                // ancestors here too, before any parse callback can spill.
+                for end in (1..=parent.len()).filter(|&i| i == parent.len() || parent.as_bytes()[i] == b'/') {
+                    if !cache.file.route.allowed()
+                        || !matches!(cache.file.native.mkdir(&parent[..end]), Ok(()) | Err(Error::Exists)) {
+                        return None;
+                    }
+                }
+            }
+            Err(_) => return None,
+        }
         work.path = path;
         work.path_bytes = name.len();
         Some(Self { cache, work })

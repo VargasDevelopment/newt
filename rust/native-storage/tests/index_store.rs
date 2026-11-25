@@ -477,7 +477,7 @@ fn published_build_requires_the_verified_read_scope() {
 #[test]
 fn work_lend_creates_parent_and_spill_borrows_terminated_path() {
     use newt_core::book_index_build::WorkFile;
-    let mut card = Card::new();
+    let mut card = Card::default();
     let mut work = IndexWorkState::new();
     with_store(&mut card, |cache| {
         let mut store = IndexBuildStore::lend(cache, &mut work, &BOOK.digest).unwrap();
