@@ -68,6 +68,11 @@ impl Runtime {
         self.acknowledge_work_image(home, ui, logical, newt_reader_ui::SlowWork::FirstOpen, events.control, events.action);
         let may_commit = self.selection.flags() & flag::COMMIT_OWED != 0
             || self.selection.flags() & (flag::SAVE_FAILED | flag::UNAVAILABLE | flag::UNCONFIRMED) == 0;
+        let previous_digest = *self.selection.digest();
+        let previous_flags = self.selection.flags();
+        let previous_saved = self.saved;
+        let previous_ready = self.progress_ready;
+        let previous_saves = self.saves;
         // Changed bytes revoke the old RAM window even if reimport fails. The
         // old durable checkpoint remains protected by the existing store.
         self.recovery = None;
@@ -97,19 +102,53 @@ impl Runtime {
             } else { None };
             let imported = digest.is_some_and(|digest| {
                 let Some(name) = filename else { return false; };
-                self.selection.publish_candidate(name, digest, &mut || {}, &mut || self.title.fill(0))
+                // Keep the previous title until the new open settles so an
+                // interrupted reimport can roll back without copying it on the stack.
+                self.selection.publish_candidate(name, digest, &mut || {}, &mut || {})
             });
             if !imported {
+                if self.interrupted_open(home, events) {
+                    self.restore_interrupted_reimport(ui, destination, filename, previous_digest,
+                        previous_flags, previous_saved, previous_ready, previous_saves, false);
+                    return true;
+                }
                 if let Some(session) = self.session.as_mut() { session.verification.mark_failed(); }
             }
             if imported {
                 *self.selection.flags_mut() &= !(flag::SAVED_PRESENT | flag::ACCEPTED_OPEN_OWED | flag::COMMIT_OWED);
                 *self.selection.flags_mut() |= flag::UNCONFIRMED | flag::CHANGED_OPEN
                     | if may_commit { flag::COMMIT_OWED } else { 0 };
-                let loaded = self.with_store(home, |this, store|
-                    matches!(this.load_progress(store, events.action), Load::Loaded(()) | Load::Empty)).unwrap_or(false);
+                let loaded = self.with_store(home, |this, store| {
+                    let _action = events.action.scope(crate::reader_action::ActionStage::ProgressLoad);
+                    let loaded = this.selection.load_progress(store, &mut this.saved);
+                    this.progress_ready = matches!(loaded, Load::Loaded(()) | Load::Empty);
+                    this.saves.set_progress_unavailable(!this.progress_ready);
+                    this.progress_ready
+                }).unwrap_or(false);
                 if loaded { self.open_selected_profile(home, ui, logical, events, profile, digest, false); }
-                if self.book().is_some_and(|book| book.owner.state.opened()) { self.commit_verified_image(home, events.action); }
+                if matches!(self.memory, ReaderBacking::Interrupted) || self.interrupted_open(home, events) {
+                    self.restore_interrupted_reimport(ui, destination, filename, previous_digest,
+                        previous_flags, previous_saved, previous_ready, previous_saves, true);
+                    return true;
+                }
+                if self.book().is_some_and(|book| book.owner.state.opened()) {
+                    self.commit_verified_image(home, events.action);
+                } else {
+                    self.title.fill(0);
+                    self.home.reading_available = self.progress_ready;
+                    self.home.progress_unavailable = true;
+                    self.home.percent = -1;
+                    self.home.clear_chapter();
+                    let finished = self.with_store(home, |this, store| {
+                        let mut facts = newt_core::reading_stats::BookFacts::default();
+                        this.selection.active()
+                            && newt_core::reading_stats_service::stored_book_facts(store, this.selection.digest(), &mut facts)
+                                == newt_core::reading_stats_service::StatsResult::Done
+                            && newt_core::reading_stats::book_finish(&facts)
+                                != newt_core::reading_stats::BookFinish::No
+                    }).unwrap_or(false);
+                    self.home.set_finished(finished);
+                }
             }
             let opened = self.book().is_some_and(|book| book.owner.state.opened());
             self.reader_ui.notice = ReaderUiNotice::BookChanged;
@@ -118,5 +157,25 @@ impl Runtime {
             self.note_home_cover_changed();
             true
         })
+    }
+
+    fn restore_interrupted_reimport(&mut self, ui: &mut Application<'_>,
+        destination: newt_core::app::Screen, filename: Option<&CStr>,
+        previous_digest: Digest, previous_flags: u16, previous_saved: Progress,
+        previous_ready: bool, previous_saves: ReadingSaveNotice, restore_selection: bool,
+    ) {
+        if restore_selection {
+            if let Some(name) = filename {
+                let _ = self.selection.publish_candidate(name, previous_digest, &mut || {}, &mut || {});
+            }
+            *self.selection.flags_mut() = previous_flags & !(flag::PAGE_CACHE_MASK | flag::PAGE_CACHE_VISIT);
+        }
+        self.saved = previous_saved;
+        self.progress_ready = previous_ready;
+        self.saves = previous_saves;
+        self.saves.set_reader(newt_core::save_notice::ReaderIssue::None);
+        self.reader_ui.notice = ReaderUiNotice::None;
+        self.publish_notice_image(ui);
+        ui.app.screen = destination;
     }
 }
