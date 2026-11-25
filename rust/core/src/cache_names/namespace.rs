@@ -113,8 +113,9 @@ pub const PAGE_ENTRY_CAP: u32 = 128;
 pub const PAGE_ENTRY_RESERVE: u32 = 8;
 pub const PAGE_ENTRY_GRANT: u8 = (PAGE_ENTRY_CAP - PAGE_ENTRY_RESERVE) as u8;
 pub const PAGE_SEGMENT_BATCH: u8 = 4;
-/// Book indexes have their own LRU quota, outside Pages: losing one costs a
-/// rebuild, so orphans of deleted books age out under pressure.
+/// Book indexes have their own quota, outside Pages, evicted oldest-written
+/// first: losing one costs a rebuild, so orphans of deleted books age out
+/// under pressure.
 pub const INDEX_QUOTA: u64 = 16 * 1024 * 1024;
 /// Provisional until the bench times a census over 256 index files: above
 /// about 20 ms, the cap drops to fit. The census runs only before a new index

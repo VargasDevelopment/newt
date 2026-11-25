@@ -6,8 +6,9 @@ use crate::{Authority, Error, Kind, MissingProbe, Native};
 use crate::page_entries::{PageEntries, PageEntry as Entry};
 use newt_core::{cache_names::namespace::{self as names, Form, Kind as NameKind, PageCacheNeed, PageName, PageNameSet}, reader_scheduler::YieldCadence};
 
-/// One LRU-quota folder of block-envelope cache files. Other known cache
-/// names found there rank as legacy and go first.
+/// One quota folder of block-envelope cache files, evicted oldest-written
+/// first (FAT does not refresh times on reads). Other known cache names found
+/// there rank as legacy and go first.
 #[derive(Clone, Copy, Debug)]
 pub struct Policy {
     pub folder: &'static str,
@@ -18,16 +19,20 @@ pub struct Policy {
     pub entry_grant: u8,
     /// Free credit units a writer needs for one largest file.
     pub required_units: u8,
+    /// Pages keep a `.bak` and its canonical file. An index `.bak` is just an
+    /// older copy left by a rebuild, evicted by age like any index; only the
+    /// open book's pair is kept.
+    pub keep_backups: bool,
 }
 pub const PAGES: Policy = Policy {
     folder: "/Pages", kind: NameKind::Page, quota: names::PAGE_QUOTA,
     entry_cap: names::PAGE_ENTRY_CAP, entry_grant: names::PAGE_ENTRY_GRANT,
-    required_units: names::PAGE_REQUIRED_UNITS,
+    required_units: names::PAGE_REQUIRED_UNITS, keep_backups: true,
 };
 pub const INDEXES: Policy = Policy {
     folder: "/Index", kind: NameKind::Index, quota: names::INDEX_QUOTA,
     entry_cap: names::INDEX_ENTRY_CAP, entry_grant: names::INDEX_ENTRY_GRANT,
-    required_units: names::INDEX_REQUIRED_UNITS,
+    required_units: names::INDEX_REQUIRED_UNITS, keep_backups: false,
 };
 
 pub struct Request<'a> {
@@ -178,12 +183,15 @@ impl<'a, 'folder> Census<'a, 'folder> {
     }
     fn consider(&mut self,entry:&Entry<'_>,parsed:PageName) {
         let Some(name)=entry.name else { return; };
+        let keep_backups=self.request.policy.keep_backups;
+        let canonical=&name[..parsed.canonical_bytes];
         let page=parsed.kind==self.request.policy.kind;
         let rank=if page && parsed.form==Form::Temporary { Rank::Temporary }
             else if !page { Rank::Legacy }
-            else if parsed.form==Form::Canonical { Rank::Page } else { Rank::None };
-        if rank==Rank::None || (parsed.form==Form::Canonical && self.backups.may_contain(&name[..parsed.canonical_bytes]))
-            || (rank==Rank::Page && self.request.pinned==Some(name))
+            else if parsed.form==Form::Canonical || (parsed.form==Form::Backup && !keep_backups) { Rank::Page }
+            else { Rank::None };
+        if rank==Rank::None || (parsed.form==Form::Canonical && keep_backups && self.backups.may_contain(canonical))
+            || (rank==Rank::Page && self.request.pinned==Some(canonical))
             || (rank==Rank::Page && self.request.need.is_some_and(|n|n.keep.may_contain(&name[65..parsed.canonical_bytes]))) { return; }
         let candidate=Victim{name:name_hash(name),bytes:entry.bytes,time:entry.time,rank};
         let mut at=self.victims;
