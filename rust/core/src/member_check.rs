@@ -96,6 +96,17 @@ pub fn check<S: BookSource + ?Sized>(
     name: &[u8],
     directory_offset: u32,
 ) -> Result<(Checked, u64), Status> {
+    check_member(&mut Erased(source), entry, name, directory_offset)
+}
+
+/// One shared body for every source type: generic copies cost about 4 KiB of
+/// firmware flash, and the check makes only a few reads per opened member.
+fn check_member(
+    source: &mut dyn BookSource,
+    entry: &Entry,
+    name: &[u8],
+    directory_offset: u32,
+) -> Result<(Checked, u64), Status> {
     let Ok(name_bytes) = u16::try_from(name.len()) else {
         return Err(Status::Unsupported);
     };
@@ -150,7 +161,7 @@ pub fn check<S: BookSource + ?Sized>(
     Ok((Checked(Entry { name: None, ..*entry }), data))
 }
 
-fn read_fully<S: BookSource + ?Sized>(source: &mut S, mut at: u64, mut out: &mut [u8]) -> bool {
+fn read_fully(source: &mut dyn BookSource, mut at: u64, mut out: &mut [u8]) -> bool {
     while !out.is_empty() {
         let got = source.read_at(at, out);
         if got <= 0 || got as usize > out.len() {
@@ -161,6 +172,18 @@ fn read_fully<S: BookSource + ?Sized>(source: &mut S, mut at: u64, mut out: &mut
     }
     true
 }
+/// Lets an unsized source (`S: ?Sized`) reach [`check_member`] as `dyn BookSource`.
+struct Erased<'a, S: ?Sized>(&'a mut S);
+
+impl<S: BookSource + ?Sized> BookSource for Erased<'_, S> {
+    fn size(&self) -> u64 {
+        self.0.size()
+    }
+    fn read_at(&mut self, at: u64, output: &mut [u8]) -> i32 {
+        self.0.read_at(at, output)
+    }
+}
+
 fn le16(b: &[u8], i: usize) -> u16 {
     u16::from_le_bytes([b[i], b[i + 1]])
 }
