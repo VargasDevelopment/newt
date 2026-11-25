@@ -8,11 +8,11 @@ use newt_reader_navigation::{metadata::Metadata, Navigation};
 pub fn agreement(source: &mut impl BookSource, name: &str) -> usize {
     let mut peak = 0;
     for (bytes, read, run, variant) in [(32768, 512, 32768, "normal"), (512, 32, 128, "spill"), (448, 32, 64, "tiny")] {
-        peak = peak.max(agreement_variant(source, &format!("{name}/{variant}"), bytes, read, run));
+        peak = peak.max(agreement_variant(source, &format!("{name}/{variant}"), bytes, read, run).0);
     }
     peak
 }
-fn agreement_variant(source: &mut impl BookSource, name: &str, buffer_bytes: usize, min_read: usize, run_bytes: usize) -> usize {
+fn agreement_variant(source: &mut impl BookSource, name: &str, buffer_bytes: usize, min_read: usize, run_bytes: usize) -> (usize, bool) {
     let mut host = HostScratch::new();
     host.with_resources(|catalog, parse, resources| {
         assert_eq!(admission::inspect(&mut admission::ScheduledSource::new(source, None, None),
@@ -43,8 +43,11 @@ fn agreement_variant(source: &mut impl BookSource, name: &str, buffer_bytes: usi
         let (mut positions, mut cursors, mut saved) =
             ([0; builder::POSITION_WORDS], [builder::Cursor::default(); builder::CURSORS], [0; builder::WRITER_PREFIX]);
         let mut state = builder::JoinState::new(&mut positions, &mut cursors, &mut saved);
-        let prepared = builder.parse(parts.workflow.reborrow(), &entry, &dir, identity, &mut store, &mut |_| true)
-            .and_then(|parsed| parsed.join(&mut store, &mut state, &mut |_| true))
+        let central_spilled = !store.work.is_empty();
+        let parsed = builder.parse(parts.workflow.reborrow(), &entry, &dir, identity, &mut store, &mut |_| true)
+            .unwrap_or_else(|e| panic!("{name}: parse {e:?}"));
+        let callback_spilled = !central_spilled && !store.work.is_empty();
+        let prepared = parsed.join(&mut store, &mut state, &mut |_| true)
             .unwrap_or_else(|e| panic!("{name}: parse {e:?}"));
         let report = prepared.publish(&mut store, &mut state, &mut |_| true, &mut || true)
             .unwrap_or_else(|e| panic!("{name}: publish {e:?}"));
@@ -94,7 +97,7 @@ fn agreement_variant(source: &mut impl BookSource, name: &str, buffer_bytes: usi
         assert_eq!(h.title, title, "{name}: title");
         assert_eq!(h.language, BookLanguage::from_opf(bytes(parts.result.metadata.language)), "{name}: language");
         println!("INDEX {name} buffer={} statistics={:?}", buffer_bytes, report.statistics);
-        builder::STACK_BYTES + builder::JOIN_STATE_BYTES + buffer_bytes
+        (builder::STACK_BYTES + builder::JOIN_STATE_BYTES + buffer_bytes, callback_spilled)
     })
 }
 
@@ -218,6 +221,7 @@ pub fn small_cases() {
     missing_member_keeps_spine_and_invalidates_progress();
     navigation_choices_and_covers_agree();
     distinct_32_bit_collision_names_agree();
+    tiny_items_and_internal_entities_spill_in_package_callback();
 }
 
 #[derive(Default)]
@@ -241,4 +245,23 @@ impl CacheStorage for BuildStore {
     fn begin_write(&mut self, _: &[u8]) -> bool { self.pending.clear(); true }
     fn write(&mut self, bytes: &[u8]) -> bool { self.pending.extend_from_slice(bytes); true }
     fn end_write(&mut self) -> bool { self.cache = std::mem::take(&mut self.pending); true }
+}
+
+// Both packages have 1,024 ZIP members and 350 identical 22-byte manifest
+// items. The second expands those items inside Expat, beyond the input bytes.
+fn tiny_items_and_internal_entities_spill_in_package_callback() {
+    let tiny = "<item id=\"\" href=\"a\"/>";
+    assert_eq!(tiny.len(), 22);
+    let names: Vec<_> = (0..1020).map(|i| format!("padding/{i}")).collect();
+    let mut extra = vec![("OEBPS/a", b"a".as_slice())];
+    extra.extend(names.iter().map(|name| (name.as_str(), b"".as_slice())));
+    let expanded = tiny.repeat(350);
+    let body = package("", &expanded, "<itemref idref=\"\"/>");
+    let entity = format!("<!DOCTYPE package [<!ENTITY items '{}'>]>{}",
+        expanded, package("", "&items;", "<itemref idref=\"\"/>"));
+    for (label, opf) in [("tiny-items", body), ("entity-items", entity)] {
+        let mut source = book(&opf, &extra);
+        let (_, callback_spilled) = agreement_variant(&mut source, label, 32768, 512, 32768);
+        assert!(callback_spilled, "{label}: work opened during OPF callback");
+    }
 }
