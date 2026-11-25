@@ -55,7 +55,7 @@ struct Never;
 impl newt_native_storage::Authority for Never { fn cancelled(&self) -> bool { false } }
 struct Flash;
 impl nvs::Native for Flash {
-    fn storage_ready(&mut self) -> bool { false }
+    fn storage_ready(&mut self) -> bool { true }
     fn open(&mut self, _: &CStr, _: bool, _: &mut u32) -> core::result::Result<(), nvs::NativeError> { Err(nvs::NativeError::NOT_FOUND) }
     fn close(&mut self, _: u32) {}
     fn get_blob(&mut self, _: u32, _: &CStr, _: Option<&mut [u8]>, _: &mut usize) -> core::result::Result<(), nvs::NativeError> { Err(nvs::NativeError::NOT_FOUND) }
@@ -97,13 +97,25 @@ fn scenario(bytes: Vec<u8>, finished: bool) {
             allowed() && raw.read_at(0, &mut bytes) == bytes.len() as i32 && hash(&bytes, &mut actual) && actual == *expected
         };
         let mut source = StrictSource::new(&mut raw, &digest).with_reopen_authorizer(&mut authorize, &|| true);
-        let info = DeviceInfo::default(); let saved = Progress { book: 7, ..Progress::default() };
+        let book = u64::from_le_bytes(digest[..8].try_into().unwrap());
+        let info = DeviceInfo::default(); let saved = Progress { book, ..Progress::default() };
         let request = BookRequest { path: "/newt-sd/Books/generated.epub", filename: "generated.epub",
-            open: reader_book::BookOpen::Receipt(digest), identity: 7, saved, policy: RestorePolicy::ExactPage,
+            open: reader_book::BookOpen::Receipt(digest), identity: book, saved, policy: RestorePolicy::ExactPage,
             info: &info, cancel: &Never, now, sleep: None, zone: newt_core::time_zone::TimeZone::Utc };
         let mut prefs = home_startup::preferences::ReaderPreferences::default();
         let mut checkpoint = ReaderCheckpoint::new(CheckpointRestore::Latest);
         let mut flash = Flash; let mut facts = newt_native_storage::reading_state::StateFacts::default();
+        if finished {
+            let selected = newt_core::sd_resume::SdResumeRecord::new(c"generated.epub", digest).unwrap();
+            let mut access = resources.pages.0.access();
+            let mut medium = reading_state_medium::MountedStateMedium::new(io, Some(&mut access));
+            let mut state_native = card.port(io);
+            let mut store = newt_native_storage::reading_state::ReadingStateRouter::new(
+                nvs::NvsBlobBackend::new(&mut flash), &mut facts, &mut medium, &mut state_native);
+            assert_eq!(newt_core::selected_book::SelectedBookStore::new(&mut store).save(selected),
+                newt_core::durable::Commit::Saved);
+            checkpoint.selection_committed(&mut store, &digest, false, false);
+        }
         let mut mounted = MountedCheckpoint::new(&mut checkpoint, &mut flash, &mut facts);
         let mut statistics = ReadingStatsRuntime::default(); let mut accepted = false; let mut recovery = None;
         let producer_entry = |_| reader_book::ProducerEntry::Blocked;
@@ -111,26 +123,55 @@ fn scenario(bytes: Vec<u8>, finished: bool) {
             pause_request: &|_, _| Some(Stop::Terminal), yield_now: None, wait: None };
         let mut pause = |_: reader_book::ProducerPause<'_, '_, '_, '_, Flash, card::Card>,
             _: &dyn Fn() -> bool| (Stop::Terminal, false);
-        let mut run = |initialize, paint_first, action: Option<Action>| {
-            if finished && action == Some(Action::Activate) { ui.panel = ReaderPanel::Menu; ui.selected = 4; }
-            let mut action = action; let mut compositions = 0;
-            let exit = reader_book::run::drive(io, &mut card, &request, &mut reader, &mut owner, &mut ui,
+        let mut run = |ui: &mut ReaderUiState, initialize, paint_first, step: Option<BookStep>| {
+            let mut step = step; let mut compositions = 0;
+            let exit = reader_book::run::drive(io, &mut card, &request, &mut reader, &mut owner, ui,
                 &mut source, &mut resources, &mut prefs, &mut mounted, &hash, &mut statistics,
-                &mut accepted, &mut recovery, 7, saved, digest, &callbacks, None, initialize,
+                &mut accepted, &mut recovery, book, saved, digest, &callbacks, None, initialize,
                 paint_first, reader_book::run::Route::Short, false, None, None, false, None,
                 |turn, _, _| {
                     if let Some(composed) = turn.composed { assert!(composed.is_ok()); compositions += 1; }
-                    action.take().map(BookStep::Action)
+                    step.take()
                 }, &mut pause).unwrap();
             (exit, compositions)
         };
-        let (opened, composed) = run(true, false, None);
+        let (opened, composed) = run(&mut ui, true, false, None);
         assert_eq!(opened.intent, None); assert_eq!(composed, 0, "short open leaves composition to image loop");
-        let (_, composed) = run(false, true, None); assert_eq!(composed, 1);
-        let (exit, composed) = run(false, false, Some(if finished { Action::Activate } else { Action::Next }));
-        assert_eq!(composed, 0, "short action must not compose before image paint");
-        assert_eq!(exit.intent, Some(ReaderUiIntent::Repaint));
-        let (_, composed) = run(false, true, None); assert_eq!(composed, 1, "one actual image composition");
+        let (_, composed) = run(&mut ui, false, true, None); assert_eq!(composed, 1);
+        if finished {
+            ui.panel = ReaderPanel::Menu; ui.selected = 4;
+            let (exit, composed) = run(&mut ui, false, false, Some(BookStep::Action(Action::Activate)));
+            assert_eq!(composed, 0, "short action must not compose before image paint");
+            assert_eq!(exit.intent, Some(ReaderUiIntent::MarkFinished),
+                "short mark-finished returns explicit intent before mark settles");
+            // Mirror reader_image_action::finish_pending_mark_image: settle owed
+            // progress commit before issuing the explicit BookStep::MarkFinished.
+            let requested_mark = if ui.finish == newt_reader_ui::ReaderFinishRow::Undo {
+                newt_core::reading_stats::StatsMark::NotFinished
+            } else {
+                newt_core::reading_stats::StatsMark::Finished
+            };
+            let (saved, composed) = run(&mut ui, false, false, Some(BookStep::Save));
+            assert_eq!(composed, 0, "short save before mark-finished must not compose");
+            assert_eq!(saved.intent, None, "short save settles without taking over intent");
+            assert_eq!(saved.statistics.checkpoint.progress, reader_book::checkpoint::Outcome::Verified,
+                "owed progress commit must verify before mark-finished");
+            assert_ne!(saved.statistics.checkpoint.destination, reader_book::checkpoint::Outcome::Unconfirmed,
+                "owed destination commit must not stay unconfirmed before mark-finished");
+            let (marked, composed) = run(&mut ui, false, false, Some(BookStep::MarkFinished(requested_mark)));
+            assert_eq!(composed, 0, "short mark-finished step must not compose before image paint");
+            assert_eq!(marked.intent, Some(ReaderUiIntent::Repaint),
+                "settled mark-finished returns Repaint");
+            assert_eq!(ui.finish, newt_reader_ui::ReaderFinishRow::Undo,
+                "mark-finished updated finish row");
+            assert_eq!(ui.notice, newt_reader_ui::ReaderUiNotice::None,
+                "mark-finished settled without error notice");
+        } else {
+            let (exit, composed) = run(&mut ui, false, false, Some(BookStep::Action(Action::Next)));
+            assert_eq!(composed, 0, "short action must not compose before image paint");
+            assert_eq!(exit.intent, Some(ReaderUiIntent::Repaint));
+        }
+        let (_, composed) = run(&mut ui, false, true, None); assert_eq!(composed, 1, "one actual image composition");
     }).unwrap();
 }
 use home_startup::CardPort;

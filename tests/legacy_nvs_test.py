@@ -104,10 +104,11 @@ def reader_recovery(run, workspace, graph, objects, support, *, controls):
             stderr = (run.output / f'{number:03d}.stderr').read_text()
             support.require(run.commands[number].get('returncode') == -signal.SIGABRT
                             and 'panicked at ' in stderr and witness in stderr,
-                            'recovery control must reach its runtime assertion')
+                            'short-turn or recovery control must reach its runtime assertion')
         else:
             raise RuntimeError('mutation survived: ' + witness)
 
+    checks.check_short_turn(recorded, flags, workspace, out, executable, controls=controls)
     checks.check_recovery(recorded, flags, workspace, out, executable, controls=controls)
 
 
