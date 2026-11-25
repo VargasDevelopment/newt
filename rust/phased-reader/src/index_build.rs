@@ -37,6 +37,7 @@ pub enum Verification<'a> {
 // Additional live adapter state is bounded independently of B2's 2,304-byte
 // builder budget; the 32 KiB run and 7,552-byte join state stay in the banks.
 const _: () = assert!(core::mem::size_of::<ObservedStore<'static, 'static>>() <= 40);
+#[inline(always)]
 pub fn open<B: ParserBackend + ?Sized, C: ReadScope + CachePresence>(
     source: &mut dyn BookSource, digest: &[u8; 32],
     storage: &mut Storage<'_>, lender: &mut impl BuildLoan, backend: &mut B,
