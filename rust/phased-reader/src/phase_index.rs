@@ -6,17 +6,12 @@ impl Phase<'_> {
         identity: newt_core::book_index::Identity, store: &mut dyn crate::index_build::Store,
         hook: newt_core::admission::Yield<'_>,
     ) -> Result<(bool, bool), Status> {
-        use newt_core::{admission::{self, ScheduledSource}, book_index_build::{Builder, Phase as Step},
-            package_parsers::{self, Workflow}, xml_input};
+        use newt_core::{admission::ScheduledSource, book_index_build::Phase as Step};
         use crate::index_build::stage;
         // Preserve the resolved style slot at the top of shared. The run buffer
         // uses 32 KiB of its dead metadata prefix; no reader state borrows it.
         let (shared, _) = top::<Home>(self.shared)?;
         let (run, rest) = shared.split_at_mut(32768);
-        let mut rest = Parts(rest);
-        let scan = rest.fixed::<4099>()?;
-        let path_bytes = rest.bytes(512, 1)?;
-        let directory = rest.fixed::<512>()?;
         let mut scheduled = ScheduledSource::new(source, hook, self.policy);
         let live = core::cell::RefCell::new(&mut scheduled);
         let members = core::cell::Cell::new(0u32);
@@ -32,51 +27,86 @@ impl Phase<'_> {
             if let Some(hook) = hook { hook.yield_now(); }
             live.borrow_mut().read_at(0, &mut []) == 0
         };
-        let mut builder = Builder::new(run, 512, 32768).map_err(index_error)?;
-        stage(hook, 2);
-        let mut view = IndexSource(&live);
-        let mut central = ScheduledSource::new(&mut view, None, self.policy);
-        let status = admission::inspect_with_visitor(&mut central,
-            &mut Arena::new(self.parse), scan, |member| builder.visit(store, member, &mut progress));
-        if status != Status::Ok { return Err(status); }
-        stage(hook, 3);
-        let container = index_member(&mut **live.borrow_mut(), self.parse, scan, b"META-INF/container.xml")?;
-        let mut paths = Arena::new(path_bytes);
-        let mut path = None;
-        {
-            let mut parts = Parts(self.parse);
-            let mut r = io(&mut parts, backend)?;
-            let mut source = live.borrow_mut();
-            let mut workflow = Workflow { source: &mut **source, backend: r.backend,
-                decoder: r.decoder.take(), buffer: r.xml_buffer.take(), filter: r.filter.take(), policy: self.policy };
-            let status = package_parsers::parse_container(&mut workflow, &container, &mut paths, &mut path);
-            if status != Status::Ok { return Err(status); }
-        }
-        let path = path.and_then(|p| paths.c_string(p)).ok_or(Status::NotEpub)?;
-        if !xml_input::dir_name(path, directory) { return Err(Status::PathTooLong); }
-        let entry = index_member(&mut **live.borrow_mut(), self.parse, scan, path)?;
-        let parsed = {
-            let mut parts = Parts(self.parse);
-            let mut r = io(&mut parts, backend)?;
-            // Source reads and builder progress alternate. Progress probes the
-            // original source, so do not hold a RefCell loan across XML callbacks.
-            let mut view = IndexSource(&live);
-            builder.parse(Workflow { source: &mut view, backend: r.backend,
-                decoder: r.decoder.take(), buffer: r.xml_buffer.take(), filter: r.filter.take(), policy: self.policy },
-                &entry, xml_input::c_bytes(directory), identity, store, &mut progress).map_err(index_error)?
-        };
-        stage(hook, 4);
-        let mut state = carve_join_state(&mut Parts(self.parse))?;
-        let prepared = parsed.join(store, &mut state, &mut progress).map_err(index_error)?;
+        let (prepared, mut state) = prepare(run, rest, self.parse, self.policy, backend, &live,
+            identity, store, &mut progress, hook)?;
         crate::index_build::counts(hook, members.get(), spine.get());
         if store.spilled() { return Ok((false, true)); }
         if !store.release_pages() { return Err(Status::IoError); }
         stage(hook, 5);
         let mut receipt = || live.borrow_mut().read_at(0, &mut []) == 0;
-        let report = prepared.publish(store, &mut state, &mut progress, &mut receipt).map_err(index_error)?;
-        crate::index_build::counts(hook, report.header.members, report.header.spine);
-        Ok((true, report.work_removed))
+        let (members, spine, removed) = publish(prepared, store, &mut state, &mut progress, &mut receipt)?;
+        crate::index_build::counts(hook, members, spine);
+        Ok((true, removed))
     }
+}
+/// Out of line so publish's frame, the deepest of the build, is not added to
+/// the frame that owns the work state and the source views.
+#[inline(never)]
+fn publish(prepared: newt_core::book_index_build::Prepared<'_>, store: &mut dyn crate::index_build::Store,
+    state: &mut newt_core::book_index_build::JoinState<'_>,
+    progress: &mut dyn FnMut(newt_core::book_index_build::Progress) -> bool,
+    receipt: &mut dyn FnMut() -> bool,
+) -> Result<(u32, u32, bool), Status> {
+    let report = prepared.publish(store, state, progress, receipt).map_err(index_error)?;
+    Ok((report.header.members, report.header.spine, report.work_removed))
+}
+/// Central pass, container, OPF parse and join. Out of line so the Builder and
+/// Parsed values, the scan views and the parse loans leave the stack before
+/// publish, whose own frame is the deepest part of the build.
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn prepare<'r, 'p, B: ParserBackend + ?Sized, S: BookSource + ?Sized>(
+    run: &'r mut [u8], rest: &mut [u8], parse: &'p mut [u8],
+    policy: Option<&dyn newt_core::xml_session::SourcePolicy>, backend: &mut B,
+    live: &core::cell::RefCell<&mut newt_core::admission::ScheduledSource<'_, S>>,
+    identity: newt_core::book_index::Identity, store: &mut dyn crate::index_build::Store,
+    progress: &mut dyn FnMut(newt_core::book_index_build::Progress) -> bool,
+    hook: newt_core::admission::Yield<'_>,
+) -> Result<(newt_core::book_index_build::Prepared<'r>, newt_core::book_index_build::JoinState<'p>), Status> {
+    use newt_core::{admission::{self, ScheduledSource}, book_index_build::Builder,
+        package_parsers::{self, Workflow}, xml_input};
+    use crate::index_build::stage;
+    let mut rest = Parts(rest);
+    let scan = rest.fixed::<4099>()?;
+    let path_bytes = rest.bytes(512, 1)?;
+    let directory = rest.fixed::<512>()?;
+    let mut builder = Builder::new(run, 512, 32768).map_err(index_error)?;
+    stage(hook, 2);
+    let mut view = IndexSource(live);
+    let mut central = ScheduledSource::new(&mut view, None, policy);
+    let status = admission::inspect_with_visitor(&mut central,
+        &mut Arena::new(&mut *parse), scan, |member| builder.visit(store, member, &mut *progress));
+    if status != Status::Ok { return Err(status); }
+    stage(hook, 3);
+    let container = index_member(&mut **live.borrow_mut(), &mut *parse, scan, b"META-INF/container.xml")?;
+    let mut paths = Arena::new(path_bytes);
+    let mut path = None;
+    {
+        let mut parts = Parts(&mut *parse);
+        let mut r = io(&mut parts, &mut *backend)?;
+        let mut source = live.borrow_mut();
+        let mut workflow = Workflow { source: &mut **source, backend: r.backend,
+            decoder: r.decoder.take(), buffer: r.xml_buffer.take(), filter: r.filter.take(), policy };
+        let status = package_parsers::parse_container(&mut workflow, &container, &mut paths, &mut path);
+        if status != Status::Ok { return Err(status); }
+    }
+    let path = path.and_then(|p| paths.c_string(p)).ok_or(Status::NotEpub)?;
+    if !xml_input::dir_name(path, directory) { return Err(Status::PathTooLong); }
+    let entry = index_member(&mut **live.borrow_mut(), &mut *parse, scan, path)?;
+    let parsed = {
+        let mut parts = Parts(&mut *parse);
+        let mut r = io(&mut parts, &mut *backend)?;
+        // Source reads and builder progress alternate. Progress probes the
+        // original source, so do not hold a RefCell loan across XML callbacks.
+        let mut view = IndexSource(live);
+        builder.parse(Workflow { source: &mut view, backend: r.backend,
+            decoder: r.decoder.take(), buffer: r.xml_buffer.take(), filter: r.filter.take(), policy },
+            &entry, xml_input::c_bytes(directory), identity, store, &mut *progress).map_err(index_error)?
+    };
+    stage(hook, 4);
+    let mut state = carve_join_state(&mut Parts(parse))?;
+    let prepared = parsed.join(store, &mut state, &mut *progress).map_err(index_error)?;
+    Ok((prepared, state))
 }
 struct IndexSource<'a, 'b, S: ?Sized>(&'a core::cell::RefCell<&'b mut S>);
 impl<S: crate::zip_window::source::BookSource + ?Sized> crate::zip_window::source::BookSource for IndexSource<'_, '_, S> {

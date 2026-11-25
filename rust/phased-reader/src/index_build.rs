@@ -27,6 +27,16 @@ pub fn open<B: ParserBackend + ?Sized, C: ReadScope + CachePresence>(
         Ok((false, existed)) => existed,
         Err(status) => { result(hook, 3, status, true); return; }
     };
+    attempt(source, digest, identity, storage, lender, backend, store, hook, existed);
+}
+
+// Out of line so the work state and the build's frames are not on the stack
+// during the probe, and the probe's are not on it during the build.
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn attempt<B: ParserBackend + ?Sized, C: CachePresence>(source: &mut dyn BookSource, digest: &[u8; 32],
+    identity: Identity, storage: &mut Storage<'_>, lender: &mut impl BuildLoan, backend: &mut B,
+    store: &mut C, hook: Yield<'_>, existed: bool) {
     if store.with_index(digest, |store| {
         build(source, identity, storage, lender, backend, store, hook, existed)
     }).is_none() {
