@@ -29,7 +29,7 @@ fn stalled_sender_exits_and_its_diagnostic_output_is_bounded() {
         unchanged(&card, Some(b"old"));
         let mut counters = observation::Counters::default();
         for event in &outcome.wire.observations { counters.observe(outcome.wire.clock, *event); }
-        let mut row = String::new(); counters.row(outcome.wire.clock, &mut row).unwrap();
+        let mut row = String::new(); counters.row(outcome.wire.clock, 250, &mut row).unwrap();
         assert!(row.starts_with("\nPUT_STATS reason=4 "));
         let sent = outcome.wire.sent.len();
         let start = outcome.wire.clock;
@@ -83,7 +83,7 @@ fn a_partial_timeout_reply_cannot_swallow_the_exit_row() {
     let at = port.wire.sent.iter().rposition(|&byte| byte == b'\n').unwrap() + 1;
     let fragment = port.wire.sent[at..].to_vec();
     assert!(fragment.starts_with(b"!N1 ") && !fragment.contains(&b'\n'));
-    let mut row = String::new(); port.counters.row(port.wire.clock, &mut row).unwrap();
+    let mut row = String::new(); port.counters.row(port.wire.clock, 250, &mut row).unwrap();
     observation::report(&mut port, row.as_bytes());
     let lines: Vec<_> = port.wire.sent[at..].split(|&byte| byte == b'\n').collect();
     assert_eq!(lines.len(), 3, "one delimited fragment, one complete row, final LF");

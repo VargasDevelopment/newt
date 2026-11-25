@@ -29,6 +29,18 @@ TESTS = 44
 MARKED = '        if self.recovery_file(MARKER, "marker")? { return Err(Refused::Recovery("commit", 0)); }\n'
 # (what breaks, its file under rust/core/src, its text there, the broken text, the test that must fail)
 CONTROLS = (
+    ('receive runs are not split by lease sleeps', '../../firmware/app_runtime/card_write_observation.rs',
+     'pub fn paused(&mut self, elapsed: u32) {\n        self.finish_burst();',
+     'pub fn paused(&mut self, elapsed: u32) {',
+     'lease_counters_separate_receive_write_ack_and_latch_the_first_exit'),
+    ('the final receive run is omitted', '../../firmware/app_runtime/card_write_observation.rs',
+     '        self.account(now);\n        self.finish_burst();\n        // A failed protocol',
+     '        self.account(now);\n        // A failed protocol',
+     'lease_counters_separate_receive_write_ack_and_latch_the_first_exit'),
+    ('the last run replaces the largest run', '../../firmware/app_runtime/card_write_observation.rs',
+     'self.burst_max = self.burst_max.max(self.burst_bytes);',
+     'self.burst_max = self.burst_bytes;',
+     'lease_counters_separate_receive_write_ack_and_latch_the_first_exit'),
     ('a partial reply swallows the undelimited exit row', '../../firmware/app_runtime/card_write_observation.rs',
      'writeln!(output, "\\nPUT_STATS', 'writeln!(output, "PUT_STATS',
      'wire_deadlines::a_partial_timeout_reply_cannot_swallow_the_exit_row'),

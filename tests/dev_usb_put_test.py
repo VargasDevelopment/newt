@@ -411,7 +411,13 @@ def lease_statistics_validation():
     decoded = decode_firmware_row(row)
     assert decoded['row'] == 'put_stats' and decoded['offset'] == 12132352
     assert decoded['reason'] == 4 and decoded['received'] == 17 and decoded['pause_ms'] == 211
+    burst_row = row + b' gap_us=250 bursts=200 burst_max=192'
+    burst = decode_firmware_row(burst_row)
+    assert (burst['gap_us'], burst['bursts'], burst['burst_max']) == (250, 200, 192)
     for bad in (row + b' name=anything', row.replace(b'id=123', b'id=-1'), row.replace(b'rx_ms=170', b'rx_ms=0170')):
+        assert decode_firmware_row(bad) is None
+    for bad in (burst_row.replace(b'gap_us=250', b'gap_us=-1'), burst_row.replace(b'bursts=200', b'bursts=0200'),
+                burst_row + b' name=anything'):
         assert decode_firmware_row(bad) is None
 
 

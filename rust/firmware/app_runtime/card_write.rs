@@ -81,7 +81,7 @@ impl LeaseWire<'_, '_, '_> {
     fn report(&mut self) {
         let mut bytes = [0; 384];
         let mut row = crate::serial_console::Row::new(&mut bytes);
-        if self.counters.row(self.channel.now(), &mut row).is_err() { return; }
+        if self.counters.row(self.channel.now(), newt_c3_board::dev_usb::PutReceive::QUIET_US, &mut row).is_err() { return; }
         let count = row.length;
         observation::report(self, &bytes[..count]);
     }

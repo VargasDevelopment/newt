@@ -295,6 +295,13 @@ No row is promised if the host remains gone or stops reading. Counters exist onl
 stack, with no idle heap. It reports the current request ID, block offset,
 received/expected bytes, total bytes read, empty receive calls, pause count/time, DATA
 receive time, card-write phase time, ACK enqueue time and commit phase time.
+It also reports `gap_us`, the receive token's actual quiet-poll limit, and
+`bursts`/`burst_max`, the count and largest nonempty receive run. An empty
+read or explicit lease sleep ends a run; the final unslept run counts too.
+`bytes / bursts` gives the mean bytes per nonempty run, including framing;
+empty waits do not inflate the run count. Run counts and sizes saturate at
+u32::MAX. Compare these with `pause_ms` to assess whether the 1 ms sleeps
+still dominate. Older rows without these three fields remain readable.
 Times are milliseconds; phases include their ordinary code overhead, not just
 USB or SD hardware time. ACK enqueue is not host receipt. No hardware overflow
 bit is observed: incomplete reception or malformed framing narrows a failure

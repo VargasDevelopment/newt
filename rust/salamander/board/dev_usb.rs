@@ -102,17 +102,18 @@ pub struct PutReceive<'owner> {
     _owner: core::marker::PhantomData<&'owner mut ReceiveOwner>,
 }
 impl PutReceive<'_> {
+    /// Quiet FIFO polling limit, also reported by the granted lease.
+    pub const QUIET_US: u32 = 250;
     pub fn read_byte(&mut self, mut micros: impl FnMut() -> u32) -> i32 {
         // USB packets within a burst arrive between ticks. Drain queued/FIFO
         // bytes and briefly poll for the next packet before Core sleeps. This
         // local bound returns control to Core's unchanged lease deadline.
-        const QUIET_US: u32 = 250;
         let start = micros();
         loop {
             // SAFETY: this non-Send guard holds RX exclusion until Drop. Native
             // drains the SDK queue before the same FIFO its ISR normally reads.
             let byte = unsafe { nsc_put_rx_read_byte() };
-            if byte >= 0 || micros().wrapping_sub(start) >= QUIET_US { return byte; }
+            if byte >= 0 || micros().wrapping_sub(start) >= Self::QUIET_US { return byte; }
         }
     }
 }

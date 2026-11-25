@@ -26,6 +26,9 @@ pub struct Counters {
     expected: u32,
     received: u32,
     bytes: u64,
+    burst_bytes: u32,
+    bursts: u32,
+    burst_max: u32,
     empty: u32,
     pauses: u32,
     pause_ms: u32,
@@ -62,22 +65,33 @@ impl Counters {
         };
     }
     pub fn read(&mut self, byte: i32) {
-        if byte < 0 { self.empty = self.empty.saturating_add(1); }
+        if byte < 0 { self.empty = self.empty.saturating_add(1); self.finish_burst(); }
         else {
             self.bytes += 1;
+            self.burst_bytes = self.burst_bytes.saturating_add(1);
             if self.phase == 1 { self.received += 1; }
         }
     }
+    // Empty reads and actual lease sleeps delimit nonempty receive runs.
+    fn finish_burst(&mut self) {
+        if self.burst_bytes == 0 { return; }
+        self.bursts = self.bursts.saturating_add(1);
+        self.burst_max = self.burst_max.max(self.burst_bytes);
+        self.burst_bytes = 0;
+    }
     pub fn paused(&mut self, elapsed: u32) {
+        self.finish_burst();
         self.pauses = self.pauses.saturating_add(1);
         self.pause_ms = self.pause_ms.saturating_add(elapsed);
     }
-    pub fn row(&mut self, now: u32, output: &mut impl Write) -> fmt::Result {
+    pub fn row(&mut self, now: u32, gap_us: u32, output: &mut impl Write) -> fmt::Result {
         self.account(now);
+        self.finish_burst();
         // A failed protocol reply may have left a fragment without its LF.
-        writeln!(output, "\nPUT_STATS reason={} id={} offset={} received={} expected={} bytes={} empty={} pauses={} pause_ms={} rx_ms={} write_ms={} ack_ms={} commit_ms={}",
+        writeln!(output, "\nPUT_STATS reason={} id={} offset={} received={} expected={} bytes={} empty={} pauses={} pause_ms={} rx_ms={} write_ms={} ack_ms={} commit_ms={} gap_us={} bursts={} burst_max={}",
             self.reason.map_or(255, |reason| reason as u8), self.id, self.offset, self.received,
             self.expected, self.bytes, self.empty, self.pauses, self.pause_ms,
-            self.rx_ms, self.write_ms, self.ack_ms, self.commit_ms)
+            self.rx_ms, self.write_ms, self.ack_ms, self.commit_ms,
+            gap_us, self.bursts, self.burst_max)
     }
 }

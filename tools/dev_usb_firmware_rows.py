@@ -16,7 +16,9 @@ FIRMWARE_ROWS = {
                             rb'received=(?P<received>%s) expected=(?P<expected>%s) bytes=(?P<bytes>%s) '
                             rb'empty=(?P<empty>%s) pauses=(?P<pauses>%s) pause_ms=(?P<pause_ms>%s) '
                             rb'rx_ms=(?P<rx_ms>%s) write_ms=(?P<write_ms>%s) ack_ms=(?P<ack_ms>%s) '
-                            rb'commit_ms=(?P<commit_ms>%s)' % ((NUMBER,) * 13)),
+                            rb'commit_ms=(?P<commit_ms>%s)'
+                            rb'(?: gap_us=(?P<gap_us>%s) bursts=(?P<bursts>%s) burst_max=(?P<burst_max>%s))?'
+                            % ((NUMBER,) * 16)),
     'runtime': re.compile(rb'Runtime: kind=(?P<kind>reader|stage-regional|stage-full-direct|stage-full-overlay|'
                           rb'stage-monochrome|none) stack-size=(?P<stack_size>%s) stack-min-free=(?P<stack_min_free>%s) '
                           rb'heap-min-free=(?P<heap_min_free>%s)' % (NUMBER, NUMBER, NUMBER)),
