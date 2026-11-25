@@ -259,3 +259,193 @@ fn container_capacity_failure_keeps_the_first_rootfile_decision() {
         }
     }
 }
+
+struct CountingParser {
+    parser: expat::Expat,
+    creates: usize,
+    closes: usize,
+    feeds: usize,
+}
+impl CountingParser {
+    fn new() -> Self {
+        Self {
+            parser: expat::Expat::default(),
+            creates: 0,
+            closes: 0,
+            feeds: 0,
+        }
+    }
+}
+impl ParserBackend for CountingParser {
+    fn create(&mut self) -> bool {
+        self.creates += 1;
+        self.parser.create()
+    }
+    fn close(&mut self) {
+        self.closes += 1;
+        self.parser.close();
+    }
+    fn feed(&mut self, bytes: &[u8], final_chunk: bool, handler: &mut dyn Handler) -> bool {
+        self.feeds += 1;
+        self.parser.feed(bytes, final_chunk, handler)
+    }
+}
+struct ChunkedSource<'a> {
+    bytes: &'a [u8],
+    max_read: usize,
+}
+impl BookSource for ChunkedSource<'_> {
+    fn size(&self) -> u64 {
+        self.bytes.len() as u64
+    }
+    fn read_at(&mut self, at: u64, output: &mut [u8]) -> i32 {
+        let Some(rest) = self.bytes.get(at as usize..) else {
+            return -1;
+        };
+        let n = rest.len().min(self.max_read).min(output.len());
+        output[..n].copy_from_slice(&rest[..n]);
+        n as i32
+    }
+}
+fn opf_expansion_xml(nested: bool, attribute: bool) -> String {
+    let mut xml = String::from("<!DOCTYPE package [<!ENTITY a '");
+    for _ in 0..1024 {
+        xml.push('x');
+    }
+    xml.push_str("'>");
+    if nested {
+        xml.push_str("<!ENTITY b '");
+        for _ in 0..32 {
+            xml.push_str("&a;");
+        }
+        xml.push_str("'>");
+    }
+    xml.push_str("]><package><metadata><dc:title>");
+    if !attribute {
+        for _ in 0..(if nested { 32 } else { 1024 }) {
+            xml.push_str(if nested { "&b;" } else { "&a;" });
+        }
+    } else {
+        xml.push_str("Title");
+    }
+    xml.push_str("</dc:title></metadata><manifest><item id='c' href='");
+    if attribute {
+        for _ in 0..(if nested { 32 } else { 1024 }) {
+            xml.push_str(if nested { "&b;" } else { "&a;" });
+        }
+    } else {
+        xml.push_str("chapter.xhtml");
+    }
+    xml.push_str("' media-type='application/xhtml+xml'/></manifest><spine><itemref idref='c'/></spine></package>");
+    xml
+}
+#[test]
+fn opf_entity_expansion_refused_without_publishing_and_large_plain_opf_opens() {
+    let mut large_plain = String::from("<package><metadata><dc:title>Plain &amp; &#65;</dc:title></metadata><manifest>");
+    for i in 0..250 {
+        large_plain.push_str(&format!(
+            "<item id='c{i}' href='chapters/chapter-{i:04}-ordinary.xhtml' media-type='application/xhtml+xml'/>"
+        ));
+    }
+    large_plain.push_str("</manifest><spine><itemref idref='c0'/></spine></package>");
+    assert!(large_plain.len() > 20 * 1024);
+
+    let tiny_entity = "<!DOCTYPE package [<!ENTITY t 'Small'>]><package><metadata><dc:title>&t;</dc:title></metadata><manifest><item id='c' href='a.xhtml' media-type='application/xhtml+xml'/></manifest><spine><itemref idref='c'/></spine></package>";
+    let external_only = "<!DOCTYPE package SYSTEM 'urn:unfetched'><package><metadata><dc:title>&amp;&#65;</dc:title></metadata><manifest><item id='c' href='a.xhtml' media-type='application/xhtml+xml'/></manifest><spine><itemref idref='c'/></spine></package>";
+    let mut utf16_opf = vec![0xffu8, 0xfe];
+    for &b in tiny_entity.as_bytes() {
+        utf16_opf.push(b);
+        utf16_opf.push(0);
+    }
+
+    for (name, xml_bytes, expected_title) in [
+        ("large-plain", large_plain.as_bytes(), b"Plain & A".as_slice()),
+        ("tiny-entity", tiny_entity.as_bytes(), b"Small".as_slice()),
+        ("external-only", external_only.as_bytes(), b"&A".as_slice()),
+        ("utf16", utf16_opf.as_slice(), b"Small".as_slice()),
+    ] {
+        let mut source = ChunkedSource { bytes: xml_bytes, max_read: 64 };
+        let mut backend = CountingParser::new();
+        let mut buffer = [0; 2048];
+        let mut memory = vec![0; 64 * 1024];
+        let mut arena = Arena::new(&mut memory);
+        let mut manifest = vec![ManifestItem::default(); 300];
+        let mut hashes = vec![0; 300];
+        let mut spine = vec![0; 16];
+        let mut out = PackageResult::default();
+        let status = parse_package(
+            &mut Workflow {
+                policy: None,
+                source: &mut source,
+                backend: &mut backend,
+                decoder: None,
+                buffer: Some(&mut buffer),
+                filter: None,
+            },
+            &Checked::raw(xml_bytes.len() as u32),
+            b"",
+            &mut arena,
+            PackageStorage {
+                manifest: &mut manifest,
+                spine_hashes: &mut hashes,
+                spine: &mut spine,
+            },
+            &mut out,
+        );
+        assert_eq!(status, Status::Ok, "{name}");
+        assert_eq!(backend.creates, 2, "{name}");
+        assert_eq!(backend.closes, backend.creates, "{name}");
+        assert_eq!(out.spine_count, 1, "{name}");
+        assert_eq!(arena.c_string(out.metadata.title.unwrap()), Some(expected_title), "{name}");
+    }
+
+    for nested in [false, true] {
+        for attribute in [false, true] {
+            let xml = opf_expansion_xml(nested, attribute);
+            for max_read in [64usize, 2048] {
+                let mut source = ChunkedSource { bytes: xml.as_bytes(), max_read };
+                let mut backend = CountingParser::new();
+                let mut buffer = [0; 2048];
+                let mut memory = vec![0; 16 * 1024];
+                let mut arena = Arena::new(&mut memory);
+                let mut manifest = [ManifestItem::default(); 8];
+                let mut hashes = [0; 8];
+                let mut spine = [0; 8];
+                let mut out = PackageResult {
+                    spine_count: 77,
+                    ..PackageResult::default()
+                };
+                let saved = out;
+                let status = parse_package(
+                    &mut Workflow {
+                        policy: None,
+                        source: &mut source,
+                        backend: &mut backend,
+                        decoder: None,
+                        buffer: Some(&mut buffer),
+                        filter: None,
+                    },
+                    &Checked::raw(xml.len() as u32),
+                    b"",
+                    &mut arena,
+                    PackageStorage {
+                        manifest: &mut manifest,
+                        spine_hashes: &mut hashes,
+                        spine: &mut spine,
+                    },
+                    &mut out,
+                );
+                assert_eq!(status, Status::ParseError, "nested={nested} attr={attribute} max={max_read}");
+                assert_eq!(out, saved, "partial package must not be published");
+                assert_eq!(backend.creates, 1, "must fail in pass 1 without pass 2");
+                assert_eq!(backend.closes, 1, "parser must be closed on ParseError");
+                let total_chunks = xml.len().div_ceil(max_read);
+                if !nested && !attribute {
+                    assert!(backend.feeds < total_chunks, "flat element expansion must stop before EOF: feeds={} total={}", backend.feeds, total_chunks);
+                } else {
+                    assert!(backend.feeds <= total_chunks + 1, "bounded expansion feeds");
+                }
+            }
+        }
+    }
+}

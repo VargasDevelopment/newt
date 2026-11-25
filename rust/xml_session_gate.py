@@ -69,6 +69,8 @@ def check(gate, snapshot, positive_only):
             runner.run([tools['clang++'], '--no-default-config', '-x', 'c', '-std=c99', *flags,
                         '-I', include, '-I', expat, '-c', source, '-o', obj], root)
             objects[name] = obj
+        load(packet / 'entity_limits.py', 'entity_limits').check(
+            root, packet, output, runner, tools, objects, flags, expat, positive_only)
         frozen_transport = load(root / 'tests/inflate/expected_transport.py', 'frozen_transport')
         reference = frozen_transport.Frozen(packet / 'expected.json', [dict(name=c['id'], input=v[0], args=[]) for c, v in zip(cases, vectors)], provenance, literal_answers=[answer for _, answer in vectors])
         cpp = packet / 'expected.json'
