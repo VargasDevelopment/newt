@@ -91,6 +91,7 @@ int32_t nb_gray_encoding(void *display, uint32_t mode, uint32_t *out) {
 
 uint32_t nb_millis(void) { return millis_value; }
 uint32_t nb_micros(void) { return millis_value * 1000u; }
+uint32_t nb_wake_cpu_mhz(void) { return 160; }
 void nb_delay_ms(uint32_t ms);  /* ports.c: the idle hook. */
 
 /* The driver's DS3231 registers (16 bytes, UTC), frozen for the whole run so

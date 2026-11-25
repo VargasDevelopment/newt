@@ -314,3 +314,48 @@ HELLO sessions and a random-ID STATUS. Old responses can be discarded only
 during that handshake recovery. Build checks and action identity checks stay
 strict. Recovery never replays FILE, DATA, DONE or a press; persistent dirty
 input fails closed before actions. Unknown commits still require inspection.
+
+## Opt-in wake timing
+
+`firmware-build.py --wake-timing --clean --health-report` builds an unpublished
+measurement candidate. This switch is separate from `dev-usb` and is off in the
+normal build. Normal publication rejects its extra Cargo feature. Product
+resource ceilings remain unchanged; the diagnostic build reports its clean
+RAM/flash measurements without claiming they meet product RAM/flash ceilings.
+The default build still passes the full product resource gate. Diagnostic
+reports retain clean-build provenance and list their measured stacks and
+capacity; they do not run the product-ceiling comparison. Bench candidates
+retain their normal image/partition limits.
+
+The optional `WAKE` command follows the same fresh session and request-ID rules
+as `DIAG`. It performs no input, display, card or clock-setting work. Use
+`dev-usb.py live --diagnostics --wake-timing` after the page appears, without
+`--press` or `--output`, and redirect stdout to the trial's JSON receipt. The
+ordinary DIAG schema and shared acceptance receipt are unchanged. A normal
+build answers `ERROR command`.
+
+Before a real page finishes, the reply is `WAKE version=1 available=0`. After
+that it is `WAKE version=1 available=1 data=HEX`, with exactly 192 lowercase
+hex digits: 24 little-endian u32 words. The first 16 are boot-local microsecond
+stamps: entry, Serial ready, panel probe, display begin, SD mount,
+application owners, home restore, reader restore, input/device info,
+picture candidate, source ready, page ready, picture ready, native display
+start, native display return and first page complete. Each current first-page
+path makes one native display call; inverse RAM cleanup precedes its start. Conditional stages are
+unavailable, never inferred as zero-cost work.
+
+The remaining eight words are schema (1), stamp-valid bit mask, flags,
+reset reason, wake cause, CPU MHz, page/restore route and panel/refresh mode.
+Flags bit 0 means frozen, bit 1 means page display armed, and bits 8–15 count
+native display calls. Route bits 0–7 identify picture (1) or ordinary page (2),
+bits 8–15 give the requested screen, and bit 16 says restored. Panel bits 0–7
+identify assumed UC8253 (1) or detected UC8279 (2); bits 8–15 give the last
+requested refresh enum (Full=0, Half=1, Fast=2).
+
+The 96-byte buffer is awake-only static DRAM, with no RTC record or heap
+allocation. Opening, Home and error paints do not freeze it. Queries, later
+page turns and sleep preparation cannot change a frozen snapshot; a new boot
+starts a new observation. Battery power-off or a reset on cable replug can
+lose it. No SD fallback is provided. Firmware clocks do not timestamp the
+physical wake press or divide ROM from bootloader time; use the owner's video
+for visible latency and keep that separate from stage durations.

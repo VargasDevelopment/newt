@@ -23,9 +23,9 @@ ALLOWED = {
         ['tools/host_common.py'], "a control runs host_common.py's own source with one call moved"),
     ('tools/firmware-build.py', 101, "[str(interpreter), '-I', '-B', str(executable), 'run', '-e', 'newt_x3', '--jobs', '2']"): (
         [], f'build_command: {PIO}'),
-    ('tools/firmware-build.py', 184, "subprocess.run([*command, '-t', 'clean'], cwd=ROOT, env=env, check=True)"): (
+    ('tools/firmware-build.py', 196, "subprocess.run([*command, '-t', 'clean'], cwd=ROOT, env=env, check=True)"): (
         [], f'the clean runs build_command: {PIO}'),
-    ('tools/firmware-build.py', 206, 'subprocess.run(command, cwd=ROOT, env=env, check=True)'): (
+    ('tools/firmware-build.py', 218, 'subprocess.run(command, cwd=ROOT, env=env, check=True)'): (
         [], f'the build runs build_command and --project-conf options: {PIO}'),
     ('tools/rust_app_archive.py', 11, "[sys.executable, '-B', str(root / 'tools/rust-toolchain.py'), '--verify']"): (
         ['tools/rust-toolchain.py'], 'shared bench/daily helper runs only the checkout\'s pinned verifier'),

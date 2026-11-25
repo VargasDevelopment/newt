@@ -19,6 +19,8 @@ pub struct Publication<'a, 'queue> {
     pub panels: &'a PanelRing,
     pub diagnostics: Diagnostics,
     pub put: Put,
+    #[cfg(feature = "wake-timing")]
+    pub wake: &'a newt_core::wake_timing::Timeline,
 }
 impl Device for Publication<'_, '_> {
     fn status(&mut self) -> Status { self.status }
@@ -28,6 +30,8 @@ impl Device for Publication<'_, '_> {
     }
     fn panel_ring(&mut self) -> Option<&PanelRing> { Some(self.panels) }
     fn diagnostics(&mut self) -> Diagnostics { self.diagnostics }
+    #[cfg(feature = "wake-timing")]
+    fn wake_timing(&self) -> Option<[u32; newt_core::wake_timing::WORDS]> { self.wake.snapshot() }
     fn put(&mut self, session: Session) -> Result<(), Busy> {
         let Put::Admits(facts) = self.put else { return Err(Busy::NotHome) };
         dev_put::admit(facts)?;

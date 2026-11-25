@@ -242,7 +242,7 @@ static void reply(const char *text) {
     if (sscanf(text, "!N1 %lu %lu %lu %n", &boot, &session, &id, &body) != 3 || !body) return;
     const char *checksum = strstr(text + body, " *");
     fprintf(receipt, "%.*s\n", checksum ? (int)(checksum - text - body) : (int)strlen(text + body), text + body);
-    static const char *const asks[] = {"DIAG", "STATUS", "FRAME"};
+    static const char *const asks[] = {"DIAG", "STATUS", "FRAME", "WAKE"};
     if (dev_step == 0 && strncmp(text + body, "HELLO ", 6) == 0) {
         dev_boot = boot;
         dev_session = session;
@@ -252,7 +252,7 @@ static void reply(const char *text) {
     if (strncmp(text + body, "FRAME ", 6) == 0)
         shown = strstr(text + body, "orientation=landscape-ccw ") ? LANDSCAPE_CCW
                   : strstr(text + body, "orientation=landscape-cw ") ? LANDSCAPE_CW : PORTRAIT;
-    if (dev_step < 3) {
+    if (dev_step < (preview_conf_long("wake.timing", 0) ? 4 : 3)) {
         char next[96];
         snprintf(next, sizeof next, "N1 %lu %lu %d %s", dev_boot, dev_session, dev_step + 1, asks[dev_step]);
         ask(next);
@@ -360,7 +360,7 @@ void nb_delay_ms(uint32_t ms) {
     }
     if (!connected) { observe(); return; }
     /* Two settle windows without every reply: the bridge is not answering. */
-    if (dev_step == 4 || nb_millis() - observed_at > 2 * SETTLE_MS) {
+    if (dev_step == (preview_conf_long("wake.timing", 0) ? 5 : 4) || nb_millis() - observed_at > 2 * SETTLE_MS) {
         fclose(receipt);
         preview_finish(0, "idle");
     }

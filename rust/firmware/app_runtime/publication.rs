@@ -68,7 +68,10 @@ impl Published<'_, '_> {
         let clock = home.bus.board.monotonic_clock();
         let mut channel = home.bus.log.dev_channel(clock);
         let mut publication = crate::app_dev::Publication { status, frame: facts.frame(self.facts.screen, logical), queue: events.queue,
-            panels: self.panels, diagnostics, put };
+            panels: self.panels, diagnostics, put,
+            #[cfg(feature = "wake-timing")]
+            wake: home.bus.board.wake_timeline(),
+        };
         crate::app_dev::poll(self.bridge, &mut channel, &mut publication, crate::app_dev::BUILD_ID,
             update_confirm::image_confirmed(self.facts.first_screen));
         if let Put::Granted(session) = publication.put {

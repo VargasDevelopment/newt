@@ -42,6 +42,8 @@ default = ["rust-app", "dev-usb"]
 rust-app = ["newt-c3-board/rust-app"]
 # The first bench image is reading-only by owner decision.
 wifi-update = []
+# Diagnostic candidate only; never part of the default/published feature set.
+wake-timing = ["dev-usb", "newt-c3-board/wake-timing", "newt-core/wake-timing"]
 dev-usb = ["newt-device-ui/dev-usb", "newt-core/dev-usb", "newt-native-storage/dev-usb", "newt-phased-reader/dev-usb"]
 # Owner-excluded from the bench image; proof follows its first image check.
 embedded-sample = ["newt-c3-board/embedded-sample", "newt-reader-ui/embedded-sample"]

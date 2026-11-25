@@ -3,6 +3,7 @@ import configparser
 import hashlib
 from contextlib import nullcontext, redirect_stderr
 import io
+import json
 import importlib.util
 import os
 from pathlib import Path
@@ -233,6 +234,23 @@ class DailyConfiguration(unittest.TestCase):
             self.write(daily_firmware.generated_configuration(self.root, identifier, '2026-11-16'))
             daily_firmware.require_generated_configuration(self.root, self.output)
 
+    def test_wake_timing_is_explicit_and_cannot_be_a_publication_image(self):
+        self.assertNotIn('wake-timing', daily_firmware.FEATURES)
+        config = daily_firmware.generated_configuration(self.root, 'a' * 12, '2026-11-16')
+        self.assertNotIn('NEWT_WAKE_TIMING', config['env:newt_x3']['build_flags'])
+        config = daily_firmware.generated_configuration(self.root, 'a' * 12, '2026-11-16', wake_timing=True)
+        self.write(config)
+        daily_firmware.require_generated_configuration(self.root, self.output)
+        with self.assertRaises(ValueError):
+            daily_firmware.require_daily_image({'image': daily_firmware.IMAGE,
+                'features': [*daily_firmware.FEATURES, 'wake-timing']})
+        for flag in ('-DNEWT_WAKE_TIMING=0', '-DNEWT_WAKE_TIMING=1 -DNEWT_WAKE_TIMING=1'):
+            bad = daily_firmware.generated_configuration(self.root, 'a' * 12, '2026-11-16')
+            bad['env:newt_x3']['build_flags'] += '\n' + flag
+            self.write(bad)
+            with self.assertRaises(ValueError):
+                daily_firmware.require_generated_configuration(self.root, self.output)
+
     def test_extra_flags_scripts_dependencies_or_paths_are_rejected(self):
         for section, key, value in (
                 ('env:newt_x3', 'extra_scripts', 'post:unreviewed.py'),
@@ -258,6 +276,32 @@ class DailyConfiguration(unittest.TestCase):
         self.bundle.write_bytes(b'changed bundle')
         with self.assertRaisesRegex(ValueError, 'certificate bundle changed'):
             daily_firmware.generated_configuration(self.root, 'a' * 12, '2026-11-16')
+
+
+class DiagnosticMeasurement(unittest.TestCase):
+    def test_same_overage_fails_product_but_diagnostics_only_measure(self):
+        spec = importlib.util.spec_from_file_location('wake_build_driver', ROOT/'tools/firmware-build.py')
+        driver = importlib.util.module_from_spec(spec); spec.loader.exec_module(driver)
+        report = {'ram_bytes': 124192, 'flash_bytes': 3990400}
+        errors = ['regional-dev-usb ram_bytes: 124192 exceeds reviewed ceiling 124096',
+                  'regional-dev-usb flash_bytes: 3990400 exceeds reviewed ceiling 3988384']
+        def exercise(writer):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory); receipt = root/'report.json'
+                with patch.object(driver, 'ROOT', root), \
+                     patch('code_health_resources.check_resources', return_value=errors) as compare:
+                    with self.assertRaisesRegex(RuntimeError, 'Resource ratchet failed'):
+                        writer(receipt, report, {}, 'regional-dev-usb', diagnostic=False)
+                    compare.assert_called_once_with(root, {}, 'regional-dev-usb')
+                    compare.reset_mock()
+                    writer(receipt, report, {}, 'regional-dev-usb', diagnostic=True)
+                    compare.assert_not_called()
+                    self.assertEqual(json.loads(receipt.read_text()), report)
+        exercise(driver.write_resource_report)
+        def bypass(*args, **kwargs):
+            kwargs['diagnostic'] = True
+            return driver.write_resource_report(*args, **kwargs)
+        with self.assertRaises(AssertionError): exercise(bypass)
 
 
 class PinnedHarness(unittest.TestCase):

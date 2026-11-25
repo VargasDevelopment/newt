@@ -93,34 +93,39 @@ def download(text: str) -> str:
     return relocate(text)
 
 
-def build(edits=None) -> Path:
+def build(edits=None, *, wake_timing=False) -> Path:
     """The firmware host binary. With `edits` ([(firmware file under
     rust/firmware, exact old text, new text)]), a control relinked from the
     last build's generated copy; each old text must occur exactly once."""
     if edits:
-        return control(edits)
-    WORK.mkdir(parents=True, exist_ok=True)
+        return control(edits, work=WORK / 'wake-timing' if wake_timing else None)
+    # Diagnostic previews cannot replace the root/recipe used by other suites.
+    work = WORK / 'wake-timing' if wake_timing else WORK
+    firmware = work / 'firmware' if wake_timing else FIRMWARE
+    link = work / 'link.json' if wake_timing else LINK
+    binary = work / 'newt-preview' if wake_timing else BINARY
+    work.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
-    run = host_build.logged_runner(WORK, env, timeout=900)
-    build = host_build.Build(WORK, ROOT, run)
+    run = host_build.logged_runner(work, env, timeout=900)
+    build = host_build.Build(work, ROOT, run)
     env.update(build.environment(env, 'host-preview'))
-    build.dependencies(DEPENDENCY_FEATURES)
+    build.dependencies((*DEPENDENCY_FEATURES, *(('newt-c3-board/wake-timing',) if wake_timing else ())))
     build.parser_objects(PREVIEW / 'fakes/board.c')
     build.generate_sources()
     build.wire_sources()
-    (WORK / 'download.c').write_text(download((host_build.SALAMANDER / 'native_io/native/download.c').read_text()))
+    (work / 'download.c').write_text(download((host_build.SALAMANDER / 'native_io/native/download.c').read_text()))
     # The entry, fixture, radio, HTTPS and partition fakes sit beside board.c and ports.c.
     others = [(path.stem, path) for path in sorted((PREVIEW / 'fakes').glob('*.c'))
               if path.name not in ('board.c', 'ports.c')]
     build.posix_objects(build.native_io(native_io), PREVIEW / 'fakes/ports.c',
-                        extra=[('download', WORK / 'download.c'), *others])
-    build.root(None, features=FEATURES)
-    build.link(FIRMWARE)
+                        extra=[('download', work / 'download.c'), *others])
+    build.root(None, features=FEATURES + (('wake-timing',) if wake_timing else ()))
+    build.link(firmware)
     # Controls in later processes relink with this exact command and root.
-    LINK.write_text(json.dumps({'command': list(map(str, build.command)), 'environment': {
+    link.write_text(json.dumps({'command': list(map(str, build.command)), 'environment': {
         key: env[key] for key in ('RUSTC', 'CARGO_HOME', 'NEWT_DEV_BUILD_ID', 'NEWT_DEV_BUILD_DATE')}}, indent=1) + '\n')
-    cli(FIRMWARE, BINARY)
-    return FIRMWARE
+    cli(firmware, binary)
+    return firmware
 
 
 def cli(firmware: Path, path: Path | None = None) -> Path:
@@ -167,15 +172,16 @@ def _control_command(command, optimize):
         '-Cdebug-assertions=no', '-Coverflow-checks=no']
 
 
-def control(edits, *, optimize: bool = True) -> Path:
+def control(edits, *, optimize: bool = True, work: Path | None = None) -> Path:
     """Relink the last build over a private copy of its generated sources, so
     parallel controls never see each other's edits. Timing-independent suites
     may skip root optimization; the positive preview stays optimized."""
-    link = json.loads(LINK.read_text())
+    control_work = WORK if work is None else Path(work)
+    link = json.loads((LINK if work is None else control_work / 'link.json').read_text())
     command = _control_command(link['command'], optimize)
-    source = WORK / 'source'
+    source = control_work / 'source'
     key = '%08x' % zlib.crc32(json.dumps((edits, optimize)).encode())
-    out = WORK / 'controls' / key
+    out = control_work / 'controls' / key
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
     copies = out / 'source'
@@ -199,7 +205,7 @@ def control(edits, *, optimize: bool = True) -> Path:
             raise ValueError(f'{name}: the control text must occur exactly once')
         path.write_text(text.replace(old, new))
     host = out / 'host.rs'
-    host.write_text(rewire((WORK / 'host.rs').read_text()))
+    host.write_text(rewire((control_work / 'host.rs').read_text()))
     env = {**os.environ, **link['environment']}
     program = out / 'firmware'
     subprocess.run([*command, host, '-o', program], cwd=ROOT, env=env, check=True,

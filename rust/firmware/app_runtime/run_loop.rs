@@ -49,12 +49,21 @@ pub fn run<'sdk>(mut board: Board<'sdk>, pending: PendingInput<'sdk>, start: Inp
         Ok(ui) => ui,
         Err(_) => stop(&mut log, Some((&mut board, logical)), "hardware unavailable"),
     };
+    #[cfg(feature = "wake-timing")]
+    board.wake_stamp(newt_core::wake_timing::Stage::Application);
     let mut home = HomeRuntime::restore_durable(BoardBus { board, log }, nvs, FirmwareCard);
+    #[cfg(feature = "wake-timing")]
+    home.bus.board.wake_stamp(newt_core::wake_timing::Stage::HomeRestore);
     crate::reader_image::with_runtime(title, home_data, picture, |reader| {
         // Reader restore cannot depend on an input queue/task that does not
         // exist yet. Both one-shot magics are consumed once after arbitration.
         let trace = crate::reader_action::Trace::borrow(&action, home.bus.board.monotonic_clock());
         let restored = reader.boot(&mut home, &mut ui, &boot, logical, trace);
+        #[cfg(feature = "wake-timing")]
+        {
+            home.bus.board.wake_stamp(newt_core::wake_timing::Stage::ReaderRestore);
+            home.bus.board.wake_timeline().restored(ui.app.screen as u8, restored);
+        }
         if home.consume_retained_boot().is_err() {
             stop(&mut home.bus.log, Some((&mut home.bus.board, logical)), RETAINED);
         }
@@ -78,6 +87,8 @@ fn after_input<'sdk>(home: &mut Home<'sdk>, ui: &mut Application<'sdk>, reader: 
     ui.read_info(home, events.action)?;
     home.begin_clock();
     ui.begin_press(reader);
+    #[cfg(feature = "wake-timing")]
+    home.bus.board.wake_stamp(newt_core::wake_timing::Stage::InputReady);
     if restored {
         events.action.begin();
         reader.open_boot(home, ui, logical, events);

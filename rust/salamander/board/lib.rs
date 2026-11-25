@@ -146,22 +146,26 @@ unsafe extern "C" {
     fn nb_restart();
 }
 
-/// Read-only SDK-global scalar timer, independent of Board's UI resource loan.
-/// The acquisition contract keeps esp_timer initialized for program lifetime.
-/// No retained Board borrow, input/bus authority, allocation or resident buffer.
+#[cfg(feature = "wake-timing")]
+pub mod wake_timing;
+
+/// Read-only SDK timer, without a Board/input/bus loan or allocation.
+/// The SDK timer is live from SDK startup, before Rust entry, for program lifetime.
 #[derive(Clone, Copy)]
 pub struct MonotonicClock {
     _local: PhantomData<*mut ()>,
 }
 impl MonotonicClock {
+    #[cfg(feature = "wake-timing")]
+    pub fn wake_stamp(self, stage: newt_core::wake_timing::Stage) { wake_timing::TIMELINE.stamp(stage, self.micros()); }
     pub fn micros(self) -> u32 {
-        // SAFETY: acquisition initialized the same program-lifetime SDK timer.
+        // SAFETY: SDK startup initialized the program-lifetime timer before Rust entry.
         unsafe { nb_micros() }
     }
 
     pub fn millis(self) -> u32 {
-        // SAFETY: successful Board startup established the program-lifetime
-        // esp_timer contract. The fixed Arduino bridge only reads that timer.
+        // SAFETY: SDK startup initialized the program-lifetime esp_timer.
+        // The fixed Arduino bridge only reads that timer.
         unsafe { nb_millis() }
     }
 }
@@ -189,6 +193,11 @@ impl<'a> Board<'a> {
             _exclusive: PhantomData,
         })
     }
+    #[cfg(feature = "wake-timing")]
+    pub fn wake_timeline(&self) -> &newt_core::wake_timing::Timeline { &wake_timing::TIMELINE }
+    #[cfg(feature = "wake-timing")]
+    pub fn wake_stamp(&self, stage: newt_core::wake_timing::Stage) { self.monotonic_clock().wake_stamp(stage); }
+
     /// Whether this owner registered the card VFS. This is not evidence that
     /// the card remains present or that any write reached durable storage.
     pub fn sd_mounted(&self) -> bool {
@@ -291,8 +300,13 @@ impl<'a> Board<'a> {
         if !self.display_ready {
             return Err(Error::NotBegun);
         }
+        #[cfg(feature = "wake-timing")]
+        wake_timing::TIMELINE.display_start(self.monotonic_clock().micros(), mode as u32);
         // SAFETY: &mut self excludes live frame loans; SDK call is blocking.
-        status(unsafe { nb_update(self.display.as_ptr(), mode as u32, u32::from(turn_off)) })
+        let result = status(unsafe { nb_update(self.display.as_ptr(), mode as u32, u32::from(turn_off)) });
+        #[cfg(feature = "wake-timing")]
+        wake_timing::TIMELINE.display_return(self.monotonic_clock().micros());
+        result
     }
     pub fn panel_sleep(&mut self) -> Result<(), Error> {
         if !self.display_ready {

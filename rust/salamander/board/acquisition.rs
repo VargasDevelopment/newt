@@ -21,7 +21,11 @@ impl<'a> Board<'a> {
         board.select_x3()?;
         board.release_sd_rail();
         let probe = board.probe_panel()?;
+        #[cfg(feature = "wake-timing")]
+        board.wake_stamp(newt_core::wake_timing::Stage::Probe);
         board.begin_display()?;
+        #[cfg(feature = "wake-timing")]
+        board.wake_stamp(newt_core::wake_timing::Stage::DisplayReady);
         Ok((board, PendingInput::from_exclusive(input), probe))
     }
 

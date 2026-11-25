@@ -133,17 +133,28 @@ def prepare_daily_lane(environment: dict[str, str]) -> None:
                        cwd=ROOT, env=environment, check=True)
 
 
+def write_resource_report(receipt, report, baseline, variant, *, diagnostic):
+    """Diagnostics measure only; product builds keep the existing ratchet."""
+    from code_health_resources import check_resources
+    write_text(ROOT, receipt, json.dumps(report, indent=2, sort_keys=True) + "\n")
+    if not diagnostic:
+        failures = check_resources(ROOT, baseline, variant)
+        if failures:
+            raise RuntimeError("Resource ratchet failed:\n" + "\n".join(failures))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--clean", action="store_true", help="clean build outputs before compiling")
     parser.add_argument("--check-config", action="store_true", help="read-only approved configuration preflight; no toolchain required")
     parser.add_argument("--health-report", action="store_true", help="verify the RAM/flash/stack ceilings and write a source-bound receipt; requires --clean")
+    parser.add_argument("--wake-timing", action="store_true", help="opt-in wake timeline diagnostic candidate; never a publication image")
     parser.add_argument("--dev-usb", "--regional-home", dest="retired", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.retired:
         parser.error("there is one firmware build (regional DEV); drop --dev-usb and --regional-home")
     if args.check_config:
-        if args.clean or args.health_report:
+        if args.clean or args.health_report or args.wake_timing:
             parser.error("--check-config checks only the authored configuration")
         require_configuration(ROOT)
         print("PASS: pinned full Rust daily dependency and build configuration")
@@ -164,7 +175,8 @@ def main() -> None:
     identifier = checkpoint + ("-dirty" if dirty else "")
     # About shows the captured revision's commit date, never the compile clock.
     date = git_output(ROOT, "show", "-s", "--format=%cs", release_source["git_revision"])
-    config = generated_configuration(ROOT, identifier, date)
+    features = FEATURES + (('wake-timing',) if args.wake_timing else ())
+    config = generated_configuration(ROOT, identifier, date, wake_timing=args.wake_timing)
     effective_config = generated_config_destination()
     stream = io.StringIO()
     config.write(stream)
@@ -174,7 +186,7 @@ def main() -> None:
     if args.health_report:
         receipt = owned_file(ROOT, ROOT / f"artifacts/code-health-{variant}.json", create_parents=True)
         from code_health import base_failures, read_baseline
-        from code_health_resources import build_identity, build_report, check_resources
+        from code_health_resources import build_identity, build_report
         baseline = read_baseline(ROOT)
         moved = base_failures(ROOT, baseline)
         if moved:
@@ -202,28 +214,26 @@ def main() -> None:
             'NEWT_DEV_BUILD_ID': identifier,
             'NEWT_DEV_BUILD_DATE': date})
         build_archive(ROOT, rust_tools, rust_env, clean=args.clean,
-                      package='newt-app-image', features=','.join(FEATURES))
+                      package='newt-app-image', features=','.join(features))
         subprocess.run(command, cwd=ROOT, env=env, check=True)
         subprocess.run(nvs_guard, cwd=ROOT, env=env, check=True)
         subprocess.run(wifi_link, cwd=ROOT, env=env, check=True)
         subprocess.run(next_boot, cwd=ROOT, env=env, check=True)
         if args.health_report:
             report = build_report(ROOT, variant, effective_config, started_ns, expected_identity)
-            write_text(ROOT, receipt, json.dumps(report, indent=2, sort_keys=True) + "\n")
-            failures = check_resources(ROOT, baseline, variant)
+            write_resource_report(receipt, report, baseline, variant, diagnostic=args.wake_timing)
     if args.health_report:
-        if failures:
-            raise RuntimeError("Resource ratchet failed:\n" + "\n".join(failures))
         if source_identity(ROOT) != release_source:
             raise RuntimeError("Release source identity changed during compilation")
         image = OUTPUT + "/build/newt_x3/firmware.bin"
         release_receipt = {**release_source, "variant": variant, "build_id": identifier,
-                           'image': IMAGE, 'features': list(FEATURES),
+                           'image': IMAGE, 'features': list(features),
                            "binary_sha256": report["artifacts"][image],
                            "resource_identity": report["identity"]}
         write_text(ROOT, ROOT / f"artifacts/firmware-identity-{variant}.json",
                    json.dumps(release_receipt, indent=2, sort_keys=True) + "\n")
-        print(f"PASS: {variant} RAM/flash/selected static-stack ceilings; {receipt.relative_to(ROOT)}")
+        label = "MEASURED: unpublished wake-timing candidate" if args.wake_timing else f"PASS: {variant} RAM/flash/selected static-stack ceilings"
+        print(f"{label}; {receipt.relative_to(ROOT)}")
 
 
 if __name__ == "__main__":
