@@ -27,15 +27,21 @@ from installer_test import OUTPUT as VECTORS
 IDENTITY = 'core/src/slot_installer/identity.rs'
 INSTALLER = 'core/src/slot_installer.rs'
 CARD = 'core/src/update_card.rs'
+SEMVER = 'core/src/update_manifest/semver.rs'
+FIXED_NIGHTLY = 'if numeric(rest) && rest.len() == 10 { return true; }'
 IMAGE, INSTALL, HEADS, SELECTIONS = ('image_check_matches_every_vector', 'card_install_accepts_only_intact_images',
                                      'slot_names_match_every_head', 'boot_and_switch_records_match_every_selection')
 WRITE = 'card_install_writes_only_the_image'
 RETURN = 'official_return::only_a_confirmed_matching_return_can_erase'
+RETURN_OFFER = 'official_return::online_tests::latest_feed_only_issues_an_older_return_after_verified_staging'
+UPDATE_HINT = 'update::paint::tests::older_offer_hint_recognizes_new_and_legacy_nightlies'
 TESTS = 6
 # (what breaks, file under rust/, its text, the broken text, the test that must fail, the vector it fails on)
 CONTROLS = (
     ('an older hand-copied pair bypasses the return authorization', INSTALLER,
      'if order < 0 {', 'if order < 0 && false {', RETURN, 'official return'),
+    ('a fixed-width nightly is not recognized for official return', SEMVER,
+     FIXED_NIGHTLY, '', RETURN, 'official return'),
     ('the image magic is not checked', IDENTITY, "header[0] != 0xe9 || ", "", IMAGE, 'magic'),
     ('the chip id is not checked', IDENTITY, " || chip != 5", "", IMAGE, 'chip'),
     ('a segment may end past the slot', IDENTITY, "at + u64::from(length) > u64::from(slot_bytes) || ", "",
@@ -86,10 +92,45 @@ def flatten(vectors):
     # Synthetic intact images exercise the real installer, not just SemVer.
     sys.path.insert(0, str(ROOT / 'rust/host/preview'))
     from update_fixtures import newt_image, manifest
-    for version in ('0.5.1-dev.20261125.1', '0.5.0', '0.5.0+changed'):
+    for version in ('0.5.1-dev.2611251500', '0.5.1-dev.20261125.1', '0.5.0', '0.5.0+changed'):
         image = newt_image(version)
         rows.append(('official', version, image.hex(), manifest(version, image).hex()))
     return ''.join('\t'.join(map(str, row)) + '\n' for row in rows)
+
+
+def lib_test_binary(run, workspace, target, package):
+    """Compiles a crate's unit tests; a compiler error is a failure, never a control's kill."""
+    wire = run.cargo(workspace, target, 'test', '-p', package, '--lib', '--no-run', '--message-format=json')
+    outputs = [row['executable'] for row in map(json.loads, wire.splitlines())
+               if row.get('reason') == 'compiler-artifact' and row.get('executable')
+               and row['target']['name'] == package.replace('-', '_')]
+    if len(outputs) != 1:
+        raise RuntimeError(f'one compiled {package} unit test executable required')
+    return outputs[0]
+
+
+def nightly_format_controls(run, workspace, target, support):
+    """Removing the fixed-width dev.<10> form from semver2_is_nightly must break both the official-return
+    Check offer and the Update page's nightly hint."""
+    path = workspace / SEMVER
+    text = path.read_text()
+    support.require(text.count(FIXED_NIGHTLY) == 1, f'nightly control anchor is not in rust/{SEMVER} exactly once')
+    path.write_text(text.replace(FIXED_NIGHTLY, ''))
+    try:
+        for package, test in (('newt-core', RETURN_OFFER), ('newt-device-ui', UPDATE_HINT)):
+            binary = lib_test_binary(run, workspace, target, package)
+            number = len(run.commands)
+            try:
+                run.run([binary, test, '--exact'], workspace)
+            except RuntimeError:
+                stdout = (run.output / f'{number:03d}.stdout').read_text()
+                support.require('test result: FAILED.' in stdout,
+                                f'nightly control: {package}::{test} must fail at runtime')
+            else:
+                raise RuntimeError(f'nightly control: {package}::{test} passed without dev.<10>')
+            print(f'PASS control: {package}::{test} fails when fixed-width dev.<10> is removed', flush=True)
+    finally:
+        path.write_text(text)
 
 
 def test_binary(run, workspace, target):
@@ -146,12 +187,17 @@ def main():
             result = run.run([test_binary(run, workspace, target)], workspace)
             support.require(f'test result: ok. {TESTS} passed; 0 failed; 0 ignored' in result,
                             f'all {TESTS} slot vector tests ran and passed')
+            for package, test in (('newt-core', RETURN_OFFER), ('newt-device-ui', UPDATE_HINT)):
+                out = run.run([lib_test_binary(run, workspace, target, package), test, '--exact'], workspace)
+                support.require('test result: ok. 1 passed; 0 failed; 0 ignored' in out,
+                                f'{package}::{test} ran and passed')
             print(f'PASS Rust slot rules match {VECTORS.relative_to(ROOT)}', flush=True)
             if negative_controls(__file__):
                 # A broken rule can leave a value unused; only the test may kill it.
                 run.env['RUSTFLAGS'] = '-Ccodegen-units=1'
                 for row in CONTROLS:
                     control(run, workspace, target, support, *row)
+                nightly_format_controls(run, workspace, target, support)
         except RuntimeError:
             for log in sorted((output / 'logs').glob('*.std*'))[-2:]:
                 print(log.read_text(), file=sys.stderr, end='')

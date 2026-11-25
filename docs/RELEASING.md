@@ -499,17 +499,22 @@ one at a time (`concurrency` with `queue: max`, so a later-queued run never
 replaces a pending one). A run whose commit is no longer `main`'s tip builds
 and publishes nothing; the newer commit's own run does.
 
-**Version.** `<next>-dev.YYYYMMDD.N`. `<next>` is the patch after the core
-of the version `main` declares (`0.2.0` gives `0.2.1`, and `0.2.1-rc.1` gives
-`0.2.2`). `YYYYMMDD` is the UTC day, and `N` follows every nightly tag of
-`<next>` that day, published or not, from 1: `0.2.1-dev.20261122.1`. A draft
-release's tag counts too. A run that stops because `main` moved on keeps its
-draft but never pushes its tag, so the next run skips that number instead of
-meeting the old draft. The Lead may delete such a draft by hand; it is never
-public.
+**Version.** `<next>-dev.YYMMDDHHMM`. `<next>` is the patch after the core
+of the version `main` declares (`0.5.0` gives `0.5.1`, and `0.5.1-rc.1` gives
+`0.5.2`). `YYMMDDHHMM` is a fixed-width 10-digit UTC timestamp, such as
+`0.5.1-dev.2611251500`, so GitHub's descending text order for
+`/releases?per_page=1` matches SemVer order and ranks above historical
+`<next>-dev.YYYYMMDD.N` tags. Existing tags and draft releases' tags count as
+taken (a run that stops because `main` moved on keeps its private draft, which
+the Lead may delete by hand): a tag is never reused, and a stamp behind an
+existing one is refused. If two runs land in the same UTC minute, `stamp`
+waits once until the next minute, rechecks `main`'s tip, tags and drafts, and
+refuses if the new minute is still taken.
 Devices hold at most 23 characters of a version (the image's identity block,
 the manifest and the seen-build record), so the stamp and the publish refuse a
 longer one; the job fails rather than cut it.
+A future two-digit patch number (`v0.5.10` vs `v0.5.9`) still carries the same
+GitHub text-order hazard in the core version.
 
 **How.** `tools/nightly.py stamp` writes the nightly version into `.cz.toml`
 and `firmware_version.h` and commits only that change on top of `main`'s tip,
@@ -548,7 +553,7 @@ tooling and `cz bump` ignore nightly tags. CI keeps every nightly; nothing
 deletes one. A run that stops before its tag push leaves at most a private
 draft. If the publish fails after the tag was pushed, the tag stays without a
 release; rerun the workflow (or the next push that changes the image), which
-builds the next number.
+builds the next minute's stamp.
 
 ## Install page
 

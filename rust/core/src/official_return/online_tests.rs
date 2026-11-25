@@ -41,6 +41,9 @@ impl CardDownload for Card {
 #[test]
 fn latest_feed_only_issues_an_older_return_after_verified_staging() {
     for (running, candidate, channel, saved, expected, granted) in [
+        (c"0.5.1-dev.2611251500", "0.5.0", TestBuilds::Off, true, OnlineCheck::Ready, true),
+        (c"0.5.1-dev.2611251500", "0.5.0", TestBuilds::Off, false, OnlineCheck::CheckAgain, true),
+        (c"0.5.1-dev.2611251500", "0.5.0", TestBuilds::On, true, OnlineCheck::Latest, false),
         (c"0.5.1-dev.20261125.1", "0.5.0", TestBuilds::Off, true, OnlineCheck::Ready, true),
         (c"0.5.1-dev.20261125.1", "0.5.0", TestBuilds::Off, false, OnlineCheck::CheckAgain, true),
         (c"0.5.1-dev.20261125.1", "0.5.0", TestBuilds::On, true, OnlineCheck::Latest, false),

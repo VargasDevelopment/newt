@@ -35,7 +35,7 @@ import update_publish
 
 TAG = 'v' + VERSION
 # A nightly: CI's stamp REVISION of the main commit MAIN, whose own release is 0.2.0.
-MAIN, NIGHTLY = 'e' * 40, '0.2.1-dev.20261122.1'
+MAIN, NIGHTLY = 'e' * 40, '0.2.1-dev.2611222359'
 HEADER = '''inline constexpr WhatsNewUpdate kWhatsNew[] = {
     {"Oct 30, 2026",
      {"Updates arrive over \\"Wi-Fi\\".",
@@ -378,11 +378,15 @@ class ReleasePublishTests(unittest.TestCase):
         release, _ = self.nightly(git=stamped_git(stamps={}))
         self.assertIn("is not a nightly stamp of a commit on origin/main's first-parent history", release.refusals[0])
         self.assertNotIn('## Test build', release.notes)
-        # A nightly version stamped by hand on a main commit is no stamp either.
+        # A nightly version stamped by hand on a main commit is no stamp either, and legacy .N is not publishable.
         self.assertTrue(self.nightly(git=stamped_git(stamps={}, mainline={MAIN, REVISION}))[0].refusals)
+        legacy = '0.2.1-dev.20261122.1'
+        self.refused('only a nightly, is a pre-release', image=newt_image(legacy),
+                     git=stamped_git(tags={'v' + legacy: REVISION}, versions={REVISION: legacy, MAIN: '0.2.0'}),
+                     github=FakeGitHub(), bench_receipt=None, prerelease=True, firmware_version=legacy)
 
     def test_refuses_a_version_longer_than_devices_hold(self):
-        version = '10.10.11-dev.20261122.10'  # 24 characters: devices hold 23
+        version = '100.10.11-dev.2611222359'  # 24 characters: devices hold 23
         with self.assertRaisesRegex(ValueError, 'longer than 23 characters'):
             self.plan(newt_image(version), stamped_git(), FakeGitHub(),
                       bench_receipt=None, prerelease=True, firmware_version=version)

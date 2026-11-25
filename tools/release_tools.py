@@ -26,9 +26,14 @@ FILE_MODES = ("100644", "100755")
 # The supported firmware release vocabulary; SemVer build metadata stays in receipts.
 CORE = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
 SEMVER = CORE + r"(?:-(?:alpha|beta|rc)\.(?:0|[1-9][0-9]*))?"
-# A nightly test build (tools/nightly.py): <next>-dev.YYYYMMDD.N. CI stamps it on
-# its own commit off main, so no branch ever carries it.
-NIGHTLY = CORE + r"-dev\.[0-9]{8}\.[1-9][0-9]*"
+# A nightly test build (tools/nightly.py): <next>-dev.YYMMDDHHMM (UTC, 2021..2099).
+# CI stamps it on its own commit off main, so no branch ever carries it.
+NIGHTLY_STAMP = r"(?:2[1-9]|[3-9][0-9])(?:0[1-9]|1[0-2])(?:0[1-9]|[12][0-9]|3[01])(?:[01][0-9]|2[0-3])[0-5][0-9]"
+NIGHTLY = CORE + r"-dev\." + NIGHTLY_STAMP
+# Legacy nightlies used <next>-dev.YYYYMMDD.N; kept to read historical tags and
+# refuse nightly versions on branches.
+LEGACY_NIGHTLY = CORE + r"-dev\.[0-9]{8}\.[1-9][0-9]*"
+ANY_NIGHTLY = f"(?:{NIGHTLY}|{LEGACY_NIGHTLY})"
 VERSION_HEADER = "rust/firmware/native/firmware_version.h"
 # Its earlier home: commits before the C++ removal (NEWT-90) bind this path.
 HISTORICAL_VERSION_HEADER = "include/newt/firmware_version.h"
@@ -61,7 +66,7 @@ print(json.dumps({"bump_pattern": factory.committer_factory(config).bump_pattern
 
 def header_version(text):
     versions = re.findall(r'^#define NEWT_FIRMWARE_VERSION "([^"]+)"$', text, re.MULTILINE)
-    if len(versions) != 1 or not (re.fullmatch(SEMVER, versions[0]) or re.fullmatch(NIGHTLY, versions[0])):
+    if len(versions) != 1 or not (re.fullmatch(SEMVER, versions[0]) or re.fullmatch(ANY_NIGHTLY, versions[0])):
         raise ValueError("Invalid or ambiguous firmware SemVer")
     return versions[0]
 
@@ -370,7 +375,7 @@ def gate(root=ROOT, rev_range=None, tags=True, prepare=False):
     whose own commits CI checked when they landed. Release preparation
     (`prepare`, never with a range or without tags) checks from release_start,
     where cz bump reads, and returns that tag."""
-    if re.fullmatch(NIGHTLY, check_version(root)):
+    if re.fullmatch(ANY_NIGHTLY, check_version(root)):
         raise ValueError("A nightly version is CI's stamp on its own commit; never commit it to a branch")
     head = (rev_range or "").rpartition("..")[2] or "HEAD"
     built_on = check_release_tagged(root, head, rev_range is not None) if tags else None
