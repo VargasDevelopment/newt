@@ -18,6 +18,7 @@ fn result_text(issue: InstallIssue, other: bool) -> &'static [u8] {
         InstallIssue::Identity => if other { "Nothing was changed. The file changed after Newt listed it." }
             else { "Nothing was changed. The file is not the version its manifest names." },
         InstallIssue::Older => "Nothing was changed. Use USB to install an older version.",
+        InstallIssue::CheckAgain => "Nothing was changed. Check again for the official release.",
         InstallIssue::Same => "Nothing was changed. This version is already installed.",
         InstallIssue::TargetUnreadable => "Nothing was changed. Newt could not read the other app slot.",
         InstallIssue::Unsettled => "Nothing was installed. Newt could not confirm which app starts next. After a restart, this Newt or the app in the other slot may start.",
@@ -66,6 +67,8 @@ fn online_text<'a>(view: &OnlineStatus<'_>, line: &'a mut [u8; 96]) -> &'a [u8] 
         OnlineCheck::Joining => "Connecting to Wi-Fi…".as_bytes(),
         OnlineCheck::Looking => "Looking for an update on GitHub…".as_bytes(),
         OnlineCheck::Downloading => "Downloading…".as_bytes(),
+        OnlineCheck::CheckAgain => b"Check again. The return to the official release was not confirmed on the card.",
+        OnlineCheck::ReturnIncompatible => b"The official release is too old for saved data. Keep this version.",
         OnlineCheck::Ready => b"Downloaded to the card.",
         OnlineCheck::Latest => {
             let prefix = b"No newer Newt on GitHub. This X3 has ";

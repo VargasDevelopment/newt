@@ -364,7 +364,7 @@ fn card_install_writes_only_the_image() {
     let mut flash = Flash { slots: [old.clone(), old], ota: Otadata([running, ERASED_RECORD]), total: 0 };
     let (mut first, mut buffer) = ([0; SECTOR_BYTES], [0; SECTOR_BYTES]);
     let issue = SlotInstaller::new(&mut flash, &mut source, &mut Sha256::default(), &mut first, &mut buffer)
-        .install(&offer.manifest, None, InstallConsent { confirmed: true, reinstall: false });
+        .install(&offer.manifest, None, InstallConsent { confirmed: true, reinstall: false, ..InstallConsent::default() });
     let mut mismatches = Mismatches::default();
     mismatches.check(&image.name, "install", issue, InstallIssue::None);
     mismatches.check(&image.name, "bytes written", flash.total as usize, length);

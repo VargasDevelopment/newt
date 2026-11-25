@@ -9,8 +9,11 @@ use newt_device_ui::update::CardStep;
 use newt_device_ui::update::CardFailure;
 use newt_native_io::{OsNative, raw_download::{EXISTS_ERRNO, MISSING_ERRNO}};
 
+pub(crate) mod official_return;
+
 pub struct Download<'ui> {
     native: OsNative<'ui>,
+    io: &'ui newt_native_io::UiIo,
     fd: i32,
     written: u32,
     #[cfg(feature = "dev-usb")]
@@ -20,7 +23,7 @@ pub struct Download<'ui> {
 }
 impl<'ui> Download<'ui> {
     pub fn new(io: &'ui newt_native_io::UiIo) -> Self {
-        Self { native: io.port(), fd: -1, written: 0,
+        Self { native: io.port(), io, fd: -1, written: 0,
             #[cfg(feature = "dev-usb")] failure: CardFailure::default(),
             #[cfg(feature = "dev-usb")] slowest_write_ms: 0 }
     }
@@ -67,6 +70,7 @@ impl CardDownload for Download<'_> {
         if let Err(error) = self.native.unlink_raw(NEWT_MANIFEST) {
             if error != MISSING_ERRNO { return self.failed(CardStep::RemoveManifest, error); }
         }
+        if !official_return::Store::new(self.io).remove() { return false; }
         self.written = 0;
         match self.native.open_truncate_raw(NEWT_IMAGE, 0o644) {
             Ok(fd) => { self.fd = fd; fd >= 0 }
@@ -102,6 +106,9 @@ impl CardDownload for Download<'_> {
             return false;
         }
         true
+    }
+    fn finish_return(&mut self, manifest: &[u8], authorization: &newt_core::official_return::ReturnAuthorization) -> bool {
+        self.finish(manifest) && official_return::Store::new(self.io).save(authorization)
     }
     fn abort(&mut self) { self.close_image(); let _ = self.native.unlink_raw(NEWT_IMAGE); }
 }

@@ -24,6 +24,7 @@ pub(super) fn connect_focused<P, S>(view: &UpdateView<'_, P, S>) -> bool {
 }
 fn start_check<P, S>(view: &mut UpdateView<'_, P, S>) -> UpdateIntent {
     if !can_check(view) { return UpdateIntent::None; }
+    view.official_return = ReturnOffer::None;
     view.page = UpdatePage::Online; view.online = OnlineCheck::Joining; view.percent = 0;
     UpdateIntent::Check
 }
@@ -112,7 +113,7 @@ fn dispatch_page<P: Password, S>(view: &mut UpdateView<'_, P, S>, action: Action
             return if action == Action::Sleep { UpdateIntent::Exit } else { UpdateIntent::None };
         }
         UpdatePage::Confirm => {
-            if action == Action::Back { view.page = UpdatePage::List; return UpdateIntent::Repaint; }
+            if action == Action::Back { view.official_return.cancel_confirmation(); view.page = UpdatePage::List; return UpdateIntent::Repaint; }
         }
         UpdatePage::List => {
             if action == Action::Back { return UpdateIntent::Exit; }
@@ -132,6 +133,7 @@ fn dispatch_page<P: Password, S>(view: &mut UpdateView<'_, P, S>, action: Action
         view.page = UpdatePage::Confirm; return UpdateIntent::Repaint;
     }
     if choice == UpdateChoice::None { return UpdateIntent::None; }
+    if view.page == UpdatePage::Confirm { view.official_return.confirm(); }
     view.page = UpdatePage::Installing; view.checking = true; view.percent = 0;
     UpdateIntent::Install
 }
@@ -158,13 +160,18 @@ pub fn update_choice<P, S>(view: &UpdateView<'_, P, S>, index: usize) -> UpdateC
     let Some(offer) = view.offers.get(index).filter(|offer| offer.present && offer.readable) else { return UpdateChoice::None; };
     if firmware(offer) { return UpdateChoice::Confirm; }
     let newer = order(view, offer);
-    if newer < 0 { UpdateChoice::None }
+    if newer < 0 {
+        if view.official_return.authorization().is_some_and(|permission| permission.targets(view.running, &offer.manifest)) {
+            UpdateChoice::Confirm
+        } else { UpdateChoice::None }
+    }
     else if newer == 0 || view.target == SlotImage::Other { UpdateChoice::Confirm } else { UpdateChoice::Install }
 }
 pub fn update_consent<P, S>(view: &UpdateView<'_, P, S>, index: usize) -> Option<InstallConsent> {
     let offer = view.offers.get(index)?;
     Some(InstallConsent { confirmed: view.target == SlotImage::Other || firmware(offer),
-        reinstall: !firmware(offer) && order(view, offer) == 0 })
+        reinstall: !firmware(offer) && order(view, offer) == 0,
+        official_return: match view.official_return { ReturnOffer::Confirmed(value) => Some(value), _ => None } })
 }
 pub fn add_wifi_network<P, S>(view: &mut UpdateView<'_, P, S>, name: Option<&[u8]>, rssi: i32, open: bool) {
     let Some(name) = name.map(crate::cstr).filter(|name| !name.is_empty()) else { return; };

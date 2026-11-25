@@ -78,6 +78,13 @@ impl update_mode::Online for Online {
                 let mut files = UpdateFiles::new(io);
                 let mut scratch = [0; MAX_BYTES + 1];
                 view.offers[0] = update_card::read_newt_offer(&mut files, &mut scratch);
+                view.official_return = if outcome.result == OnlineCheck::CheckAgain {
+                    newt_device_ui::update::ReturnOffer::None
+                } else {
+                    crate::update_download::official_return::Store::new(io)
+                        .restore(&crate::update_runtime::running_identity(view.running), &view.offers[0].manifest, test_builds)
+                        .map(newt_device_ui::update::ReturnOffer::Offered).unwrap_or_default()
+                };
             });
             let floor = network_clock::network_clock_floor(CStr::from_bytes_with_nul(
                 concat!(env!("NEWT_DEV_BUILD_DATE"), "\0").as_bytes()).ok());
@@ -143,11 +150,11 @@ fn fetch(board: &mut Board<'_>, parts: &mut Parts<'_, '_>, page: &mut Page<'_>, 
         let mut card = Download::new(io);
         board.with_image_partitions(false, |slots| slots.with_hash(|slots, hash| {
             let board = slots.board();
-            let running = page.running;
+            let running = crate::update_runtime::running_identity(page.running);
             outcome.result = update_online::fetch_online_update_with_http(http, &mut card, hash, &mut clock,
                 &mut |http, done, total| {
                     if page.progress(board, parts, http, events, done, total).is_err() { crate::app_power::stop(); }
-                }, &mut work.borrow(), test_builds, Some(running), &mut outcome.manifest);
+                }, &mut work.borrow(), test_builds, Some(&running), &mut outcome.manifest);
             http.close();
             #[cfg(feature = "dev-usb")]
             {

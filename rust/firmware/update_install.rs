@@ -58,6 +58,9 @@ impl Installer {
         }
         view.page = UpdatePage::Result; view.checking = false;
         ui.paint(view, Some(logical), radio_on)?;
+        if view.issue == InstallIssue::None {
+            ui.bus.board.with_optional_sd_io(|_, io| { let _ = crate::update_download::official_return::Store::new(io).remove(); });
+        }
         Ok(view.issue)
     }
 }

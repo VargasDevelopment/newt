@@ -50,6 +50,24 @@ impl Default for WifiNetwork {
     fn default() -> Self { Self { name: [0; NAME_BYTES + 1], rssi: 0, open: false } }
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub enum ReturnOffer {
+    #[default] None,
+    Offered(newt_core::official_return::ReturnAuthorization),
+    Confirmed(newt_core::official_return::ConfirmedReturn),
+}
+impl ReturnOffer {
+    pub fn authorization(self) -> Option<newt_core::official_return::ReturnAuthorization> {
+        match self { Self::None => None, Self::Offered(value) => Some(value), Self::Confirmed(value) => Some(value.authorization()) }
+    }
+    fn confirm(&mut self) {
+        if let Self::Offered(value) = *self { *self = Self::Confirmed(value.confirm()); }
+    }
+    fn cancel_confirmation(&mut self) {
+        if let Self::Confirmed(value) = *self { *self = Self::Offered(value.authorization()); }
+    }
+}
+
 /// One actual update-boot owner. P and S are the existing required Secret
 /// capabilities, occupying their original fields, never copied or formatted.
 /// The runtime must construct these owners in its native-wiping scope before
@@ -61,6 +79,7 @@ pub struct UpdateView<'a, P, S> {
     pub focus: u8,
     pub running: &'a CStr,
     pub target: SlotImage,
+    pub official_return: ReturnOffer,
     pub target_name: FirmwareName,
     pub card_ready: bool,
     pub rolled_back: bool,
@@ -95,7 +114,7 @@ impl<'a, P: Password, S: Secret<32>> UpdateView<'a, P, S> {
     /// pages and scalars change in place and the live view is never reassigned.
     pub fn new(running: &'a CStr, empty_password: P, empty_seed: S) -> Self {
         Self { page: UpdatePage::List, offers: [UpdateOffer::default(); OFFERS], more_files: false, focus: 0,
-            running, target: SlotImage::Empty, target_name: FirmwareName::Unknown,
+            running, target: SlotImage::Empty, official_return: ReturnOffer::None, target_name: FirmwareName::Unknown,
             card_ready: false, rolled_back: false, checking: false, percent: 0, issue: InstallIssue::None,
             scan: WifiScan::Scanning, network_count: 0, networks: [WifiNetwork::default(); NETWORK_ROWS],
             network_focus: 0, entropy: WifiEntropy { seed: empty_seed, counter: 0 }, saved: WifiChoice::default(),

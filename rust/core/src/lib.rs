@@ -119,6 +119,7 @@ pub mod reader_scheduler;
 pub mod update_mode_request;
 
 pub mod update_manifest;
+pub mod official_return;
 
 pub mod update_release;
 

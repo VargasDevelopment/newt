@@ -17,6 +17,11 @@ pub fn empty_view(running: &CStr) -> UpdateView<'_> {
     UpdateView::new(running, SecretBytes::empty(), SecretBytes::empty())
 }
 
+pub fn running_identity(running: &CStr) -> newt_core::update_card::slot_installer::identity::NewtAppIdentity {
+    newt_core::update_card::slot_installer::identity::newt_app_identity(running,
+        CStr::from_bytes_with_nul(concat!(env!("NEWT_DEV_BUILD_ID"), "\0").as_bytes()).ok())
+}
+
 /// A Wi-Fi-only boot skips card offers; Quick Start Wi-Fi still reads them.
 pub fn needs_card_offers(request: UpdateModeRequest) -> bool {
     matches!(request, UpdateModeRequest::Update | UpdateModeRequest::QuickStartWifi)
