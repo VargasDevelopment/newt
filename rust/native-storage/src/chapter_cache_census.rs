@@ -15,8 +15,9 @@ impl<S: crate::page_entries::PageEntries> ChapterCacheStorage<'_, S> {
             pinned.map(str::as_bytes), need)
     }
     /// Book indexes: their own folder and quota. `pinned` is the open book's
-    /// index name, which is never evicted. Callers treat any outcome as
-    /// advisory: a failed eviction must not fail the open.
+    /// index file name in that folder (`<key>-<digest>.fibx`), which is never
+    /// evicted. Callers treat any outcome as advisory: a failed eviction must
+    /// not fail the open.
     pub fn index_census(
         &mut self, cancel: &dyn Authority, clock: Option<fn() -> u32>,
         wait: Option<fn()>, pinned: Option<&[u8]>,
