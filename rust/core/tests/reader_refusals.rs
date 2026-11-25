@@ -11,6 +11,8 @@ fn required_book_refusals_keep_runtime_memory_and_existing_codes_distinct() {
         (Status::MetadataTooLarge, ReaderIssue::MetadataTooLarge, "Book metadata is too large. Position kept."),
         (Status::PathTooLong, ReaderIssue::PathTooLong, "An EPUB path is too long. Position kept."),
         (Status::OutOfMemory, ReaderIssue::Memory, "Reader memory is unavailable. Position kept."),
+        // A damaged container or OPF still refuses the book with admission's old copy.
+        (Status::Damaged, ReaderIssue::Unsupported, "This EPUB format or size is not supported."),
     ] {
         assert_eq!(ReaderIssue::for_open_failure(status), issue);
         assert_eq!(issue.text().unwrap().to_str().unwrap(), message);
@@ -20,6 +22,7 @@ fn required_book_refusals_keep_runtime_memory_and_existing_codes_distinct() {
     }
     assert_eq!(Status::MetadataTooLarge as u8, 11);
     assert_eq!(Status::PathTooLong as u8, 12);
+    assert_eq!(Status::Damaged as u8, 13);
     for (code, issue) in [ReaderIssue::None, ReaderIssue::Session, ReaderIssue::Memory,
         ReaderIssue::InvalidCheckpoint, ReaderIssue::InvalidText, ReaderIssue::Io,
         ReaderIssue::NotEpub, ReaderIssue::Encrypted, ReaderIssue::Truncated, ReaderIssue::Unsupported,

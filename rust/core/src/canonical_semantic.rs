@@ -47,6 +47,10 @@ impl<S: BookSource + ?Sized, B: ParserBackend + ?Sized> Book<'_, '_, S, B> {
             if !crate::phased_metadata::admissible_href(href, 512) {
                 return Status::Unsupported;
             }
+            let entry = match self.check(&entry) {
+                Ok(member) => member,
+                Err(e) => return e,
+            };
             let mut handler = SemanticHandler(Default::default());
             let mut chapter = match crate::admission::ChapterSource::open(
                 self.workflow.source,
@@ -62,7 +66,7 @@ impl<S: BookSource + ?Sized, B: ParserBackend + ?Sized> Book<'_, '_, S, B> {
                 Ok(chapter) => chapter,
                 Err(e) => return e,
             };
-            let raw = Entry::raw(entry.uncompressed_size);
+            let raw = Checked::raw(entry.uncompressed_size);
             let mut eof = false;
             let mut status = {
                 let mut stream =

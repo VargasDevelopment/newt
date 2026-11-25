@@ -33,7 +33,7 @@ fn field_helpers_preserve_missing_invalid_and_embedded_nul_values() {
     let spine = [0, 1, 2, 3, u16::MAX];
     let package = PackageResult { spine_count: spine.len(), ..Default::default() };
     let metadata = Metadata { arena: &arena, package: &package, manifest: &manifest,
-        spine: &spine, toc: &toc, entries: &[] };
+        spine: &spine, toc: &toc, entries: &[], directory_offset: 0 };
     let validated = Validated(&metadata);
     for index in 0..=spine.len() {
         assert_eq!(metadata.toc_title(index), validated.toc_title(index));
@@ -83,7 +83,7 @@ fn actual_metadata_matches_validated_accessors_across_shapes_and_failures() {
             let spine: Vec<_> = (0..count as u16).collect();
             let package = PackageResult { spine_count: count, manifest_count: count, ..Default::default() };
             let metadata = Metadata { arena: &arena, package: &package, manifest: &manifest,
-                spine: &spine, toc: &toc, entries: &entries };
+                spine: &spine, toc: &toc, entries: &entries, directory_offset: 0 };
             let validated = Validated(&metadata);
             for selected in [0, 8, 9, count as u32 - 1, count as u32] {
                 let mut actual = Navigation::default();

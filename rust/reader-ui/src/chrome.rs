@@ -22,12 +22,25 @@ pub fn chapter_failure_message(f: &ReaderChapterFailure) -> &'static [u8] {
         return b"This chapter can't be read (invalid text). Your place is kept.";
     }
     match f.status {
-        Status::IoError => b"This chapter can't be read (damaged data). Your place is kept.",
+        Status::IoError | Status::Damaged => {
+            b"This chapter can't be read (damaged data). Your place is kept."
+        }
         Status::Truncated => b"This chapter can't be read (incomplete data). Your place is kept.",
         Status::ParseError => {
             b"This chapter can't be read (malformed content). Your place is kept."
         }
-        _ => b"This chapter can't be read (too large or unsupported). Your place is kept.",
+        Status::Ok
+        | Status::NotZip
+        | Status::NotEpub
+        | Status::Encrypted
+        | Status::Unsupported
+        | Status::OutOfMemory
+        | Status::NotFound
+        | Status::Stale
+        | Status::MetadataTooLarge
+        | Status::PathTooLong => {
+            b"This chapter can't be read (too large or unsupported). Your place is kept."
+        }
     }
 }
 fn field(

@@ -1,8 +1,9 @@
 //! Canonical RV32 inspect/chapter probes use runtime inputs and caller storage.
 //! Full XML admission awaits an actual target ParserBackend.
+use newt_core::member_check::Checked;
 use newt_core::{
     admission,
-    zip_container::{Entry, InflateScratch, Status},
+    zip_container::{InflateScratch, Status},
     zip_window::{arena::Arena, source::BookSource},
 };
 pub struct SliceSource<'a> {
@@ -42,7 +43,7 @@ pub fn inspect(
 pub fn chapter(
     bytes: &[u8],
     max: usize,
-    entry: &Entry,
+    entry: &Checked,
     scratch: Option<InflateScratch<'_>>,
     out: &mut [u8],
 ) -> (Status, i32, bool) {
@@ -71,7 +72,7 @@ pub fn epub_probe_inspect(
 pub fn epub_probe_chapter(
     bytes: &[u8],
     max: usize,
-    entry: &Entry,
+    entry: &Checked,
     scratch: Option<InflateScratch<'_>>,
     out: &mut [u8],
 ) -> (Status, i32, bool) {

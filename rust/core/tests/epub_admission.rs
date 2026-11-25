@@ -1,3 +1,4 @@
+use newt_core::member_check::Checked;
 use newt_core::{
     admission::*,
     zip_container::{Entry, Status},
@@ -76,17 +77,22 @@ fn all_headers_short_read_and_cache_fallback() {
         }
     }
 }
+/// Admission reads central records only, so the central flags decide; the
+/// local header is checked when the member opens (`member_check`).
 #[test]
-fn local_mismatch_precedes_encryption() {
-    assert_eq!(inspected(archive(1, 0), 7, 4096), Status::Unsupported);
+fn central_flags_decide_admission() {
+    assert_eq!(inspected(archive(1, 0), 7, 4096), Status::Encrypted);
     assert_eq!(inspected(archive(1, 1), 7, 4096), Status::Encrypted);
     assert_eq!(inspected(archive(32, 32), 7, 0), Status::Unsupported);
 }
 #[test]
-fn every_member_name_must_match() {
+fn member_name_is_checked_when_it_opens() {
     let mut b = archive(0, 0);
     b[30] = b'y';
-    assert_eq!(inspected(b, 3, 0), Status::Unsupported);
+    assert_eq!(inspected(b.clone(), 3, 0), Status::Ok);
+    let entry = Entry { local_header_offset: 0, ..Entry::default() };
+    let mut source = Source::new(b, 3);
+    assert_eq!(newt_core::member_check::check(&mut source, &entry, b"x", 31), Err(Status::Damaged));
 }
 #[test]
 fn premature_zero_is_scheduled_error() {
@@ -100,6 +106,7 @@ fn premature_zero_is_scheduled_error() {
 fn chapter_sequential_eof_and_failure() {
     let mut s = Source::new(b"abc".to_vec(), 1);
     let e = Entry::raw(3);
+    let e = Checked::unverified(e);
     let mut c = ChapterSource::open(&mut s, &e, None, None, None).unwrap();
     assert_eq!(c.read_at(1, &mut [0]), -1);
     assert_eq!(c.read_at(0, &mut [0; 8]), 1);
@@ -116,7 +123,7 @@ fn required_stream_probe_and_oom() {
     assert_eq!(
         expand(
             &mut s,
-            &Entry::raw(3),
+            &Checked::raw(3),
             0,
             b"x.xml",
             None,
@@ -127,10 +134,11 @@ fn required_stream_probe_and_oom() {
         Status::Ok
     );
     assert_eq!(
-        expand(&mut s, &Entry::raw(3), 0, b"x", None, None, None, None),
+        expand(&mut s, &Checked::raw(3), 0, b"x", None, None, None, None),
         Status::OutOfMemory
     );
     let e = Entry::raw(4);
+    let e = Checked::unverified(e);
     assert_eq!(
         expand(&mut s, &e, 0, b"x", None, Some(&mut chunk), None, None),
         Status::IoError
@@ -190,7 +198,7 @@ fn exact_required_events() {
     assert_eq!(
         expand(
             &mut s,
-            &Entry::raw(2),
+            &Checked::raw(2),
             7,
             b"a.XML",
             None,
@@ -264,6 +272,10 @@ fn canonical_missing_container_and_duplicate_reset_without_xml() {
         let mut backend = RejectXml { created: 0 };
         let mut chunk = [0; 2048];
         let mut xml = [0; 2048];
+        // The duplicate sort borrows the idle inflate dictionary.
+        let mut state = Box::new(newt_core::inflate::State::new(newt_core::inflate::BitBuffer::Bits64));
+        let mut dictionary = [0; 32768];
+        let mut input = [0; 2048];
         let mut r = canonical::Resources {
                 policy: None,
             scan: &mut scan,
@@ -273,7 +285,11 @@ fn canonical_missing_container_and_duplicate_reset_without_xml() {
             spine_hashes: &mut hashes,
             spine: &mut spine,
             backend: &mut backend,
-            decoder: None,
+            decoder: Some(newt_core::zip_container::InflateScratch {
+                state: &mut state,
+                dictionary: &mut dictionary,
+                input: &mut input,
+            }),
             chunk: Some(&mut chunk),
             xml_buffer: Some(&mut xml),
             filter: None,

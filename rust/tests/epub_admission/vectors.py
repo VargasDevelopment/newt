@@ -36,9 +36,10 @@ CASES=[
  {'id':'no-byte-scratch-cache-fallback','members':BASE,'status':'Ok','parse_bytes':0,'domain':'Rust typed scratch supplied; C++ requires separate XML scratch and is not byte-cap equivalent'},
 ]
 # Admission events: InspectBegin/End, CatalogBegin/End, one CompareBegin/End
-# per record, then required members 0,1,3. OPF parses twice. Chapter not expanded.
+# pair for the whole duplicate-name heapsort (its comparison total), then
+# required members 0,1,3. OPF parses twice. Chapter not expanded.
 VALID_REQUIRED=[0,1,3]
-VALID_COMPARE_COUNTS=[0,1,2,3]
+VALID_COMPARE_COUNTS=[10]
 FAILURE_MATRIX={
  'scan_read_failure':'IoError; InspectEnd only, no catalog; both arenas reset',
  'no_entry_slots':'OutOfMemory; CatalogEnd failure; no CompareBegin',

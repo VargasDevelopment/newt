@@ -1,5 +1,6 @@
 //! Strict host-only transport. Heap construction here is not target runtime.
 use newt_core::image_probe::*;
+use newt_core::member_check::Checked;
 use newt_core::{
     inflate::{BitBuffer, State},
     zip_container::{Entry, InflateScratch},
@@ -99,13 +100,13 @@ fn run() -> Result<(), ()> {
             return Err(());
         };
         let data = bytes(data)?.ok_or(())?;
-        let e = Entry {
+        let e = Checked::unverified(Entry {
             method: number(method)?,
             compressed_size: number(comp)?,
             uncompressed_size: number(uncomp)?,
             local_header_offset: number(offset)?,
             ..Entry::default()
-        };
+        });
         let fail = signed(fail)?;
         let ret = i32::try_from(signed(ret)?).map_err(|_| ())?;
         let decode = number::<u8>(decode)?;

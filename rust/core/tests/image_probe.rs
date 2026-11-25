@@ -1,3 +1,4 @@
+use newt_core::member_check::Checked;
 use newt_core::image_probe::{ImageInfo, Kind, probe};
 use newt_core::zip_container::{Entry, Status};
 use newt_core::zip_window::source::BookSource;
@@ -26,7 +27,7 @@ fn output_reset_open_precedence_and_staging_admission() {
     };
     let mut entry = Entry::raw(26);
     assert_eq!(
-        probe(&mut source, &entry, None, &mut staging, &mut out),
+        probe(&mut source, &Checked::unverified(entry), None, &mut staging, &mut out),
         Status::Ok
     );
     assert_eq!(
@@ -40,13 +41,13 @@ fn output_reset_open_precedence_and_staging_admission() {
     );
     entry.method = 8;
     assert_eq!(
-        probe(&mut source, &entry, None, &mut [], &mut out),
+        probe(&mut source, &Checked::unverified(entry), None, &mut [], &mut out),
         Status::Unsupported
     );
     assert_eq!(out, ImageInfo::default());
     entry.method = 0;
     assert_eq!(
-        probe(&mut source, &entry, None, &mut staging[..1023], &mut out),
+        probe(&mut source, &Checked::unverified(entry), None, &mut staging[..1023], &mut out),
         Status::OutOfMemory
     );
     assert_eq!(out, ImageInfo::default());
@@ -60,7 +61,7 @@ fn jpeg_pending_sof_short_length_and_zero_dimensions() {
     assert_eq!(
         probe(
             &mut Source(&data, 1),
-            &Entry::raw(26),
+            &Checked::raw(26),
             None,
             &mut staging,
             &mut out
@@ -84,7 +85,7 @@ fn incomplete_header_fault_is_unknown_ok() {
     assert_eq!(
         probe(
             &mut Source(&[255, 216], 1),
-            &Entry::raw(26),
+            &Checked::raw(26),
             None,
             &mut staging,
             &mut out

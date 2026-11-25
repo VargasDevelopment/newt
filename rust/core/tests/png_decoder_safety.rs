@@ -156,9 +156,9 @@ impl newt_core::zip_window::source::BookSource for Source<'_> {
         n as i32
     }
 }
-struct Lookup(newt_core::zip_container::Entry);
+struct Lookup(newt_core::member_check::Checked);
 impl EntryLookup for Lookup {
-    fn find_entry(&self, href: &[u8]) -> Option<newt_core::zip_container::Entry> {
+    fn find_entry(&self, href: &[u8]) -> Option<newt_core::member_check::Checked> {
         (href == b"image.png").then_some(self.0)
     }
 }
@@ -166,11 +166,11 @@ impl EntryLookup for Lookup {
 fn page_decoder_uses_real_probe_reader_and_png_bytes() {
     use newt_core::{
         page_renderer::{BookStatus, ByteArena, ImageDecoder, PageImage},
-        zip_container::Entry,
+        member_check::Checked,
     };
     let bytes = include_bytes!("../../tests/png_decoder/tests/fixtures/tiny.png");
     let mut source = Source(bytes);
-    let lookup = Lookup(Entry::raw(bytes.len() as u32));
+    let lookup = Lookup(Checked::raw(bytes.len() as u32));
     let mut zip_state = State::new(BitBuffer::Bits32);
     let mut png_state = State::new(BitBuffer::Bits32);
     let mut decoder = Decoder::new();

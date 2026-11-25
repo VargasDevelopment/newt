@@ -1,10 +1,11 @@
 //! CanonicalBook: catalog, encryption, container, OPF. Navigation selection is
 //! returned; admission expands a present selection, never parses optional TOC.
 use crate::admission::{self as admission, Observer, WorkKind};
+use crate::member_check::{self, Checked};
 use crate::package_parsers::{self as package, ManifestItem, PackageResult, Workflow};
 use crate::xml_session::{Attributes, Handler, ParserBackend};
 use crate::zip_container::{Catalog, Entry, InflateScratch, Status, hash_path};
-use crate::zip_window::{arena::Arena, source::BookSource};
+use crate::zip_window::{arena::{Arena, CStringRef}, source::BookSource};
 
 pub struct Resources<'a, B: ParserBackend + ?Sized> {
     pub policy: Option<&'a dyn crate::xml_session::SourcePolicy>,
@@ -47,13 +48,28 @@ pub struct PackageResources<'a, B: ParserBackend + ?Sized> {
 pub struct CatalogView<'a, 'storage> {
     entries: &'a [Entry],
     arena: &'a Arena<'storage>,
+    directory_offset: u32,
 }
 impl<'a, 'storage> CatalogView<'a, 'storage> {
-    pub fn new(entries: &'a [Entry], arena: &'a Arena<'storage>) -> Self {
-        Self { entries, arena }
+    pub fn new(entries: &'a [Entry], arena: &'a Arena<'storage>, directory_offset: u32) -> Self {
+        Self { entries, arena, directory_offset }
+    }
+    /// Check a found entry's local header before anything reads it. `find`
+    /// only answers whether a name exists; reads take a [`Checked`] from here.
+    pub fn check<S: BookSource + ?Sized>(&self, source: &mut S, entry: &Entry) -> Result<Checked, Status> {
+        let name = self.name(entry).ok_or(Status::Damaged)?;
+        member_check::check(source, entry, name, self.directory_offset).map(|(member, _)| member)
+    }
+    /// `find` then `check`: a missing member is `NotFound`.
+    pub fn member<S: BookSource + ?Sized>(&self, source: &mut S, path: &[u8]) -> Result<(usize, Checked), Status> {
+        let (index, entry) = self.find(path).ok_or(Status::NotFound)?;
+        Ok((index, self.check(source, &entry)?))
     }
     pub fn len(&self) -> usize {
         self.entries.len()
+    }
+    pub fn entry(&self, index: usize) -> Option<&'a Entry> {
+        self.entries.get(index)
     }
     pub fn name(&self, entry: &Entry) -> Option<&'a [u8]> {
         self.arena.c_string(entry.name?)
@@ -95,6 +111,7 @@ pub struct BookParts<'a, 'storage, S: BookSource + ?Sized, B: ParserBackend + ?S
     pub spine: &'a mut [u16],
     pub chunk: Option<&'a mut [u8; 2048]>,
     pub result: PackageResult,
+    pub directory_offset: u32,
 }
 pub struct Book<'a, 'storage, S: BookSource + ?Sized, B: ParserBackend + ?Sized> {
     workflow: Workflow<'a, S, B>,
@@ -104,6 +121,7 @@ pub struct Book<'a, 'storage, S: BookSource + ?Sized, B: ParserBackend + ?Sized>
     spine: &'a mut [u16],
     chunk: Option<&'a mut [u8; 2048]>,
     result: PackageResult,
+    directory_offset: u32,
 }
 impl<'a, 'storage, S: BookSource + ?Sized, B: ParserBackend + ?Sized> Book<'a, 'storage, S, B> {
     /// End the Book borrow without losing its concrete metadata or workflow.
@@ -116,6 +134,7 @@ impl<'a, 'storage, S: BookSource + ?Sized, B: ParserBackend + ?Sized> Book<'a, '
             spine: self.spine,
             chunk: self.chunk,
             result: self.result,
+            directory_offset: self.directory_offset,
         }
     }
     pub fn package(&self) -> &PackageResult {
@@ -125,7 +144,12 @@ impl<'a, 'storage, S: BookSource + ?Sized, B: ParserBackend + ?Sized> Book<'a, '
         self.arena
     }
     pub fn catalog(&self) -> CatalogView<'_, '_> {
-        CatalogView::new(self.entries, self.arena)
+        CatalogView::new(self.entries, self.arena, self.directory_offset)
+    }
+    /// [`CatalogView::check`] against this book's own source.
+    pub fn check(&mut self, entry: &Entry) -> Result<Checked, Status> {
+        CatalogView::new(self.entries, self.arena, self.directory_offset)
+            .check(self.workflow.source, entry)
     }
     pub fn manifest_item(&self, index: usize) -> Option<&ManifestItem> {
         self.manifest[..self.result.manifest_count].get(index)
@@ -140,38 +164,44 @@ impl<'a, 'storage, S: BookSource + ?Sized, B: ParserBackend + ?Sized> Book<'a, '
     pub fn navigation_is_epub3(&self) -> bool {
         self.result.nav_index.is_some()
     }
-    fn required(&mut self, index: usize, on_yield: crate::admission::Yield<'_>, observer: Observer) -> Status {
-        let e = self.entries[index];
-        let view = CatalogView::new(self.entries, self.arena);
-        let Some(name) = view.name(&e) else {
-            return Status::Unsupported;
+    /// Check a found member before anything reads it. At admission
+    /// (`required`) it is also expanded, and the check runs inside its
+    /// MemberBegin/MemberEnd pair so a damaged member names its stage.
+    fn open_found(&mut self, found: Option<(usize, Entry)>, required: bool,
+        on_yield: crate::admission::Yield<'_>, observer: Observer,
+    ) -> Result<Checked, Status> {
+        let (index, entry) = found.ok_or(Status::NotFound)?;
+        if !required {
+            return self.check(&entry);
+        }
+        let Some(name) = CatalogView::new(self.entries, self.arena, self.directory_offset).name(&entry) else {
+            return Err(Status::Damaged);
         };
         let decoder = self.workflow.decoder.as_mut().map(|s| InflateScratch {
             state: &mut *s.state,
             dictionary: &mut *s.dictionary,
             input: &mut *s.input,
         });
-        admission::expand(
+        admission::check_and_expand(
             self.workflow.source,
-            &e,
+            &entry,
             index as u16,
             name,
+            self.directory_offset,
             decoder,
             self.chunk.as_deref_mut(),
             on_yield,
             observer,
         )
     }
+    fn find_at(&self, path: CStringRef) -> Option<(usize, Entry)> {
+        self.catalog().find(self.arena.c_string(path)?)
+    }
     pub fn validate_selection(mut self, on_yield: crate::admission::Yield<'_>, observer: Observer) -> Status {
-        let selected = self
-            .navigation_item()
-            .and_then(|m| m.href)
-            .and_then(|h| self.arena.c_string(h))
-            .and_then(|h| self.catalog().find(h));
-        if let Some((index, _)) = selected {
-            let status = self.required(index, on_yield, observer);
-            if status != Status::Ok {
-                return status;
+        if let Some(href) = self.navigation_item().and_then(|m| m.href) {
+            match self.open_found(self.find_at(href), true, on_yield, observer) {
+                Ok(_) | Err(Status::NotFound) => {}
+                Err(status) => return status,
             }
         }
         for i in 0..self.result.spine_count {
@@ -204,45 +234,33 @@ impl<'a, 'storage, S: BookSource + ?Sized, B: ParserBackend + ?Sized> Book<'a, '
             -> Result<(&'a mut [ManifestItem], &'scratch mut [u32]), Status>,
         allocate_spine: impl FnOnce(&mut Arena<'storage>, usize) -> Result<&'a mut [u16], Status>,
     ) -> Status {
-        if let Some((index, entry)) = self.catalog().find(b"META-INF/encryption.xml") {
-            if required {
-                let s = self.required(index, on_yield, observer);
-                if s != Status::Ok {
-                    return s;
+        match self.open_found(self.catalog().find(b"META-INF/encryption.xml"), required, on_yield, observer) {
+            Err(Status::NotFound) => {}
+            Err(status) => return status,
+            Ok(member) => {
+                let mut scan = EncryptionScan { encrypted: false };
+                let status = self.workflow.pass(&member, &mut scan);
+                if status != Status::Ok || scan.encrypted {
+                    return Status::Encrypted;
                 }
             }
-            let mut scan = EncryptionScan { encrypted: false };
-            let status = self.workflow.pass(&entry, &mut scan);
-            if status != Status::Ok || scan.encrypted {
-                return Status::Encrypted;
-            }
         }
-        let Some((index, entry)) = self.catalog().find(b"META-INF/container.xml") else {
-            return Status::NotEpub;
+        let member = match self.open_found(self.catalog().find(b"META-INF/container.xml"), required, on_yield, observer) {
+            Ok(member) => member,
+            Err(Status::NotFound) => return Status::NotEpub,
+            Err(status) => return status,
         };
-        if required {
-            let s = self.required(index, on_yield, observer);
-            if s != Status::Ok {
-                return s;
-            }
-        }
         let mut path = None;
-        let status = package::parse_container(&mut self.workflow, &entry, self.arena, &mut path);
+        let status = package::parse_container(&mut self.workflow, &member, self.arena, &mut path);
         if status != Status::Ok {
             return status;
         }
-        let Some((index, entry)) = path
-            .and_then(|p| self.arena.c_string(p))
-            .and_then(|p| self.catalog().find(p))
-        else {
-            return Status::NotEpub;
+        let found = path.and_then(|p| self.find_at(p));
+        let member = match self.open_found(found, required, on_yield, observer) {
+            Ok(member) => member,
+            Err(Status::NotFound) => return Status::NotEpub,
+            Err(status) => return status,
         };
-        if required {
-            let s = self.required(index, on_yield, observer);
-            if s != Status::Ok {
-                return s;
-            }
-        }
         let Some(path) = path.and_then(|p| self.arena.c_string(p)) else {
             return Status::NotEpub;
         };
@@ -256,7 +274,7 @@ impl<'a, 'storage, S: BookSource + ?Sized, B: ParserBackend + ?Sized> Book<'a, '
             .unwrap_or(directory.len());
         match package::parse_package_allocated(
             &mut self.workflow,
-            &entry,
+            &member,
             &directory[..len],
             self.arena,
             allocate_manifest,
@@ -344,42 +362,37 @@ pub fn open_allocated<'a, 'scratch, 'storage, S: BookSource + ?Sized, B: ParserB
         }
         return Err(status);
     }
+    let directory_offset = catalog.directory_offset();
     let (source, arena, entries) = catalog.into_parts();
     if required { admission::emit_to(on_yield, observer, WorkKind::CatalogEnd, 0); }
-    open_catalog((source, arena, entries), PackageResources {
+    open_catalog((source, arena, entries, directory_offset), PackageResources {
         policy: r.policy, backend: r.backend, decoder: r.decoder, chunk: r.chunk,
         xml_buffer: r.xml_buffer, filter: r.filter,
     }, required, on_yield, observer, allocate_manifest, allocate_spine)
 }
 
 /// Continue the same open after the actual catalog scan loan ends. The source,
-/// arena and entries are that catalog's unchanged result; the original package
-/// passes and counted allocation boundaries remain shared with open_allocated.
+/// arena, entries and directory offset are that catalog's unchanged result; the
+/// package passes and counted allocation boundaries stay shared with open_allocated.
 pub fn open_catalog<'a, 'scratch, 'storage, S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
-    (source, arena, entries): (&'a mut S, &'a mut Arena<'storage>, &'a mut [Entry]),
-    r: PackageResources<'a, B>, required: bool,
+    (source, arena, entries, directory_offset): (&'a mut S, &'a mut Arena<'storage>, &'a mut [Entry], u32),
+    mut r: PackageResources<'a, B>, required: bool,
     on_yield: crate::admission::Yield<'_>, observer: Observer,
     allocate_manifest: impl FnOnce(&mut Arena<'storage>, usize, usize)
         -> Result<(&'a mut [ManifestItem], &'scratch mut [u32]), Status>,
     allocate_spine: impl FnOnce(&mut Arena<'storage>, usize) -> Result<&'a mut [u16], Status>,
 ) -> Result<Book<'a, 'storage, S, B>, Status> {
     if required {
-        let view = CatalogView::new(entries, arena);
-        for i in 0..entries.len() {
-            admission::emit_to(on_yield, observer, WorkKind::CompareBegin, 0);
-            let mut duplicate = false;
-            let mut comparisons = 0;
-            for j in 0..i {
-                if duplicate {
-                    break;
-                }
-                duplicate = view.name(&entries[i]) == view.name(&entries[j]);
-                comparisons += 1;
-            }
-            admission::emit_to(on_yield, observer, WorkKind::CompareEnd, comparisons);
-            if duplicate {
-                return Err(Status::Unsupported);
-            }
+        // The OPF inflate has not started, so its idle dictionary holds the order.
+        let view = CatalogView::new(entries, arena, directory_offset);
+        let Some(idle) = r.decoder.as_mut().filter(|d| view.fits_order(d)) else {
+            return Err(Status::OutOfMemory);
+        };
+        admission::emit_to(on_yield, observer, WorkKind::CompareBegin, 0);
+        let (duplicate, comparisons) = view.duplicate_names(idle);
+        admission::emit_to(on_yield, observer, WorkKind::CompareEnd, comparisons);
+        if duplicate {
+            return Err(Status::Unsupported);
         }
     }
     let mut book = Book {
@@ -397,6 +410,7 @@ pub fn open_catalog<'a, 'scratch, 'storage, S: BookSource + ?Sized, B: ParserBac
         spine: &mut [],
         chunk: r.chunk,
         result: PackageResult::default(),
+        directory_offset,
     };
     let status = book.open_package(
         required,
@@ -410,6 +424,114 @@ pub fn open_catalog<'a, 'scratch, 'storage, S: BookSource + ?Sized, B: ParserBac
     } else {
         Err(status)
     }
+}
+
+impl CatalogView<'_, '_> {
+    /// Whether `idle`'s dictionary can hold the sort order for this catalog.
+    pub fn fits_order(&self, idle: &InflateScratch<'_>) -> bool {
+        2 * self.len() <= idle.dictionary.len()
+    }
+    /// Exact duplicate member names, in O(n log n) with no heap. Heapsorts a u16
+    /// index permutation by (name hash, exact name), then compares neighbours.
+    /// Equal names sort together; the bytes decide, so a hash collision is
+    /// never a duplicate. Returns (duplicate, comparisons).
+    ///
+    /// The permutation lives in `idle`'s inflate dictionary, borrowed only for
+    /// this call, so the sort can run before or after a member inflate:
+    ///
+    /// ```
+    /// # use newt_core::{canonical::CatalogView, member_check::Checked, zip_container::{InflateScratch, Reader}};
+    /// # use newt_core::zip_window::source::BookSource;
+    /// fn sort_then_read<S: BookSource>(view: CatalogView<'_, '_>, source: &mut S,
+    ///     idle: &mut InflateScratch<'_>, member: &Checked) {
+    ///     view.duplicate_names(idle);
+    ///     let mut reader = Reader::new(source, Some(InflateScratch {
+    ///         state: &mut *idle.state, dictionary: &mut *idle.dictionary, input: &mut *idle.input }));
+    ///     reader.open(member);
+    ///     reader.read(&mut [0; 1]);
+    /// }
+    /// ```
+    ///
+    /// but never while an inflate holds that dictionary:
+    ///
+    /// ```compile_fail
+    /// # use newt_core::{canonical::CatalogView, member_check::Checked, zip_container::{InflateScratch, Reader}};
+    /// # use newt_core::zip_window::source::BookSource;
+    /// fn sort_during_read<S: BookSource>(view: CatalogView<'_, '_>, source: &mut S,
+    ///     idle: &mut InflateScratch<'_>, member: &Checked) {
+    ///     let mut reader = Reader::new(source, Some(InflateScratch {
+    ///         state: &mut *idle.state, dictionary: &mut *idle.dictionary, input: &mut *idle.input }));
+    ///     reader.open(member);
+    ///     view.duplicate_names(idle);
+    ///     reader.read(&mut [0; 1]);
+    /// }
+    /// ```
+    ///
+    /// Panics if the order does not fit; check [`Self::fits_order`] first.
+    pub fn duplicate_names(self, idle: &mut InflateScratch<'_>) -> (bool, i32) {
+        duplicate_names(self, &mut idle.dictionary[..2 * self.len()])
+    }
+}
+
+fn duplicate_names(view: CatalogView<'_, '_>, order: &mut [u8]) -> (bool, i32) {
+    struct Sort<'v, 's, 'o> {
+        view: CatalogView<'v, 's>,
+        order: &'o mut [u8],
+        comparisons: i32,
+    }
+    impl Sort<'_, '_, '_> {
+        fn at(&self, i: usize) -> &Entry {
+            &self.view.entries[usize::from(u16::from_le_bytes([self.order[2 * i], self.order[2 * i + 1]]))]
+        }
+        fn less(&mut self, a: usize, b: usize) -> bool {
+            self.comparisons += 1;
+            let (a, b) = (self.at(a), self.at(b));
+            match a.name_hash.cmp(&b.name_hash) {
+                core::cmp::Ordering::Equal => self.view.name(a) < self.view.name(b),
+                order => order.is_lt(),
+            }
+        }
+        fn swap(&mut self, a: usize, b: usize) {
+            self.order.swap(2 * a, 2 * b);
+            self.order.swap(2 * a + 1, 2 * b + 1);
+        }
+        fn sift_down(&mut self, mut root: usize, end: usize) {
+            loop {
+                let mut child = 2 * root + 1;
+                if child >= end {
+                    return;
+                }
+                if child + 1 < end && self.less(child, child + 1) {
+                    child += 1;
+                }
+                if !self.less(root, child) {
+                    return;
+                }
+                self.swap(root, child);
+                root = child;
+            }
+        }
+    }
+    let n = view.len();
+    debug_assert_eq!(order.len(), 2 * n);
+    for (i, pair) in order.chunks_exact_mut(2).enumerate() {
+        pair.copy_from_slice(&(i as u16).to_le_bytes());
+    }
+    let mut sort = Sort { view, order, comparisons: 0 };
+    for root in (0..n / 2).rev() {
+        sort.sift_down(root, n);
+    }
+    for end in (1..n).rev() {
+        sort.swap(0, end);
+        sort.sift_down(0, end);
+    }
+    for i in 1..n {
+        sort.comparisons += 1;
+        if sort.view.name(sort.at(i - 1)) == sort.view.name(sort.at(i)) {
+            return (true, sort.comparisons);
+        }
+    }
+    (false, sort.comparisons)
 }
 
 include!("canonical_semantic.rs");

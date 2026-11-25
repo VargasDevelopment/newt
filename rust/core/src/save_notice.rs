@@ -63,7 +63,9 @@ impl ReaderIssue {
             Status::NotZip | Status::NotEpub => Self::NotEpub,
             Status::Encrypted => Self::Encrypted,
             Status::Truncated => Self::Truncated,
-            Status::Unsupported => Self::Unsupported,
+            // A damaged required member (container, OPF) keeps the refusal
+            // whole-book admission gave it before members were checked on open.
+            Status::Unsupported | Status::Damaged => Self::Unsupported,
             Status::MetadataTooLarge => Self::MetadataTooLarge,
             Status::PathTooLong => Self::PathTooLong,
             Status::ParseError => Self::Parse,

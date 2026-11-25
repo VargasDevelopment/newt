@@ -4,10 +4,11 @@
 use super::{Parts, ParseResources};
 use crate::{bounded::{self, Chapters, LaidOut, LAYOUT_BYTES, PARSE_BYTES},
     reader::{reader_parameters, validate_exact_anchor_stream}, BookLanguage, xml_input::{self, EntityFilter},
-    xml_session::{self, ParserBackend, XmlStream}, zip_container::{Entry, Reader, Status}, bounded::source::Source};
+    xml_session::{self, ParserBackend, XmlStream}, zip_container::{Reader, Status}, bounded::source::Source};
 use newt_core::{chapter_layout::{images::{self, BookImages, Catalog, Collector, Probed},
     types::{self, LineBreak, Sink}}, css::{CssRule, CssStylesheetBuilder, MAX_RULES},
     preferences::ViewSettings};
+use newt_core::{canonical::CatalogView, member_check::Checked, zip_window::source::BookSource};
 use newt_reader_navigation::{BookView, metadata::Metadata};
 
 /// One sample-memory loan. The two source views below borrow these same
@@ -39,7 +40,7 @@ impl<B: ParserBackend + ?Sized> Chapters for Work<'_, B> {
         let href = book.spine_item(spine as usize).and_then(|item| item.href)
             .ok_or(Status::NotFound)?;
         let catalog = Members(book);
-        let entry = catalog.find(href).ok_or(Status::NotFound)?;
+        let entry = catalog.member(&mut Source(self.epub), href)?;
         let directory = directory(href);
         let language = BookLanguage::from_opf(book.package.metadata.language
             .and_then(|h| book.arena.c_string(h)));
@@ -70,7 +71,10 @@ impl<B: ParserBackend + ?Sized> Chapters for Work<'_, B> {
         let Some(href) = book.spine_item(spine as usize).and_then(|item| item.href) else {
             return Status::NotFound;
         };
-        let Some(entry) = Members(book).find(href) else { return Status::NotFound; };
+        let entry = match Members(book).member(&mut Source(self.epub), href) {
+            Ok(entry) => entry,
+            Err(status) => return status,
+        };
         if fragment.is_empty() { return Status::Ok; }
         let mut parts = Parts(&mut *self.parse);
         let resources = (|| Ok::<_, Status>((parts.fixed::<2048>()?,
@@ -86,17 +90,20 @@ impl<B: ParserBackend + ?Sized> Chapters for Work<'_, B> {
     }
 }
 
+/// The sample's members pass the same open-time check as an SD book's.
 struct Members<'a, 'book, 'storage>(&'a Metadata<'book, 'storage>);
-impl Catalog for Members<'_, '_, '_> {
-    fn find(&self, path: &[u8]) -> Option<Entry> {
-        let hash = crate::zip_container::hash_path(path);
-        self.0.entries.iter().find(|entry| entry.name_hash == hash
-            && entry.name.and_then(|name| self.0.arena.c_string(name))
-                .is_some_and(|name| xml_input::c_bytes(name) == xml_input::c_bytes(path)))
-            .copied()
+impl<'a> Members<'a, '_, '_> {
+    fn view(&self) -> CatalogView<'a, '_> {
+        CatalogView::new(self.0.entries, self.0.arena, self.0.directory_offset)
     }
-    fn find_hash(&self, hash: u32) -> Option<Entry> {
-        self.0.entries.iter().find(|entry| entry.name_hash == hash).copied()
+}
+impl Catalog for Members<'_, '_, '_> {
+    fn member(&self, source: &mut dyn BookSource, path: &[u8]) -> Result<Checked, Status> {
+        self.view().member(source, path).map(|(_, member)| member)
+    }
+    fn member_by_hash(&self, source: &mut dyn BookSource, hash: u32) -> Result<Checked, Status> {
+        let entry = self.0.entries.iter().find(|entry| entry.name_hash == hash).ok_or(Status::NotFound)?;
+        self.view().check(source, entry)
     }
 }
 fn directory(href: &[u8]) -> &[u8] {
@@ -106,7 +113,7 @@ fn directory(href: &[u8]) -> &[u8] {
         None => &href[..0],
     }
 }
-fn mentions(epub: &[u8], entry: &Entry, parse: &mut [u8; PARSE_BYTES]) -> bool {
+fn mentions(epub: &[u8], entry: &Checked, parse: &mut [u8; PARSE_BYTES]) -> bool {
     let mut parts = Parts(parse);
     let buffer = parts.fixed::<2048>();
     let Ok(buffer) = buffer else { return true; };
@@ -130,7 +137,7 @@ fn parse(bank: &mut [u8; PARSE_BYTES])
     let skip = parts.fixed::<1024>()?;
     Ok(Parse { buffer, filter, skip, paths: parts.0 })
 }
-fn prescan<B: ParserBackend + ?Sized>(epub: &[u8], entry: &Entry,
+fn prescan<B: ParserBackend + ?Sized>(epub: &[u8], entry: &Checked,
     directory: &[u8], catalog: &dyn Catalog, bank: &mut [u8; PARSE_BYTES],
     backend: &mut B, table: &mut [Probed],
 ) -> usize {
@@ -184,7 +191,7 @@ fn storage<'a>(parts: &mut Parts<'a>) -> Result<Layout<'a>, Status> {
     Ok(Layout { storage: types::Storage { text, breaks, levels, spans, lines,
         elements, runs, images, links, page, style_text, paragraph_links }, chapter_css })
 }
-fn run<B: ParserBackend + ?Sized>(epub: &[u8], entry: &Entry,
+fn run<B: ParserBackend + ?Sized>(epub: &[u8], entry: &Checked,
     directory: &[u8], catalog: &dyn Catalog, params: types::Params<'_>,
     bank: &mut [u8], table: &[Probed], parse_bank: &mut [u8; PARSE_BYTES],
     backend: &mut B, breaker: &mut dyn LineBreak, sink: &mut dyn Sink,

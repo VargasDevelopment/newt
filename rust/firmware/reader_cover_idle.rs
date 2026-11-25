@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! The one frozen cover_idle.h global, shared by Home, Library and Reading.
 use core::ffi::CStr;
-use newt_core::{app::Screen, cover};
+use newt_core::{app::Screen, cover, member_check::CheckedRecord};
 use super::cover_resume::CoverResumeOwner;
 
 pub const SETTLE_MS: u32 = 2000;
@@ -50,13 +50,11 @@ pub enum Step { #[default] Empty, Read, Located, Decided }
 pub struct CoverResume {
     pub book: u32,
     pub source_crc: u32,
-    pub local: u32,
-    pub compressed: u32,
-    pub uncompressed: u32,
     pub crc32: u32,
     pub data: u32,
+    /// The located cover, kept checked so a resumed job reads no unchecked member.
+    pub member: CheckedRecord,
     pub step: Step,
-    pub method: u8,
     pub verdict: CoverResult,
 }
 

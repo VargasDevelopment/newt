@@ -26,6 +26,8 @@ Axes covered (each case declares target axis and exact expected outcomes):
   chapter-anchors 192-anchor cap in PageCacheWriter (Profile::Small)
   chapter-pages   768-page sync index (6x128) & 4,096-page Profile::Small cap
   long-web-novel  Combined multi-chapter text-only web novel profiles
+  member-check    Damaged local headers checked when each member opens (#60)
+  duplicate-names Exact-name duplicate check, including a forced name-hash collision
 """
 from dataclasses import asdict, dataclass
 import argparse
@@ -88,6 +90,15 @@ class BookSpec:
     target_cd_bytes: int | None = None
     zip64: bool = False
     seed: int = 1
+    # Chapter 0 links this CSS; chapter 1 is the same text without the link.
+    stylesheet: str | None = None
+    # Chapter 0 shows img.png, a PNG header the sample path can size. The
+    # sample path takes only small stored books, so image cases set compress=False.
+    image: bool = False
+    # (member, fault): member is container, opf, css, image or chapter (chapter 2).
+    damage: tuple[str, str] | None = None
+    # Extra stored entries with exact names, so duplicates and collisions are possible.
+    extra_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -108,6 +119,19 @@ class Case:
     expected_small32: bool | None = None
     expected_pages_range: tuple[int, int] | None = None
     expected_fallback: str | None = None
+    # Status of selecting chapter 2 (check_mode "damaged").
+    expected_chapter: str | None = None
+    # Whether chapter 0's stylesheet changed its layout (check_mode "styled").
+    expected_styled: bool | None = None
+    # Whether the sample path placed chapter 0's image (check_mode "image").
+    expected_image: bool | None = None
+
+
+# A local-header fault per name; each makes the local header disagree with
+# its central record, or moves the member data past the central directory.
+DAMAGE_FAULTS = ("signature", "flags", "method", "name-length", "name", "range")
+# Two distinct names with the same FNV-1a 32-bit hash (zip_container::hash_path).
+HASH_COLLISION = ("e/0317786", "e/1056240")
 
 
 def _paragraph(seed: int, chapter: int, index: int) -> str:
@@ -144,6 +168,19 @@ def chapter_xhtml(chapter: int, *, seed: int = 1, target_bytes: int = 0, paragra
     if target_bytes > 0 and len(data) != target_bytes:
         raise AssertionError(f"exact size mismatch: got {len(data)}, want {target_bytes}")
     return data
+
+
+def _link_stylesheet(chapter: bytes) -> bytes:
+    link = b'<link rel="stylesheet" type="text/css" href="style.css"/>'
+    return chapter.replace(b"</head>", link + b"</head>", 1)
+
+
+def _show_image(chapter: bytes) -> bytes:
+    return chapter.replace(b"</body>", b'<p><img src="img.png" alt=""/></p></body>', 1)
+
+
+# Only the 26 B header is probed: signature, IHDR length/type, 600 x 1600.
+PNG_HEADER = b"\x89PNG\r\n\x1a\n" + struct.pack(">I4sII", 13, b"IHDR", 600, 1600) + b"\x08\x00\x00\x00\x00"
 
 
 def _chapter_href(spec: BookSpec, index: int) -> str:
@@ -216,6 +253,8 @@ def _opf(spec: BookSpec, hrefs: list[str], extra_manifest: list[str]) -> bytes:
         spine.append(f'<itemref idref="{item_id}"/>')
     for i, href in enumerate(extra_manifest):
         manifest.append(f'<item id="{_item_id(spec, "m", i)}" href="{href}" media-type="text/plain"/>')
+    if spec.stylesheet is not None:
+        manifest.append('<item id="css" href="style.css" media-type="text/css"/>')
     spine_attr = ' toc="ncx"' if is_ncx and not spec.toc_absent else ""
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -229,8 +268,30 @@ def _opf(spec: BookSpec, hrefs: list[str], extra_manifest: list[str]) -> bytes:
     ).encode("utf-8")
 
 
-def write_zip(entries: list[tuple[str, bytes, bool]], *, target_cd_bytes: int | None = None, zip64: bool = False) -> bytes:
-    """Deterministic ZIP writer with exact CD sizing and optional ZIP64 EOCD."""
+def _damage_local(header: bytearray, name: bytearray, fault: str) -> None:
+    """Break one field of a local header so it fails the open-time member check."""
+    if fault == "signature":
+        header[0] ^= 1
+    elif fault == "flags":
+        header[6] ^= 2
+    elif fault == "method":
+        header[8] ^= 8
+    elif fault == "name-length":
+        header[26] += 1
+    elif fault == "name":
+        name[-1] ^= 0x20
+    elif fault == "range":
+        header[28:30] = b"\xff\xff"
+    else:
+        raise ValueError(f"unknown damage fault: {fault}")
+
+
+def write_zip(entries: list[tuple[str, bytes, bool]], *, target_cd_bytes: int | None = None, zip64: bool = False,
+              damage: tuple[str, str] | None = None) -> bytes:
+    """Deterministic ZIP writer with exact CD sizing and optional ZIP64 EOCD.
+
+    `damage` is (ZIP name, fault): that member's local header no longer
+    matches its central record. The central directory stays intact."""
     names = [name.encode("utf-8") for name, _, _ in entries]
     comments = [b""] * len(entries)
     if target_cd_bytes is not None:
@@ -257,8 +318,11 @@ def write_zip(entries: list[tuple[str, bytes, bool]], *, target_cd_bytes: int | 
         else:
             method, payload, crc = 0, data, zlib.crc32(data) & 0xFFFFFFFF
         offset = len(out)
-        out += struct.pack("<IHHHHHIIIHH", 0x04034B50, 20, 0, method, DOS_TIME, DOS_DATE, crc, len(payload), len(data), len(name_b), 0)
-        out += name_b + payload
+        header = bytearray(struct.pack("<IHHHHHIIIHH", 0x04034B50, 20, 0, method, DOS_TIME, DOS_DATE, crc, len(payload), len(data), len(name_b), 0))
+        local_name = bytearray(name_b)
+        if damage is not None and damage[0] == name:
+            _damage_local(header, local_name, damage[1])
+        out += header + local_name + payload
         central += struct.pack("<IHHHHHHIIIHHHHHII", 0x02014B50, 20, 20, 0, method, DOS_TIME, DOS_DATE, crc, len(payload), len(data), len(name_b), 0, len(comment), 0, 0, 0, offset)
         central += name_b + comment
 
@@ -304,7 +368,12 @@ def build_epub(spec: BookSpec) -> bytes:
     ]
     extras: list[tuple[str, bytes, bool]] = [
         (f"{prefix}{name}", b"note\n", spec.compress) for name in extra_manifest
-    ] + [(f"e/{i:04d}".ljust(spec.extra_entry_name_bytes, "x"), b"x", False) for i in range(spec.extra_entries)]
+    ] + [(f"e/{i:04d}".ljust(spec.extra_entry_name_bytes, "x"), b"x", False) for i in range(spec.extra_entries)
+    ] + [(name, b"x", False) for name in spec.extra_names]
+    if spec.stylesheet is not None:
+        extras.append((f"{prefix}style.css", spec.stylesheet.encode("utf-8"), spec.compress))
+    if spec.image:
+        extras.append((f"{prefix}img.png", PNG_HEADER, spec.compress))
 
     chapter_sizes = [spec.chapter_bytes] * spec.chapters
     if spec.first_chapter_bytes > 0:
@@ -330,7 +399,24 @@ def build_epub(spec: BookSpec) -> bytes:
         )
         for i, href in enumerate(hrefs)
     ]
-    epub = write_zip(fixed + chapters + extras, target_cd_bytes=spec.target_cd_bytes, zip64=spec.zip64)
+    if spec.stylesheet is not None:
+        if spec.chapters < 2 or spec.chapter_paragraphs <= 0:
+            raise ValueError("stylesheet books need two chapters of paragraphs")
+        plain = chapter_xhtml(0, seed=spec.seed, paragraphs=spec.chapter_paragraphs)
+        chapters[0] = (chapters[0][0], _link_stylesheet(plain), spec.compress)
+        chapters[1] = (chapters[1][0], plain, spec.compress)
+    if spec.image:
+        chapters[0] = (chapters[0][0], _show_image(chapters[0][1]), spec.compress)
+    damage = None
+    if spec.damage is not None:
+        member, fault = spec.damage
+        names = {"container": "META-INF/container.xml", "opf": opf_path, "css": f"{prefix}style.css",
+                 "image": f"{prefix}img.png" if spec.image else None,
+                 "chapter": chapters[2][0] if len(chapters) > 2 else None}
+        if names.get(member) is None:
+            raise ValueError(f"cannot damage {member} in this book")
+        damage = (names[member], fault)
+    epub = write_zip(fixed + chapters + extras, target_cd_bytes=spec.target_cd_bytes, zip64=spec.zip64, damage=damage)
     if spec.target_file_bytes is not None and len(epub) != spec.target_file_bytes:
         raise AssertionError(f"file size mismatch: got {len(epub)}, want {spec.target_file_bytes}")
     return epub
@@ -425,6 +511,29 @@ CASES: tuple[Case, ...] = (
          BookSpec(chapters=240, chapter_bytes=40 * KIB, toc_kind="nav"), expected_menu_valid=True, expected_authored=True, expected_menu_count=240, expected_fallback="None"),
     Case("web-novel-2000ch", "long-web-novel", "full", "Unsupported", "Unsupported", "admit", "2,000-chapter plain-text web novel (~20 MiB text, 2,004 entries): refused at 1,024",
          BookSpec(chapters=2000, chapter_bytes=10 * KIB, toc_kind="nav")),
+    *(Case(f"damaged-chapter-{fault}", "member-check", "fast", "Ok", "Ok", "damaged",
+           f"Chapter 3's local header fails the open-time check ({fault}): the book opens, chapter 1 reads, chapter 3 is refused",
+           BookSpec(chapters=4, damage=("chapter", fault)),
+           expected_chapter="Truncated" if fault == "range" else "Damaged")
+      for fault in DAMAGE_FAULTS),
+    *(Case(f"damaged-{member}-{fault}", "member-check", "fast", "Damaged", "Damaged", "admit",
+           f"Damaged {member} local header ({fault}): the whole book is refused, as before",
+           BookSpec(chapters=2, damage=(member, fault)))
+      for member in ("container", "opf") for fault in ("signature", "name")),
+    Case("styled-chapter", "member-check", "fast", "Ok", "Ok", "styled", "Chapter 0's stylesheet changes its layout (control for damaged-css)",
+         BookSpec(chapters=2, chapter_paragraphs=40, stylesheet="p { margin-top: 5em; }"), expected_styled=True),
+    Case("damaged-css", "member-check", "fast", "Ok", "Ok", "styled", "Damaged stylesheet local header: chapter 0 reads without its styles, like a missing stylesheet",
+         BookSpec(chapters=2, chapter_paragraphs=40, stylesheet="p { margin-top: 5em; }", damage=("css", "name")), expected_styled=False),
+    Case("css-read-failure", "member-check", "fast", "Ok", "IoError", "styled-io", "One failed read of the stylesheet's local header fails the open, as before #60, instead of dropping the styles",
+         BookSpec(chapters=2, chapter_paragraphs=40, stylesheet="p { margin-top: 5em; }")),
+    Case("sample-image", "member-check", "fast", "Ok", "Ok", "image", "The built-in sample path sizes and places chapter 0's image (control for damaged-image)",
+         BookSpec(chapters=2, image=True, compress=False), expected_image=True),
+    Case("damaged-image", "member-check", "fast", "Ok", "Ok", "image", "Damaged image local header: the sample path skips the image, like a missing image",
+         BookSpec(chapters=2, image=True, compress=False, damage=("image", "name")), expected_image=False),
+    Case("hash-collision", "duplicate-names", "fast", "Ok", "Ok", "admit", "Two different names with the same 32-bit name hash are not duplicates",
+         BookSpec(chapters=2, extra_names=HASH_COLLISION)),
+    Case("duplicate-name", "duplicate-names", "fast", "Unsupported", "Unsupported", "admit", "Two members with the same exact name are refused",
+         BookSpec(chapters=2, extra_names=(HASH_COLLISION[0], HASH_COLLISION[0]))),
 )
 CASES_BY_NAME = {case.name: case for case in CASES}
 

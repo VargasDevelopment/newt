@@ -1,7 +1,8 @@
 //! Runtime-borrowed input, ZIP entry, typed decoder state/dictionary/input,
 //! staging and output. Link/inspect RV32 separately; no execution claim.
+use newt_core::member_check::Checked;
 use newt_core::image_probe::{ImageInfo, probe};
-use newt_core::zip_container::{Entry, InflateScratch, Status};
+use newt_core::zip_container::{InflateScratch, Status};
 use newt_core::zip_window::source::BookSource;
 struct Borrowed<'a>(&'a [u8]);
 impl BookSource for Borrowed<'_> {
@@ -21,7 +22,7 @@ impl BookSource for Borrowed<'_> {
 #[inline(never)]
 pub fn borrowed(
     input: &[u8],
-    entry: &Entry,
+    entry: &Checked,
     decode: Option<InflateScratch<'_>>,
     staging: &mut [u8],
     out: &mut ImageInfo,

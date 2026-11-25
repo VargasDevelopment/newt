@@ -22,7 +22,7 @@ fn empty_case(id: u32, bytes: &[u8]) -> Output {
     let mut loan = Loan { bytes: &mut native, signal: &signal, returns: 0 };
     let mut storage = Storage::new(&mut shared);
     let mut selections = [Selection::default(), Selection::default()];
-    selections[0].entry = Entry::raw(bytes.len() as u32);
+    selections[0].entry = newt_core::member_check::Checked::raw(bytes.len() as u32);
     let mut reader = PhasedReader::new(&mut selections, None, PageLayout::PORTRAIT);
     reader.source_bytes = bytes.len() as u64;
     reader.info.page_count = 1;

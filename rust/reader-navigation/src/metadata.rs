@@ -13,6 +13,8 @@ pub struct Metadata<'a, 'storage> {
     pub spine: &'a [u16],
     pub toc: &'a [TocEntry],
     pub entries: &'a [Entry],
+    /// Where the central directory starts, for the open-time member check.
+    pub directory_offset: u32,
 }
 impl Metadata<'_, '_> {
     fn bytes(&self, value: Option<CStringRef>) -> &[u8] {

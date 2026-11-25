@@ -1,4 +1,5 @@
 //! Scheduling/failure witnesses only. RecordingBackend is deliberately NOT XML.
+use newt_core::member_check::Checked;
 use newt_core::xml_session::*;
 use newt_core::{
     xml_input::EntityFilter,
@@ -97,7 +98,7 @@ fn resources(buffer: &mut [u8; 2048]) -> Resources<'_> {
 #[test]
 fn final_empty_feed_finished_at_end_and_close_retains_count() {
     let mut source = Source::new(b"abc");
-    let entry = Entry::raw(3);
+    let entry = Checked::raw(3);
     let mut backend = RecordingBackend::default();
     let mut sink = Sink::default();
     let mut buffer = [0; 2048];
@@ -140,7 +141,7 @@ fn final_empty_feed_finished_at_end_and_close_retains_count() {
 fn parser_failure_does_not_advance_count_or_finish_even_after_callbacks() {
     let mut source = Source::new(b"abcdef");
     source.max = 3;
-    let entry = Entry::raw(6);
+    let entry = Checked::raw(6);
     let mut backend = RecordingBackend {
         fail_feed: Some(1),
         ..Default::default()
@@ -167,7 +168,7 @@ fn parser_failure_does_not_advance_count_or_finish_even_after_callbacks() {
 fn io_error_never_feeds_parser() {
     let mut source = Source::new(b"x");
     source.fail = Some(0);
-    let entry = Entry::raw(1);
+    let entry = Checked::raw(1);
     let mut backend = RecordingBackend::default();
     let mut sink = Sink::default();
     let mut buffer = [0; 2048];
@@ -189,7 +190,7 @@ fn io_error_never_feeds_parser() {
 fn create_and_typed_resource_failures() {
     for mode in 0..3 {
         let mut source = Source::new(b"x");
-        let entry = Entry::raw(1);
+        let entry = Checked::raw(1);
         let mut backend = RecordingBackend {
             fail_create: true,
             ..Default::default()
@@ -222,9 +223,10 @@ fn create_and_typed_resource_failures() {
 #[test]
 fn reopen_closes_old_before_failed_reader_open_and_resets_count() {
     let mut source = Source::new(b"x");
-    let first = Entry::raw(1);
+    let first = Checked::raw(1);
     let mut invalid = Entry::raw(1);
     invalid.method = 9;
+    let invalid = Checked::unverified(invalid);
     let mut backend = RecordingBackend::default();
     let mut one = Sink::default();
     let mut two = Sink::default();
@@ -253,7 +255,7 @@ fn reopen_closes_old_before_failed_reader_open_and_resets_count() {
 #[test]
 fn successful_reopen_routes_callbacks_to_new_handler() {
     let mut source = Source::new(b"x");
-    let entry = Entry::raw(1);
+    let entry = Checked::raw(1);
     let mut backend = RecordingBackend::default();
     let mut one = Sink::default();
     let mut two = Sink::default();
@@ -291,7 +293,7 @@ fn one_shot_stop_initially_and_during_callback_is_between_chunks() {
     for initial in [false, true] {
         let mut source = Source::new(b"abcdef");
         source.max = 2;
-        let entry = Entry::raw(6);
+        let entry = Checked::raw(6);
         let mut backend = RecordingBackend::default();
         let mut sink = Sink {
             stop: initial,
@@ -318,7 +320,7 @@ fn one_shot_stop_initially_and_during_callback_is_between_chunks() {
 #[test]
 fn stepped_feed_ignores_handler_stop() {
     let mut source = Source::new(b"x");
-    let entry = Entry::raw(1);
+    let entry = Checked::raw(1);
     let mut backend = RecordingBackend::default();
     let mut sink = Sink {
         stop: true,
@@ -339,7 +341,7 @@ fn stepped_feed_ignores_handler_stop() {
 fn real_filter_expansion_is_counted_and_filter_is_reset_at_open() {
     let mut source = Source::new(b"&nbsp;&amp;");
     source.max = 1;
-    let entry = Entry::raw(11);
+    let entry = Checked::raw(11);
     let mut backend = RecordingBackend::default();
     let mut sink = Sink::default();
     let mut buffer = [0; 2048];
@@ -381,7 +383,7 @@ fn real_filter_expansion_is_counted_and_filter_is_reset_at_open() {
 #[test]
 fn failure_on_final_empty_feed_does_not_finish() {
     let mut source = Source::new(b"");
-    let entry = Entry::raw(0);
+    let entry = Checked::raw(0);
     let mut backend = RecordingBackend {
         fail_feed: Some(0),
         ..Default::default()
@@ -402,7 +404,7 @@ fn failure_on_final_empty_feed_does_not_finish() {
 fn real_reader_2048_chunk_boundary_and_final_empty_feed() {
     let input = [b'x'; 4097];
     let mut source = Source::new(&input);
-    let entry = Entry::raw(4097);
+    let entry = Checked::raw(4097);
     let mut backend = RecordingBackend::default();
     let mut sink = Sink::default();
     let mut buffer = [0; 2048];
@@ -434,12 +436,12 @@ fn missing_decoder_fails_in_reader_before_parser_admission() {
     let mut local = [0; 30];
     local[..4].copy_from_slice(&0x04034b50u32.to_le_bytes());
     let mut source = Source::new(&local);
-    let entry = Entry {
+    let entry = Checked::unverified(Entry {
         compressed_size: 2,
         uncompressed_size: 1,
         method: 8,
         ..Default::default()
-    };
+    });
     let mut backend = RecordingBackend::default();
     let mut sink = Sink::default();
     assert_eq!(
@@ -464,7 +466,7 @@ fn missing_decoder_fails_in_reader_before_parser_admission() {
 fn zero_source_read_before_expected_end_is_io_error() {
     let mut source = Source::new(b"x");
     source.max = 0;
-    let entry = Entry::raw(1);
+    let entry = Checked::raw(1);
     let mut backend = RecordingBackend::default();
     let mut sink = Sink::default();
     let mut buffer = [0; 2048];
@@ -505,7 +507,7 @@ impl ProcessingPolicy for CancelAt {
 #[test]
 fn producer_reopen_cancellation_closes_before_poll_without_resetting_progress() {
     let mut source = Source::new(b"x");
-    let entry = Entry::raw(1);
+    let entry = Checked::raw(1);
     let mut backend = RecordingBackend::default();
     let mut one = Sink::default();
     let mut two = Sink::default();

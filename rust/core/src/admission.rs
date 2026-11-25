@@ -1,4 +1,5 @@
 //! EPUB admission checks. Typed resources are caller-owned; no hidden inflater stack.
+use crate::member_check::Checked;
 use crate::zip_container::{self as zip, Directory, Entry, InflateScratch, Reader, Status};
 use crate::zip_record_rules::*;
 use crate::zip_window::{arena::Arena, source::BookSource, window::ZipDirectoryWindow};
@@ -154,7 +155,9 @@ fn window_yield<S: BookSource + ?Sized>(s: &mut ScheduledSource<'_, S>) {
         f.yield_now();
     }
 }
-/// Every central record and local header, in original precedence order.
+/// Every central record, in original precedence order. Local headers are
+/// checked when each member opens (`member_check`), so a damaged member
+/// fails where it is read instead of refusing the whole book.
 pub fn inspect<S: BookSource + ?Sized>(
     source: &mut ScheduledSource<'_, S>,
     parse: &mut Arena<'_>,
@@ -217,42 +220,19 @@ pub fn inspect<S: BookSource + ?Sized>(
         if record > end - at || local + 30 > u64::from(d.offset) {
             return Status::Truncated;
         }
-        let mut lh = [0; 30];
-        if !central.read_before_directory(local, &mut lh) {
-            return Status::IoError;
-        }
-        if zip_local_header_rule(
-            le32(&lh, 0),
-            le16(&lh, 6),
-            le16(&lh, 8),
-            le16(&lh, 26),
-            flags,
-            method,
-            name,
-        ) == ZipLocalHeaderRule::Mismatch
-        {
-            return Status::Unsupported;
-        }
         match zip_member_flag_rule(flags) {
             ZipCentralRecordRule::Encrypted => return Status::Encrypted,
             ZipCentralRecordRule::Unsupported => return Status::Unsupported,
             ZipCentralRecordRule::Ok => (),
         }
-        let data = local + 30 + u64::from(name) + u64::from(le16(&lh, 28));
-        if data > u64::from(d.offset) || u64::from(compressed) > u64::from(d.offset) - data {
-            return Status::Truncated;
-        }
         let mut n = 0u64;
         while n < u64::from(name) {
             let mut a = [0; 64];
-            let mut b = [0; 64];
             let take = (u64::from(name) - n).min(64) as usize;
-            if !central.read(at + 46 + n, Some(&mut a), take as u32)
-                || !central.read_before_directory(local + 30 + n, &mut b[..take])
-            {
+            if !central.read(at + 46 + n, Some(&mut a), take as u32) {
                 return Status::IoError;
             }
-            if a[..take].contains(&0) || a[..take] != b[..take] {
+            if a[..take].contains(&0) {
                 return Status::Unsupported;
             }
             n += take as u64;
@@ -292,13 +272,49 @@ pub fn category(name: &[u8]) -> u8 {
 /// Scratch presence is the typed-domain OOM decision, independent of byte arena.
 pub fn expand<S: BookSource + ?Sized>(
     source: &mut S,
-    entry: &Entry,
+    entry: &Checked,
     index: u16,
     name: &[u8],
     decoder: Option<InflateScratch<'_>>,
     chunk: Option<&mut [u8; 2048]>,
     on_yield: crate::admission::Yield<'_>,
     observer: Observer,
+) -> Status {
+    member_events(entry, index, name, on_yield, observer,
+        || stream(source, entry, decoder, chunk, on_yield, observer))
+}
+/// Admission's required member: the open-time check runs inside the member's
+/// MemberBegin/MemberEnd pair, so a damaged member's failure names its stage.
+pub fn check_and_expand<S: BookSource + ?Sized>(
+    source: &mut S,
+    entry: &Entry,
+    index: u16,
+    name: &[u8],
+    directory_offset: u32,
+    decoder: Option<InflateScratch<'_>>,
+    chunk: Option<&mut [u8; 2048]>,
+    on_yield: crate::admission::Yield<'_>,
+    observer: Observer,
+) -> Result<Checked, Status> {
+    let mut checked = None;
+    let status = member_events(entry, index, name, on_yield, observer, || {
+        match crate::member_check::check(source, entry, name, directory_offset) {
+            Ok((member, _)) => stream(source, checked.insert(member), decoder, chunk, on_yield, observer),
+            Err(status) => status,
+        }
+    });
+    match (status, checked) {
+        (Status::Ok, Some(member)) => Ok(member),
+        _ => Err(status),
+    }
+}
+fn member_events(
+    entry: &Entry,
+    index: u16,
+    name: &[u8],
+    on_yield: crate::admission::Yield<'_>,
+    observer: Observer,
+    body: impl FnOnce() -> Status,
 ) -> Status {
     let mut event = WorkEvent::new(WorkKind::MemberBegin, 0);
     event.member = index;
@@ -307,7 +323,21 @@ pub fn expand<S: BookSource + ?Sized>(
     event.compressed_bytes = entry.compressed_size;
     event.expanded_bytes = entry.uncompressed_size;
     observe(on_yield, observer, event);
-    let result = (|| {
+    let result = body();
+    event.kind = WorkKind::MemberEnd;
+    event.result = result as i32;
+    observe(on_yield, observer, event);
+    result
+}
+fn stream<S: BookSource + ?Sized>(
+    source: &mut S,
+    entry: &Checked,
+    decoder: Option<InflateScratch<'_>>,
+    chunk: Option<&mut [u8; 2048]>,
+    on_yield: crate::admission::Yield<'_>,
+    observer: Observer,
+) -> Status {
+    {
         if !inflate_input_bounded(entry) {
             return Status::Unsupported;
         }
@@ -343,11 +373,7 @@ pub fn expand<S: BookSource + ?Sized>(
                 f.yield_now();
             }
         }
-    })();
-    event.kind = WorkKind::MemberEnd;
-    event.result = result as i32;
-    observe(on_yield, observer, event);
-    result
+    }
 }
 /// A sequential chapter adapter. Successful construction corresponds to open Ok.
 /// On failed open no source object is published (stronger safe API boundary).
@@ -361,7 +387,7 @@ pub struct ChapterSource<'a, S: BookSource + ?Sized> {
 impl<'a, S: BookSource + ?Sized> ChapterSource<'a, S> {
     pub fn open(
         source: &'a mut S,
-        entry: &'a Entry,
+        entry: &'a Checked,
         decoder: Option<InflateScratch<'a>>,
         on_yield: Yield<'a>,
         policy: Option<&'a dyn crate::xml_session::SourcePolicy>,

@@ -34,11 +34,13 @@ pub struct MetadataParts<'a, 'storage> {
     pub spine: &'a mut [u16],
     pub toc: &'a mut [TocEntry],
     pub package: PackageResult,
+    pub directory_offset: u32,
 }
 impl MetadataParts<'_, '_> {
     pub fn view(&self) -> Metadata<'_, '_> {
         Metadata { arena: self.arena, entries: self.entries, manifest: self.manifest,
-            spine: self.spine, toc: self.toc, package: &self.package }
+            spine: self.spine, toc: self.toc, package: &self.package,
+            directory_offset: self.directory_offset }
     }
 }
 
@@ -49,11 +51,13 @@ pub fn load_toc<'a, 'storage, S: BookSource + ?Sized, B: ParserBackend + ?Sized>
     parts: BookParts<'a, 'storage, S, B>,
     allocate: impl FnOnce(&mut Arena<'storage>, usize) -> Result<&'a mut [TocEntry], Status>,
 ) -> Result<MetadataParts<'a, 'storage>, Status> {
-    let BookParts { mut workflow, arena, entries, manifest, spine, result, .. } = parts;
+    let BookParts { mut workflow, arena, entries, manifest, spine, result, directory_offset, .. } = parts;
     let selected = result.nav_index.or(result.ncx_index)
         .and_then(|index| manifest.get(index)).and_then(|item| item.href)
         .and_then(|href| arena.c_string(href))
-        .and_then(|href| CatalogView::new(entries, arena).find(href));
+        .map(|href| CatalogView::new(entries, arena, directory_offset).member(workflow.source, href))
+        .filter(|found| *found != Err(Status::NotFound))
+        .transpose()?;
     let toc = if let Some((_, entry)) = selected {
         let index = result.nav_index.or(result.ncx_index).ok_or(Status::NotEpub)?;
         let href = manifest[index].href.and_then(|href| arena.c_string(href)).ok_or(Status::NotEpub)?;
@@ -66,5 +70,5 @@ pub fn load_toc<'a, 'storage, S: BookSource + ?Sized, B: ParserBackend + ?Sized>
         let used = package_parsers::fill_toc(&mut workflow, &entry, directory, arena, kind, toc)?;
         toc.get_mut(..used).ok_or(Status::OutOfMemory)?
     } else { &mut [] };
-    Ok(MetadataParts { arena, entries, manifest, spine, toc, package: result })
+    Ok(MetadataParts { arena, entries, manifest, spine, toc, package: result, directory_offset })
 }

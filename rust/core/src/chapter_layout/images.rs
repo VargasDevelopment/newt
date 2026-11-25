@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+use crate::member_check::{self, Checked};
 use super::{text::local, types::Images};
 use crate::{
     xml_input,
@@ -12,9 +13,11 @@ pub struct Probed {
     pub hash: u32,
     pub info: ImageInfo,
 }
+/// Newt: lookups return checked members, so no image read skips the open-time
+/// check. `source` is the image service's own read handle of the same book.
 pub trait Catalog {
-    fn find(&self, path: &[u8]) -> Option<Entry>;
-    fn find_hash(&self, hash: u32) -> Option<Entry>;
+    fn member(&self, source: &mut dyn BookSource, path: &[u8]) -> Result<Checked, Status>;
+    fn member_by_hash(&self, source: &mut dyn BookSource, hash: u32) -> Result<Checked, Status>;
 }
 /// One borrowed decoder is reborrowed for each sequential image probe. During
 /// pre-scan this is the temporary large decoder; resident layout can use another.
@@ -28,7 +31,7 @@ pub struct BookImages<'a> {
     pub table: &'a [Probed],
 }
 impl BookImages<'_> {
-    fn probe_entry(&mut self, e: &Entry) -> ImageInfo {
+    fn probe_entry(&mut self, e: &Checked) -> ImageInfo {
         let mut info = ImageInfo::default();
         let decoder = self.decoder.as_mut().map(|d| InflateScratch {
             state: &mut *d.state,
@@ -69,7 +72,8 @@ impl Images for BookImages<'_> {
         let info = if let Some(p) = self.table.iter().find(|p| p.hash == hash) {
             p.info
         } else {
-            let e = catalog.find(path)?;
+            // A damaged image gives no size, like a missing one.
+            let e = catalog.member(&mut *self.source, path).ok()?;
             self.probe_entry(&e)
         };
         if info.kind == Kind::Unknown || info.width == 0 || info.height == 0 {
@@ -147,7 +151,7 @@ pub fn probe_collected(images: &mut BookImages<'_>, table: &mut [Probed]) {
         return;
     };
     for p in table {
-        if let Some(e) = catalog.find_hash(p.hash) {
+        if let Ok(e) = catalog.member_by_hash(&mut *images.source, p.hash) {
             p.info = images.probe_entry(&e)
         }
     }
@@ -164,7 +168,7 @@ pub fn prescan<
     P: crate::xml_session::SessionPolicy<B>,
 >(
     chapter: &mut S,
-    entry: &Entry,
+    entry: &Checked,
     backend: &mut B,
     mut chapter_decoder: Option<InflateScratch<'_>>,
     buffer: &mut [u8; 2048],
@@ -232,10 +236,18 @@ pub fn prescan<
 /// image service needs a separate read handle/view of the same immutable book.
 /// No pointer escape or second mutable borrow of the catalog's source occurs.
 impl<S: BookSource + ?Sized> Catalog for crate::zip_container::Catalog<'_, '_, S> {
-    fn find(&self, path: &[u8]) -> Option<Entry> {
-        crate::zip_container::Catalog::find(self, Some(path)).copied()
+    fn member(&self, source: &mut dyn BookSource, path: &[u8]) -> Result<Checked, Status> {
+        let entry = crate::zip_container::Catalog::find(self, Some(path)).ok_or(Status::NotFound)?;
+        self.checked(source, entry)
     }
-    fn find_hash(&self, hash: u32) -> Option<Entry> {
-        self.find_by_hash(hash).copied()
+    fn member_by_hash(&self, source: &mut dyn BookSource, hash: u32) -> Result<Checked, Status> {
+        let entry = self.find_by_hash(hash).ok_or(Status::NotFound)?;
+        self.checked(source, entry)
+    }
+}
+impl<S: BookSource + ?Sized> crate::zip_container::Catalog<'_, '_, S> {
+    fn checked(&self, source: &mut dyn BookSource, entry: &Entry) -> Result<Checked, Status> {
+        let name = self.name(entry).ok_or(Status::Damaged)?;
+        member_check::check(source, entry, name, self.directory_offset()).map(|(member, _)| member)
     }
 }

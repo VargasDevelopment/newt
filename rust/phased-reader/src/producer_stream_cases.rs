@@ -1,7 +1,7 @@
 extern crate std;
 use super::super::{Selection,PhasedReader};
 use crate::{phase_storage::{BANK_BYTES, BuildLoan, Storage}, imported_revision::RevisionHasher, CachePresence, PageLayout, producer::Route};
-use newt_core::{producer_policy::{Cancellation, Hooks, Stop}, xml_session::{Handler, ParserBackend, ProducerBackend}, page_cache::CacheStorage, zip_container::{Entry,Status}, zip_window::source::BookSource};
+use newt_core::{producer_policy::{Cancellation, Hooks, Stop}, xml_session::{Handler, ParserBackend, ProducerBackend}, page_cache::CacheStorage, zip_container::Status, zip_window::source::BookSource};
 use newt_target_expat::Expat;
 use std::{cell::Cell, vec, vec::Vec};
 #[path = "../../tests/producer_stream/linebreak.rs"]
@@ -54,7 +54,7 @@ fn one(label:&str){
   "budget"=>{let mut s=b"<html><body>".to_vec();for _ in 0..1024{s.extend_from_slice(b"<!--z-->");}s.extend_from_slice(b"<p>A</p></body></html>");s},
   _=>b"<html><body><p>A</p></body></html>".to_vec()
  };
- let mut selections=[Selection::default(),Selection::default()];selections[0].entry=Entry::raw(input.len() as u32);
+ let mut selections=[Selection::default(),Selection::default()];selections[0].entry=newt_core::member_check::Checked::raw(input.len() as u32);
  let mut reader=PhasedReader::new(&mut selections,None,PageLayout::PORTRAIT);reader.info.page_count=if label=="pages"{2}else{1};reader.info.total_chars=if label=="chars"{2}else{1};
  let info=reader.info;let mut hash=Hash;let mut route=Route{settings:newt_core::preferences::ViewSettings{orientation:newt_core::preferences::Orientation::Portrait,..Default::default()},digest:&[0;32],info,hash:&mut hash};
  let context=Context{cancel_pause:label=="cancel",..Default::default()};let cancellation=Cancellation::new(Hooks{context:&context,stop:Some(stopped),yield_now:None,pause:Some(paused)});

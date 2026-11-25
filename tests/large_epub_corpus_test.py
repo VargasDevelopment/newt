@@ -6,8 +6,13 @@ newt_core::admission::admit and PhasedReader::open_phased (real 48 KiB banks),
 and checks each boundary case. Runs the fast subset by default so the normal
 gate stays quick; pass --full for the complete 64 MiB and multi-thousand-page
 corpus, and --measure to print per-case timings and arena metrics.
+--negative-controls runs only the negative controls: the gate runs them as
+their own phase so neither half outgrows one phase's CPU budget.
 """
 import argparse
+import contextlib
+import hashlib
+import io
 import importlib.util
 import json
 import os
@@ -21,7 +26,6 @@ import time
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
-from gate_tier import negative_controls
 import large_epub_corpus as corpus
 
 ADMISSION = "core/src/admission.rs"
@@ -31,6 +35,7 @@ PAGE_CACHE = "core/src/page_cache.rs"
 PHASE_STORAGE = "phased-reader/src/phase_storage.rs"
 PHASED = "phased-reader/src/reader_phased.rs"
 READER = "phased-reader/src/reader.rs"
+MEMBER_CHECK = "core/src/member_check.rs"
 
 SYNC_SIX_CHUNKS = (
     "let mut text_parts = Parts(&mut text[..TEXT_BYTES]);\n"
@@ -83,6 +88,25 @@ CONTROLS = (
      "return Err(metadata_capacity_error(status));\n    }\n    if filler.error != Status::Ok", "runtime-parser-fill-oom"),
     ("generic Contents fallback returns invalid/empty menu", READER, "Err(status) => (project(arena, &[]), status),", "Err(status) => (false, status),", "toc-nav-over-arena"),
     ("the 64 MiB source-file cap is removed", PHASED, "if bytes > admission::EXTERNAL_MAX_BYTES {", "if false {", "file-size-over"),
+    ("the open-time check skips the local-header rule", MEMBER_CHECK,
+     ") == ZipLocalHeaderRule::Mismatch", ") == ZipLocalHeaderRule::Mismatch && false", "damaged-chapter-flags"),
+    ("the open-time check skips the local name bytes", MEMBER_CHECK, "if got != expected {", "if false {", "damaged-chapter-name"),
+    ("the open-time check skips the data range", MEMBER_CHECK,
+     "if data > directory || u64::from(entry.compressed_size) > directory - data {", "if false {", "damaged-chapter-range"),
+    ("a damaged chapter is read instead of refused", PHASED,
+     "selected.entry = book.check(&entry)?;", "selected.entry = book.check(&entry).unwrap_or_default();", "damaged-chapter-signature"),
+    # A stylesheet read needs a Checked member, so styles.rs cannot skip the
+    # check and still compile; this proves the stylesheet read runs it.
+    ("a damaged stylesheet passes the open-time check", MEMBER_CHECK, "if got != expected {", "if false {", "damaged-css"),
+    ("a stylesheet read failure is taken for damage", "phased-reader/src/styles.rs",
+     "Some(Err(Status::IoError)) => {\n                    status = Status::IoError;\n                    break;\n                }",
+     "Some(Err(Status::IoError)) => *member = Member { link: Link::Damaged, ..Member::default() },",
+     "css-read-failure"),
+    # SD books never probe images; the built-in sample path does.
+    ("a damaged sample image passes the open-time check", MEMBER_CHECK, "if got != expected {", "if false {", "damaged-image"),
+    ("duplicate names are compared by hash only", "core/src/canonical.rs",
+     "if sort.view.name(sort.at(i - 1)) == sort.view.name(sort.at(i)) {",
+     "if sort.at(i - 1).name_hash == sort.at(i).name_hash {", "hash-collision"),
 )
 
 
@@ -142,6 +166,21 @@ def test_binary(run, workspace, target, *, unit=False):
     return outputs[0]
 
 
+class FreshBuilds:
+    """Proves each control's kill came from its own mutant build: an executable
+    already seen from the clean source or from a different mutation fails the
+    phase. Controls that apply the same edit may share one."""
+
+    def __init__(self):
+        self.seen = {}
+
+    def admit(self, executable, mutation):
+        digest = hashlib.sha256(Path(executable).read_bytes()).hexdigest()
+        earlier = self.seen.setdefault(digest, mutation)
+        if earlier != mutation:
+            raise RuntimeError(f"control build reused a previous executable ({earlier[0] if earlier else 'clean'})")
+
+
 
 CACHE_LIMIT_CONTROLS = (
     ("producer admission probes oversized chapters", "phased-reader/src/producer_admission.rs",
@@ -160,15 +199,17 @@ CACHE_LIMIT_CONTROLS = (
 )
 
 
-def cache_limit_cases(run, workspace, target, support, *, controls):
+def cache_limit_cases(run, workspace, target, support, *, builds=None):
+    """The cache-boundary tests, then their controls when given BUILDS."""
     binary = test_binary(run, workspace, target, unit=True)
     command = lambda executable: [executable, "cache_page_limit_cases::", "--nocapture"]
     output = run.run(command(binary), workspace)
     support.require("test result: ok. 3 passed; 0 failed; 0 ignored" in output,
                     "three cache-boundary tests must pass before controls")
     print("PASS cache boundaries: exact 4096/4097, settled producer and foreground bypass", flush=True)
-    if not controls:
+    if builds is None:
         return
+    builds.admit(binary, None)
     for label, source, good, bad in CACHE_LIMIT_CONTROLS:
         path = workspace / source
         original = path.read_text()
@@ -176,6 +217,7 @@ def cache_limit_cases(run, workspace, target, support, *, controls):
         path.write_text(original.replace(good, bad))
         try:
             binary = test_binary(run, workspace, target, unit=True)
+            builds.admit(binary, (source, good, bad))
             number = len(run.commands)
             try:
                 run.run(command(binary), workspace)
@@ -212,6 +254,9 @@ def write_manifest(path: Path, records: list[dict]) -> None:
             _opt_bool(r.get("expected_small32")),
             "-" if pr is None else f"{pr[0]}..{pr[1]}",
             r.get("expected_fallback") or "-",
+            r.get("expected_chapter") or "-",
+            _opt_bool(r.get("expected_styled")),
+            _opt_bool(r.get("expected_image")),
         )))
     path.write_text("\n".join(lines) + "\n")
 
@@ -285,7 +330,59 @@ def verify_control_baseline_guard(binary, run, workspace, epubs_dir, output, sup
     print(f"PASS self-test: clean baseline rejects broken expectation on {bad_name}", flush=True)
 
 
-def run_control(run, workspace, target, support, manifest, verified, name, source, good, bad, failing_case):
+class _FakeBuild:
+    """A stand-in Run for verify_fresh_build_guard: the "build" copies the
+    source into an executable, and the "test" fails on a broken source. A stale
+    build hands back the previous executable instead."""
+
+    def __init__(self, root, source):
+        self.output, self.source, self.env, self.commands = root, source, {}, []
+        self.stale, self.last = False, None
+
+    def cargo(self, workspace, target, *arguments):
+        if not self.stale:
+            self.last = self.output / f"exe-{len(self.commands)}"
+            self.last.write_text(self.source.read_text())
+        self.commands.append(("cargo",))
+        return json.dumps({"reason": "compiler-artifact", "executable": str(self.last),
+                           "target": {"name": "large_epub_corpus"}})
+
+    def run(self, command, cwd):
+        number = len(self.commands)
+        self.commands.append(command)
+        broken = "BROKEN" in Path(command[0]).read_text()
+        (self.output / f"{number:03d}.stdout").write_text("test result: FAILED. case:" if broken else "test result: ok.")
+        (self.output / f"{number:03d}.stderr").write_text("")
+        if broken:
+            raise RuntimeError("test failed")
+        return "test result: ok."
+
+
+def verify_fresh_build_guard(support):
+    """Self-test: a no-op control fails whether its build reuses the previous
+    mutant's executable or yields the clean one, never counting as a kill."""
+    def reused(stale_successor):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "lib.rs").write_text("LIMIT")
+            run, builds = _FakeBuild(root, root / "lib.rs"), FreshBuilds()
+            builds.admit(test_binary(run, root, root), None)
+            control = lambda name, bad: run_control(run, root, root, support, root / "m.tsv", {"case"}, builds,
+                                                    name, "lib.rs", "LIMIT", bad, "case")
+            with contextlib.redirect_stdout(io.StringIO()):
+                control("a real break", "BROKEN")
+                run.stale = stale_successor
+                try:
+                    control("a no-op", "LIMIT")
+                except RuntimeError as error:
+                    return "reused a previous executable" in str(error)
+            return False
+    support.require(reused(True), "a stale mutant executable must fail its successor control")
+    support.require(reused(False), "a clean executable must fail a no-op control")
+    print("PASS self-test: a control fails when its build reuses an earlier executable", flush=True)
+
+
+def run_control(run, workspace, target, support, manifest, verified, builds, name, source, good, bad, failing_case):
     support.require(failing_case in verified, f'control "{name}": {failing_case} has no clean baseline')
     path = workspace / source
     text = path.read_text()
@@ -293,6 +390,7 @@ def run_control(run, workspace, target, support, manifest, verified, name, sourc
     path.write_text(text.replace(good, bad))
     try:
         binary = test_binary(run, workspace, target)
+        builds.admit(binary, (source, good, bad))
         number = len(run.commands)
         run.env["NEWT_LARGE_EPUB_MANIFEST"] = str(manifest)
         try:
@@ -370,17 +468,35 @@ def run_sweep(binary, run, workspace, out_dir):
     print(f"extra ZIP entries (e/0000, chapters=2): max extra = {max_extra_zip} (total entries={max_extra_zip + 6})", flush=True)
 
 
+def run_controls(binary, run, workspace, target, support, epubs_dir, output):
+    """Every negative control. Each target case is generated here and must pass
+    on unchanged code first, so this needs nothing from the clean-case run."""
+    verify_fresh_build_guard(support)
+    builds = FreshBuilds()
+    builds.admit(binary, None)
+    cache_limit_cases(run, workspace, target, support, builds=builds)
+    by_name, verified = {}, set()
+    prepare_control_baselines(binary, run, workspace, epubs_dir, output, support, by_name, verified, CONTROLS)
+    verify_control_baseline_guard(binary, run, workspace, epubs_dir, output, support, by_name)
+    for row in CONTROLS:
+        case_name = row[4]
+        case_manifest = output / f"ctrl-{case_name}.tsv"
+        write_manifest(case_manifest, [by_name[case_name]])
+        run_control(run, workspace, target, support, case_manifest, verified, builds, *row)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--full", action="store_true", help="Run the full corpus (includes 64 MiB and >4,096-page cases)")
     parser.add_argument("--measure", action="store_true", help="Print per-case timings, arena high-water, and cache sizes")
     parser.add_argument("--sweep", action="store_true", help="Also run chapter/entry count sweep against 48 KiB banks")
-    parser.add_argument("--no-controls", action="store_true", help="Skip negative controls")
+    parser.add_argument("--negative-controls", action="store_true",
+                        help="Run only the negative controls, instead of the corpus cases")
     args = parser.parse_args(argv)
 
     started = time.perf_counter()
     subset = "full" if args.full else "fast"
-    cases = corpus.select_cases(subset=subset)
+    cases = [] if args.negative_controls else corpus.select_cases(subset=subset)
 
     support = load("large_epub_support", ROOT / "rust/tests/inflate/run_support.py")
     support.install_signal_handlers()
@@ -403,34 +519,35 @@ def main(argv=None):
         run = support.Run(output / "logs", support.verify_tools(), time.monotonic() + 600)
         run.env["CARGO_BUILD_JOBS"] = os.environ.get("CARGO_BUILD_JOBS", "6")
         objects = compile_native_objects(run, workspace, output / "objs")
-        run.env["RUSTFLAGS"] = rustflags(objects, warnings=True)
+        # Mutants may warn, so controls build without denied warnings from the
+        # start; the corpus-case run is the one that holds the code to them.
+        run.env["RUSTFLAGS"] = rustflags(objects, warnings=not args.negative_controls)
+        if args.negative_controls:
+            # Each control rebuilds after a one-line edit: incremental builds
+            # without debug info halve that. FreshBuilds rejects a control
+            # whose build returns an earlier executable; staleness within a
+            # new executable relies on rustc's incremental correctness.
+            run.env.update(CARGO_INCREMENTAL="1", CARGO_PROFILE_DEV_DEBUG="0")
         run.env["NEWT_LARGE_EPUB_MANIFEST"] = str(manifest)
         target = output / "target"
         try:
             binary = test_binary(run, workspace, target)
+            if args.negative_controls:
+                run_controls(binary, run, workspace, target, support, epubs_dir, output)
+                print(f"PASS large-EPUB corpus controls ({len(CONTROLS) + len(CACHE_LIMIT_CONTROLS)} controls; "
+                      f"total {time.perf_counter() - started:.2f}s)", flush=True)
+                return
             exec_t0 = time.perf_counter()
             out = run_clean_cases(binary, run, workspace, support, manifest)
             exec_s = time.perf_counter() - exec_t0
             if args.measure:
                 for line in out.splitlines():
-                    if line.startswith(("SIZES ", "CASE ")):
+                    if line.startswith(("SIZES ", "CASE ", "CHAPTER ")):
                         print(line)
             if args.sweep:
                 run_sweep(binary, run, workspace, output / "sweep")
-            unit_controls = not args.no_controls and negative_controls(__file__)
             run.env["RUSTFLAGS"] = rustflags(objects, warnings=False)
-            cache_limit_cases(run, workspace, target, support, controls=unit_controls)
-            if not args.no_controls and negative_controls(__file__):
-                by_name = {r["name"]: r for r in records}
-                verified = set(by_name)
-                prepare_control_baselines(binary, run, workspace, epubs_dir, output, support, by_name, verified, CONTROLS)
-                verify_control_baseline_guard(binary, run, workspace, epubs_dir, output, support, by_name)
-                run.env["RUSTFLAGS"] = rustflags(objects, warnings=False)
-                for row in CONTROLS:
-                    case_name = row[4]
-                    case_manifest = output / f"ctrl-{case_name}.tsv"
-                    write_manifest(case_manifest, [by_name[case_name]])
-                    run_control(run, workspace, target, support, case_manifest, verified, *row)
+            cache_limit_cases(run, workspace, target, support)
         except RuntimeError:
             for log in sorted((output / "logs").glob("*.std*"))[-2:]:
                 print(log.read_text(), file=sys.stderr, end="")

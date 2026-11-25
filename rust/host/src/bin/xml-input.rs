@@ -1,7 +1,8 @@
 // Host-only transport. Core library uses no std or heap.
+use newt_core::member_check::Checked;
 use newt_core::{
     xml_input::*,
-    zip_container::{Entry, Reader, Status},
+    zip_container::{Reader, Status},
     zip_window::{arena::Arena, source::BookSource},
 };
 use std::{
@@ -91,7 +92,7 @@ fn run(line: &str) {
                 .map(|a| if a == "r" { None } else { Some(num(a)) })
                 .collect();
             let calls = Rc::new(Cell::new(0));
-            let entry = Entry::raw(bytes.len() as u32);
+            let entry = Checked::raw(bytes.len() as u32);
             let mut source = Source {
                 bytes,
                 max,

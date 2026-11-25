@@ -19,8 +19,7 @@ def check(gate, snapshot, positive_only):
     result = json.loads((output / 'result.json').read_text())
     positives = json.loads((output / 'positive-receipts.json').read_text())
     controls = json.loads((output / 'mutation-receipts.json').read_text()) if not positive_only else []
-    comparisons = sum('cpp' in row and row.get('domain', 'shared semantic domain')
-                      == 'shared semantic domain' for row in positives)
+    comparisons = sum('reference' in row for row in positives)
     return dict(result, receipts=str(output), comparisons=comparisons,
                 positive_cases=len(positives), distinct_resource_domain_cases=len(positives)-comparisons,
                 semantic_controls=controls)

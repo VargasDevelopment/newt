@@ -1,7 +1,8 @@
 // Copyright (c) 2026 FreeInk. MIT; see rust/THIRD_PARTY.md.
 //! Safe translation of pinned Css.h/Css.cpp. Byte syntax, not web CSS.
 #![forbid(unsafe_code)]
-use crate::zip_container::{Entry, InflateScratch, Reader, Status};
+use crate::member_check::Checked;
+use crate::zip_container::{InflateScratch, Reader, Status};
 use crate::zip_window::source::BookSource;
 
 pub const MAX_RULES: usize = 512;
@@ -475,7 +476,7 @@ impl<'a> CssStylesheetBuilder<'a> {
     pub fn add_sheet<S: BookSource + ?Sized>(
         &mut self,
         source: &mut S,
-        entry: &Entry,
+        entry: &Checked,
         decode: Option<InflateScratch<'_>>,
         text: &mut [u8],
     ) -> Status {

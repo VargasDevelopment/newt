@@ -46,7 +46,8 @@ Each case isolates one axis (`zip-entries`, `metadata-arena`, `central-dir`,
 Host verification and timing measurements:
 
 ```sh
-python3 tests/large_epub_corpus_test.py            # fast subset + negative controls (gate default)
+python3 tests/large_epub_corpus_test.py            # fast subset (gate default)
+python3 tests/large_epub_corpus_test.py --negative-controls  # every negative control (its own gate phase)
 python3 tests/large_epub_corpus_test.py --full --measure
 python3 tests/large_epub_corpus_test.py --full --measure --sweep
 ```

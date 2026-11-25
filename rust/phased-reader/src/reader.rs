@@ -6,10 +6,11 @@ use crate::{
     styles::{self, Slot, Sources, State as StyleState},
     watch::Watch,
     xml_session::{self, Attributes, Handler, ParserBackend, XmlStream},
-    zip_container::{Entry, Status, hash_path},
+    zip_container::{Status, hash_path},
     zip_window::{arena::Arena, source::BookSource},
 };
 use newt_core::{
+    member_check::Checked,
     chapter_layout::{
         engine::Engine,
         session::{ChapterSession, LayoutHandler},
@@ -38,7 +39,8 @@ pub struct PageInfo {
 }
 /// Initialize directly in caller storage; no owned arena or selection allocation.
 pub struct Selection {
-    pub entry: Entry,
+    /// Checked when the chapter was selected; the producer and cache reuse it.
+    pub entry: Checked,
     href: [u8; 512],
     title: [u8; 256],
     pub language: BookLanguage,
@@ -71,7 +73,7 @@ impl Selection {
         self.navigation.clone_from(&other.navigation);
     }
     fn clear(&mut self) {
-        self.entry = Entry::default();
+        self.entry = Checked::default();
         self.href.fill(0);
         self.title.fill(0);
         self.spines = 0;
@@ -807,6 +809,28 @@ fn bind_menu_source<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
         })
 }
 
+/// An optional TOC failure ends the open only when the book source itself
+/// failed. Anything about the TOC member (damaged, unparsable, too big)
+/// degrades to no TOC, like a missing one. Exhaustive so a new status needs a
+/// decision here.
+pub(crate) fn optional_toc_ends_open(status: Status) -> bool {
+    match status {
+        Status::IoError | Status::Stale => true,
+        Status::Ok
+        | Status::NotZip
+        | Status::NotEpub
+        | Status::Encrypted
+        | Status::Truncated
+        | Status::Unsupported
+        | Status::OutOfMemory
+        | Status::ParseError
+        | Status::NotFound
+        | Status::MetadataTooLarge
+        | Status::PathTooLong
+        | Status::Damaged => false,
+    }
+}
+
 fn contents_fallback(authored: bool, status: Status) -> crate::ContentsFallback {
     use crate::ContentsFallback;
     if !authored || status == Status::Ok { ContentsFallback::None }
@@ -829,7 +853,8 @@ fn bind_menu_book<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
         .map(|(_, e)| (e, book.navigation_is_epub3()));
     let package = *book.package();
     let entry_count = book.catalog().len();
-    let canonical::BookParts { mut workflow, arena, entries, manifest, spine, .. } = book.into_parts();
+    let canonical::BookParts { mut workflow, arena, entries, manifest, spine, directory_offset, .. } =
+        book.into_parts();
     let mark = arena.mark();
     let bytes = workflow.source.size();
     let mut guarded = NavigationSource { source: &mut *workflow.source, bytes, failed: false };
@@ -837,11 +862,19 @@ fn bind_menu_book<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     if live != Status::Ok { return Err(live); }
     let mut project = |arena: &Arena<'_>, toc: &[TocEntry]| {
         bind(&Metadata { arena, package: &package, manifest: &manifest[..package.manifest_count],
-            spine: &spine[..package.spine_count], toc, entries: &entries[..entry_count] }, navigation)
+            spine: &spine[..package.spine_count], toc, entries: &entries[..entry_count],
+            directory_offset }, navigation)
     };
     let optional = if let Some((entry, epub3)) = declaration {
         let href = entry.name.and_then(|n| arena.c_string(n)).map(crate::xml_input::c_bytes);
-        if href.is_some_and(|h| crate::xml_input::dir_name(h, directory)) {
+        // A damaged TOC member degrades like an unparsable one.
+        let checked = canonical::CatalogView::new(&entries[..entry_count], arena, directory_offset)
+            .check(&mut guarded, &entry);
+        if let Err(status) = checked {
+            Err(status)
+        } else if let (Ok(entry), true) =
+            (checked, href.is_some_and(|h| crate::xml_input::dir_name(h, directory)))
+        {
             let mut nav = Workflow {
                 policy: workflow.policy, source: &mut guarded, backend: &mut *workflow.backend,
                 decoder: resources::decoder(&mut workflow.decoder), buffer: workflow.buffer.as_deref_mut(),
@@ -862,7 +895,7 @@ fn bind_menu_book<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     arena.release(mark);
     let live = guarded.guard();
     if live != Status::Ok { return Err(live); }
-    if matches!(optional, Status::IoError | Status::Stale) { return Err(optional); }
+    if optional_toc_ends_open(optional) { return Err(optional); }
     if !bound { navigation.invalidate_menu(); return Err(Status::Unsupported); }
     navigation.set_contents_fallback(contents_fallback(authored, optional));
     Ok(())
@@ -1024,7 +1057,7 @@ fn pass_stream<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
         None,
     )?;
     let mut watch = Watch::begin(&mut chapter, slot.state);
-    let raw = Entry::raw(selected.entry.uncompressed_size);
+    let raw = Checked::raw(selected.entry.uncompressed_size);
     let mut metrics = ReaderAtlas;
     let atlas = ReaderAtlas;
     let output = match plan {
@@ -1152,7 +1185,7 @@ impl Handler for ExactAnchor<'_> {
 /// Pinned standalone exact-ID validation; a parser/I/O error precedes missing ID.
 pub fn validate_exact_anchor<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     source: &mut S,
-    entry: &Entry,
+    entry: &Checked,
     wanted: &[u8],
     r: &mut canonical::Resources<'_, B>,
     on_yield: newt_core::admission::Yield<'_>,
@@ -1167,7 +1200,7 @@ pub fn validate_exact_anchor<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
 }
 pub(crate) fn validate_exact_anchor_stream<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     source: &mut S,
-    entry: &Entry,
+    entry: &Checked,
     wanted: &[u8],
     r: &mut crate::phase_storage::ParseResources<'_, B>,
     on_yield: newt_core::admission::Yield<'_>,
@@ -1186,7 +1219,7 @@ pub(crate) fn validate_exact_anchor_stream<S: BookSource + ?Sized, B: ParserBack
         Ok(c) => c,
         Err(e) => return e,
     };
-    let raw = Entry::raw(entry.uncompressed_size);
+    let raw = Checked::raw(entry.uncompressed_size);
     let mut handler = ExactAnchor {
         wanted,
         hash: hash_path(wanted),

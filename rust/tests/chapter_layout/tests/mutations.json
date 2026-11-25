@@ -51,7 +51,7 @@
     "id": "cached-unknown-reprobe",
     "path": "core/images.rs",
     "old": "            p.info\n        } else {",
-    "new": "            if p.info.kind == Kind::Unknown {\n                let e = catalog.find(path)?; self.probe_entry(&e)\n            } else { p.info }\n        } else {",
+    "new": "            if p.info.kind == Kind::Unknown {\n                let e = catalog.member(&mut *self.source, path).ok()?; self.probe_entry(&e)\n            } else { p.info }\n        } else {",
     "witness": "image-unknown",
     "family": "layout"
   },

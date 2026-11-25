@@ -7,7 +7,7 @@ pub(crate) fn select_book_metadata<
     S: BookSource + ?Sized,
     B: ParserBackend + ?Sized,
 >(
-    book: canonical::Book<'a, 'storage, S, B>,
+    mut book: canonical::Book<'a, 'storage, S, B>,
     spine: u32,
     selected: &mut Selection,
     sr: &mut StyleResources<'_, '_>,
@@ -27,12 +27,12 @@ pub(crate) fn select_book_metadata<
         if !newt_core::phased_metadata::admissible_href(href, selected.href.len()) {
             return Err(Status::Unsupported);
         }
-        let (_, mut entry) = book.catalog().find(href).ok_or(Status::NotFound)?;
+        let (_, entry) = book.catalog().find(href).ok_or(Status::NotFound)?;
         selected.href[..href.len()].copy_from_slice(href);
         selected.href[href.len()] = 0;
-        // Entry name is an arena handle, never retain it after metadata reset.
-        entry.name = None;
-        selected.entry = entry;
+        // The chapter's local header is checked as it opens. A damaged chapter
+        // fails here and gets the chapter notice; the rest of the book reads.
+        selected.entry = book.check(&entry)?;
         selected.spines =
             u32::try_from(book.package().spine_count).map_err(|_| Status::Unsupported)?;
         newt_core::phased_metadata::copy_display_title(
@@ -60,6 +60,7 @@ pub(crate) fn select_book_metadata<
         spine: spines,
         result: _,
         chunk: _,
+        directory_offset,
     } = book.into_parts();
     let mark = arena.mark();
     let bytes = workflow.source.size();
@@ -81,6 +82,7 @@ pub(crate) fn select_book_metadata<
                 spine: &spines[..package.spine_count],
                 toc,
                 entries: &entries[..entry_count],
+                directory_offset,
             },
             spine,
         )
@@ -90,27 +92,34 @@ pub(crate) fn select_book_metadata<
             .name
             .and_then(|n| arena.c_string(n))
             .map(crate::xml_input::c_bytes);
-        if href.is_some_and(|h| crate::xml_input::dir_name(h, sr.directory)) {
-            let mut navigation_workflow = Workflow {
-                policy: workflow.policy,
-                source: &mut guarded,
-                backend: &mut *workflow.backend,
-                decoder: resources::decoder(&mut workflow.decoder),
-                buffer: workflow.buffer.as_deref_mut(),
-                filter: workflow.filter.as_deref_mut(),
-            };
-            let dir = crate::xml_input::c_bytes(sr.directory);
-            let kind = if epub3 { TocKind::Nav } else { TocKind::Ncx };
-            package::count_toc(&mut navigation_workflow, &entry, dir, arena, kind).and_then(
-                |count| {
-                    toc_backing.with_toc(arena, count, |arena, toc| {
-                        package::fill_toc(&mut navigation_workflow, &entry, dir, arena, kind, toc)
-                            .map(|used| bind(arena, &toc[..used]))
-                    })?
-                },
-            )
-        } else {
-            Err(Status::Unsupported)
+        // A damaged optional TOC degrades to no TOC, like an unparsable one.
+        match canonical::CatalogView::new(&entries[..entry_count], arena, directory_offset)
+            .check(&mut guarded, &entry)
+        {
+            Err(status) => Err(status),
+            Ok(_) if !href.is_some_and(|h| crate::xml_input::dir_name(h, sr.directory)) => {
+                Err(Status::Unsupported)
+            }
+            Ok(entry) => {
+                let mut navigation_workflow = Workflow {
+                    policy: workflow.policy,
+                    source: &mut guarded,
+                    backend: &mut *workflow.backend,
+                    decoder: resources::decoder(&mut workflow.decoder),
+                    buffer: workflow.buffer.as_deref_mut(),
+                    filter: workflow.filter.as_deref_mut(),
+                };
+                let dir = crate::xml_input::c_bytes(sr.directory);
+                let kind = if epub3 { TocKind::Nav } else { TocKind::Ncx };
+                package::count_toc(&mut navigation_workflow, &entry, dir, arena, kind).and_then(
+                    |count| {
+                        toc_backing.with_toc(arena, count, |arena, toc| {
+                            package::fill_toc(&mut navigation_workflow, &entry, dir, arena, kind, toc)
+                                .map(|used| bind(arena, &toc[..used]))
+                        })?
+                    },
+                )
+            }
         }
     } else {
         Err(Status::Unsupported)
@@ -126,7 +135,7 @@ pub(crate) fn select_book_metadata<
     if live != Status::Ok {
         return Err(live);
     }
-    if matches!(optional, Status::IoError | Status::Stale) {
+    if crate::reader::optional_toc_ends_open(optional) {
         return Err(optional);
     }
     if !bound {
@@ -140,7 +149,7 @@ pub(crate) fn select_book_metadata<
         let book = styles::Book {
             manifest: &manifest[..package.manifest_count],
             arena,
-            catalog: Some(canonical::CatalogView::new(&entries[..entry_count], arena)),
+            catalog: Some(canonical::CatalogView::new(&entries[..entry_count], arena, directory_offset)),
         };
         if !book.declares_stylesheet() {
             return (true, Status::Ok);

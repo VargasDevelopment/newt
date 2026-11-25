@@ -76,3 +76,23 @@ and exact trace contract.
 Entry metadata and source content remain stable while a reader is active. Rust
 reads a value snapshot of Entry; mutating the original C entry through another
 reference is defined C++ usage outside this supported Rust caller domain.
+
+## Newt additions (#60)
+
+These are additive and outside the oracle. No C path reads them, and the
+pinned trace, statuses and mutation anchors are unchanged.
+
+- `Entry.flags` keeps the central general-purpose flags. It fills existing
+  padding, so `Entry` stays 24 B (32-bit) and 32 B (64-bit).
+- `Catalog::directory_offset()` returns where the central directory starts.
+- `Status::Damaged` (13) is never returned by Catalog or Reader. Only the
+  open-time member check returns it (`core/src/member_check.rs`, reached via
+  `canonical::CatalogView::check`), when a local header disagrees with its
+  central record.
+- `Reader::open` takes `&Checked`, not `&Entry`. Only the entry type in the
+  signatures changed, so the compiler refuses any read of a member that
+  skipped the open-time check. A `Checked` reads as its `Entry`, so behavior
+  and traces are byte-identical, and the oracle and expected files are
+  untouched. The pinned harness reads raw catalog entries, as the SDK does, so
+  it wraps them with `Checked::unverified`. That exists only under the
+  `pinned-harness` feature, which RV32 (firmware) builds refuse to compile.

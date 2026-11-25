@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Offline canonical EPUB host parity, semantic controls and RV32 compilation."""
+"""Offline canonical EPUB host results against Newt-owned expected-v3, semantic
+controls and RV32 compilation. See CONTRACT.md for why the C++ comparison ended."""
 import argparse
 import hashlib
 import importlib.util
@@ -48,7 +49,7 @@ def main(argv=None, tool_root=None):
         with p.open('rb') as f: return hashlib.file_digest(f,'sha256').hexdigest()
     def verify_paths():
         # Original manifests authenticate the capture; runtime products remain sealed below.
-        data = json.loads(__import__('zlib').decompress((HERE/'expected-v2.json.zlib').read_bytes()))
+        data = json.loads(__import__('zlib').decompress((HERE/'expected-v3.json.zlib').read_bytes()))
         require(data['source_provenance'] == expected, 'EPUB frozen provenance changed')
         load(ROOT/'rust/tests/xml_session/native_inputs.py', 'epub_expat_inputs').verify(
             ROOT/'rust/tests/package_parsers', tool_root/'vendor/freeink-sdk')
@@ -105,7 +106,7 @@ def main(argv=None, tool_root=None):
         finally: verify()
     records=[]
     try:
-        # Genuine Expat/bridge product objects remain; no C++ reference enters this test.
+        # Genuine Expat/bridge product objects remain; no C++ enters this test.
         book=tool_root/'vendor/freeink-sdk/libs/book/FreeInkBook'
         include=book/'include'; expat=book/'third_party/expat'
         flags=['-O1','-g','-fsanitize=address,undefined','-fno-sanitize-recover=all','-fno-omit-frame-pointer']
@@ -122,9 +123,9 @@ def main(argv=None, tool_root=None):
         valid=next(c for c in cases if c['id']=='valid-nav-not-parsed')
         native_cases=[c for c in cases if 'typed' not in c]
         native_cases += [{**valid,'id':f'fail-call-{call}','fail_call':call} for call in range(fail_calls)]
-        reference=frozen_transport.Frozen(HERE/'expected-v2.json.zlib',
+        reference_path=HERE/'expected-v3.json.zlib'
+        reference=frozen_transport.Frozen(reference_path,
             [dict(mode=0,input=corpus.wire(c)) for c in native_cases],expected)
-        cpp=HERE/'expected-v2.json.zlib'
         host_flags=['-Dwarnings','-Ccodegen-units=1','-C','link-arg=-fsanitize=address,undefined','-C','link-arg=-fno-sanitize-recover=all']
         for name in ('parse','tok','role','bridge'): host_flags+=['-C','link-arg='+str(objects[name])]
         runner.env['RUSTFLAGS']=shlex.join(host_flags)
@@ -149,7 +150,7 @@ def main(argv=None, tool_root=None):
         def reply(binary,case):
             runner.env['NEWT_TYPED_CASE']=case.get('typed','')
             wire=corpus.wire(case)
-            raw=reference.text(wire) if binary==cpp else command([binary],stdin=wire,runtime=True)
+            raw=reference.text(wire) if binary==reference_path else command([binary],stdin=wire,runtime=True)
             rows=protocol.response(raw,wire)
             return rows
         baseline={}
@@ -157,26 +158,26 @@ def main(argv=None, tool_root=None):
             r=reply(rust,case);corpus.check(case,r)
             record=dict(id=case['id'],rust=r,domain=case.get('domain','shared semantic domain'))
             if 'typed' not in case:
-                c=reply(cpp,case);corpus.check(case,c,cpp=True)
-                record['cpp']=c
-                record['arena_diagnostics']=dict(rust=r[-2][1:],cpp=c[-2][1:],matched_claim=False)
-                if 'domain' not in case: require(protocol.semantic(r)==protocol.semantic(c),'semantic/read/event parity: '+case['id'])
+                c=reply(reference_path,case);corpus.check(case,c)
+                record['reference']=c
+                record['arena_diagnostics']=dict(rust=r[-2][1:],reference=c[-2][1:],matched_claim=False)
+                require(protocol.semantic(r)==protocol.semantic(c),'semantic/read/event result: '+case['id'])
             baseline[case['id']]=r;records.append(record)
             dump(output/'positive-receipts.json',records)
         controls.run(protocol,corpus,next(c for c in cases if c['id']=='valid-nav-not-parsed'),baseline['valid-nav-not-parsed'])
         chapter=next(c for c in cases if c['id']=='chapter-stored')
         controls.run(protocol,corpus,chapter,baseline[chapter['id']])
-        dump(output/'negative-controls.json',dict(protocol_field_deletion=True,field_bounds=True,expectation_tampering=True))
+        dump(output/'negative-controls.json',dict(protocol_field_deletion=True,field_bounds=True,expectation_tampering=True,regeneration_semantic_change=True))
         # Dynamic fail-call coverage spans each observed baseline source read.
         valid=next(c for c in cases if c['id']=='valid-nav-not-parsed')
         require(fail_calls == sum(r[0]=='R' for r in baseline[valid['id']]), 'frozen dynamic read corpus changed')
         for call in range(fail_calls):
             case={**valid,'id':f'fail-call-{call}','fail_call':call}
-            r=reply(rust,case);c=reply(cpp,case)
-            require(protocol.semantic(r)==protocol.semantic(c),'fail-call parity '+str(call))
+            r=reply(rust,case);c=reply(reference_path,case)
+            require(protocol.semantic(r)==protocol.semantic(c),'fail-call result '+str(call))
             # Some failed optional lookups may be recoverable; equality alone
             # does not establish fault propagation. Record every observed status.
-            records.append(dict(id=case['id'],rust=r,cpp=c))
+            records.append(dict(id=case['id'],rust=r,reference=c))
             dump(output/'positive-receipts.json',records)
         dump(output/'positive-receipts.json',records)
         # Borrowed actual core and nonconstant runtime-input functions compile for RV32.

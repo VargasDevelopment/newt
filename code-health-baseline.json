@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3980848,
+      "flash_bytes": 3981440,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "5503a788fe34f390a2d07441a8d5f9216f560e7c",
-      "before": 3980720,
-      "after": 3980848,
-      "reason": "+128 B over measured main f4628cb3 (3,980,720 -> 3,980,848 B), measured by a clean pinned-Python firmware-build.py --clean --health-report of committed 5503a788. Creates the canonical Update path and its parents best effort after each boot's first successful card mount; errors do not change the mount result. The component walk supports changed mount points and Update paths without a second hardcoded Newt root. No new idle state or heap. RAM 124,096 -> 124,096 B; RTC 300 -> 300 B; lent Wi-Fi 22,528 -> 22,528 B. Selected compiler frames remain 0/16/32/48/480 B. Native nb_mount_sd grows 32 -> 80 B for the bounded path buffer; no memory floor or other resource ceiling changes.",
-      "reviewer": "Newt Lead (cross-family review: Opus 5.5 xhigh, 2026-11-25)"
+      "source_revision": "2e60583f73727a2d1b8336531efea7bf401501ba",
+      "before": 3980848,
+      "after": 3981440,
+      "reason": "+592 B over the 3,980,848 B ceiling (main 3a5f051a): #60 (NEWT-166) checks each ZIP member's local header when it opens instead of during whole-book admission (core/src/member_check.rs), so one code path serves every book. Admission checks the container and OPF inside their MemberBegin/MemberEnd events; chapters, images, stylesheets, the built-in sample and the cover use the same check, and duplicate names are compared by one typed sort. One dyn BookSource check body serves every source type (eight generic copies cost 5,872 B more). Clean regional DEV USB builds: main 3a5f051a 3,980,848 B (its record); 2e60583f 3,981,440 B (56.7% of the 7,016,448 B usable app flash). RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, selected stack frames 0/16/32/48/480 B (within 0/16/32/48/656 B ceilings; 330 frames).",
+      "reviewer": "Newt Lead (2026-11-25; cross-family review: Astra)"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",

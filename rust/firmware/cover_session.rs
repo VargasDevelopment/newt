@@ -3,7 +3,7 @@
 use super::{io::{self,Files,Source,Control},memory::{Memory,Block},member::{self,Stored},
     decode::{self,Drift},xml,CoverResult as R,CoverResume,Step};
 use core::{ffi::CStr,mem::size_of,ptr};
-use newt_core::{cover::{self,Member,MetadataStatus as M,discovery,xml::Found},zip_window::source::BookSource};
+use newt_core::{cover::{self,Member,MetadataStatus as M,discovery,xml::Found},member_check::CheckedRecord,zip_window::source::BookSource};
 const STAGE:u8=1;const PENDING:u8=2;const EARLY:u8=4;
 #[derive(Clone,Copy)]
 enum Document{Container,Package,Page}
@@ -97,9 +97,7 @@ impl<'a> Session<'a>{
         self.source_crc=self.resume.source_crc;
         if self.resume.step==Step::Decided{return self.resume.verdict;}
         if self.resume.step==Step::Located{
-            self.member=Member{entry:newt_core::zip_container::Entry{name:None,name_hash:0,
-                compressed_size:self.resume.compressed,uncompressed_size:self.resume.uncompressed,
-                local_header_offset:self.resume.local,method:u16::from(self.resume.method)},
+            self.member=Member{entry:self.resume.member.member(),
                 crc32:self.resume.crc32,data:u64::from(self.resume.data)};
         }else{let result=self.locate(true);if result!=R::Ready{return self.cancelled(result);}}
         if self.member.entry.method!=0{
@@ -155,9 +153,8 @@ impl<'a> Session<'a>{
         }
         let result=metadata(discovery::locate(&mut self.source,&self.found.image,&mut self.member));
         if remember&&result==R::Ready&&self.unfaulted(){
-            self.resume.local=self.member.entry.local_header_offset;self.resume.compressed=self.member.entry.compressed_size;
-            self.resume.uncompressed=self.member.entry.uncompressed_size;self.resume.crc32=self.member.crc32;
-            self.resume.data=self.member.data as u32;self.resume.method=self.member.entry.method as u8;self.resume.step=Step::Located;
+            self.resume.member=CheckedRecord::from(&self.member.entry);self.resume.crc32=self.member.crc32;
+            self.resume.data=self.member.data as u32;self.resume.step=Step::Located;
         }result
     }
     fn early_unsupported(&mut self)->(R,bool){

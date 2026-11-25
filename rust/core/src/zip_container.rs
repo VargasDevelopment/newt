@@ -23,6 +23,8 @@ pub enum Status {
     Stale,
     MetadataTooLarge,
     PathTooLong,
+    /// Newt addition: a member's local header disagrees with its central record.
+    Damaged,
 }
 impl Status {
     pub fn name(self) -> &'static str {
@@ -40,6 +42,7 @@ impl Status {
             Self::Stale => "Stale",
             Self::MetadataTooLarge => "MetadataTooLarge",
             Self::PathTooLong => "PathTooLong",
+            Self::Damaged => "Damaged",
         }
     }
 }
@@ -53,6 +56,9 @@ pub struct Entry {
     pub uncompressed_size: u32,
     pub local_header_offset: u32,
     pub method: u16,
+    /// Newt addition: central general-purpose flags, kept for the open-time
+    /// local-header check (`member_check`). Fills existing padding.
+    pub flags: u16,
 }
 impl Entry {
     pub const fn raw(size: u32) -> Self {
@@ -63,6 +69,7 @@ impl Entry {
             uncompressed_size: size,
             local_header_offset: RAW_HEADER_OFFSET,
             method: 0,
+            flags: 0,
         }
     }
 }
@@ -189,6 +196,7 @@ pub struct Catalog<'a, 'storage, S: BookSource + ?Sized> {
     arena: &'a mut Arena<'storage>,
     entries: &'a mut [Entry],
     count: usize,
+    directory_offset: u32,
 }
 impl<'a, 'storage, S: BookSource + ?Sized> Catalog<'a, 'storage, S> {
     pub fn new(
@@ -201,6 +209,7 @@ impl<'a, 'storage, S: BookSource + ?Sized> Catalog<'a, 'storage, S> {
             arena,
             entries,
             count: 0,
+            directory_offset: 0,
         }
     }
     pub fn open(&mut self, scan: &mut [u8; 4099], sequential: &mut [u8; 1024]) -> Status {
@@ -234,6 +243,7 @@ impl<'a, 'storage, S: BookSource + ?Sized> Catalog<'a, 'storage, S> {
     }
     fn open_directory(&mut self, directory: Directory, sequential: &mut [u8; 1024]) -> Status {
         let count = usize::from(directory.entries);
+        self.directory_offset = directory.offset;
         if count > self.entries.len() {
             return Status::OutOfMemory;
         }
@@ -280,6 +290,7 @@ impl<'a, 'storage, S: BookSource + ?Sized> Catalog<'a, 'storage, S> {
                 uncompressed_size: le32(&hdr, 24),
                 local_header_offset: le32(&hdr, 42),
                 method: le16(&hdr, 10),
+                flags: le16(&hdr, 8),
             };
         }
         self.count = count;
@@ -291,6 +302,10 @@ impl<'a, 'storage, S: BookSource + ?Sized> Catalog<'a, 'storage, S> {
     }
     pub fn entry_count(&self) -> usize {
         self.count
+    }
+    /// Newt addition: start of the central directory, the end bound for member data.
+    pub fn directory_offset(&self) -> u32 {
+        self.directory_offset
     }
     pub fn entry(&self, index: usize) -> Option<&Entry> {
         self.entries[..self.count].get(index)
@@ -360,7 +375,9 @@ impl<'a, S: BookSource + ?Sized> Reader<'a, S> {
             inflate_ready: false,
         }
     }
-    pub fn open(&mut self, entry: &'a Entry) -> Status {
+    /// Newt: only a member that passed the open-time check can be read.
+    pub fn open(&mut self, entry: &'a crate::member_check::Checked) -> Status {
+        let entry: &'a Entry = entry;
         self.entry = Some(entry);
         self.produced = 0;
         self.in_pos = 0;
