@@ -711,6 +711,40 @@ impl<S: Native> Operation<'_, '_, S> {
         }
         self.stable(lease)
     }
+    /// Index publication owns this cursor until a read-back or a new writer.
+    /// Other stores keep their pinned 1 KiB polling and seek boundaries.
+    pub(crate) fn write_indexed(&mut self, mut offset: u32, mut input: &[u8], append: bool,
+        position: &mut Option<u32>,
+    ) -> bool {
+        let lease = self.port.state.generation;
+        if !self.port.state.writing || !self.stable(lease) { return false; }
+        let mut interrupted = 0;
+        while !input.is_empty() {
+            if !self.stable(lease) { return self.poison(); }
+            let fd = self.port.state.fd.unwrap();
+            if *position != Some(offset) && self.io(|native| native.seek(fd, offset)) != Ok(u64::from(offset)) {
+                *position = None;
+                return self.poison();
+            }
+            let want = input.len().min(4096);
+            self.port.state.synced = false;
+            let result = self.io(|native| native.write(fd, &input[..want]));
+            if result == Err(Error::Interrupted) {
+                *position = None;
+                interrupted += 1;
+                if interrupted < 4 { continue; }
+            }
+            if result.is_ok() { interrupted = 0; }
+            let Ok(got) = result else { *position = None; return self.poison(); };
+            if got == 0 || got > want || !self.allowed() { *position = None; return self.poison(); }
+            if append { self.port.state.bytes = self.port.state.bytes.wrapping_add(got as u32); }
+            offset = offset.wrapping_add(got as u32);
+            *position = Some(offset);
+            if !self.stable(lease) { return self.poison(); }
+            input = &input[got..];
+        }
+        self.stable(lease)
+    }
     pub fn sync(&mut self) -> bool {
         if !self.port.state.writing || !self.stable(self.port.state.generation) {
             return self.fail();

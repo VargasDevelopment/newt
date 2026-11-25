@@ -8,10 +8,10 @@ use newt_core::book_index_build::WorkFile;
 /// Census before building; resident publication may keep the source open.
 /// End every attempt with WorkFile::remove_work, including admission failures.
 pub struct IndexWorkState {
-    path: [u8; 256], path_bytes: usize, fd: Option<i32>, bytes: u32,
+    path: [u8; 256], path_bytes: usize, fd: Option<i32>, bytes: u32, publish_position: Option<u32>,
 }
 impl IndexWorkState {
-    pub fn new() -> Self { Self { path: [0; 256], path_bytes: 0, fd: None, bytes: 0 } }
+    pub fn new() -> Self { Self { path: [0; 256], path_bytes: 0, fd: None, bytes: 0, publish_position: None } }
 }
 pub struct IndexBuildStore<'op, 'a, N: Native> {
     cache: &'op mut ChapterCacheStorage<'a, N>,
@@ -84,6 +84,7 @@ impl<N: Native> WorkFile for IndexBuildStore<'_, '_, N> {
     fn remove_work(&mut self) -> bool {
         let path_bytes = core::mem::take(&mut self.work.path_bytes);
         self.work.bytes = 0;
+        self.work.publish_position = None;
         let Some(fd) = self.work.fd.take() else { return true; };
         let closed = self.cache.file.native.close(fd).is_ok();
         let removed = core::str::from_utf8(&self.work.path[..path_bytes])
@@ -97,13 +98,19 @@ impl<N: Native> CacheStorage for IndexBuildStore<'_, '_, N> {
     fn read_at(&mut self, name: &[u8], offset: u32, output: &mut [u8]) -> i32 {
         self.cache.access().read_at(name, offset, output)
     }
-    fn begin_write(&mut self, name: &[u8]) -> bool { self.cache.access().begin_write(name) }
-    fn write(&mut self, bytes: &[u8]) -> bool { self.cache.access().write(bytes) }
+    fn begin_write(&mut self, name: &[u8]) -> bool {
+        self.work.publish_position = None;
+        self.cache.access().begin_write(name)
+    }
+    fn write(&mut self, bytes: &[u8]) -> bool {
+        self.cache.access().write_indexed(bytes, &mut self.work.publish_position)
+    }
     fn end_write(&mut self) -> bool { self.cache.access().end_write() }
     fn end_write_checked(&mut self, receipt_live: &mut dyn FnMut() -> bool) -> bool {
         self.cache.access().end_write_checked(receipt_live)
     }
     fn read_back_at(&mut self, offset: u32, output: &mut [u8]) -> i32 {
+        self.work.publish_position = None;
         self.cache.access().read_back_at(offset, output)
     }
 }

@@ -6,9 +6,9 @@ use std::{vec, vec::Vec};
 mod support;
 #[derive(Clone, Copy)]
 enum Fault { None, Crc, Short, Write, Sync }
-struct Store { work: Vec<u8>, pending: Vec<u8>, published: Vec<u8>, removed: bool, fault: Fault, remove_fails: bool }
+struct Store { work: Vec<u8>, pending: Vec<u8>, published: Vec<u8>, removed: bool, fault: Fault, remove_fails: bool, writes: Vec<usize> }
 impl Store {
-    fn new(fault: Fault) -> Self { Self { work: Vec::new(), pending: Vec::new(), published: Vec::new(), removed: false, fault, remove_fails: false } }
+    fn new(fault: Fault) -> Self { Self { work: Vec::new(), pending: Vec::new(), published: Vec::new(), removed: false, fault, remove_fails: false, writes: Vec::new() } }
 }
 impl WorkFile for Store {
     fn append(&mut self, bytes: &[u8]) -> bool {
@@ -35,7 +35,7 @@ impl CacheStorage for Store {
         out.copy_from_slice(bytes); out.len() as i32
     }
     fn begin_write(&mut self, _: &[u8]) -> bool { self.pending.clear(); true }
-    fn write(&mut self, bytes: &[u8]) -> bool { self.pending.extend_from_slice(bytes); true }
+    fn write(&mut self, bytes: &[u8]) -> bool { self.writes.push(bytes.len()); self.pending.extend_from_slice(bytes); true }
     fn end_write(&mut self) -> bool { self.published = std::mem::take(&mut self.pending); true }
 }
 #[test]
@@ -178,4 +178,28 @@ fn stylesheet_bit_is_unavailable_to_admitted_zip_flags_and_records_do_not_grow()
     assert_eq!((book_index::MEMBER_BYTES, book_index::HEADER_BYTES, WRITER_PREFIX), (32, 384, 384));
     // The bit fits existing Header padding, so the stack owner does not grow.
     assert_eq!(core::mem::size_of::<Header>(), 328);
+}
+
+#[test]
+fn publish_batches_in_dead_scan_storage_without_changing_records() {
+    for (buffer_bytes, run_bytes) in [(32768, 32768), (448, 64)] {
+        let mut snapshots = Vec::new();
+        let mut calls = Vec::new();
+        for buffered in [false, true] {
+            let mut store = Store::new(Fault::None);
+            let mut buffer = vec![0; buffer_bytes];
+            let mut backing = support::JoinBacking::new();
+            let mut state = backing.state();
+            let prepared = support::prepare(&mut store, &mut buffer, run_bytes, 200, 200, 200, &mut state).unwrap();
+            let report = if buffered {
+                prepared.publish_buffered(&mut store, &mut state, &mut [0; PUBLISH_BUFFER_BYTES], &mut |_| true, &mut || true)
+            } else { prepared.publish(&mut store, &mut state, &mut |_| true, &mut || true) }.unwrap();
+            assert!(report.work_removed);
+            snapshots.push(store.published);
+            calls.push(store.writes.len());
+        }
+        assert_eq!(snapshots[0], snapshots[1]);
+        assert!(calls[1] < calls[0]);
+        std::println!("PUBLISH buffer={buffer_bytes} legacy_calls={} batched_calls={} join_bytes={JOIN_STATE_BYTES} stack_state={STACK_BYTES}", calls[0], calls[1]);
+    }
 }

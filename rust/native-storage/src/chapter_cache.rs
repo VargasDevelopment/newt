@@ -475,6 +475,17 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
         let verified = self.verify_page_payload(&route, payload, scratch.as_mut(), None);
         self.file.settle(verified)
     }
+    /// The attempt owns the cursor; a cache read-back invalidates it.
+    fn write_indexed(&mut self, bytes: &[u8], position: &mut Option<u32>) -> bool {
+        let payload = self.state.payload;
+        if bytes.len() > MAX_BYTES.wrapping_sub(payload) as usize || !self.spend(bytes.len() as u64) {
+            return self.file.poison();
+        }
+        if !self.file.write_indexed(payload, bytes, true, position) { return false; }
+        self.state.crc = envelope::crc(self.state.crc, bytes);
+        self.state.payload += bytes.len() as u32;
+        true
+    }
     /// Reads the complete wire. A damaged committed candidate is an optional
     /// miss, so production repairs it; finalization settles writer failure.
     fn verify_page_payload(

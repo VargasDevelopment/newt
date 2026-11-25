@@ -48,7 +48,9 @@ fn earlier(target: &mut Option<Choice>, candidate: Choice) {
     if target.is_none_or(|old| candidate.sequence < old.sequence) { *target = Some(candidate); }
 }
 
-/// Writer::begin borrows this prefix of the run buffer; publish saves it in JoinState.
+/// One block lent from dead scan storage after preparation.
+pub const PUBLISH_BUFFER_BYTES: usize = 4096;
+/// Writer::begin borrows this prefix in the unbuffered host oracle.
 pub const WRITER_PREFIX: usize = crate::book_index::HEADER_BYTES as usize;
 /// Exact bytes a JoinState borrows, before alignment padding.
 pub const JOIN_STATE_BYTES: usize = core::mem::size_of::<[u64; POSITION_WORDS]>()
@@ -74,7 +76,7 @@ const _: () = assert!(STACK_BYTES <= 2_304, "index builder stack state outgrew i
 pub struct JoinState<'p> {
     positions: &'p mut [u64; POSITION_WORDS],
     cursors: &'p mut [Cursor; CURSORS],
-    saved: &'p mut [u8; WRITER_PREFIX],
+    saved: &'p mut [u8],
 }
 impl<'p> JoinState<'p> {
     pub fn new(positions: &'p mut [u64; POSITION_WORDS], cursors: &'p mut [Cursor; CURSORS],
@@ -288,6 +290,16 @@ impl<W: WorkFile + ?Sized> Handler for Package<'_, '_, W> {
 
 
 impl Prepared<'_> {
+    /// The caller lends dead scan bytes after preparation; no join allocation
+    /// grows, and the run prefix stays intact while records are batched here.
+    #[inline(always)]
+    pub fn publish_buffered<W: WorkFile + CacheStorage + ?Sized>(self, store: &mut W,
+        state: &mut JoinState<'_>, buffer: &mut [u8; PUBLISH_BUFFER_BYTES], progress: &mut dyn FnMut(Progress) -> bool,
+        receipt_live: &mut dyn FnMut() -> bool,
+    ) -> Result<Report, Error> {
+        let mut lent = JoinState { positions: &mut *state.positions, cursors: &mut *state.cursors, saved: buffer };
+        self.publish(store, &mut lent, progress, receipt_live)
+    }
     /// With the source open, publish only a resident build: the work file and
     /// index temporary must not both be open alongside source and receipt.
     /// After an error the unfinished index temp stays with the store; closing the

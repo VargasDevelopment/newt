@@ -43,7 +43,9 @@ impl Phase<'_> {
         stage(hook, 5);
         let mut receipt = || if released.get() { !live.borrow().source.cancelled() }
             else { live.borrow_mut().read_at(0, &mut []) == 0 };
-        let published = publish(prepared, store, &mut state, &mut progress, &mut receipt);
+        let buffer = rest.first_chunk_mut::<{newt_core::book_index_build::PUBLISH_BUFFER_BYTES}>()
+            .ok_or(Status::OutOfMemory)?;
+        let published = publish(prepared, store, &mut state, buffer, &mut progress, &mut receipt);
         // Publish consumes/removes work before reopening, so even a live
         // receipt leaves room for the source under the three-file mount cap.
         if released.get() { stage(hook,8); }
@@ -60,10 +62,11 @@ impl Phase<'_> {
 #[inline(never)]
 fn publish(prepared: newt_core::book_index_build::Prepared<'_>, store: &mut dyn crate::index_build::Store,
     state: &mut newt_core::book_index_build::JoinState<'_>,
+    buffer: &mut [u8; newt_core::book_index_build::PUBLISH_BUFFER_BYTES],
     progress: &mut dyn FnMut(newt_core::book_index_build::Progress) -> bool,
     receipt: &mut dyn FnMut() -> bool,
 ) -> Result<(u32, u32, bool), Status> {
-    let report = prepared.publish(store, state, progress, receipt).map_err(index_error)?;
+    let report = prepared.publish_buffered(store, state, buffer, progress, receipt).map_err(index_error)?;
     Ok((report.header.members, report.header.spine, report.work_removed))
 }
 /// Central pass, container, OPF parse and join. Out of line so the Builder and

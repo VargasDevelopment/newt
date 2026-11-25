@@ -17,6 +17,7 @@ pub(super) struct Card {
     pub(super) creates: u32,
     pub(super) cstr_opens: u32,
     pub(super) writes: u32,
+    pub(super) allocations: u32,
     pub(super) armed: bool,
     pub(super) off: bool,
 }
@@ -63,9 +64,22 @@ impl Native for Card {
         Ok(())
     }
     fn read(&mut self, fd: i32, out: &mut [u8]) -> Result<usize> { self.live(|m| m.read(fd, out)) }
-    fn write(&mut self, fd: i32, input: &[u8]) -> Result<usize> { self.writes += 1; self.live(|m| m.write(fd, input)) }
+    fn write(&mut self, fd: i32, input: &[u8]) -> Result<usize> {
+        let before: usize = self.model.files.values().map(|file| file.readable.len().div_ceil(512)).sum();
+        self.writes += 1;
+        let result = self.live(|model| model.write(fd, input));
+        let after: usize = self.model.files.values().map(|file| file.readable.len().div_ceil(512)).sum();
+        self.allocations += u32::from(after > before);
+        result
+    }
     fn seek(&mut self, fd: i32, offset: u32) -> Result<u64> { self.live(|m| m.seek(fd, offset)) }
-    fn truncate(&mut self, fd: i32, bytes: u32) -> Result<()> { self.live(|m| m.truncate(fd, bytes)) }
+    fn truncate(&mut self, fd: i32, bytes: u32) -> Result<()> {
+        let before: usize = self.model.files.values().map(|file| file.readable.len().div_ceil(512)).sum();
+        let result = self.live(|model| model.truncate(fd, bytes));
+        let after: usize = self.model.files.values().map(|file| file.readable.len().div_ceil(512)).sum();
+        self.allocations += u32::from(after > before);
+        result
+    }
     fn sync(&mut self, fd: i32) -> Result<()> { self.live(|m| m.sync(fd)) }
     fn fstat(&mut self, fd: i32) -> Result<Stat> {
         let mut stat = self.live(|m| m.fstat(fd))?;

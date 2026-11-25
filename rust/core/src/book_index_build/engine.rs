@@ -248,15 +248,21 @@ impl<'a> Engine<'a> {
     pub fn publish<W: WorkFile + CacheStorage + ?Sized>(&mut self, store: &mut W, header: Header,
         state: &mut JoinState<'_>, progress: &mut dyn FnMut(Progress) -> bool, receipt_live: &mut dyn FnMut() -> bool) -> Result<(), Error> {
         use crate::book_index::{Writer, SpineItem};
-        let fan = (self.buffer.len() - 384) / self.min_read;
+        let reserve = if state.saved.len() > WRITER_PREFIX { 0 } else { WRITER_PREFIX };
+        let fan = (self.buffer.len() - reserve) / self.min_read;
         reduce::<Member, W>(&mut self.streams[0], fan - 1, self.buffer, &mut Pool::new(&mut *state.cursors, 0, self.min_read), store, &mut self.io, progress)?;
         reduce::<Spine, W>(&mut self.streams[5], fan, self.buffer, &mut Pool::new(&mut *state.cursors, 0, self.min_read), store, &mut self.io, progress)?;
         if self.disk && !store.sync_work() { return Err(io()); }
         let JoinState { cursors, saved, .. } = state;
-        saved.copy_from_slice(&self.buffer[..WRITER_PREFIX]);
-        let (write_buffer, tail) = self.buffer.split_at_mut(WRITER_PREFIX);
-        let mut view = View { prefix: &saved[..], tail };
-        let mut pool = Pool::new(cursors, WRITER_PREFIX, self.min_read);
+        let (write_buffer, prefix, tail): (&mut [u8], &[u8], &mut [u8]) = if reserve == 0 {
+            (&mut **saved, &[], &mut *self.buffer)
+        } else {
+            saved.copy_from_slice(&self.buffer[..WRITER_PREFIX]);
+            let (write_buffer, tail) = self.buffer.split_at_mut(WRITER_PREFIX);
+            (write_buffer, &saved[..], tail)
+        };
+        let mut view = View { prefix, tail };
+        let mut pool = Pool::new(cursors, reserve, self.min_read);
         let mut members = pool.attach::<Member, W>(store, &mut self.io, self.streams[0])?;
         let mut first = pool.attach::<First, W>(store, &mut self.io, self.streams[4])?;
         let mut f = pool.next::<First, W>(&mut first, &mut view, store, &mut self.io)?;
@@ -273,7 +279,7 @@ impl<'a> Engine<'a> {
             rank += 1; poll(progress, Phase::Publish, u64::from(rank), u64::from(header.members + header.spine))?;
         }
         if f.is_some() || rank != header.members { return Err(io()); }
-        let mut pool = Pool::new(cursors, WRITER_PREFIX, self.min_read);
+        let mut pool = Pool::new(cursors, reserve, self.min_read);
         let mut spine = pool.attach::<Spine, W>(store, &mut self.io, self.streams[5])?;
         let mut before = 0;
         let mut count = 0;

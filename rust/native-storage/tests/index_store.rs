@@ -80,14 +80,17 @@ fn header(identity: Identity) -> Header {
 fn write(store: &mut ChapterCacheStorage<'_, Card>, identity: Identity) -> core::result::Result<(), WriteError> {
     let mut access = store.access();
     let mut buffer = [0; 4096];
-    let mut writer = Writer::begin(&mut access, header(identity), &mut buffer)?;
+    write_records(&mut access, identity, &mut buffer)
+}
+fn write_records<S: CacheStorage + ?Sized>(store: &mut S, identity: Identity, buffer: &mut [u8]) -> core::result::Result<(), WriteError> {
+    let mut writer = Writer::begin(store, header(identity), buffer)?;
     for member in members() {
-        writer = writer.member(&mut access, member)?;
+        writer = writer.member(store, member)?;
     }
     for item in SPINE {
-        writer = writer.spine(&mut access, item)?;
+        writer = writer.spine(store, item)?;
     }
-    writer.finish(&mut access, &mut || true)
+    writer.finish(store, &mut || true)
 }
 
 /// The reader's verified path: attach the envelope, then read records
@@ -499,4 +502,31 @@ fn consumed_block_damage_can_revoke_both_index_copies_across_cold_boot() {
     assert!(!card.model.files.contains_key(&path));
     assert!(!card.model.files.contains_key(&format!("{ROOT}/Index/{}", backup(&name))));
     with_store(&mut card, |store| assert!(read(store, &BOOK, |_, _| ()).is_none()));
+}
+
+#[test]
+fn publish_uses_larger_sequential_writes_without_changing_the_envelope() {
+    let mut snapshots = Vec::new();
+    let mut measurements = Vec::new();
+    for sequential in [false, true] {
+        let mut card = Card::default();
+        with_store(&mut card, |cache| {
+            let mut work = chapter_cache::IndexWorkState::new();
+            let mut index = chapter_cache::IndexBuildStore::lend(cache, &mut work, &BOOK.digest).unwrap();
+            if sequential { write_records(&mut index, BOOK, &mut [0; 4096]).unwrap(); }
+            else {
+                drop(index);
+                write_records(&mut cache.access(), BOOK, &mut [0; 4096]).unwrap();
+            }
+        });
+        let seeks = card.model.trace.iter().filter(|line| line.starts_with("seek ")).count();
+        let lookups = card.model.trace.iter().filter(|line| line.starts_with("stat ")).count();
+        measurements.push((card.writes, seeks, lookups, card.allocations));
+        snapshots.push(card.model.files[&format!("{ROOT}/Index/{}", leaf(&BOOK.digest))].durable.clone());
+    }
+    assert_eq!(snapshots[0], snapshots[1]);
+    assert!(measurements[1].0 < measurements[0].0);
+    assert!(measurements[1].1 < measurements[0].1);
+    assert_eq!(measurements[1].2, measurements[0].2);
+    println!("INDEX IO legacy={:?} sequential={:?} (writes,seeks,path_lookups,extent_growth_calls)", measurements[0], measurements[1]);
 }
