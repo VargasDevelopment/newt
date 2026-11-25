@@ -33,8 +33,8 @@ import release_tag
 from release_tools import release_python
 
 WORKFLOWS = ROOT / '.github/workflows'
-# The step each lane runs on a pull request: its title becomes the merge subject.
-TITLE_STEP = {'name': "The pull request's title, its merge subject", 'if': "github.event_name == 'pull_request'",
+# The standalone required check: the title becomes the merge subject.
+TITLE_STEP = {'name': "The pull request's title, its merge subject",
               'env': {'PR_TITLE': '${{ github.event.pull_request.title }}'},
               'run': 'python3 -B tools/release_tools.py --pr-title "$PR_TITLE"'}
 # Each tier's controls(script) for gate_plan.plan: a pull request's local tier
@@ -381,36 +381,47 @@ class PublicWorkflow(unittest.TestCase):
         self.assertEqual(job['env']['EXPECTED_COMMIT'], '${{ github.event.pull_request.head.sha }}')
         self.assertEqual(job['env']['BASE'], '${{ github.event.pull_request.base.sha }}')
         self.assertEqual([steps[name]['run'] for name in names[prepare:]],
-                         ['python3 -B tools/ci_environment.py --prepare-release', TITLE_STEP['run'],
+                         ['python3 -B tools/ci_environment.py --prepare-release',
                           'python3 -B tools/docs_lane.py check --base "$BASE"'])
 
-    def test_each_lane_checks_the_pull_request_title_and_an_edit_runs_it_again(self):
-        """GitHub's merge commit takes the title as its subject, so both lanes check the title the
-        event carries, and an edit starts a new run that cancels the older one."""
-        def checked(workflow):
-            for name in ('check', 'docs'):
-                steps = [step for step in workflow['jobs'][name]['steps']
-                         if step.get('name') == TITLE_STEP['name']]
-                if steps != [TITLE_STEP]:
-                    return False
-            types = workflow['on']['pull_request'].get('types', [])
-            return {'opened', 'synchronize', 'reopened', 'edited'} <= set(types)
-        self.assertTrue(checked(self.workflow))
-        self.assertTrue(trust_expression(TITLE_STEP['if'])({'event_name': 'pull_request'}))
-        for event in ('push', 'schedule', 'workflow_dispatch'):
-            self.assertFalse(trust_expression(TITLE_STEP['if'])({'event_name': event}))
+    def test_standalone_title_check_runs_on_every_edit_without_skips_or_cancellation(self):
+        title = workflow('pr-title.yml')
+        docs = self.workflow['jobs']['docs']
+        # Reuse only the already-pinned Python and release-tools bootstrap.
+        environment = {key: value for key, value in docs['env'].items() if key != 'BASE'}
+        checkout = {'name': "Check out the pull request's head", 'uses': docs['steps'][0]['uses'],
+                    'with': {'ref': '${{ env.EXPECTED_COMMIT }}', 'fetch-depth': '1',
+                             'persist-credentials': 'false', 'set-safe-directory': 'false'}}
+        expected = {'name': 'Pull request title',
+                    'on': {'pull_request': {'branches': ['main'],
+                           'types': ['opened', 'synchronize', 'reopened', 'edited']}},
+                    'permissions': {'contents': 'read'},
+                    'jobs': {'pr-title': {'name': 'pr-title', 'runs-on': 'ubuntu-24.04',
+                             'timeout-minutes': '10', 'env': environment,
+                             'steps': [checkout, *docs['steps'][1:4], TITLE_STEP]}}}
+        def checked(candidate):
+            return candidate == expected
+        self.assertTrue(checked(title))
+        # An absent trigger, skipped step/job, or cancelled run must not satisfy it.
+        for event in ('opened', 'synchronize', 'reopened', 'edited'):
+            changed = json.loads(json.dumps(title))
+            changed['on']['pull_request']['types'].remove(event)
+            self.assertFalse(checked(changed), event)
+        for change in ('job-if', 'step-if', 'paths', 'concurrency', 'continue-on-error', 'missing-title'):
+            changed = json.loads(json.dumps(title))
+            job = changed['jobs']['pr-title']
+            if change == 'job-if': job['if'] = 'false'
+            elif change == 'step-if': job['steps'][-1]['if'] = 'false'
+            elif change == 'paths': changed['on']['pull_request']['paths'] = ['docs/**']
+            elif change == 'concurrency': changed['concurrency'] = {'group': 'title', 'cancel-in-progress': 'true'}
+            elif change == 'continue-on-error': job['continue-on-error'] = 'true'
+            else: job['steps'].pop()
+            self.assertFalse(checked(changed), change)
+        self.assertEqual(self.workflow['on']['pull_request']['types'], ['opened', 'synchronize', 'reopened'])
+        self.assertNotIn('--pr-title', self.text)
         self.assertEqual(self.workflow['concurrency'], {
             'group': '${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}',
             'cancel-in-progress': 'true'})
-        # Controls: a lane without the step, or a title edit that starts no run, is caught.
-        for job in ('check', 'docs'):
-            mutated = json.loads(json.dumps(self.workflow))
-            mutated['jobs'][job]['steps'] = [step for step in mutated['jobs'][job]['steps']
-                                             if step.get('name') != TITLE_STEP['name']]
-            self.assertFalse(checked(mutated), job)
-        mutated = json.loads(json.dumps(self.workflow))
-        mutated['on']['pull_request']['types'].remove('edited')
-        self.assertFalse(checked(mutated))
 
     def test_the_nightly_job_builds_and_publishes_after_the_gate_as_releases_are_built(self):
         jobs = self.workflow['jobs']

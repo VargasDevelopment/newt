@@ -196,21 +196,26 @@ In the docs lane the `check` job is skipped and the `docs` job runs instead:
 
 `gate` passes only when `classify` chose a lane and that lane's job succeeded
 while the other was skipped: `check` for `full`, `docs` for `docs`. Branch
-protection still requires only `gate`. One lane's job is always skipped,
-which makes `success()` false for every later job, so `release-tag` and
+protection requires `gate` and the separate `pr-title` check. One lane's job is
+always skipped, which makes `success()` false for every later job, so `release-tag` and
 `nightly` read `needs.gate.result` instead.
 
-**Pull request title.** GitHub's merge commit takes a pull request's title as
-its subject, so each lane's job checks the title the event carries with the
-pinned Commitizen (`tools/release_tools.py --pr-title`), and `gate` fails on a
-title that is not a Conventional Commit. An edit of the pull request (title,
-body or base) starts a new run, which cancels the older run if it is still
-running (its unfinished `gate` concludes `cancelled`, not `failure`; a `gate`
-that already finished keeps its result), so the whole gate runs again: about 5
-minutes and 40 hosted runner-minutes in the full lane, one job in the docs
-lane. A run that checked only the title would have to post `gate` from an
-earlier run's result for the same head, and a `gate` it skipped would count as
-passing.
+**Pull request title.** GitHub's merge commit takes the pull request's title as
+its subject. The separate `pr-title.yml` workflow reports the stable required
+check `pr-title`, using the existing pinned Commitizen
+(`tools/release_tools.py --pr-title`). It runs on opened, synchronize, reopened
+and edited events, without path, lane or changed-field filters. Every run
+finishes; it has no cancellation concurrency. Titles reach the shell through a
+quoted environment variable, never interpolated script text.
+
+Public CI runs on opened, synchronize and reopened events, so a body or title
+edit reruns only `pr-title`, not the host and firmware gate. The `gate` result
+for that head stays unchanged: no skipped gate is emitted and no earlier
+success is copied. Commit validation and the release-tag/nightly checks remain
+in Public CI. Branch protection requires both `gate` and `pr-title`; after this
+workflow first merges, the owner adds `pr-title` as required immediately.
+Already-open PRs have no `pr-title` result until their next push or edit.
+
 
 **Shards come from the gate's own plan.** `tools/gate_tier.py` `shard()` takes
 the tier's plan, keeps every phase with the phases it runs `after` in one
