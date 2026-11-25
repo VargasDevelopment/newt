@@ -81,6 +81,7 @@ impl<'a> Engine<'a> {
         state.positions.fill(0);
         let mut positions = Positions(&mut *state.positions);
         self.join_items(work, &mut choices, &mut positions, &mut *state.cursors, progress)?;
+        header.navigation_declared = choices.nav.or(choices.ncx).is_some();
         header.spine = positions.total();
         if header.spine == 0 { return Err(Error::Book(Status::NotEpub)); }
         if header.stylesheets { self.rekey_styles(work, &mut *state.cursors, progress)?; }

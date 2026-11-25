@@ -14,7 +14,7 @@ fn title(text: &[u8]) -> [u8; TITLE_BYTES] {
 }
 fn header(members: u32, spine: u32) -> Header {
     Header {
-        stylesheets: false, identity: BOOK, members, spine, spine_bytes: 900, nav: 1, ncx: NONE, cover: 0,
+        stylesheets: false, navigation_declared: false, identity: BOOK, members, spine, spine_bytes: 900, nav: 1, ncx: NONE, cover: 0,
         language: BookLanguage::Japanese, title: title("A Book — 本".as_bytes()),
     }
 }

@@ -234,6 +234,15 @@ the existing session verifier; if no session fits, the reopened source is checke
 in full before the open continues. Failed verification revokes the derived index.
 The index trace reports source release and reopen times.
 
+Imported SD books select chapters, Contents, styles and semantic metadata from
+that index. Each chapter's local ZIP header and name are checked when it opens.
+The index joins manifest IDs and spine references with 64-bit hashes. The parser
+oracle retains its 32-bit FNV-1a join: distinct IDs with the same 32-bit hash can
+select the first manifest item there, while the index selects the intended item.
+Missing chapter files keep their Contents projection and return NotFound without
+a chapter notice. A declared but missing TOC keeps the existing Contents fallback
+message.
+
 Runtime acknowledged progress advances only after a verified checkpoint. A failed
 attempt retains newer live progress separately as pending recovery. Back and
 Sleep proceed even if storage cannot confirm the attempt; they never label it

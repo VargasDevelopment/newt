@@ -11,7 +11,15 @@ impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::Pro
         reader: &mut PhasedReader<'_, '_>, spine: u32, backend: &mut B,
         breaker: &mut dyn LineBreak, route: &mut Route<'_>, prepared_pages: Option<&mut u32>,
     ) -> Status {
-        let mut status = self.select_next(reader, spine, backend);
+        self.produce_next_selected(reader, spine, backend, breaker, route, prepared_pages,
+            |owner, reader, spine, backend| owner.select_next(reader, spine, backend))
+    }
+    fn produce_next_selected<B: ProducerBackend + ?Sized>(&mut self,
+        reader: &mut PhasedReader<'_, '_>, spine: u32, backend: &mut B,
+        breaker: &mut dyn LineBreak, route: &mut Route<'_>, prepared_pages: Option<&mut u32>,
+        select: impl FnOnce(&mut Self, &mut PhasedReader<'_, '_>, u32, &mut B) -> Status,
+    ) -> Status {
+        let mut status = select(self, reader, spine, backend);
         if status == Status::Ok {
             self.state.language = reader.book_language();
             if !self.state.identify(route, spine) { status = Status::IoError; }
@@ -76,5 +84,19 @@ impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::Pro
         }
         self.drop_styles();
         status
+    }
+}
+
+impl<C: ?Sized, S: crate::phase_storage::ReadScope, F: BookSource + newt_core::producer_policy::ProducerReceipt + ?Sized>
+    Producer<'_, '_, '_, C, S, F>
+{
+    #[inline(always)]
+    pub fn produce_next_indexed<B: ProducerBackend + ?Sized>(&mut self, reader: &mut PhasedReader<'_, '_>,
+        spine: u32, backend: &mut B, breaker: &mut dyn LineBreak, route: &mut Route<'_>,
+        prepared_pages: Option<&mut u32>,
+    ) -> Status {
+        let digest = route.digest;
+        self.produce_next_selected(reader, spine, backend, breaker, route, prepared_pages,
+            |owner, reader, spine, backend| owner.select_next_indexed(reader, digest, spine, backend))
     }
 }

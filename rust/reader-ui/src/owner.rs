@@ -136,3 +136,7 @@ pub struct ReaderPosition {
 #[cfg(test)]
 #[path = "owner_cases.rs"]
 mod cases;
+
+#[cfg(test)]
+#[path = "owner_missing_member_cases.rs"]
+mod missing_member_cases;

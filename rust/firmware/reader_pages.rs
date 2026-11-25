@@ -3,8 +3,6 @@
 //! Every call takes one short access; the descriptor, lease and read policy
 //! stay in `ChapterCacheAccess`.
 use newt_core::page_cache::CacheStorage;
-use newt_core::page_cache_access::VerifiedAccess;
-use newt_core::page_envelope::VerifiedStore;
 use newt_core::zip_container::Status;
 use newt_native_storage::Native;
 use newt_native_storage::chapter_cache::ChapterCacheStorage;
@@ -60,6 +58,8 @@ impl<N: Native + newt_native_storage::page_entries::PageEntries> CachePresence f
 /// `new(scratch) VerifiedPageStore(name)`. A failed attach still runs the
 /// checked exit, and its read is Stale.
 impl<N: Native> ReadScope for ReaderPages<'_, N> {
+    fn invalidate_index(&mut self, digest: &[u8; 32]) -> bool { self.0.invalidate_index(digest) }
+    #[inline(always)]
     fn query<R>(
         &mut self,
         name: &[u8],
@@ -68,45 +68,14 @@ impl<N: Native> ReadScope for ReaderPages<'_, N> {
         source_live: &mut dyn FnMut() -> bool,
         read: impl FnOnce(&mut dyn CacheStorage) -> R,
     ) -> Result<(R, bool), Status> {
-        self.query_bound(name,None,opening,scratch,source_live,read)
+        self.0.access().query(name,opening,scratch,source_live,read)
     }
+    #[inline(always)]
     fn query_index<R>(&mut self,name:&[u8],digest:&[u8;32],opening:bool,scratch:&mut[u8],
         source_live:&mut dyn FnMut()->bool,read:impl FnOnce(&mut dyn CacheStorage)->R)->Result<(R,bool),Status> {
-        self.query_bound(name,Some(digest),opening,scratch,source_live,read)
+        self.0.access().query_index(name,digest,opening,scratch,source_live,read)
     }
 }
-impl<N:Native> ReaderPages<'_,N> {
-    fn query_bound<R>(&mut self,name:&[u8],digest:Option<&[u8;32]>,opening:bool,scratch:&mut[u8],
-        source_live:&mut dyn FnMut()->bool,read:impl FnOnce(&mut dyn CacheStorage)->R)->Result<(R,bool),Status> {
-        let (directory, rest) = scratch
-            .split_first_chunk_mut::<4160>()
-            .ok_or(Status::OutOfMemory)?;
-        let window = rest.first_chunk_mut::<4096>().ok_or(Status::OutOfMemory)?;
-        let mut access = self.0.access();
-        let mut verified=match digest {
-            Some(digest)=>VerifiedStore::for_index(Some(name),digest,directory,window),
-            None=>VerifiedStore::new(Some(name),directory,window),
-        };
-        let held = access.begin_page_read(opening, Some(&mut verified.query));
-        let entered = held && source_live();
-        if !entered || !verified.attach(&mut access) {
-            verified.query.finish();
-            source_live();
-            if held { access.finish_cache_read(); }
-            return Err(Status::Stale);
-        }
-        let value = read(&mut VerifiedAccess {
-            store: &mut verified,
-            source: &mut access,
-        });
-        verified.query.finish();
-        let source_fresh = source_live();
-        let finished = access.finish_cache_read();
-        Ok((value, source_fresh && finished))
-    }
-
-}
-
 impl<N: Native> newt_phased_reader::producer_probe::ProducerProbe for ReaderPages<'_, N> {
     fn producer_probe(&mut self, name: &[u8], cancelled: &dyn Fn() -> bool)
         -> newt_core::producer_visit::MissingProbe

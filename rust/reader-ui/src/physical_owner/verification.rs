@@ -14,6 +14,14 @@ struct StoredChapter<'op, 'cache, C> {
 impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence>
     Cache<OperationPhased<'_, '_, '_, '_, B, L>> for StoredChapter<'_, '_, C>
 {
+    fn stage_original_verified(&mut self, reader: &mut OperationPhased<'_, '_, '_, '_, B, L>,
+        revision: &mut ImportedRevision<'_>, spine: u32, plain: bool) -> Option<Result<(), Status>> {
+        self.cache.stage_original_verified(reader, revision, spine, plain)
+    }
+    fn strict_open(&mut self, reader: &mut OperationPhased<'_, '_, '_, '_, B, L>, source: &mut dyn BookSource,
+        digest: &Digest) -> Status {
+        self.cache.strict_open(reader, source, digest)
+    }
     fn stored(&mut self, digest: &Digest, spine: u32,
         reader: &mut OperationPhased<'_, '_, '_, '_, B, L>) -> bool {
         let _action = reader.reader.action_scope(ActionStage::CacheQuery);
@@ -49,7 +57,8 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
             } else if !source.source_verified() {
                 return PageWork::failed(Status::Stale);
             }
-            self.execute_raw(reader, source, request)
+            let digest = source.digest();
+            self.execute_raw(reader, source, &digest, request)
         })();
         if request == PageRequest::Open && work.result != Completion::Published {
             reader.close();

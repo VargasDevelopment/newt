@@ -120,6 +120,7 @@ impl ReaderActionProfile {
             ReaderOpenRoute::CacheProbe => 1,
             ReaderOpenRoute::CacheHit => 2,
             ReaderOpenRoute::OrdinaryPage => 4,
+            ReaderOpenRoute::ContentsPerRow => 128,
             _ => return,
         };
         self.route.set(self.route.get() | bit);
@@ -132,7 +133,7 @@ impl ReaderActionProfile {
             && kept != CacheMissReason::Open as u8 && kept != CacheMissReason::Attach as u8 {
             return;
         }
-        self.route.set((self.route.get() & 7) | (reason as u8) << 3);
+        self.route.set((self.route.get() & 135) | (reason as u8) << 3);
     }
 
     pub fn finish(&self, now: u32) -> bool {
@@ -158,8 +159,8 @@ impl ReaderActionProfile {
     pub fn running(&self) -> bool { self.faults.get() & Self::ACTIVE != 0 }
     pub fn stage(&self) -> u8 { self.phase_depth.get() & 15 }
     pub fn actions(&self) -> u16 { u16::from(self.actions.get()) }
-    pub fn routes(&self) -> u8 { self.route.get() & 7 }
-    pub fn miss_reason(&self) -> u8 { self.route.get() >> 3 }
+    pub fn routes(&self) -> u8 { self.route.get() & 135 }
+    pub fn miss_reason(&self) -> u8 { (self.route.get() >> 3) & 15 }
 
     fn fault(&self, fault: u16) { self.faults.set(self.faults.get() | fault as u8); }
     fn depth(&self) -> u8 { self.phase_depth.get() >> 4 }
@@ -179,3 +180,19 @@ impl Default for ReaderActionProfile {
 }
 const _: () = assert!(core::mem::size_of::<ReaderActionProfile>() == 76);
 const _: () = assert!(core::mem::align_of::<ReaderActionProfile>() == 4);
+
+#[cfg(test)]
+mod contents_trace_tests {
+    use super::*;
+    #[test]
+    fn contents_per_row_trace_survives_cache_route_and_miss_updates() {
+        let profile = ReaderActionProfile::new();
+        profile.begin(0);
+        profile.route(ReaderOpenRoute::ContentsPerRow);
+        profile.route(ReaderOpenRoute::OrdinaryPage);
+        profile.cache_miss(CacheMissReason::Map);
+        assert_eq!(profile.routes(), 128 | 4);
+        assert_eq!(profile.miss_reason(), CacheMissReason::Map as u8);
+        assert_eq!(core::mem::size_of::<ReaderActionProfile>(), 76);
+    }
+}

@@ -412,7 +412,7 @@ fn mapping_index(book: &Book<'_>) -> (MappingIndex, newt_core::book_index::Reade
     let identity = Identity { digest: [1; 32], policy: 1 };
     let mut title = [0; idx::TITLE_BYTES];
     title[..4].copy_from_slice(b"Test");
-    let header = Header { stylesheets: false, identity, members: book.members.len() as u32,
+    let header = Header { stylesheets: false, navigation_declared: false, identity, members: book.members.len() as u32,
         spine: book.spine_count() as u32, spine_bytes: 0, nav: idx::NONE,
         ncx: idx::NONE, cover: idx::NONE, language: Default::default(), title };
     let mut bytes = vec![0; header.payload_bytes().unwrap() as usize];

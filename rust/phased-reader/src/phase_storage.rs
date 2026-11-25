@@ -433,7 +433,7 @@ impl Phase<'_> {
         )
     }
 
-    /// Actual counted admission/selection. The scratch lifetime ends at open,
+    /// Parser-oracle counted admission/selection. The scratch lifetime ends at open,
     /// before style paths reclaim those parse bytes.
     pub(crate) fn metadata_counted<
         S: crate::zip_window::source::BookSource + ?Sized,
@@ -809,30 +809,7 @@ impl<'a> newt_core::page_cache::IndexAllocation<'a> for IndexParts<'a> {
         self.0.array(count)
     }
 }
-/// One checked cache read, as pinned ChapterPageCache readEntry/locate:
-/// beginRead(query), attach, the SDK read, query.finish, finishRead.
-/// `opening` is `!hasPage`; `scratch` is the parse loan beyond the
-/// index, where a native store places its verified query. `read` gets the
-/// store to read from; Ok's bool is the checked exit. A scope that could not
-/// begin or attach is Err(Stale). No default success implementation: the
-/// caller supplies real scope authority. Check source_live after admission
-/// before attach, then after query cleanup before the checked exit, including
-/// failures; the read callback has no raw source capability.
-pub trait ReadScope: newt_core::page_cache::CacheStorage {
-    fn query_index<R>(&mut self,name:&[u8],_digest:&[u8;32],opening:bool,scratch:&mut[u8],
-        source_live:&mut dyn FnMut()->bool,read:impl FnOnce(&mut dyn newt_core::page_cache::CacheStorage)->R)
-        ->Result<(R,bool),Status> {
-        self.query(name,opening,scratch,source_live,read)
-    }
-    fn query<R>(
-        &mut self,
-        name: &[u8],
-        opening: bool,
-        scratch: &mut [u8],
-        source_live: &mut dyn FnMut() -> bool,
-        read: impl FnOnce(&mut dyn newt_core::page_cache::CacheStorage) -> R,
-    ) -> Result<(R, bool), Status>;
-}
+pub use newt_core::page_cache::ReadScope;
 
 /// Created only inside ReadScope::query; it cannot revalidate the raw source.
 pub(crate) struct ScopedRead<'a>(pub(crate) &'a mut dyn newt_core::page_cache::CacheStorage);
@@ -1033,5 +1010,21 @@ impl Phase<'_> {
         let mapping = parts.array::<u32>(count)?;
         let rows = parts.array::<newt_reader_navigation::index_mapping::HashRow>(count)?;
         Ok(operation(Some((mapping, rows)), query))
+    }
+}
+
+#[path = "phase_navigation_indexed.rs"]
+mod navigation_indexed;
+#[path = "phase_styles_indexed.rs"]
+mod styles_indexed;
+impl Phase<'_> {
+    pub(crate) fn with_index_open<R>(&mut self,
+        operation: impl FnOnce(&mut [u8], &mut [u8; 4099]) -> Result<R, Status>,
+    ) -> Result<R, Status> {
+        *self.held = false;
+        let query = Parts(self.parse).bytes(CONTENTS_QUERY_BYTES, 16)?;
+        let (shared, _) = top::<Home>(self.shared)?;
+        let scan = Parts(shared).fixed::<4099>()?;
+        operation(query, scan)
     }
 }

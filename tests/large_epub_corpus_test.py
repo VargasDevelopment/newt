@@ -54,6 +54,14 @@ INDEX_STYLE_CONTROL = (
     "if next.position & (1 << 16) != 0 { member.flags |= crate::book_index::STYLESHEET; }",
     "if false { member.flags |= crate::book_index::STYLESHEET; }", "stylesheet-application",
 )
+INDEX_NAME_CONTROL = (
+    "an indexed hash hit skips its exact local-name comparison", "core/src/member_check_indexed.rs",
+    "|| expected.is_some_and(|expected|", "|| false && expected.is_some_and(|expected|", "indexed-local-name",
+)
+INDEX_TOC_CONTROL = (
+    "Contents ignores the TOC-declared header bit", "phased-reader/src/phase_navigation_indexed.rs",
+    "index.header().navigation_declared, status", "false, status", "toc-declared-missing",
+)
 CONTROLS = (
     ("the 1,024-entry cap is raised", ADMISSION, "d.entries > 1024", "d.entries > 2048", "zip-entries-over"),
     ("the 1 MiB central-directory cap is raised", ADMISSION, "d.size > 1024 * 1024", "d.size > 2 * 1024 * 1024", "central-dir-over"),
@@ -390,19 +398,19 @@ def verify_fresh_build_guard(support):
     print("PASS self-test: a control fails when its build reuses an earlier executable", flush=True)
 
 
-def run_control(run, workspace, target, support, manifest, verified, builds, name, source, good, bad, failing_case):
+def run_control(run, workspace, target, support, manifest, verified, builds, name, source, good, bad, failing_case, *, unit=False, test_filter=None):
     support.require(failing_case in verified, f'control "{name}": {failing_case} has no clean baseline')
     path = workspace / source
     text = path.read_text()
     support.require(text.count(good) == 1, f'control "{name}": anchor not in rust/{source} exactly once')
     path.write_text(text.replace(good, bad))
     try:
-        binary = test_binary(run, workspace, target)
+        binary = test_binary(run, workspace, target, unit=unit)
         builds.admit(binary, (source, good, bad))
         number = len(run.commands)
         run.env["NEWT_LARGE_EPUB_MANIFEST"] = str(manifest)
         try:
-            run.run([binary, "--nocapture"], workspace)
+            run.run([binary, *([test_filter] if test_filter else []), "--nocapture"], workspace)
         except RuntimeError:
             stdout = (run.output / f"{number:03d}.stdout").read_text()
             stderr = (run.output / f"{number:03d}.stderr").read_text()
@@ -489,6 +497,23 @@ def run_controls(binary, run, workspace, target, support, epubs_dir, output):
                 *INDEX_STYLE_CONTROL)
     binary = test_binary(run, workspace, target)
     builds.admit(binary, None)
+    run_control(run, workspace, target, support, manifest, {"indexed-local-name"}, builds,
+                *INDEX_NAME_CONTROL)
+    binary = test_binary(run, workspace, target)
+    builds.admit(binary, None)
+    run_control(run, workspace, target, support, manifest, {"toc-declared-missing"}, builds,
+                *INDEX_TOC_CONTROL)
+    binary = test_binary(run, workspace, target)
+    builds.admit(binary, None)
+    unit_binary = test_binary(run, workspace, target, unit=True)
+    recovery_test = "navigation_indexed::tests::consumed_index_damage_removes_the_header_hit_for_the_next_open"
+    recovery = run.run([unit_binary, recovery_test, "--nocapture"], workspace)
+    support.require("test result: ok. 1 passed; 0 failed" in recovery, "index recovery baseline absent")
+    builds.admit(unit_binary, None)
+    run_control(run, workspace, target, support, manifest, {"index-recovery"}, builds,
+                "a consumed index failure leaves a reusable header", "phased-reader/src/reader_indexed.rs",
+                "if damaged { store.invalidate_index(digest); }", "if false && damaged { store.invalidate_index(digest); }",
+                "index-recovery", unit=True, test_filter=recovery_test)
     cache_limit_cases(run, workspace, target, support, builds=builds)
     by_name, verified = {}, set()
     prepare_control_baselines(binary, run, workspace, epubs_dir, output, support, by_name, verified, CONTROLS)
@@ -549,7 +574,7 @@ def main(argv=None):
             binary = test_binary(run, workspace, target)
             if args.negative_controls:
                 run_controls(binary, run, workspace, target, support, epubs_dir, output)
-                print(f"PASS large-EPUB corpus controls ({len(CONTROLS) + len(CACHE_LIMIT_CONTROLS) + 1} controls; "
+                print(f"PASS large-EPUB corpus controls ({len(CONTROLS) + len(CACHE_LIMIT_CONTROLS) + 4} controls; "
                       f"total {time.perf_counter() - started:.2f}s)", flush=True)
                 return
             exec_t0 = time.perf_counter()

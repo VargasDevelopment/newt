@@ -34,9 +34,7 @@ impl<'a, S: Native> ChapterCacheStorage<'a, S> {
     /// A failed source verification revokes this digest's derived index too.
     #[inline(never)]
     pub fn invalidate_index(&mut self, digest: &[u8;32]) -> bool {
-        if !self.access().release_for_admission() { return false; }
-        let name=newt_core::book_index::FileName::new(digest,newt_core::book_index::FileKind::Index);
-        self.file.route.remove_record(self.file.native,"Index",name.as_str(),false)
+        newt_core::page_cache::ReadScope::invalidate_index(&mut self.access(), digest)
     }
     /// A foreground loan, without producer policy. Dropping it owes nothing.
     pub fn access(&mut self) -> ChapterCacheAccess<'_, 'a, S> {
@@ -858,3 +856,6 @@ mod census;
 #[path = "index_build.rs"]
 mod index_build;
 pub use index_build::{IndexBuildStore, IndexWorkState};
+
+#[path = "chapter_cache_read_scope.rs"]
+mod read_scope;

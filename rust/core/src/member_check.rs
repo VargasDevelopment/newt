@@ -198,3 +198,7 @@ const _: () = assert!(size_of::<Entry>() == if cfg!(target_pointer_width = "32")
 #[cfg(test)]
 #[path = "member_check_tests.rs"]
 mod tests;
+
+#[path = "member_check_indexed.rs"]
+mod indexed;
+pub use indexed::check_indexed;

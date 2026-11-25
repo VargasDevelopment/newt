@@ -334,6 +334,21 @@ impl PhasedReader<'_, '_> {
         backend: &mut B,
         breaker: &mut dyn newt_core::chapter_layout::types::LineBreak,
     ) -> Status {
+        self.layout_phased_selected(source, spine, target, mode, storage, lender, backend, breaker,
+            |reader, source, spine, phase, backend| reader.select_physical(source, spine, phase, backend, false))
+    }
+    fn layout_phased_selected<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
+        &mut self,
+        source: &mut S,
+        spine: u32,
+        target: u32,
+        mode: Target,
+        storage: &mut PhaseStorage<'_>,
+        lender: &mut impl BuildLoan,
+        backend: &mut B,
+        breaker: &mut dyn newt_core::chapter_layout::types::LineBreak,
+        mut select: impl FnMut(&mut Self, &mut S, u32, &mut Phase<'_>, &mut B) -> Result<bool, Status>,
+    ) -> Status {
         self.pending = None;
         self.pending_cached = false;
         self.pending_undeclared = None;
@@ -385,7 +400,7 @@ impl PhasedReader<'_, '_> {
                 self.selections[inactive]
                     .navigation
                     .stage_required_toc(required);
-                let result = self.select_physical(source, spine, phase, backend, false);
+                let result = select(self, source, spine, phase, backend);
                 match result {
                     Ok(u) => {
                         self.styles_ready = true;
@@ -538,8 +553,23 @@ impl PhasedReader<'_, '_> {
         backend: &mut B,
         breaker: &mut dyn newt_core::chapter_layout::types::LineBreak,
     ) -> Status {
+        self.capture_chapter_selected(source, spine, toc_index, storage, lender, backend, breaker,
+            |reader, source, spine, phase, backend| reader.select_physical(source, spine, phase, backend, false))
+    }
+    fn capture_chapter_selected<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
+        &mut self,
+        source: &mut S,
+        spine: u32,
+        toc_index: u16,
+        storage: &mut PhaseStorage<'_>,
+        lender: &mut impl BuildLoan,
+        backend: &mut B,
+        breaker: &mut dyn newt_core::chapter_layout::types::LineBreak,
+        mut select: impl FnMut(&mut Self, &mut S, u32, &mut Phase<'_>, &mut B) -> Result<bool, Status>,
+    ) -> Status {
+        if self.plan.is_none() { return Status::Unsupported; }
         if toc_index == NO_TOC {
-            return self.capture_phased(
+            return self.layout_phased_selected(
                 source,
                 spine,
                 0,
@@ -548,12 +578,13 @@ impl PhasedReader<'_, '_> {
                 lender,
                 backend,
                 breaker,
+                &mut select,
             );
         }
         if self.plan.is_none() {
             return Status::Unsupported;
         }
-        let status = self.layout_phased(
+        let status = self.layout_phased_selected(
             source,
             spine,
             u32::from(toc_index),
@@ -562,6 +593,7 @@ impl PhasedReader<'_, '_> {
             lender,
             backend,
             breaker,
+            &mut select,
         );
         if status != Status::Ok {
             return status;
@@ -599,7 +631,7 @@ impl PhasedReader<'_, '_> {
         self.selections[self.active ^ 1]
             .navigation
             .stage_required_toc(toc_index);
-        self.layout_phased(
+        self.layout_phased_selected(
             source,
             spine,
             page,
@@ -608,6 +640,7 @@ impl PhasedReader<'_, '_> {
             lender,
             backend,
             breaker,
+            &mut select,
         )
     }
 }

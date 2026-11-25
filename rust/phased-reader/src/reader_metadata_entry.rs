@@ -1,4 +1,4 @@
-// MIT. Physical phase entry points; canonical policy remains in reader.rs.
+// MIT. Parser-oracle entry points over canonical metadata.
 fn select_metadata<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     source: &mut S,
     spine: u32,
@@ -17,7 +17,7 @@ fn select_metadata<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     )
 }
 
-// MIT. Physical phase entry points; canonical policy remains in reader.rs.
+// MIT. Parser-oracle entry points over canonical metadata.
 fn select_metadata_capture<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     source: &mut S,
     spine: u32,

@@ -72,7 +72,7 @@ fn header(identity: Identity) -> Header {
     let mut title = [0; TITLE_BYTES];
     title[..6].copy_from_slice(b"A Book");
     Header {
-        stylesheets: false, identity, members: 200, spine: 3, spine_bytes: 300, nav: 3, ncx: NONE, cover: NONE,
+        stylesheets: false, navigation_declared: false, identity, members: 200, spine: 3, spine_bytes: 300, nav: 3, ncx: NONE, cover: NONE,
         language: BookLanguage::Default, title,
     }
 }
@@ -474,4 +474,29 @@ fn stale_short_work_and_temp_slots_cannot_block_a_build() {
     });
     assert_eq!(card.indexes(),[leaf(&BOOK.digest)]);
     assert_eq!(with_store(&mut card,|store|read(store,&BOOK,built_index_complete)),Some(true));
+}
+
+#[test]
+fn consumed_block_damage_can_revoke_both_index_copies_across_cold_boot() {
+    use newt_core::page_cache::ReadScope;
+    let mut card = Card::default();
+    for _ in 0..2 { with_store(&mut card, |store| write(store, BOOK)).unwrap(); }
+    let name = leaf(&BOOK.digest);
+    let path = format!("{ROOT}/Index/{name}");
+    let offset = book_index::HEADER_BYTES + 200 * book_index::MEMBER_BYTES;
+    card.model.files.get_mut(&path).unwrap().readable[offset as usize] ^= 1;
+    with_store(&mut card, |store| {
+        let mut access = store.access();
+        let (value, _) = access.query_index(name.as_bytes(), &BOOK.digest, false, &mut [0; 8256],
+            &mut || true, |verified| {
+                let index = Reader::open(verified, &BOOK).expect("header block is intact");
+                index.spine(verified, 0)
+            }).unwrap();
+        assert!(value.is_none());
+        assert!(ReadScope::invalidate_index(&mut access, &BOOK.digest));
+    });
+    card.boot();
+    assert!(!card.model.files.contains_key(&path));
+    assert!(!card.model.files.contains_key(&format!("{ROOT}/Index/{}", backup(&name))));
+    with_store(&mut card, |store| assert!(read(store, &BOOK, |_, _| ()).is_none()));
 }

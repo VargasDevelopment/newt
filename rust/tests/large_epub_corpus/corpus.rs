@@ -603,4 +603,6 @@ fn large_epub_corpus_boundaries() {
         }
     }
     assert!(failures.is_empty(), "corpus mismatches:\n{}", failures.join("\n"));
+    // Shared-rule controls must reach their target corpus row first.
+    index_agreement::navigation_declarations_agree();
 }

@@ -18,3 +18,32 @@ pub trait CacheStorage {
         -1
     }
 }
+/// One checked cache read, as pinned ChapterPageCache readEntry/locate:
+/// beginRead(query), attach, the SDK read, query.finish, finishRead.
+/// `opening` is `!hasPage`; `scratch` is the parse loan beyond the
+/// index, where a native store places its verified query. `read` gets the
+/// store to read from; Ok's bool is the checked exit. A scope that could not
+/// begin or attach is Err(Stale). No default success implementation: the
+/// caller supplies real scope authority. Check source_live after admission
+/// before attach, then after query cleanup before the checked exit, including
+/// failures; the read callback has no raw source capability.
+pub trait ReadScope: CacheStorage {
+    /// A failed consumed index block must not leave a header-only cache hit.
+    fn invalidate_index(&mut self, digest: &[u8; 32]) -> bool {
+        let name = crate::book_index::FileName::new(digest, crate::book_index::FileKind::Index);
+        self.remove(name.as_bytes())
+    }
+    fn query_index<R>(&mut self,name:&[u8],_digest:&[u8;32],opening:bool,scratch:&mut[u8],
+        source_live:&mut dyn FnMut()->bool,read:impl FnOnce(&mut dyn CacheStorage)->R)
+        ->Result<(R,bool),Status> {
+        self.query(name,opening,scratch,source_live,read)
+    }
+    fn query<R>(
+        &mut self,
+        name: &[u8],
+        opening: bool,
+        scratch: &mut [u8],
+        source_live: &mut dyn FnMut() -> bool,
+        read: impl FnOnce(&mut dyn CacheStorage) -> R,
+    ) -> Result<(R, bool), Status>;
+}

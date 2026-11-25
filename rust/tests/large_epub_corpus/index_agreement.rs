@@ -8,11 +8,11 @@ use newt_reader_navigation::{metadata::Metadata, Navigation};
 pub fn agreement(source: &mut impl BookSource, name: &str) -> usize {
     let mut peak = 0;
     for (bytes, read, run, variant) in [(32768, 512, 32768, "normal"), (512, 32, 128, "spill"), (448, 32, 64, "tiny")] {
-        peak = peak.max(agreement_variant(source, &format!("{name}/{variant}"), bytes, read, run, false).0);
+        peak = peak.max(agreement_variant(source, &format!("{name}/{variant}"), bytes, read, run, false, false).0);
     }
     peak
 }
-fn agreement_variant(source: &mut impl BookSource, name: &str, buffer_bytes: usize, min_read: usize, run_bytes: usize, check_styles: bool) -> (usize, bool) {
+fn agreement_variant(source: &mut impl BookSource, name: &str, buffer_bytes: usize, min_read: usize, run_bytes: usize, check_styles: bool, check_menu: bool) -> (usize, bool) {
     let mut host = HostScratch::new();
     host.with_resources(|catalog, parse, resources| {
         assert_eq!(admission::inspect(&mut admission::ScheduledSource::new(source, None, None),
@@ -98,6 +98,8 @@ fn agreement_variant(source: &mut impl BookSource, name: &str, buffer_bytes: usi
             .and_then(|i| member_for(&parts.manifest[i]));
         same_member(read_member(&mut store, if h.nav != NONE { h.nav } else { h.ncx }), chosen);
         assert_eq!(h.nav != NONE, chosen.is_some() && parts.result.nav_index.is_some(), "{name}: nav kind");
+        assert_eq!(h.navigation_declared, parts.result.nav_index.or(parts.result.ncx_index).is_some(),
+            "{name}: TOC declared, including missing members");
         let cover = parts.manifest[..parts.result.manifest_count].iter().find(|m| m.is_cover_image).and_then(member_for);
         same_member(read_member(&mut store, h.cover), cover);
         let mut title = [0; 256];
@@ -106,11 +108,71 @@ fn agreement_variant(source: &mut impl BookSource, name: &str, buffer_bytes: usi
         assert_eq!(h.language, BookLanguage::from_opf(bytes(parts.result.metadata.language)), "{name}: language");
         assert_eq!(h.stylesheets, parts.manifest[..parts.result.manifest_count].iter()
             .any(|item| bytes(item.media_type) == Some(b"text/css")), "{name}: declares stylesheet");
+        if check_menu {
+            let mut shared = Box::new(Bank([0; BANK_BYTES]));
+            let mut native = Box::new(Bank([0; BANK_BYTES]));
+            let mut storage = PhaseStorage::new(&mut shared.0);
+            let mut loan = HostLoan(&mut native);
+            let mut navigation = Navigation::default();
+            storage.with_loan(&mut loan, |phase| phase.navigation_indexed(parts.workflow.source,
+                parts.workflow.backend, &mut store, &identity.digest, &reader, Default::default(),
+                &mut navigation, Some((newt_reader_navigation::Section::default(), 0)), None)).unwrap();
+            let authored = parts.result.nav_index.or(parts.result.ncx_index).is_some();
+            let expected = if authored && chosen.is_none() { ContentsFallback::Invalid } else { ContentsFallback::None };
+            assert_eq!(navigation.contents_fallback(), expected, "{name}: same Contents fallback message");
+            assert!(navigation.menu_info().valid);
+        }
         if check_styles {
+            let mut selections = [Selection::default(), Selection::default()];
+            let mut physical = PhasedReader::new(&mut selections, None, PageLayout::PORTRAIT);
+            let mut shared = Box::new(Bank([0; BANK_BYTES]));
+            let mut native = Box::new(Bank([0; BANK_BYTES]));
+            let mut storage = PhaseStorage::new(&mut shared.0);
+            let mut loan = HostLoan(&mut native);
+            let selected = storage.with_loan(&mut loan, |phase| physical.select_indexed(parts.workflow.source,
+                &mut store, &identity.digest, 0, phase, parts.workflow.backend, false));
+            assert_eq!(selected, Ok(false), "{name}: indexed chapter selection");
+            assert!(storage.styles_ready(0), "{name}: indexed style slot ready");
+            assert_eq!(physical.staged_selection().href(), b"OEBPS/c.xhtml");
+            assert_eq!(physical.staged_selection().title(), h.title());
+            let token = index_build::open(parts.workflow.source, &identity.digest, &mut storage, &mut loan,
+                parts.workflow.backend, &mut store, None, index_build::Verification::Verified).unwrap();
+            {
+                use imported_revision::session::{Reader, metadata_reader::MetadataReader};
+                let mut query = [0; 4160 + 4096];
+                let mut scan = [0; 4099]; let mut path = [0; 512];
+                let mut metadata = MetadataReader::new(&mut store, &token, &mut query, &mut scan, &mut path);
+                assert_eq!(metadata.strict_open(parts.workflow.source), Status::Ok);
+                assert_eq!(metadata.spine_count(), h.spine);
+                let selected = metadata.stage(parts.workflow.source, 0, false).unwrap();
+                assert_eq!(selected.local_header_offset, physical.staged_selection().entry.local_header_offset);
+                metadata.commit(0);
+                assert_eq!(metadata.selected(), Some(0));
+            }
+            let mut counts_host = HostScratch::new();
+            let mut oracle_counts = newt_core::book_semantic_index::Index::default();
+            let mut indexed_counts = newt_core::book_semantic_index::Index::default();
+            let bytes = parts.workflow.source.size();
+            counts_host.with_resources(|catalog, _, resources| {
+                assert_eq!(canonical::open(parts.workflow.source, catalog, resources, false, None, None).unwrap()
+                    .semantic_counts(h.spine, bytes, &identity.digest, &mut oracle_counts, None), Status::Ok);
+            });
+            counts_host.with_resources(|metadata, parse, resources| {
+                assert_eq!(semantic_builder::build(parts.workflow.source, bytes, h.spine, &identity.digest,
+                    &mut store, &mut indexed_counts, metadata, parse, resources, None, None, || {}, || {}), Status::Ok);
+            });
+            for spine in 0..h.spine {
+                assert_eq!(indexed_counts.chapter_count(&identity.digest, 1, spine),
+                    oracle_counts.chapter_count(&identity.digest, 1, spine), "{name}: indexed semantic counts");
+            }
             let style_book = styles::Book { manifest: &parts.manifest[..parts.result.manifest_count],
                 arena: parts.arena, catalog: Some(view) };
             let chapter = view.find(b"OEBPS/c.xhtml").unwrap().1;
             let chapter = view.check(parts.workflow.source, &chapter).unwrap();
+            let (_, member) = reader.find(&mut store, index::name_hash(b"OEBPS/valid.css")).unwrap().unwrap();
+            assert_eq!(newt_core::member_check::check_indexed(parts.workflow.source, &member,
+                Some(b"OEBPS/another-name"), &mut [0; 512], parts.directory_offset), Err(Status::Damaged),
+                "indexed-local-name: hash hit must compare exact requested name");
             let store = std::cell::RefCell::new(&mut store);
             let lookup = |source: &mut dyn BookSource, path: &[u8]| {
                 let hit = reader.find(&mut **store.borrow_mut(), index::name_hash(path)).map_err(|_| Status::IoError)?;
@@ -119,7 +181,8 @@ fn agreement_variant(source: &mut impl BookSource, name: &str, buffer_bytes: usi
                 };
                 let entry = view.find(path).unwrap().1;
                 assert_eq!(member.local_offset, entry.local_header_offset);
-                view.check(source, &entry).map(|checked| styles::Member::from_checked(&checked))
+                newt_core::member_check::check_indexed(source, &member, Some(path), &mut [0; 512],
+                    parts.directory_offset).map(|checked| styles::Member::from_checked(&checked))
             };
             let mut snapshots = Vec::new();
             for indexed in [false, true] {
@@ -286,7 +349,7 @@ fn stylesheet_declarations_agree() {
     let opf = package("", &(chapter.clone() + "<item id='css' href='valid.css' media-type='text/css'/><item id='odd' href='odd' media-type='text/css'/>"), "<itemref idref='chapter'/>");
     let mut styled = book(&opf, &[("OEBPS/c.xhtml", b"<html><head><link rel='stylesheet' href='valid.css'/><link rel='stylesheet' href='odd'/></head><body><p>Generated text</p></body></html>"),
         ("OEBPS/valid.css", b"p { font-weight: bold; }"), ("OEBPS/odd", b"em { font-style: italic; }")]);
-    agreement_variant(&mut styled, "stylesheet-application", 32768, 512, 32768, true);
+    agreement_variant(&mut styled, "stylesheet-application", 32768, 512, 32768, true, false);
     for (name, styles) in [
         ("no-stylesheet", ""),
         ("stylesheet-metadata", "<item id='a' href='a.css' media-type='text/css'/><item id='b' href='odd' media-type='text/css'/><item id='c' href='fake.css' media-type='text/html'/><item id='d' href='a.css' media-type='image/png'/><item id='e' href='missing' media-type='text/css'/><item id='f' href='valid.css' media-type='text/css'/>"),
@@ -298,7 +361,66 @@ fn stylesheet_declarations_agree() {
     }
 }
 
+pub fn navigation_declarations_agree() {
+    let chapter = item("chapter", "c.xhtml", "");
+    for (name, declaration, files) in [
+        ("no-toc-declared", "", vec![("OEBPS/c.xhtml", b"<html/>".as_slice())]),
+        ("toc-declared-present", "<item id='nav' href='nav.xhtml' media-type='application/xhtml+xml' properties='nav'/>",
+            vec![("OEBPS/c.xhtml", b"<html/>".as_slice()), ("OEBPS/nav.xhtml", b"<html><body><nav><ol><li><a href='c.xhtml'>Chapter</a></li></ol></nav></body></html>")]),
+        ("toc-declared-missing", "<item id='nav' href='missing.xhtml' media-type='application/xhtml+xml' properties='nav'/>",
+            vec![("OEBPS/c.xhtml", b"<html/>".as_slice())]),
+    ] {
+        let opf = package("", &(chapter.clone() + declaration), "<itemref idref='chapter'/>");
+        for (buffer, min_read, run) in [(32768, 512, 32768), (512, 32, 128)] {
+            agreement_variant(&mut book(&opf, &files), name, buffer, min_read, run, false, true);
+        }
+    }
+}
+
+fn colliding_32_bit_ids_select_the_exact_indexed_item() {
+    let (first, second) = ("ica4fef2f4f5e837e", "iebf558cad0143146");
+    assert_eq!(newt_core::zip_container::hash_path(first.as_bytes()), newt_core::zip_container::hash_path(second.as_bytes()));
+    assert_ne!(index::name_hash(first.as_bytes()), index::name_hash(second.as_bytes()));
+    let opf = package("", &(item(first, "a.xhtml", "") + &item(second, "b.xhtml", "")),
+        &format!("<itemref idref='{second}'/>"));
+    for (buffer_bytes, min_read, run_bytes) in [(32768, 512, 32768), (512, 32, 128), (448, 32, 64)] {
+        let mut source = book(&opf, &[("OEBPS/a.xhtml", b"a"), ("OEBPS/b.xhtml", b"bbb")]);
+        let mut host = HostScratch::new();
+        host.with_resources(|catalog, parse, resources| {
+            let book = canonical::open(&mut source, catalog, resources, false, None, None).unwrap();
+            let entries = book.catalog().len();
+            let parts = book.into_parts();
+            let view = canonical::CatalogView::new(&parts.entries[..entries], parts.arena, parts.directory_offset);
+            // The parser oracle joins 32-bit hashes and picks the first item.
+            // Schema two's 64-bit join fixes this intentional divergence.
+            let oracle_item = &parts.manifest[usize::from(parts.spine[0])];
+            assert_eq!(oracle_item.href.and_then(|href| parts.arena.c_string(href)), Some(b"OEBPS/a.xhtml".as_slice()));
+            let opf_entry = view.find(b"OEBPS/book.opf").unwrap().1;
+            let opf_entry = view.check(parts.workflow.source, &opf_entry).unwrap();
+            let mut buffer = vec![0; buffer_bytes];
+            let mut store = BuildStore::default();
+            let mut build = builder::Builder::new(&mut buffer, min_read, run_bytes).unwrap();
+            assert_eq!(admission::inspect_with_visitor(&mut admission::ScheduledSource::new(parts.workflow.source, None, None),
+                parse, &mut [0; 4099], |member| build.visit(&mut store, member, &mut |_| true)), Status::Ok);
+            let mut positions = [0; builder::POSITION_WORDS];
+            let mut cursors = [builder::Cursor::default(); builder::CURSORS];
+            let mut saved = [0; builder::WRITER_PREFIX];
+            let mut state = builder::JoinState::new(&mut positions, &mut cursors, &mut saved);
+            let identity = index::Identity { digest: [17; 32], policy: 1 };
+            build.parse(parts.workflow, &opf_entry, b"OEBPS", identity, &mut store, &mut |_| true).unwrap()
+                .join(&mut store, &mut state, &mut |_| true).unwrap()
+                .publish(&mut store, &mut state, &mut |_| true, &mut || true).unwrap();
+            let index = index::Reader::open(&mut store, &identity).unwrap();
+            let spine = index.spine(&mut store, 0).unwrap();
+            let member = index.member(&mut store, spine.member).unwrap();
+            assert_eq!(member.local_offset, view.find(b"OEBPS/b.xhtml").unwrap().1.local_header_offset);
+            assert_eq!(index.header().spine_bytes, 3);
+        });
+    }
+}
+
 pub fn small_cases() {
+    colliding_32_bit_ids_select_the_exact_indexed_item();
     stylesheet_declarations_agree();
     contents_requires_one_supported_text_spine_item();
     normalized_hrefs_and_progress_agree();
@@ -347,7 +469,21 @@ fn tiny_items_and_internal_entities_spill_in_package_callback() {
         expanded, package("", "&items;", "<itemref idref=\"\"/>"));
     for (label, opf) in [("tiny-items", body), ("entity-items", entity)] {
         let mut source = book(&opf, &extra);
-        let (_, callback_spilled) = agreement_variant(&mut source, label, 32768, 512, 32768, false);
+        let (_, callback_spilled) = agreement_variant(&mut source, label, 32768, 512, 32768, false, false);
         assert!(callback_spilled, "{label}: work opened during OPF callback");
     }
+}
+
+impl phase_storage::ReadScope for BuildStore {
+    fn query<R>(&mut self, _: &[u8], _: bool, _: &mut [u8], live: &mut dyn FnMut() -> bool,
+        read: impl FnOnce(&mut dyn CacheStorage) -> R) -> Result<(R, bool), Status> {
+        if !live() { return Err(Status::Stale); }
+        let result = read(self);
+        Ok((result, live()))
+    }
+}
+
+impl CachePresence for BuildStore {
+    fn with_index<R>(&mut self, _: &[u8; 32], _: impl FnOnce(&mut dyn index_build::Store) -> R) -> Option<R> { None }
+    fn present(&mut self, _: &[u8], _: bool) -> bool { !self.cache.is_empty() }
 }

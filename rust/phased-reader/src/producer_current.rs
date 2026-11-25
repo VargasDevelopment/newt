@@ -5,12 +5,13 @@ use crate::phase_storage::producer::Producer;
 impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::ProducerReceipt + ?Sized>
     Producer<'_, '_, '_, C, S, F>
 {
-    fn settle_current<B: ProducerBackend + ?Sized>(&mut self,
+    fn settle_current_selected<B: ProducerBackend + ?Sized>(&mut self,
         reader: &mut PhasedReader<'_, '_>, backend: &mut B, breaker: &mut dyn LineBreak,
+        select: impl FnOnce(&mut Self, &mut PhasedReader<'_, '_>, u32, &mut B) -> Status,
     ) -> Status {
         let spine = reader.info.spine;
         self.state.staged = true;
-        let status = self.select_next(reader, spine, backend);
+        let status = select(self, reader, spine, backend);
         if status != Status::Ok { return status; }
         self.with_index(|owner, mut memory| {
             let mut last = super::NextPass { status: Status::Ok, pages: 0, chars: 0, restyle: false };
@@ -31,6 +32,14 @@ impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::Pro
         reader: &mut PhasedReader<'_, '_>, backend: &mut B, breaker: &mut dyn LineBreak,
         route: &mut Route<'_>,
     ) -> Status {
+        self.produce_current_selected(reader, backend, breaker, route,
+            |owner, reader, spine, backend| owner.select_next(reader, spine, backend))
+    }
+    fn produce_current_selected<B: ProducerBackend + ?Sized>(&mut self,
+        reader: &mut PhasedReader<'_, '_>, backend: &mut B, breaker: &mut dyn LineBreak,
+        route: &mut Route<'_>,
+        select: impl FnOnce(&mut Self, &mut PhasedReader<'_, '_>, u32, &mut B) -> Status,
+    ) -> Status {
         if !reader.opened || !reader.has_page || reader.info.page_count == 0
             || reader.info.page_count > newt_core::cache_names::segment::MAX_PAGES
             || reader.plan.is_none() || !crate::reader::session_adapter::reader_settings_match(reader, route.settings)
@@ -39,7 +48,7 @@ impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::Pro
         let settled = self.with_unbuffered(|phase, _| Ok(phase.ready(reader.info.spine)
             && phase.edit_slot(|slot| slot.state == crate::styles::State::Settled)?))
             .unwrap_or(false);
-        let mut status = if settled { Status::Ok } else { self.settle_current(reader, backend, breaker) };
+        let mut status = if settled { Status::Ok } else { self.settle_current_selected(reader, backend, breaker, select) };
         if status == Status::Ok {
             self.state.language = reader.book_language();
             status = self.with_buffered(|phase, mut attempt| {
@@ -78,5 +87,18 @@ impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::Pro
         }
         if self.state.staged { self.drop_styles(); }
         status
+    }
+}
+
+impl<C: ?Sized, S: crate::phase_storage::ReadScope, F: BookSource + newt_core::producer_policy::ProducerReceipt + ?Sized>
+    Producer<'_, '_, '_, C, S, F>
+{
+    #[inline(always)]
+    pub fn produce_current_indexed<B: ProducerBackend + ?Sized>(&mut self, reader: &mut PhasedReader<'_, '_>,
+        backend: &mut B, breaker: &mut dyn LineBreak, route: &mut Route<'_>,
+    ) -> Status {
+        let digest = route.digest;
+        self.produce_current_selected(reader, backend, breaker, route,
+            |owner, reader, spine, backend| owner.select_next_indexed(reader, digest, spine, backend))
     }
 }

@@ -831,7 +831,7 @@ pub(crate) fn optional_toc_ends_open(status: Status) -> bool {
     }
 }
 
-fn contents_fallback(authored: bool, status: Status) -> crate::ContentsFallback {
+pub(crate) fn contents_fallback(authored: bool, status: Status) -> crate::ContentsFallback {
     use crate::ContentsFallback;
     if !authored || status == Status::Ok { ContentsFallback::None }
     else if status == Status::OutOfMemory { ContentsFallback::Capacity }
@@ -1615,6 +1615,7 @@ pub(crate) mod cache_show;
 pub use cache_show::{CacheRequest, CachedPageMemory, CapturedPage, ShowResult};
 
 include!("reader_phased.rs");
+include!("reader_indexed.rs");
 
 
 impl PhasedReader<'_, '_> {

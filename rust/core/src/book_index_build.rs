@@ -135,7 +135,7 @@ impl<'a> Builder<'a> {
         if package.error != Status::Ok { return Err(Error::Book(package.error)); }
         if package.raw_items == 0 || package.raw_refs == 0 { return Err(Error::Book(Status::NotEpub)); }
         if !package.title_set { copy_display_title(&mut package.title, None); }
-        let header = Header { stylesheets: package.stylesheets, identity, members: self.members, spine: 0, spine_bytes: 0,
+        let header = Header { stylesheets: package.stylesheets, navigation_declared: false, identity, members: self.members, spine: 0, spine_bytes: 0,
             nav: NONE, ncx: NONE, cover: NONE, title: package.title, language: package.language };
         let choices = Choices { toc: package.toc, cover_id: package.cover,
             nav: package.nav, ncx: package.ncx, cover: package.image };

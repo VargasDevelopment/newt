@@ -105,6 +105,7 @@ impl<'a> Trace<'a> {
                 value if value == ReaderOpenRoute::CacheProbe as u32 => owner.route(ReaderOpenRoute::CacheProbe),
                 value if value == ReaderOpenRoute::CacheHit as u32 => owner.route(ReaderOpenRoute::CacheHit),
                 value if value == ReaderOpenRoute::OrdinaryPage as u32 => owner.route(ReaderOpenRoute::OrdinaryPage),
+                value if value == ReaderOpenRoute::ContentsPerRow as u32 => owner.route(ReaderOpenRoute::ContentsPerRow),
                 _ => {},
             }
         }

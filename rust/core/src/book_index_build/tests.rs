@@ -155,7 +155,7 @@ fn unsupported_member_has_no_contents_spine() {
             contents_spine: NONE, ..Member::default() }).unwrap();
         engine.item(&mut store, records::Item { id: 3, href: 7, sequence: 0, flags: TEXT }).unwrap();
         engine.reference(&mut store, records::Reference { id: 3, position: 0 }).unwrap();
-        let mut header = Header { stylesheets: false, identity: support::IDENTITY, members: 1, spine: 0,
+        let mut header = Header { stylesheets: false, navigation_declared: false, identity: support::IDENTITY, members: 1, spine: 0,
             spine_bytes: 0, nav: NONE, ncx: NONE, cover: NONE,
             language: BookLanguage::Default, title: [0; 256] };
         copy_display_title(&mut header.title, None);
