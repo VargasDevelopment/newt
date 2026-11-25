@@ -150,7 +150,7 @@ unsafe extern "C" {
 pub mod wake_timing;
 
 /// Read-only SDK timer, without a Board/input/bus loan or allocation.
-/// The acquisition contract keeps the SDK timer live for program lifetime.
+/// The SDK timer is live from SDK startup, before Rust entry, for program lifetime.
 #[derive(Clone, Copy)]
 pub struct MonotonicClock {
     _local: PhantomData<*mut ()>,
@@ -159,13 +159,13 @@ impl MonotonicClock {
     #[cfg(feature = "wake-timing")]
     pub fn wake_stamp(self, stage: newt_core::wake_timing::Stage) { wake_timing::TIMELINE.stamp(stage, self.micros()); }
     pub fn micros(self) -> u32 {
-        // SAFETY: acquisition initialized the same program-lifetime SDK timer.
+        // SAFETY: SDK startup initialized the program-lifetime timer before Rust entry.
         unsafe { nb_micros() }
     }
 
     pub fn millis(self) -> u32 {
-        // SAFETY: successful Board startup established the program-lifetime
-        // esp_timer contract. The fixed Arduino bridge only reads that timer.
+        // SAFETY: SDK startup initialized the program-lifetime esp_timer.
+        // The fixed Arduino bridge only reads that timer.
         unsafe { nb_millis() }
     }
 }

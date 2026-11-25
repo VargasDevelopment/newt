@@ -104,13 +104,47 @@ def preview_checks():
                           'source_ready', 'page_ready', 'display_start', 'display_return', 'page_complete'):
                 if page['stamps'][stage] is None: return stage + ' missing'
             if page['page_kind'] != 'ordinary': return 'wrong page path'
+    def restored_page(program, picture):
+        with tempfile.TemporaryDirectory(prefix='wake-restored-', dir=ROOT/'.build') as directory:
+            world = Path(directory)
+            preview_driver.world(program, world, preview_driver.parse(['--library-fixture', 'healthy']))
+            preview_driver.write_conf(world, {'wake.timing': 1, 'telemetry': 'sample'})
+            rust_preview.run(program, world, [1, 1, 6])
+            saved = world/'card/Newt/Cache/resume.pic'
+            assert saved.is_file(), 'sleep did not save a resume picture'
+            if not picture:
+                saved.unlink()
+                (world/'retained.bin').unlink(missing_ok=True)
+            _, log = rust_preview.run(program, world, [], boot_kind='deep-sleep' if picture else 'power-on')
+            rows = (world/'receipt.txt').read_text().splitlines()
+            page = decode_wake_timing(next(row for row in rows if row.startswith('WAKE ')))
+            if not page['available']: return 'restored page did not freeze'
+            assert page['restored'] and page['requested_screen'] == 4, page
+            assert page['page_kind'] == ('picture' if picture else 'ordinary'), page
+            assert page['display_calls'] == 1, page
+            if picture:
+                assert 'Reader picture: result=shown' in log
+                assert page['stamps']['picture_ready'] is not None
+            stages = ['picture_candidate', 'source_ready']
+            if picture: stages.append('picture_ready')
+            stages += ['page_ready', 'display_start', 'display_return', 'page_complete']
+            times = [page['since_entry_us'][stage] for stage in stages]
+            assert all(value is not None for value in times) and times == sorted(times), page
     assert first_page(binary) is None
+    assert restored_page(binary, True) is None
+    assert restored_page(binary, False) is None
     if negative_controls(__file__):
         original = 'if actual_page && !covered { home.bus.board.wake_timeline().complete(home.bus.board.monotonic_clock().micros()); }'
         control = rust_preview.control([('reader_image_paint.rs', original, 'if false { home.bus.board.wake_timeline().complete(home.bus.board.monotonic_clock().micros()); }')],
                                       optimize=False, work=rust_preview.WORK/'wake-timing')
         assert first_page(control) == 'the real reader never froze the timeline'
         print('PASS control: removing the actual-page completion hook fails')
+        picture_hook = 'home.bus.board.wake_timeline().complete(home.bus.board.monotonic_clock().micros());'
+        control = rust_preview.control([('reader_image_picture.rs', picture_hook, 'if false { ' + picture_hook + ' }')],
+                                      optimize=False, work=rust_preview.WORK/'wake-timing')
+        assert restored_page(control, True) == 'restored page did not freeze'
+        print('PASS control: removing the picture completion hook fails')
+
     print('PASS: real firmware excludes Home and publishes the first-page snapshot')
 
 

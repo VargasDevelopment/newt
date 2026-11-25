@@ -68,7 +68,7 @@ impl Timeline {
     }
     pub fn display_return(&self, now: u32) {
         if self.frozen() || self.metadata[2].load(Ordering::Relaxed) & PAGE == 0 { return; }
-        // An inverse cleanup can precede the target wave: keep its final return.
+        // Record the native refresh return; inverse RAM cleanup is outside this call.
         self.stamps[Stage::DisplayReturn as usize].store(now, Ordering::Relaxed);
         self.metadata[1].store(self.metadata[1].load(Ordering::Relaxed) | 1 << Stage::DisplayReturn as usize, Ordering::Relaxed);
     }

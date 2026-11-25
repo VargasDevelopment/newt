@@ -340,8 +340,8 @@ hex digits: 24 little-endian u32 words. The first 16 are boot-local microsecond
 stamps: entry, Serial ready, panel probe, display begin, SD mount,
 application owners, home restore, reader restore, input/device info,
 picture candidate, source ready, page ready, picture ready, native display
-start, native display return and first page complete. The last native return
-covers multiple calls needed for the first page. Conditional stages are
+start, native display return and first page complete. Each current first-page
+path makes one native display call; inverse RAM cleanup precedes its start. Conditional stages are
 unavailable, never inferred as zero-cost work.
 
 The remaining eight words are schema (1), stamp-valid bit mask, flags,
