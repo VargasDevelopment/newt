@@ -24,7 +24,7 @@ pub(crate) fn query_index_store<C: ReadScope, R>(
     let name = book_index::FileName::new(digest, book_index::FileKind::Index);
     let bytes = source.size();
     let scoped = store.query_index(name.as_bytes(), digest, false, scratch,
-        &mut || validate(source, bytes) == Status::Ok, read);
+        &mut || validate(source, bytes) == Status::Ok, |store| read_index_store(store, read));
     let result = match scoped {
         Ok((result, true)) => result,
         Ok((_, false)) => Err(Status::Stale),
@@ -34,6 +34,15 @@ pub(crate) fn query_index_store<C: ReadScope, R>(
         || matches!(result, Err(Status::Stale)) && validate(source, bytes) == Status::Ok;
     if damaged { store.invalidate_index(digest); }
     result
+}
+
+// The callback's header and result temporaries are needed only after attach,
+// when the native descriptor is already open.
+#[inline(never)]
+fn read_index_store<R>(store: &mut dyn newt_core::page_cache::CacheStorage,
+    read: impl FnOnce(&mut dyn newt_core::page_cache::CacheStorage) -> Result<R, Status>,
+) -> Result<R, Status> {
+    read(store)
 }
 
 // Selection workspace must return before navigation and style parsing begin.
