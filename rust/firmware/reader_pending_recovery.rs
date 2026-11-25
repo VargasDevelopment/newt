@@ -25,6 +25,19 @@ impl PendingRecovery {
     pub(crate) fn settings(&self) -> ViewSettings { self.settings }
     pub(crate) fn policy(&self) -> RestorePolicy { self.policy }
 
+    /// Replace a stale pending position with a newer loaded durable checkpoint.
+    /// Downgrades `ExactPage` because durable progress may belong to another layout.
+    pub(crate) fn reconcile_durable(&mut self, durable: Progress, checkpoint_saved: bool) -> bool {
+        if !durable.supersedes(&self.progress, checkpoint_saved) {
+            return false;
+        }
+        self.progress = durable;
+        if self.policy == RestorePolicy::ExactPage {
+            self.policy = RestorePolicy::ColdCheckpoint;
+        }
+        true
+    }
+
     /// Frozen blockedCheckpoint: Changed revokes the old page; an accepted
     /// open still awaiting verification is deferred, not a failed save.
     pub(crate) fn blocked_checkpoint(pending: &mut Option<Self>, checkpoint: &mut ReaderCheckpoint,

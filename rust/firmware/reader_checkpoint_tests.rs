@@ -49,14 +49,88 @@ fn failed_checkpoint_survives_back_then_home_sleep() {
         deep_wake: true, software_reset: false, gpio_wake: true };
     let mut consumed = SleepRecord::default();
     let mut restored_app = AppState::default();
-    let mut restored = Progress::default();
+    let mut restored = acknowledged;
     let mut geometry = ViewSettings::default();
     let report = record::restore_boot(&snapshot, &mut consumed, &mut restored_app,
-        Some(&mut restored), Some(&mut geometry), live.book, true);
+        Some(&mut restored), true, Some(&mut geometry), live.book, true);
     assert!(report.restored);
+    assert!(!report.durable_progress);
+    assert!(!report.checkpoint_saved);
     assert_eq!(restored_app.screen, Screen::Home);
     assert_eq!(restored, live);
     assert_eq!(geometry, settings());
+}
+
+#[test]
+fn newer_durable_progress_supersedes_stale_sleep_record_and_pending_recovery() {
+    let stale_rtc = progress(10);
+    let newer_durable = Progress { sequence: 42, ..progress(80) };
+    let reading = AppState { screen: Screen::EpubReading, ..AppState::default() };
+    for (checkpoint_saved, recovery, aborted) in [
+        (true, Recovery::Ordinary, false),
+        (false, Recovery::PendingExact, false),
+        (true, Recovery::Ordinary, true),
+    ] {
+        let mut retained = record::make_record(&reading, Some(&stale_rtc), settings(),
+            checkpoint_saved, recovery, true);
+        if aborted { record::stamp_rejection(&mut retained); }
+        let snapshot = BootSnapshot { record: retained, reset: 0, cause: 0,
+            deep_wake: !aborted, software_reset: aborted, gpio_wake: !aborted };
+        let mut consumed = retained;
+        let mut restored_app = AppState::default();
+        let mut restored = newer_durable;
+        let mut geometry = ViewSettings::default();
+        let report = record::restore_boot(&snapshot, &mut consumed, &mut restored_app,
+            Some(&mut restored), true, Some(&mut geometry), newer_durable.book, true);
+        assert!(report.restored);
+        assert!(report.durable_progress);
+        assert!(report.checkpoint_saved);
+        assert_eq!(consumed.magic, 0);
+        assert_eq!(restored_app.screen, Screen::EpubReading);
+        assert_eq!(restored, newer_durable);
+    }
+    // Modular wraparound (u32::MAX -> 0) and antipode ambiguity prefer durable.
+    for (durable_seq, rtc_seq, expected_durable) in [
+        (0, u32::MAX, true),
+        (u32::MAX, 0, false),
+        (0x8000_0005, 5, true),
+        (1, 0, true),
+    ] {
+        let durable = Progress { sequence: durable_seq, ..progress(90) };
+        let rtc = Progress { sequence: rtc_seq, ..progress(12) };
+        let retained = record::make_record(&reading, Some(&rtc), settings(), true, Recovery::Ordinary, true);
+        let snapshot = BootSnapshot { record: retained, reset: 0, cause: 0,
+            deep_wake: true, software_reset: false, gpio_wake: true };
+        let mut consumed = retained;
+        let mut restored = durable;
+        let report = record::restore_boot(&snapshot, &mut consumed, &mut AppState::default(),
+            Some(&mut restored), true, Some(&mut ViewSettings::default()), durable.book, true);
+        assert!(report.restored);
+        assert_eq!(report.durable_progress, expected_durable);
+        assert_eq!(restored, if expected_durable { durable } else { rtc });
+    }
+    // Without loaded durable progress (Load::Empty synthesized seq=0), RTC wins.
+    let empty_default = Progress { book: stale_rtc.book, sequence: 0, ..Progress::default() };
+    let unsaved_rtc = Progress { sequence: 0, ..progress(44) };
+    let retained = record::make_record(&reading, Some(&unsaved_rtc), settings(), true, Recovery::Ordinary, true);
+    let snapshot = BootSnapshot { record: retained, reset: 0, cause: 0,
+        deep_wake: true, software_reset: false, gpio_wake: true };
+    let mut restored = empty_default;
+    let report = record::restore_boot(&snapshot, &mut SleepRecord::default(), &mut AppState::default(),
+        Some(&mut restored), false, Some(&mut ViewSettings::default()), unsaved_rtc.book, true);
+    assert!(report.restored && !report.durable_progress);
+    assert_eq!(restored, unsaved_rtc);
+
+    // PendingRecovery reconciliation upgrades stale pending progress and relaxes ExactPage.
+    let mut pending = PendingRecovery { progress: stale_rtc, settings: settings(), policy: RestorePolicy::ExactPage };
+    assert!(pending.reconcile_durable(newer_durable, false));
+    assert_eq!(*pending.progress(), newer_durable);
+    assert_eq!(pending.policy(), RestorePolicy::ColdCheckpoint);
+    // Unconfirmed live progress at the same sequence is kept when durable did not advance.
+    let mut unconfirmed = PendingRecovery { progress: progress(29), settings: settings(), policy: RestorePolicy::ExactPage };
+    assert!(!unconfirmed.reconcile_durable(progress(10), false));
+    assert_eq!(*unconfirmed.progress(), progress(29));
+    assert_eq!(unconfirmed.policy(), RestorePolicy::ExactPage);
 }
 
 #[test]

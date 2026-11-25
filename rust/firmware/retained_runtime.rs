@@ -51,13 +51,17 @@ pub unsafe fn snapshot_before_board() -> Result<BootSnapshot, SnapshotError> {
 /// Home's published durable settings include the product defaults on missing
 /// or corrupt storage. RTC settings are validated for resume compatibility,
 /// but cannot replace that authority, even after an eligible warm wake.
+/// When `durable_present` is true, `*progress` holds the loaded durable record
+/// and cannot be replaced by an older RTC sleep record.
 /// Call before reader reopen and Quick Start selection; SD choices stay on
 /// HomeClockSource and are never reconstructed from retained words.
+#[allow(clippy::too_many_arguments)]
 pub fn restore_after_durable(
     snapshot: &BootSnapshot,
     consumed: &mut SleepRecord,
     state: &mut AppState,
     progress: Option<&mut Progress>,
+    durable_present: bool,
     durable_settings: ViewSettings,
     expected_book: u64,
     expected_sd_source: bool,
@@ -68,6 +72,7 @@ pub fn restore_after_durable(
         consumed,
         state,
         progress,
+        durable_present,
         Some(&mut resume_settings),
         expected_book,
         expected_sd_source,
@@ -102,12 +107,14 @@ impl<L: core::fmt::Write, N: crate::nvs::Native, P: crate::home_startup::CardPor
 
     /// Uses this boot's durable reader settings without publishing RTC settings.
     /// Native magic clearing must follow even if no resume was eligible.
+    #[allow(clippy::too_many_arguments)]
     pub fn restore_retained_boot(
         &mut self,
         snapshot: &BootSnapshot,
         consumed: &mut SleepRecord,
         state: &mut AppState,
         progress: Option<&mut Progress>,
+        durable_present: bool,
         expected_book: u64,
         expected_sd_source: bool,
     ) -> BootReport {
@@ -116,6 +123,7 @@ impl<L: core::fmt::Write, N: crate::nvs::Native, P: crate::home_startup::CardPor
             consumed,
             state,
             progress,
+            durable_present,
             self.preferences.settings(),
             expected_book,
             expected_sd_source,

@@ -76,6 +76,30 @@ impl Progress {
             qualified_sessions: get32(bytes, 40),
         })
     }
+
+    /// Whether this loaded durable record supersedes a warm or pending
+    /// `candidate` for the same book. Strictly newer modular sequences and
+    /// exact-antipode ambiguity prefer durable authority; at equal sequence,
+    /// an unconfirmed live candidate (`candidate_saved == false`) keeps
+    /// unsaved progress, while a claimed-saved mismatch defers to durable.
+    pub fn supersedes(&self, candidate: &Self, candidate_saved: bool) -> bool {
+        if self.book == 0 || self.book != candidate.book {
+            return false;
+        }
+        let delta = self.sequence.wrapping_sub(candidate.sequence);
+        if delta == 0 {
+            candidate_saved
+                && Self {
+                    session_milliseconds: 0,
+                    ..*self
+                } != Self {
+                    session_milliseconds: 0,
+                    ..*candidate
+                }
+        } else {
+            delta <= 0x8000_0000
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -129,4 +153,37 @@ pub fn plan(first: &[u8], second: &[u8], proposed: Progress) -> Option<SavePlan>
             ..proposed
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample(sequence: u32, character: u32) -> Progress {
+        Progress {
+            sequence,
+            session_milliseconds: 0,
+            book: 0x1122_3344_5566_7788,
+            locator: Locator { spine: 1, character },
+            active_milliseconds: 1000,
+            forward_pages: 2,
+            qualified_sessions: 1,
+        }
+    }
+
+    #[test]
+    fn durable_supersedes_by_modular_sequence_and_saved_mismatch() {
+        assert!(sample(6, 500).supersedes(&sample(5, 100), true));
+        assert!(sample(6, 500).supersedes(&sample(5, 100), false));
+        assert!(sample(0, 500).supersedes(&sample(u32::MAX, 100), false));
+        assert!(!sample(u32::MAX, 100).supersedes(&sample(0, 500), true));
+        assert!(sample(0x8000_0005, 500).supersedes(&sample(5, 100), false));
+        assert!(!sample(5, 100).supersedes(&sample(5, 500), false));
+        assert!(sample(5, 500).supersedes(&sample(5, 100), true));
+        assert!(!sample(5, 500).supersedes(&sample(5, 500), true));
+        let with_session = Progress { session_milliseconds: 999, ..sample(5, 500) };
+        assert!(!with_session.supersedes(&sample(5, 500), true));
+        assert!(!Progress { book: 0, ..sample(6, 500) }.supersedes(&sample(5, 100), true));
+        assert!(!Progress { book: 9, ..sample(6, 500) }.supersedes(&sample(5, 100), true));
+    }
 }

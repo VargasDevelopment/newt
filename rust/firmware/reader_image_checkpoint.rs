@@ -173,12 +173,7 @@ fn authorized_record(record: &SleepRecord, selection_verified: bool) -> bool {
 }
 fn checkpoint_destination<B: Backend>(store: &mut B, record: &SleepRecord) -> SaveOutcome {
     let intent = if record.resume_screen == Screen::EpubReading as u32 {
-        let progress = Progress { sequence: record.sequence,
-            book: record::join_words(record.book_low, record.book_high),
-            locator: newt_core::progress::Locator { spine: record.spine, character: record.character },
-            active_milliseconds: record::join_words(record.active_low, record.active_high),
-            forward_pages: record.forward_pages, qualified_sessions: record.qualified_sessions,
-            session_milliseconds: 0 };
+        let progress = record.progress();
         SleepResumeIntent { book: progress.book, checkpoint: progress_checkpoint(&progress),
             settings: record.reader_settings | if record.recovery_kind() == Some(Recovery::PendingAnchor) { 8 } else { 0 } }
     } else { SleepResumeIntent::default() };

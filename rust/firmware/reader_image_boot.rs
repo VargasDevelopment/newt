@@ -127,7 +127,10 @@ impl Runtime {
         }
         if let Some((saved, present)) = home_records { self.load_home_records(home, &saved, present); }
         #[cfg(feature = "embedded-sample")]
-        if !self.selection.active() && !self.selection.selection_blocked() { self.load_sample_home(home); }
+        let sample_loaded = !self.selection.active() && !self.selection.selection_blocked()
+            && self.load_sample_home(home);
+        #[cfg(not(feature = "embedded-sample"))]
+        let sample_loaded = false;
         if self.selection.selection_blocked() {
             self.home.progress_unavailable = true;
             self.home.percent = -1;
@@ -135,9 +138,14 @@ impl Runtime {
             self.saves.set_progress_unavailable(true);
         }
         let expected = if self.selection.active() { self.selection.book_id() } else { self.unselected_book_id() };
+        let durable_present = if self.selection.active() {
+            self.selection.saved_progress_present()
+        } else {
+            sample_loaded
+        };
         let mut consumed = SleepRecord::default();
         let report = home.restore_retained_boot(boot, &mut consumed, &mut ui.app,
-            Some(&mut self.saved), expected, self.selection.active());
+            Some(&mut self.saved), durable_present, expected, self.selection.active());
         if durable && !report.restored {
             ui.app.screen = Screen::EpubReading;
             ui.app.resume_screen = Screen::EpubReading;
@@ -145,7 +153,10 @@ impl Runtime {
         ui.info.wake = Some(if durable && !report.restored {
             b"power-on / saved reading resumed".as_slice()
         } else { report.wake.as_bytes() });
-        self.saves.restore(if report.restored { boot.record.recovery } else { 0 },
+        let recovery_bits = if report.restored {
+            if report.durable_progress { boot.record.recovery & !4 } else { boot.record.recovery }
+        } else { 0 };
+        self.saves.restore(recovery_bits,
             report.restored && ui.app.screen != Screen::EpubReading,
             report.restored && self.saved.book != 0 && !report.checkpoint_saved);
         self.checkpoint.restore_uncertainty(self.saves.page_unconfirmed(), self.saves.destination_unconfirmed());
@@ -157,12 +168,17 @@ impl Runtime {
         }
         let retained_recovery = boot.record.recovery_kind();
         if (report.restored || durable) && (ui.app.screen == Screen::EpubReading
-            || retained_recovery != Some(record::Recovery::Ordinary)) {
+            || (!report.durable_progress && retained_recovery != Some(record::Recovery::Ordinary))) {
             self.saves.set_checkpoint_saved(durable || report.checkpoint_saved);
+            let durable_checkpoint = if durable {
+                Some(DurableCheckpoint::of(&target))
+            } else if report.durable_progress {
+                Some(DurableCheckpoint::PageStart)
+            } else { None };
             self.recovery = Some(crate::reader_book::PendingRecovery {
                 progress: self.saved,
                 settings: self.settings,
-                policy: boot_restore_policy(durable.then(|| DurableCheckpoint::of(&target)),
+                policy: boot_restore_policy(durable_checkpoint,
                     report.restored.then_some(&boot.record), self.settings),
             });
         }
@@ -176,14 +192,15 @@ impl Runtime {
         self.wake.durable_resume = durable;
         self.wake.restored_screen = ui.app.screen as u8;
         if durable || report.status == Status::Valid {
+            let durable_position = durable || report.durable_progress;
             self.wake.requested = if durable { Screen::EpubReading as u8 } else { boot.record.resume_screen as u8 };
             self.wake.rejected_entry = if durable { UNAVAILABLE } else { boot.record.rejected_sleep as u8 };
             self.wake.checkpoint_saved = durable || report.checkpoint_saved;
-            self.wake.book = if durable { self.saved.book } else { record::join_words(boot.record.book_low, boot.record.book_high) };
-            self.wake.spine = if durable { self.saved.locator.spine } else { boot.record.spine };
-            self.wake.character = if durable { self.saved.locator.character } else { boot.record.character };
+            self.wake.book = if durable_position { self.saved.book } else { record::join_words(boot.record.book_low, boot.record.book_high) };
+            self.wake.spine = if durable_position { self.saved.locator.spine } else { boot.record.spine };
+            self.wake.character = if durable_position { self.saved.locator.character } else { boot.record.character };
             if self.wake.book != 0 {
-                self.wake.saved_orientation = boot.record.wake_orientation(durable.then_some(target.settings))
+                self.wake.saved_orientation = boot.record.wake_orientation(durable_position.then_some(self.settings))
                     .map_or(UNAVAILABLE, |orientation| orientation as u8);
             }
         }

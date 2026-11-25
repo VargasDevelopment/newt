@@ -112,6 +112,20 @@ impl SleepRecord {
     pub fn wake_orientation(&self, durable: Option<ViewSettings>) -> Option<Orientation> {
         durable.or_else(|| self.reader_view()).map(|settings| settings.orientation)
     }
+    pub const fn progress(&self) -> Progress {
+        Progress {
+            sequence: self.sequence,
+            session_milliseconds: 0,
+            book: join_words(self.book_low, self.book_high),
+            locator: Locator {
+                spine: self.spine,
+                character: self.character,
+            },
+            active_milliseconds: join_words(self.active_low, self.active_high),
+            forward_pages: self.forward_pages,
+            qualified_sessions: self.qualified_sessions,
+        }
+    }
 }
 
 #[repr(u8)]
@@ -287,37 +301,51 @@ pub fn validate(record: &SleepRecord, expected_book: u64, expected_sd_source: bo
     Status::Valid
 }
 
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Restored {
+    None,
+    Retained,
+    DurableProgress,
+}
+impl Restored {
+    pub const fn restored(self) -> bool {
+        !matches!(self, Self::None)
+    }
+    pub const fn durable_progress(self) -> bool {
+        matches!(self, Self::DurableProgress)
+    }
+}
+
 /// Every failure preserves all outputs; Home leaves optional book outputs alone.
+/// When `durable_present` is true, `*progress` holds the loaded durable record
+/// and is preserved whenever it supersedes `record`'s reading position.
 pub fn restore(
     record: &SleepRecord,
     state: &mut AppState,
     progress: Option<&mut Progress>,
+    durable_present: bool,
     settings: Option<&mut ViewSettings>,
     expected_book: u64,
     expected_sd_source: bool,
-) -> bool {
+) -> Restored {
     if validate(record, expected_book, expected_sd_source) != Status::Valid {
-        return false;
+        return Restored::None;
     }
     let book = record.resume_screen == Screen::EpubReading as u32
         || record.recovery_kind() != Some(Recovery::Ordinary);
+    let mut durable_progress = false;
     if book {
         let (Some(progress), Some(settings), Some(view)) =
             (progress, settings, record.reader_view()) else {
-            return false;
+            return Restored::None;
         };
-        *progress = Progress {
-            sequence: record.sequence,
-            session_milliseconds: 0,
-            book: join_words(record.book_low, record.book_high),
-            locator: Locator {
-                spine: record.spine,
-                character: record.character,
-            },
-            active_milliseconds: join_words(record.active_low, record.active_high),
-            forward_pages: record.forward_pages,
-            qualified_sessions: record.qualified_sessions,
-        };
+        let retained = record.progress();
+        if durable_present && progress.supersedes(&retained, record.checkpoint_saved != 0) {
+            durable_progress = true;
+        } else {
+            *progress = retained;
+        }
         *settings = view;
     }
     let screen = if record.resume_screen == Screen::Home as u32 {
@@ -330,27 +358,36 @@ pub fn restore(
         resume_screen: screen,
         ..AppState::default()
     };
-    true
+    if durable_progress {
+        Restored::DurableProgress
+    } else {
+        Restored::Retained
+    }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn restore_on_boot(
     boot: Boot,
     record: &SleepRecord,
     state: &mut AppState,
     progress: Option<&mut Progress>,
+    durable_present: bool,
     settings: Option<&mut ViewSettings>,
     expected_book: u64,
     expected_sd_source: bool,
-) -> bool {
-    boot != Boot::OtherReset
-        && restore(
-            record,
-            state,
-            progress,
-            settings,
-            expected_book,
-            expected_sd_source,
-        )
+) -> Restored {
+    if boot == Boot::OtherReset {
+        return Restored::None;
+    }
+    restore(
+        record,
+        state,
+        progress,
+        durable_present,
+        settings,
+        expected_book,
+        expected_sd_source,
+    )
 }
 
 /// Caller supplies observations from its SDK boundary; this module reads no hardware.
@@ -370,16 +407,19 @@ pub struct BootReport {
     pub status: Status,
     pub requested: u32,
     pub restored: bool,
+    pub durable_progress: bool,
     pub checkpoint_saved: bool,
     pub wake: &'static str,
 }
 /// Portable restoreSleepBoot semantics, including unconditional one-shot consumption.
 /// The caller publishes `wake` into DeviceInfo; logging and reset/cause acquisition are pending.
+#[allow(clippy::too_many_arguments)]
 pub fn restore_boot(
     snapshot: &BootSnapshot,
     retained: &mut SleepRecord,
     state: &mut AppState,
     progress: Option<&mut Progress>,
+    durable_present: bool,
     settings: Option<&mut ViewSettings>,
     expected_book: u64,
     expected_sd_source: bool,
@@ -390,15 +430,18 @@ pub fn restore_boot(
         &snapshot.record,
     );
     let status = validate(&snapshot.record, expected_book, expected_sd_source);
-    let restored = restore_on_boot(
+    let outcome = restore_on_boot(
         eligibility,
         &snapshot.record,
         state,
         progress,
+        durable_present,
         settings,
         expected_book,
         expected_sd_source,
     );
+    let restored = outcome.restored();
+    let durable_progress = outcome.durable_progress();
     let wake = if restored {
         if eligibility == Boot::AbortedSleepRestart {
             "sleep entry rejected / resumed"
@@ -419,7 +462,9 @@ pub fn restore_boot(
         status,
         requested: snapshot.record.resume_screen,
         restored,
-        checkpoint_saved: status == Status::Valid && snapshot.record.checkpoint_saved == 1,
+        durable_progress,
+        checkpoint_saved: status == Status::Valid
+            && (snapshot.record.checkpoint_saved == 1 || durable_progress),
         wake,
     }
 }

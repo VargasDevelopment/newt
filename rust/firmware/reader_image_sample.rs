@@ -26,14 +26,16 @@ pub(super) fn with_operation<R>(memory: &mut SampleMemory, status: &mut Status,
 }
 
 impl Runtime {
-    pub(super) fn load_sample_home(&mut self, home: &mut Home<'_>) {
-        self.progress_ready = home.with_state_store(|_, store| sample_epub::load_home_progress(
+    pub(super) fn load_sample_home(&mut self, home: &mut Home<'_>) -> bool {
+        let sample = home.with_state_store(|_, store| sample_epub::load_home_progress(
             &mut newt_core::progress_store::ProgressStore::new(store), &mut self.saved, &mut self.home));
+        self.progress_ready = sample.ready;
         self.home.set_finished(false);
         self.reader_ui.finish = newt_reader_ui::ReaderFinishRow::Hidden;
         self.saves.set_progress_unavailable(!self.progress_ready);
         self.title.fill(0);
         self.title[..newt_stage_home::SAMPLE_TITLE.len()].copy_from_slice(newt_stage_home::SAMPLE_TITLE);
+        sample.loaded
     }
 
     // Keep sample-only admission locals out of the shared SD-open ancestor.
@@ -41,8 +43,13 @@ impl Runtime {
     pub(super) fn open_sample_image(&mut self, home: &mut Home<'_>, ui: &mut Application<'_>,
         logical: &mut Frame, events: &mut Events<'_, '_>, session_checkpoint: bool,
     ) -> bool {
-        let policy = self.restore_policy_image();
-        if policy.reloads_saved_progress() && !session_checkpoint { self.load_sample_home(home); }
+        let mut policy = self.restore_policy_image();
+        if !session_checkpoint && (policy.reloads_saved_progress() || !self.progress_ready) {
+            if self.load_sample_home(home) {
+                self.reconcile_recovery_progress();
+                policy = self.restore_policy_image();
+            }
+        }
         if self.recovery.is_none() && policy.reloads_saved_progress()
             && !session_checkpoint && !self.progress_ready {
             self.publish_notice_image(ui);

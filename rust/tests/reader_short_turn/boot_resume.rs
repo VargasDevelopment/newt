@@ -11,7 +11,7 @@ use newt_native_io::UiIo;
 use newt_native_storage::RouteState;
 use newt_phased_reader::PhasedChapterCache;
 use reader_restore_policy::{DurableCheckpoint, boot_restore_policy};
-use retained_record::{Recovery, make_record};
+use retained_record::{BootSnapshot, Recovery, make_record, restore_boot};
 use upgrade::{with_pages, with_router};
 
 /// The page start the real opener shows for `saved` under `settings`, or None when it refuses.
@@ -133,4 +133,26 @@ fn pair(panel: &mut newt_c3_board::ReaderPanel<'_, '_>, io: &UiIo, bytes: &[u8],
         assert_eq!(open(panel, io, &mut card, bytes, settings, progress, policy), page,
             "power-on {case}: the resume target reopens under the durable settings ({what}, {policy:?})");
     }
+
+    // #111: warm wake with a stale RTC sleep record (saved under `other`) while
+    // durable storage holds a newer sequence saved under `under` must keep the
+    // newer durable progress and reopen at the page holding it under `other`.
+    let older_rtc = Progress { sequence: 2, ..at(0) };
+    let newer_durable = Progress { sequence: 3, ..at(start) };
+    let stale_record = make_record(&state, Some(&older_rtc), other, true, Recovery::Ordinary, true);
+    let snapshot = BootSnapshot { record: stale_record, reset: 8, cause: 7,
+        deep_wake: true, software_reset: false, gpio_wake: true };
+    let mut restored_progress = newer_durable;
+    let mut consumed = stale_record;
+    let mut restored_app = AppState::default();
+    let mut ignored = other;
+    let report = restore_boot(&snapshot, &mut consumed, &mut restored_app,
+        Some(&mut restored_progress), true, Some(&mut ignored), book, true);
+    assert!(report.restored && report.durable_progress && report.checkpoint_saved,
+        "warm stale-RTC: newer durable progress supersedes stale RTC ({what})");
+    assert_eq!(restored_progress, newer_durable,
+        "warm stale-RTC: newer durable progress is kept ({what})");
+    let policy = boot_restore_policy(Some(DurableCheckpoint::PageStart), Some(&stale_record), other);
+    assert_eq!(open(panel, io, &mut card, bytes, other, restored_progress, policy), other_page,
+        "warm stale-RTC: newer durable progress reopens under durable settings ({what}, {policy:?})");
 }

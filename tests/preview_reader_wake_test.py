@@ -324,6 +324,206 @@ def clockwise_reopen_from_home_picture_buttons(binary):
         return 'clockwise front 4 did not cancel the in-flight open'
 
 
+def diag_fields(log):
+    return dict(re.findall(
+        r'(restored|checkpoint_saved|spine|character|reader_open|progress_ready|actual_spine|actual_character)=(\d+)',
+        log.split(' DIAG ')[-1]))
+
+
+def reseal_sleep(retained, **changes):
+    """Update fields in retained.bin's 17-word SleepRecord and recompute word-FNV."""
+    words = list(struct.unpack_from('<17I', retained, 0))
+    offsets = {'screen': 2, 'character': 6, 'rejected': 7, 'sequence': 9, 'saved': 14, 'recovery': 15}
+    for key, value in changes.items():
+        words[offsets[key]] = value
+    h = 2166136261
+    for word in words[1:16]:
+        h = ((h ^ word) * 16777619) & 0xffffffff
+    words[16] = h
+    out = bytearray(retained)
+    struct.pack_into('<17I', out, 0, *words)
+    return bytes(out)
+
+
+def stale_world(binary, directory):
+    """Advance an SD book to page 2 (captured as stale RTC + resume.pic), then
+    two more pages so durable SD holds a newer sequence and character."""
+    preview_driver.world(binary, directory, preview_driver.parse(['--library-fixture', 'healthy']))
+    preview_driver.write_conf(directory, {'telemetry': 'sample'})
+    rust_preview.run(binary, directory, (CONFIRM, CONFIRM, RIGHT, POWER))
+    stale_rtc = (directory / 'retained.bin').read_bytes()
+    stale_pic = (directory / PICTURE).read_bytes()
+    rust_preview.run(binary, directory, (RIGHT, RIGHT, POWER), boot_kind='deep-sleep')
+    newer_rtc = (directory / 'retained.bin').read_bytes()
+    stale_char = u32(stale_rtc, 24)
+    newer_char = u32(newer_rtc, 24)
+    assert newer_char > stale_char > 0
+    return stale_rtc, stale_pic, stale_char, newer_char
+
+
+def durable_beats_stale_rtc(binary):
+    """#111: newer durable progress wins over a stale RTC sleep record across
+    cold boot, warm deep-sleep wake, aborted-sleep restart, stale unconfirmed
+    flags, stale Home PendingExact, and shifted durable layout boundaries."""
+    with tempfile.TemporaryDirectory(prefix='newt-stale-rtc-') as scratch:
+        d = Path(scratch)
+        stale_rtc, stale_pic, _, newer = stale_world(binary, d)
+        # 1. Cold power-on discards stale RTC and restores durable progress.
+        (d / 'retained.bin').write_bytes(stale_rtc)
+        _, log = rust_preview.run(binary, d, (), boot_kind='power-on')
+        if diag_fields(log).get('actual_character') != str(newer):
+            return f'cold power-on did not open newer durable progress ({diag_fields(log)})'
+        # 2. Warm deep-sleep wake: durable beats stale RTC; stale picture is skipped.
+        (d / 'retained.bin').write_bytes(stale_rtc)
+        (d / PICTURE).write_bytes(stale_pic)
+        _, log = rust_preview.run(binary, d, (), boot_kind='deep-sleep')
+        got = diag_fields(log)
+        if (got.get('restored'), got.get('checkpoint_saved'), got.get('character'),
+                got.get('actual_character')) != ('1', '1', str(newer), str(newer)):
+            return f'warm wake let stale RTC replace newer durable progress ({got})'
+        if SHOWN in log:
+            return 'warm wake flashed the stale RTC page picture instead of newer durable progress'
+        # 3. Aborted-sleep software restart: durable beats stale RTC too.
+        (d / 'retained.bin').write_bytes(reseal_sleep(stale_rtc, rejected=1))
+        _, log = rust_preview.run(binary, d, (), boot_kind='software')
+        if diag_fields(log).get('actual_character') != str(newer):
+            return f'aborted-sleep restart let stale RTC replace durable progress ({diag_fields(log)})'
+        # 4. Stale unconfirmed RTC (saved=0, PendingExact|PAGE): durable wins & clears notice.
+        (d / 'retained.bin').write_bytes(reseal_sleep(stale_rtc, saved=0, recovery=5))
+        _, log = rust_preview.run(binary, d, (), boot_kind='deep-sleep')
+        got = diag_fields(log)
+        if (got.get('checkpoint_saved'), got.get('actual_character')) != ('1', str(newer)):
+            return f'stale unconfirmed RTC beat newer durable progress ({got})'
+        # 5. Stale Home PendingExact RTC: stays Home, Read opens newer durable, Books not blocked.
+        (d / 'retained.bin').write_bytes(reseal_sleep(stale_rtc, screen=0, saved=0, recovery=5))
+        _, log = rust_preview.run(binary, d, (BACK,), boot_kind='deep-sleep')
+        if diag_fields(log).get('actual_character') != str(newer):
+            return f'stale Home PendingExact RTC replaced durable progress ({diag_fields(log)})'
+        # 6. Shifted durable boundary (e.g. saved under another layout) while stale RTC matches
+        #    current settings: must open via anchor policy (not stale RTC's ExactPage).
+        shifted = save_stale_boundary(d / 'card/Newt/State')
+        assert shifted == newer
+        (d / 'retained.bin').write_bytes(stale_rtc)
+        _, log = rust_preview.run(binary, d, (), boot_kind='deep-sleep')
+        got = diag_fields(log)
+        if (got.get('reader_open'), got.get('character'), got.get('actual_character')) != (
+                '1', str(newer + 1), str(newer)):
+            return f'warm wake failed to open shifted durable boundary ({got})'
+
+
+def warm_fallback_failed_commit_and_storage_faults(binary):
+    """Unconfirmed live progress at equal sequence survives a failed commit,
+    lost-ack commits promote to durable on wake, and missing/corrupt durable
+    storage still admits valid warm RTC while cold boot stays fail-closed."""
+    with tempfile.TemporaryDirectory(prefix='newt-rtc-faults-') as scratch:
+        d = Path(scratch)
+        preview_driver.world(binary, d, preview_driver.parse(['--library-fixture', 'healthy']))
+        rust_preview.run(binary, d, (CONFIRM, CONFIRM, RIGHT, POWER))
+        base_rtc = (d / 'retained.bin').read_bytes()
+        base_char = u32(base_rtc, 24)
+        # 1. Refused write: durable stays at base_char (same seq), RTC carries unsaved page 3.
+        preview_driver.write_conf(d, {'store.refuse': 'card-write:/newt-sd/Newt/State/nb'})
+        rust_preview.run(binary, d, (RIGHT, POWER), boot_kind='deep-sleep')
+        unconfirmed_rtc = (d / 'retained.bin').read_bytes()
+        unsaved_char = u32(unconfirmed_rtc, 24)
+        assert unsaved_char > base_char and u32(unconfirmed_rtc, 56) == 0
+        preview_driver.write_conf(d, {'store.refuse': ''})
+        _, log = rust_preview.run(binary, d, (), boot_kind='deep-sleep')
+        got = diag_fields(log)
+        if (got.get('checkpoint_saved'), got.get('actual_character')) != ('0', str(unsaved_char)):
+            return f'unconfirmed warm wake lost unsaved live page ({got}, want {unsaved_char})'
+        # 2. Lost-ack sync drop: bytes land on SD with seq+1 while RTC has old seq & saved=0.
+        (d / 'retained.bin').write_bytes(base_rtc)
+        preview_driver.write_conf(d, {'store.drop': 'card-sync:/newt-sd/Newt/State/nb'})
+        rust_preview.run(binary, d, (RIGHT, POWER), boot_kind='deep-sleep')
+        assert u32((d / 'retained.bin').read_bytes(), 56) == 0
+        preview_driver.write_conf(d, {'store.drop': ''})
+        _, log = rust_preview.run(binary, d, (), boot_kind='deep-sleep')
+        got = diag_fields(log)
+        if (got.get('checkpoint_saved'), got.get('actual_character')) != ('1', str(unsaved_char)):
+            return f'lost-ack warm wake did not promote to committed durable progress ({got})'
+        # 3. Corrupt durable progress payload inside intact NRSK slots: warm wake
+        #    uses valid RTC; cold power-on refuses open (progress_ready=0).
+        progress_path, = (d / 'card/Newt/State').glob('nb*.nrs')
+        raw = bytearray(progress_path.read_bytes())
+        corrupted = 0
+        for at in range(512, len(raw), 512):
+            if raw[at:at + 4] == b'NRSK' and raw[at + 20:at + 24] == b'NWTR':
+                raw[at + 68] ^= 1  # corrupt NWTR CRC32 inside an intact NRSK envelope
+                struct.pack_into('<I', raw, at + 252, preview_driver.crc32c(raw[at:at + 252]))
+                corrupted += 1
+        assert corrupted >= 1
+        progress_path.write_bytes(raw)
+        (d / 'retained.bin').write_bytes(base_rtc)
+        _, log = rust_preview.run(binary, d, (), boot_kind='deep-sleep')
+        if diag_fields(log).get('actual_character') != str(base_char):
+            return f'warm wake with corrupt durable did not use valid RTC fallback ({diag_fields(log)})'
+        (d / 'card/Newt/State/newt-resume.nrs').unlink(missing_ok=True)
+        _, log = rust_preview.run(binary, d, (BACK,), boot_kind='power-on')
+        got = diag_fields(log)
+        if got.get('reader_open') != '0' or got.get('progress_ready') != '0':
+            return f'cold power-on opened despite corrupt durable progress ({got})'
+        # 4. Missing durable storage: warm wake uses valid RTC; cold power-on starts cleanly at 0.
+        progress_path.unlink()
+        (d / 'retained.bin').write_bytes(base_rtc)
+        _, log = rust_preview.run(binary, d, (), boot_kind='deep-sleep')
+        if diag_fields(log).get('actual_character') != str(base_char):
+            return f'warm wake with missing durable did not use valid RTC fallback ({diag_fields(log)})'
+        _, log = rust_preview.run(binary, d, (BACK,), boot_kind='power-on')
+        got = diag_fields(log)
+        if (got.get('reader_open'), got.get('actual_character')) != ('1', '0'):
+            return f'cold power-on with missing durable did not start cleanly at 0 ({got})'
+
+
+def late_reload_reconciles_stale_pending_recovery(binary):
+    """When boot sees only the older durable slot and admits RTC PendingAnchor
+    (RestorePolicy::Validated), and open's reload later reads a newer durable
+    progress record, open must promote PendingRecovery instead of letting
+    PendingRecovery shadow this.saved (rust/firmware/reader_image_operation.rs:84, #111)."""
+    with tempfile.TemporaryDirectory(prefix='newt-late-reload-') as scratch:
+        d = Path(scratch)
+        stale_rtc, _, _, newer = stale_world(binary, d)
+        progress_path, = (d / 'card/Newt/State').glob('nb*.nrs')
+        raw = bytearray(progress_path.read_bytes())
+        # Slot0 copy 1 starts at byte 2048 (the file's middle byte) and holds seq 3.
+        # Flip it before boot so boot_restore sees only seq 2; card.edit flips it
+        # back when prepare_image opens the EPUB, before Validated reloads progress.
+        assert raw[2048:2052] == b'NRSK' and raw[2068:2072] == b'NWTR'
+        assert u32(raw, 2092) == newer
+        raw[2048] ^= 1
+        progress_path.write_bytes(raw)
+        (d / 'retained.bin').write_bytes(reseal_sleep(stale_rtc, recovery=2))
+        preview_driver.write_conf(d, {
+            'card.edit': f'/newt-sd/Newt/State/{progress_path.name}',
+            'card.edit.on': '/Newt/Books/',
+        })
+        _, log = rust_preview.run(binary, d, (), boot_kind='deep-sleep')
+        got = diag_fields(log)
+        if (got.get('reader_open'), got.get('actual_character')) != ('1', str(newer)):
+            return f'open did not reconcile stale PendingRecovery with newer durable progress ({got})'
+
+
+def sample_durable_beats_stale_rtc(binary):
+    """Embedded sample (NVS newt_reader) obeys the same freshness rule on warm wake."""
+    with tempfile.TemporaryDirectory(prefix='newt-sample-rtc-') as scratch:
+        d = Path(scratch)
+        preview_driver.world(binary, d, preview_driver.parse([]))
+        rust_preview.run(binary, d, (BACK, RIGHT, POWER))
+        stale_rtc = (d / 'retained.bin').read_bytes()
+        rust_preview.run(binary, d, (RIGHT, RIGHT, POWER), boot_kind='deep-sleep')
+        newer = u32((d / 'retained.bin').read_bytes(), 24)
+        assert newer > u32(stale_rtc, 24) > 0
+        (d / 'retained.bin').write_bytes(stale_rtc)
+        _, log = rust_preview.run(binary, d, (), boot_kind='deep-sleep')
+        got = diag_fields(log)
+        if (got.get('reader_open'), got.get('actual_character')) != ('1', str(newer)):
+            return f'sample warm wake let stale RTC replace newer NVS progress ({got})'
+        (d / 'retained.bin').write_bytes(stale_rtc)
+        _, log = rust_preview.run(binary, d, (BACK,), boot_kind='power-on')
+        if diag_fields(log).get('actual_character') != str(newer):
+            return f'sample cold power-on did not restore newer NVS progress ({diag_fields(log)})'
+
+
 # The reader trusts any shown picture without comparing it with the real page.
 UNCHECKED = ('reader_image_paint.rs',
              '        let covered = check == newt_core::resume_picture::Check::Covered;',
@@ -364,10 +564,10 @@ CASES = [
     (cold_power_on_at_old_boundary, [
         # Boot asks a durable reopen for its exact page.
         ('reader_image_boot.rs',
-         'policy: boot_restore_policy(durable.then(|| DurableCheckpoint::of(&target)),\n'
+         '                policy: boot_restore_policy(durable_checkpoint,\n'
          '                    report.restored.then_some(&boot.record), self.settings),',
-         'policy: if durable { newt_reader_ui::RestorePolicy::ExactPage } '
-         'else { boot_restore_policy(None,\n'
+         '                policy: if durable { newt_reader_ui::RestorePolicy::ExactPage } '
+         'else { boot_restore_policy(durable_checkpoint,\n'
          '                    report.restored.then_some(&boot.record), self.settings) },')]),
     (stale_picture_repaints_once, [
         UNCHECKED,
@@ -378,6 +578,24 @@ CASES = [
     (cold_picture_is_checked, [UNCHECKED]),
     (clockwise_wake_open_buttons, [PUBLISH_BACK_SYNC]),
     (clockwise_reopen_from_home_picture_buttons, [PUBLISH_BACK_SYNC]),
+    (durable_beats_stale_rtc, [
+        # Admitted sleep record overwrites newer durable progress without comparing sequence (#111).
+        ('retained_runtime/record.rs',
+         '        if durable_present && progress.supersedes(&retained, record.checkpoint_saved != 0) {',
+         '        if false && durable_present && progress.supersedes(&retained, record.checkpoint_saved != 0) {'),
+        # Superseded warm wake keeps stale RTC's ExactPage policy instead of ColdCheckpoint (#111).
+        ('reader_image_boot.rs',
+         '            } else if report.durable_progress {\n'
+         '                Some(DurableCheckpoint::PageStart)\n',
+         '            } else if false && report.durable_progress {\n'
+         '                Some(DurableCheckpoint::PageStart)\n')]),
+    (warm_fallback_failed_commit_and_storage_faults, []),
+    (late_reload_reconciles_stale_pending_recovery, [
+        # Reloaded durable progress does not reconcile PendingRecovery before open (#111).
+        ('reader_image_open.rs',
+         '                self.reconcile_recovery_progress();\n',
+         '                let _ = Self::reconcile_recovery_progress;\n')]),
+    (sample_durable_beats_stale_rtc, []),
 ]
 
 

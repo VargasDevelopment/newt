@@ -75,13 +75,19 @@ pub fn open<B: newt_core::xml_session::ParserBackend + ?Sized>(saved: Progress,
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SampleHome {
+    pub ready: bool,
+    pub loaded: bool,
+}
+
 /// Frozen firmware/home_progress.h uses the real newt_reader NVS store through
 /// the same router. A failed read retains saved; only confirmed absence resets
 /// it. Another book's valid record cannot authorize the sample or its progress.
 pub fn load_home_progress<B: newt_core::durable::Backend>(
     store: &mut newt_core::progress_store::ProgressStore<'_, B>,
     saved: &mut Progress, home: &mut newt_device_ui::HomeData<'_>,
-) -> bool {
+) -> SampleHome {
     use newt_core::durable::Load;
     let loaded = store.load();
     match loaded {
@@ -100,5 +106,5 @@ pub fn load_home_progress<B: newt_core::durable::Backend>(
     home.set_estimated(false);
     home.progress_unavailable = loaded != Load::Empty && !known;
     home.reading_available = loaded == Load::Empty || known;
-    home.reading_available
+    SampleHome { ready: home.reading_available, loaded: matches!(loaded, Load::Loaded(_)) }
 }
