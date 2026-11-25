@@ -28,7 +28,7 @@ pub fn crc(mut value: u32, input: &[u8]) -> u32 {
     value
 }
 
-pub fn blocks(bytes: u32) -> u32 {
+pub const fn blocks(bytes: u32) -> u32 {
     bytes.wrapping_add(BLOCK_BYTES - 1) / BLOCK_BYTES
 }
 
@@ -42,11 +42,13 @@ pub fn payload_for_extent(extent: u32) -> u32 {
     if blocks(payload) == count { payload } else { 0 }
 }
 
+/// Pages (`.fibp`) and book indexes (`.fibx`) share this envelope; the route
+/// is the name's 64 hex digits.
 pub fn route(name: Option<&[u8]>, out: &mut Route, canonical: bool) -> bool {
     let Some(name) = name.map(c_string) else {
         return false;
     };
-    if (canonical && name.len() != 69) || name.len() < 69 || &name[64..69] != b".fibp" {
+    if (canonical && name.len() != 69) || name.len() < 69 || !matches!(&name[64..69], b".fibp" | b".fibx") {
         return false;
     }
     fn digit(c: u8) -> Option<u8> {
