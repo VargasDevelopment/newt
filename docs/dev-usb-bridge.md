@@ -149,7 +149,11 @@ The code is `rust/core/src/dev_put.rs`; the firmware glue is
   are created. A final file may be replaced; a directory or other kind never is.
   The internal `NEWT.PUT`, `NEWT.OLD` and `NEWT.MRK` names and older
   `.newt-put`, `.newt-old`, `.newt-old-name` names are reserved.
-  FAT ignores case, so the host refuses duplicate names within a batch.
+  Before opening the port, the host refuses batch names that the pinned
+  FatFs uppercase table treats as equal (including Unicode aliases such as
+  `σ`/`ς`). Python's Unicode casing is different. Existing files remain
+  replaceable through any FatFs-equivalent spelling: FILE is an independent
+  atomic replacement, and the device has no batch identity.
 - **Size:** no PUT file-size cap or reserved free-space allowance. FILE checks
   the card's free bytes; insufficient space answers `ERROR card-full free=N`.
   An empty file is valid. File sizes and offsets use unsigned 64-bit counts;
@@ -234,6 +238,11 @@ A missing DONE answer gives `"result": "unknown"`; establish a fresh handshake
 and check the card before another write. Receipts include free bytes, total
 seconds and bytes per second, including read-back and commit; DATA is summarized
 once per file. The DONE deadline grows with file size.
+
+The client uses committed tables and needs no firmware toolchain. The gate
+checks those tables against `libfatfs.a(ffunicode.c.obj)` in the pinned SDK;
+`python3 tools/fatfs_case_generate.py --write` regenerates them after a reviewed
+provider change. The source path and object SHA-256 are recorded in the table.
 
 HWCDC ignores the `115200` baud argument: it uses the ESP32-C3's USB Serial/JTAG
 full-speed USB link. Larger raw blocks remove the Base64 overhead and reduce

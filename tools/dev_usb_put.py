@@ -8,6 +8,7 @@ import hashlib
 from pathlib import Path
 import re
 import time
+from fatfs_case import name_key
 
 CHUNK_BYTES = 4096
 LINE_BYTES = 4351
@@ -67,8 +68,8 @@ def plan(paths, name=None):
     for path in paths:
         data = Path(path).read_bytes()
         files.append((str(path), card_name(name or Path(path).name), data))
-    # FAT ignores case, so a.txt and A.TXT are one file.
-    if len({card.lower() for _, card, _ in files}) != len(files):
+    # Use the card's table, including Unicode aliases Python lower() misses.
+    if len({name_key(card) for _, card, _ in files}) != len(files):
         raise ValueError('Two files share a card name (FAT ignores case)')
     return files
 

@@ -73,7 +73,7 @@ CONTROLS = [('host_objects procedure', "'host_jobs.py'", "'host_objects.py'", 't
                            'freeink_sdk_routes.py', 'freeink_sdk_provenance.py',
                            'freeink_source_pin.py', 'daily_firmware.py', 'rust_app_archive.py', 'rust_resource_inputs.py')),
             *(('reading_acceptance procedure', f"'tools/{name}'", "'tools/check.py'", f'tools/{name}')
-              for name in ('bench_lease.py', 'bench_candidate.py', 'x3_slots.py', 'dev_usb_panel_telemetry.py', 'dev_usb_firmware_rows.py', 'dev_usb_put.py', 'check_scratch.py', 'gate_scratch.py', 'gate_plan.py', 'gate_runner.py', 'gate_tier.py', 'rust_gate_families.py', 'release_tag.py', 'host_jobs.py', 'native_toolchain.py',
+              for name in ('bench_lease.py', 'bench_candidate.py', 'x3_slots.py', 'dev_usb_panel_telemetry.py', 'dev_usb_firmware_rows.py', 'dev_usb_put.py', 'fatfs_case.py', 'check_scratch.py', 'gate_scratch.py', 'gate_plan.py', 'gate_runner.py', 'gate_tier.py', 'rust_gate_families.py', 'release_tag.py', 'host_jobs.py', 'native_toolchain.py',
                            'toolchain-share.py', 'freeink_sdk_provenance.py', 'freeink_source_pin.py'))]
 
 

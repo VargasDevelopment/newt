@@ -2,11 +2,13 @@
 import hashlib
 import importlib.util
 from pathlib import Path
+import struct
 import subprocess
 import sys
 import tempfile
 import time
 from types import SimpleNamespace
+from unittest.mock import patch
 import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +18,10 @@ spec = importlib.util.spec_from_file_location('dev_usb_client', ROOT / 'tools/de
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 import dev_usb_put as put  # the same module object dev-usb.py imported
+import fatfs_case
+import fatfs_case_generate
+from host_common import C_COMPILER
+from host_objects import compiler_environment
 
 BUILD = 'put-fixture'
 put.FILE_SECONDS = 0.2  # keep deadline tests short; the rule under test is the same
@@ -209,6 +215,113 @@ def plans_are_checked_before_the_port_opens():
             assert result.returncode == 2 and not result.stdout, args
 
 
+def unicode_destinations():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        paths = [root / name for name in ('σ.epub', 'ς.epub', 'Ǆ.epub', 'ǅ.epub')]
+        for path in paths:
+            path.write_bytes(b'x')
+        # Host preflight needs neither the toolchain nor a connected device.
+        with patch.object(subprocess, 'run', side_effect=AssertionError('unexpected subprocess')):
+            try:
+                put.plan(paths[:2])
+            except ValueError as error:
+                assert 'FAT ignores case' in str(error), str(error)
+            else:
+                raise AssertionError('FatFs-equivalent Unicode destinations accepted')
+            assert 'Ǆ'.lower() == 'ǅ'.lower()
+            assert len(put.plan(paths[2:])) == 2, 'FatFs preserves this titlecase distinction'
+    assert fatfs_case.name_key('ß') != fatfs_case.name_key('SS'), 'no uppercase expansions'
+    assert fatfs_case.name_key('é') != fatfs_case.name_key('e\u0301'), 'no normalization'
+    assert fatfs_case.name_key('𐐀') != fatfs_case.name_key('𐐨'), 'non-BMP units stay unchanged'
+
+
+def committed_tables_match(tables):
+    assert (fatfs_case.CVT1, fatfs_case.CVT2) == tables, 'Host FatFs tables differ from pinned firmware'
+    source = (ROOT / 'tools/fatfs_case.py').read_text()
+    assert fatfs_case_generate.generated(tables) in source, 'Regenerated table block differs'
+
+
+def fatfs_parity_and_controls():
+    tables = fatfs_case_generate.pinned_tables()
+    committed_tables_match(tables)
+    # Original ff_wtoupper control flow, using the very same pinned tables.
+    # FatFs R0.15: Copyright (C) 2022, ChaN, all right reserved.
+    # FatFs module is an open source software. Redistribution and use of FatFs in
+    # source and binary forms, with or without modification, are permitted provided
+    # that the following condition is met:
+    # 1. Redistributions of source code must retain the above copyright notice,
+    #    this condition and the following disclaimer.
+    # This software is provided by the copyright holder and contributors "AS IS"
+    # and any warranties related to this software are DISCLAIMED.
+    # The copyright owner or contributors be NOT LIABLE for any damages caused
+    # by use of this software.
+    reference = r'''
+#include <stdint.h>
+#include <stdio.h>
+static uint32_t ff_wtoupper(uint32_t uni) {
+    const uint16_t *p;
+    uint16_t uc, bc, nc, cmd;
+    if (uni < 0x10000) {
+        uc = (uint16_t)uni; p = uc < 0x1000 ? cvt1 : cvt2;
+        for (;;) {
+            bc = *p++;
+            if (bc == 0 || uc < bc) break;
+            nc = *p++; cmd = nc >> 8; nc &= 0xFF;
+            if (uc < bc + nc) {
+                switch (cmd) {
+                case 0: uc = p[uc - bc]; break;
+                case 1: uc -= (uc - bc) & 1; break;
+                case 2: uc -= 16; break;
+                case 3: uc -= 32; break;
+                case 4: uc -= 48; break;
+                case 5: uc -= 26; break;
+                case 6: uc += 8; break;
+                case 7: uc -= 80; break;
+                case 8: uc -= 0x1C60; break;
+                }
+                break;
+            }
+            if (cmd == 0) p += nc;
+        }
+        uni = uc;
+    }
+    return uni;
+}
+int main(void) {
+    for (uint32_t code = 0; code < 0x10000; ++code) {
+        uint32_t value = ff_wtoupper(code);
+        putchar(value & 255); putchar(value >> 8);
+    }
+    return ferror(stdout) ? 1 : 0;
+}
+'''
+    arrays = ''.join('static const unsigned short ' + name + '[] = {' +
+                     ','.join(str(value) for value in table) + '};\n'
+                     for name, table in zip(('cvt1', 'cvt2'), tables, strict=True))
+    environment = compiler_environment(ROOT)
+    with tempfile.TemporaryDirectory(prefix='fatfs-case-') as directory:
+        path = Path(directory)
+        source, binary = path / 'reference.c', path / 'reference'
+        source.write_text(arrays + reference)
+        subprocess.run([C_COMPILER, '--no-default-config', '-std=c11', '-O1', str(source), '-o', str(binary)],
+                       check=True, env=environment, capture_output=True)
+        result = subprocess.run([str(binary)], check=True, env=environment, capture_output=True).stdout
+    assert struct.unpack('<65536H', result) == tuple(fatfs_case._upper(code) for code in range(65536))
+    for label, target, field, value, check in (
+            ('Python lower', put, 'name_key', str.lower, unicode_destinations),
+            ('table drift', fatfs_case, 'CVT1', (fatfs_case.CVT1[0] ^ 1, *fatfs_case.CVT1[1:]),
+             lambda: committed_tables_match(tables))):
+        with patch.object(target, field, value):
+            try:
+                check()
+            except AssertionError:
+                pass
+            else:
+                raise AssertionError(f'Negative control survived: {label}')
+    print('PASS: FatFs pinned table regeneration, exhaustive BMP C parity, Unicode preflight; two controls fail')
+
+
 def main():
     success()
     refusals_before_any_write()
@@ -216,6 +329,8 @@ def main():
     an_unknown_commit_is_never_retried()
     a_commit_left_for_a_hand_check_is_recovery_needed()
     plans_are_checked_before_the_port_opens()
+    unicode_destinations()
+    fatfs_parity_and_controls()
     print('PASS: dev-usb put: verified final SHA-256, bounded lease frames, fragmented replies, '
           'deadlines, short writes, no retry of an unknown commit, recovery-needed and plan refusals; '
           'no device access')
