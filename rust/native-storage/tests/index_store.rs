@@ -19,50 +19,73 @@ const ROOT: &str = "/sd/Cache";
 const KEY: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const BOOK: Identity = Identity { digest: [0xa5; 32], policy: 1 };
 
-/// The FAT model plus what it lacks: file times for LRU order, and a count
-/// of open files for the card's small descriptor budget.
+/// The FAT model plus what it lacks: file times for eviction order, a count
+/// of open files for the card's small descriptor budget, and a power cut that
+/// stops the card, so no cleanup runs between the cut and the next boot.
 #[derive(Default)]
 struct Card {
     model: Model,
     times: BTreeMap<String, i64>,
     open: u32,
     most_open: u32,
+    armed: bool,
+    off: bool,
+}
+impl Card {
+    fn live<T>(&mut self, op: impl FnOnce(&mut Model) -> Result<T>) -> Result<T> {
+        if self.off {
+            return Err(Error::Unavailable);
+        }
+        let result = op(&mut self.model);
+        self.off = self.armed && self.model.cut_after.is_none();
+        result
+    }
+    /// Cut power `steps` card operations from now.
+    fn cut_in(&mut self, steps: u32) {
+        self.model.cut_after = Some(self.model.steps + steps);
+        self.armed = true;
+    }
+    /// Boot again on what was durable at the cut.
+    fn boot(&mut self) {
+        (self.armed, self.off, self.open) = (false, false, 0);
+        self.model.power();
+    }
 }
 impl Native for Card {
     fn open(&mut self, path: &str, mode: Open) -> Result<i32> {
-        let fd = self.model.open(path, mode)?;
+        let fd = self.live(|m| m.open(path, mode))?;
         self.open += 1;
         self.most_open = self.most_open.max(self.open);
         Ok(fd)
     }
     fn close(&mut self, fd: i32) -> Result<()> {
-        self.model.close(fd)?;
+        self.live(|m| m.close(fd))?;
         self.open -= 1;
         Ok(())
     }
-    fn read(&mut self, fd: i32, out: &mut [u8]) -> Result<usize> { self.model.read(fd, out) }
-    fn write(&mut self, fd: i32, input: &[u8]) -> Result<usize> { self.model.write(fd, input) }
-    fn seek(&mut self, fd: i32, offset: u32) -> Result<u64> { self.model.seek(fd, offset) }
-    fn truncate(&mut self, fd: i32, bytes: u32) -> Result<()> { self.model.truncate(fd, bytes) }
-    fn sync(&mut self, fd: i32) -> Result<()> { self.model.sync(fd) }
-    fn fstat(&mut self, fd: i32) -> Result<Stat> { self.model.fstat(fd) }
+    fn read(&mut self, fd: i32, out: &mut [u8]) -> Result<usize> { self.live(|m| m.read(fd, out)) }
+    fn write(&mut self, fd: i32, input: &[u8]) -> Result<usize> { self.live(|m| m.write(fd, input)) }
+    fn seek(&mut self, fd: i32, offset: u32) -> Result<u64> { self.live(|m| m.seek(fd, offset)) }
+    fn truncate(&mut self, fd: i32, bytes: u32) -> Result<()> { self.live(|m| m.truncate(fd, bytes)) }
+    fn sync(&mut self, fd: i32) -> Result<()> { self.live(|m| m.sync(fd)) }
+    fn fstat(&mut self, fd: i32) -> Result<Stat> { self.live(|m| m.fstat(fd)) }
     fn stat(&mut self, path: &str, no_follow: bool) -> Result<Stat> {
-        let mut stat = self.model.stat(path, no_follow)?;
+        let mut stat = self.live(|m| m.stat(path, no_follow))?;
         stat.seconds = self.times.get(path).copied().unwrap_or_default();
         Ok(stat)
     }
-    fn mkdir(&mut self, path: &str) -> Result<()> { self.model.mkdir(path) }
-    fn unlink(&mut self, path: &str) -> Result<()> { self.model.unlink(path) }
-    fn rename(&mut self, from: &str, to: &str) -> Result<()> { self.model.rename(from, to) }
+    fn mkdir(&mut self, path: &str) -> Result<()> { self.live(|m| m.mkdir(path)) }
+    fn unlink(&mut self, path: &str) -> Result<()> { self.live(|m| m.unlink(path)) }
+    fn rename(&mut self, from: &str, to: &str) -> Result<()> { self.live(|m| m.rename(from, to)) }
     fn next_nonce(&mut self) -> u32 { self.model.next_nonce() }
 }
 impl Directory for Card {
     type Listing = u32;
-    fn open_dir(&mut self, path: &str) -> Result<u32> { self.model.open_dir(path) }
+    fn open_dir(&mut self, path: &str) -> Result<u32> { self.live(|m| m.open_dir(path)) }
     fn read_dir(&mut self, listing: &mut u32, name: &mut [u8]) -> Result<Option<usize>> {
-        self.model.read_dir(listing, name)
+        self.live(|m| m.read_dir(listing, name))
     }
-    fn close_dir(&mut self, listing: u32) -> Result<()> { self.model.close_dir(listing) }
+    fn close_dir(&mut self, listing: u32) -> Result<()> { self.live(|m| m.close_dir(listing)) }
 }
 impl page_entries::PageEntries for Card {
     fn walk_entries(&mut self, folder: &core::ffi::CStr, sized: bool,
@@ -175,7 +198,7 @@ fn read<R>(store: &mut ChapterCacheStorage<'_, Card>, identity: &Identity,
 /// few searches, not one per member.
 fn complete(s: &mut dyn CacheStorage, reader: &Reader) -> bool {
     let members = members();
-    *reader.header() == header(BOOK)
+    *reader.header() == header(reader.header().identity)
         && members.iter().enumerate().all(|(i, m)| reader.member(s, i as u32) == Some(*m))
         && SPINE.iter().enumerate().all(|(i, item)| reader.spine(s, i as u32) == Some(*item))
         && [0, 123, 124, 199].iter().all(|&i| reader.find(s, members[i].hash) == Ok(Some((i as u32, members[i]))))
@@ -229,20 +252,42 @@ fn a_full_card_or_power_cut_never_publishes_a_partial_index() {
     assert_eq!(with_store(&mut card, |store| write(store, BOOK)), Err(WriteError::Storage));
     assert_eq!(card.indexes(), Vec::<String>::new());
 
-    let mut clean = Card::new();
-    with_store(&mut clean, |store| write(store, BOOK)).unwrap();
-    let steps = clean.model.steps;
-    for cut in 1..=steps {
+    // A first build, then a rebuild over it (a new admission policy), cut
+    // at every card operation. The card stops at the cut and boots on what
+    // was durable then.
+    let rebuilt = Identity { policy: 2, ..BOOK };
+    let steps = |rebuild: bool| {
         let mut card = Card::new();
-        card.model.cut_after = Some(cut);
-        let written = with_store(&mut card, |store| write(store, BOOK));
-        // Only the published index survives, whole; a leftover temporary is
-        // swept by the next census.
-        let survived = with_store(&mut card, |store| read(store, &BOOK, complete));
-        assert!(matches!(survived, None | Some(true)), "cut {cut}");
-        assert!(written.is_err() || survived == Some(true), "cut {cut}");
-        with_store(&mut card, |store| store.index_census(&Never, None, None, None));
-        assert!(card.indexes().iter().all(|leaf| leaf.ends_with(".fibx")), "cut {cut}: {:?}", card.indexes());
+        if rebuild {
+            with_store(&mut card, |store| write(store, BOOK)).unwrap();
+        }
+        let start = card.model.steps;
+        with_store(&mut card, |store| write(store, rebuilt)).unwrap();
+        card.model.steps - start
+    };
+    for rebuild in [false, true] {
+        for cut in 1..=steps(rebuild) {
+            let mut card = Card::new();
+            if rebuild {
+                with_store(&mut card, |store| write(store, BOOK)).unwrap();
+            }
+            card.cut_in(cut);
+            let written = with_store(&mut card, |store| write(store, rebuilt));
+            card.boot();
+            let old = with_store(&mut card, |store| read(store, &BOOK, complete));
+            let new = with_store(&mut card, |store| read(store, &rebuilt, complete));
+            // Each index is whole or absent; a rebuild never loses the old one
+            // before the new one is published.
+            assert!(matches!(old, None | Some(true)) && matches!(new, None | Some(true)), "cut {cut}");
+            assert!(written.is_err() || new == Some(true), "cut {cut}");
+            assert!(!rebuild || old.is_some() || new.is_some(), "cut {cut}");
+            // The next census sweeps any leftover temporary, and the build
+            // runs again.
+            with_store(&mut card, |store| store.index_census(&Never, None, None, None));
+            assert!(card.indexes().iter().all(|leaf| !leaf.ends_with(".tmp")), "cut {cut}: {:?}", card.indexes());
+            with_store(&mut card, |store| write(store, rebuilt)).unwrap();
+            assert_eq!(with_store(&mut card, |store| read(store, &rebuilt, complete)), Some(true), "cut {cut}");
+        }
     }
 }
 
@@ -266,4 +311,27 @@ fn the_census_evicts_the_oldest_unpinned_index_and_keeps_the_open_one() {
     with_store(&mut card, |store| write(store, BOOK)).unwrap();
     assert_eq!(with_store(&mut card, |store| read(store, &BOOK, complete)), Some(true));
     assert_eq!(card.indexes(), [pinned, live, leaf(&BOOK.digest)]);
+}
+
+#[test]
+fn a_rebuilt_index_and_its_backup_stay_evictable() {
+    const MIB: usize = 1024 * 1024;
+    let mut card = Card::new();
+    // A rebuild keeps the old copy as `.bak`, both written at time 0.
+    with_store(&mut card, |store| write(store, BOOK)).unwrap();
+    with_store(&mut card, |store| write(store, Identity { policy: 2, ..BOOK })).unwrap();
+    let book = leaf(&BOOK.digest);
+    assert_eq!(card.indexes(), [book.clone(), format!("{book}.bak")]);
+
+    // The open book also has a pair; with a newer orphan, the folder is
+    // crowded. The oldest unpinned files go first, backups included.
+    let pinned = leaf(&[1; 32]);
+    card.seed(&pinned, 6 * MIB, 5);
+    card.seed(&format!("{pinned}.bak"), 6 * MIB, 1);
+    card.seed(&leaf(&[2; 32]), 2 * MIB, 3);
+    let grant = with_store(&mut card, |store| {
+        store.index_census(&Never, None, None, Some(pinned.as_bytes()))
+    });
+    assert_eq!(grant.outcome, MissingProbe::Ready);
+    assert_eq!(card.indexes(), [pinned.clone(), format!("{pinned}.bak")]);
 }

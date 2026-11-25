@@ -228,7 +228,8 @@ fn writer_refuses_collisions_order_and_counts_before_publishing() {
         Writer::begin(s, Header { nav: NONE, ..header(1, 2) }, buffer).unwrap()
     }
     let w = begin(&mut s, &mut buffer);
-    assert_eq!(w.spine(&mut s, SPINE[0]).err(), Some(WriteError::Invalid), "spine before members");
+    let first = SpineItem { member: 0, before: 0 };
+    assert_eq!(w.spine(&mut s, first).err(), Some(WriteError::Invalid), "spine before members");
     let w = begin(&mut s, &mut buffer).member(&mut s, one).unwrap();
     assert_eq!(w.member(&mut s, Member { hash: 2, ..one }).err(), Some(WriteError::Invalid), "extra member");
     let w = begin(&mut s, &mut buffer).member(&mut s, one).unwrap().spine(&mut s, SPINE[1]).unwrap();
