@@ -6,13 +6,18 @@ pub(super) struct Engine<'a> {
     pub buffer: &'a mut [u8], pub io: Io, streams: [Stream; 6],
     pub min_read: usize, run_bytes: usize, members: usize, items: usize, references: usize, disk: bool,
 }
-struct Positions([u64; MAX_SPINE as usize / 64]);
+/// Positions are read back from the card before their run CRC is checked, so
+/// an out-of-range one is a misread: refuse it instead of indexing past the set.
+pub(super) struct Positions(pub(super) [u64; MAX_SPINE as usize / 64]);
 impl Positions {
-    fn mark(&mut self, position: u32) { self.0[position as usize / 64] |= 1 << (position % 64); }
-    fn rank(&self, position: u32) -> u32 {
+    pub(super) fn mark(&mut self, position: u32) -> Result<(), Error> {
+        *self.0.get_mut(position as usize / 64).ok_or_else(io)? |= 1 << (position % 64);
+        Ok(())
+    }
+    pub(super) fn rank(&self, position: u32) -> Result<u32, Error> {
         let word = position as usize / 64;
-        self.0[..word].iter().map(|b| b.count_ones()).sum::<u32>()
-            + (self.0[word] & ((1u64 << (position % 64)) - 1)).count_ones()
+        let partial = self.0.get(word).ok_or_else(io)? & ((1u64 << (position % 64)) - 1);
+        Ok(self.0[..word].iter().map(|b| b.count_ones()).sum::<u32>() + partial.count_ones())
     }
     fn total(&self) -> u32 { self.0.iter().map(|b| b.count_ones()).sum() }
 }
@@ -88,8 +93,9 @@ impl<'a> Engine<'a> {
         let mut pool = Pool::new(0, self.min_read);
         let mut items = pool.attach::<Item, W>(work, &mut self.io, self.streams[1])?;
         let mut refs = pool.attach::<Reference, W>(work, &mut self.io, self.streams[2])?;
-        let output = if self.disk { Region { start: pool.bytes(), bytes: self.buffer.len() - pool.bytes() } }
-            else { self.streams[2].memory.unwrap() };
+        // A resident R region is reused in place for J1; spilled output gets the space after the cursors.
+        let output = self.streams[2].memory
+            .unwrap_or(Region { start: pool.bytes(), bytes: self.buffer.len() - pool.bytes() });
         let mut out = Output::<Joined>::new(output.start, output.bytes, !self.disk, false);
         let mut view = View { prefix: &[], tail: self.buffer };
         let mut item = pool.next::<Item, W>(&mut items, &mut view, work, &mut self.io)?;
@@ -99,10 +105,9 @@ impl<'a> Engine<'a> {
             let choice = Choice { sequence: first.sequence, hash: first.href };
             if Some(first.id) == toc { earlier(ncx, choice); }
             if Some(first.id) == cover_id { earlier(cover, choice); }
-            while reference.is_some_and(|r| r.id <= first.id) {
-                let r = reference.unwrap();
+            while let Some(r) = reference.filter(|r| r.id <= first.id) {
                 if r.id == first.id {
-                    positions.mark(r.position);
+                    positions.mark(r.position)?;
                     out.push(Joined { href: first.href, position: r.position, text: first.flags & TEXT != 0 }, &mut view, work, &mut self.io)?;
                 }
                 reference = pool.next::<Reference, W>(&mut refs, &mut view, work, &mut self.io)?;
@@ -134,9 +139,12 @@ impl<'a> Engine<'a> {
         let mut members = pool.attach::<Member, W>(work, &mut self.io, self.streams[0])?;
         let mut joins = pool.attach::<Joined, W>(work, &mut self.io, self.streams[3])?;
         let start = self.io.end;
-        let (f_region, j_region) = if self.disk {
-            (Region { start: pool.bytes(), bytes: f_bytes }, Region { start: pool.bytes() + f_bytes, bytes: self.buffer.len() - pool.bytes() - f_bytes })
-        } else { (self.streams[1].memory.unwrap(), self.streams[3].memory.unwrap()) };
+        // Resident F and J2 reuse the I and J1 regions; spilled ones follow the cursors.
+        let (f_region, j_region) = match (self.streams[1].memory, self.streams[3].memory) {
+            (Some(items), Some(joined)) => (items, joined),
+            _ => (Region { start: pool.bytes(), bytes: f_bytes },
+                Region { start: pool.bytes() + f_bytes, bytes: self.buffer.len() - pool.bytes() - f_bytes }),
+        };
         let mut first = Output::<First>::new(f_region.start, f_region.bytes, !self.disk, true);
         let mut spine = Output::<Spine>::new(j_region.start, j_region.bytes, !self.disk, false);
         let mut view = View { prefix: &[], tail: self.buffer };
@@ -150,9 +158,8 @@ impl<'a> Engine<'a> {
             }
             if cover.is_some_and(|c| c.hash == member.hash) { header.cover = rank; }
             let mut first_position = NONE;
-            while joined.is_some_and(|j| j.href <= member.hash) {
-                let j = joined.unwrap();
-                let position = positions.rank(j.position);
+            while let Some(j) = joined.filter(|j| j.href <= member.hash) {
+                let position = positions.rank(j.position)?;
                 let found = j.href == member.hash;
                 if found { first_position = first_position.min(position); }
                 let weight = if j.text && found { member.uncompressed } else { 0 };
@@ -168,7 +175,7 @@ impl<'a> Engine<'a> {
         }
         while let Some(j) = joined {
             if j.text { valid = false; }
-            spine.push(Spine { position: positions.rank(j.position), member: NONE, weight: 0 }, &mut view, work, &mut self.io)?;
+            spine.push(Spine { position: positions.rank(j.position)?, member: NONE, weight: 0 }, &mut view, work, &mut self.io)?;
             joined = pool.next::<Joined, W>(&mut joins, &mut view, work, &mut self.io)?;
             poll(progress, Phase::Join, u64::from(rank), u64::from(header.members))?;
         }
@@ -197,8 +204,8 @@ impl<'a> Engine<'a> {
         let mut rank = 0;
         while let Some(mut member) = pool.next::<Member, W>(&mut members, &mut view, store, &mut self.io)? {
             if f.is_some_and(|f| f.rank < rank) { return Err(io()); }
-            if f.is_some_and(|f| f.rank == rank) {
-                member.first_spine = f.unwrap().position;
+            if let Some(next) = f.filter(|f| f.rank == rank) {
+                member.first_spine = next.position;
                 f = pool.next::<First, W>(&mut first, &mut view, store, &mut self.io)?;
             }
             writer = writer.member(store, member).map_err(Error::Write)?;

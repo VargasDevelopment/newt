@@ -48,6 +48,14 @@ fn spill_faults_remove_work_and_never_publish() {
     }
 }
 #[test]
+fn a_misread_spine_position_fails_the_build_instead_of_panicking() {
+    let mut positions = engine::Positions([0; MAX_SPINE as usize / 64]);
+    positions.mark(MAX_SPINE - 1).unwrap();
+    assert_eq!(positions.rank(MAX_SPINE - 1), Ok(0));
+    assert_eq!(positions.mark(MAX_SPINE), Err(Error::Book(Status::IoError)));
+    assert_eq!(positions.rank(u32::MAX), Err(Error::Book(Status::IoError)));
+}
+#[test]
 fn cancellation_during_merges_removes_work() {
     let mut store = Store::new(Fault::None);
     let mut buffer = [0; 448];

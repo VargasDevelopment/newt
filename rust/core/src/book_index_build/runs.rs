@@ -31,7 +31,7 @@ impl Io {
     fn header<W: WorkFile + ?Sized>(&mut self, work: &mut W, at: u32) -> Result<(Run, u32, u32), Error> {
         let mut b = [0; HEADER];
         self.read(work, at, &mut b)?;
-        let word = |i| u32::from_le_bytes(b[i..i + 4].try_into().unwrap());
+        let word = |i| crate::book_index::get32(&b, i);
         if crc(u32::MAX, &b[..20]) != word(20) { return Err(io()); }
         let (previous, start, count, checked, kind) = (word(0), word(4), word(8), word(12), word(16));
         let size = wire_bytes(kind).ok_or_else(io)? as u32;

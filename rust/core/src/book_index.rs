@@ -125,13 +125,13 @@ pub fn name(digest: &Digest, out: &mut [u8; 69]) {
     out[64..].copy_from_slice(b".fibx");
 }
 
-fn get16(b: &[u8], at: usize) -> u16 {
+pub(crate) fn get16(b: &[u8], at: usize) -> u16 {
     u16::from_le_bytes([b[at], b[at + 1]])
 }
-fn get32(b: &[u8], at: usize) -> u32 {
+pub(crate) fn get32(b: &[u8], at: usize) -> u32 {
     u32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]])
 }
-fn get64(b: &[u8], at: usize) -> u64 {
+pub(crate) fn get64(b: &[u8], at: usize) -> u64 {
     u64::from(get32(b, at)) | (u64::from(get32(b, at + 4)) << 32)
 }
 fn language_code(language: BookLanguage) -> u8 {

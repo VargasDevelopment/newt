@@ -33,22 +33,21 @@ impl<'op, 'a, N: Native> IndexBuildStore<'op, 'a, N> {
         work.path_bytes = name.len();
         Some(Self { cache, work })
     }
-    fn open(&mut self) -> bool {
-        if self.work.fd.is_some() { return true; }
-        let path = self.work.path;
-        let text = core::str::from_utf8(&path[..self.work.path_bytes]).expect("route UTF-8");
-        let Some((parent, _)) = text.rsplit_once('/') else { return false; };
-        if !matches!(self.cache.file.native.mkdir(parent), Ok(()) | Err(Error::Exists)) { return false; }
-        let Ok(fd) = self.cache.file.native.open(text, Open::CreateExclusive) else { return false; };
-        self.work.fd = Some(fd);
-        true
+    /// The live work descriptor, creating the file on first use.
+    fn open(&mut self) -> Option<i32> {
+        if self.work.fd.is_some() { return self.work.fd; }
+        let text = core::str::from_utf8(&self.work.path[..self.work.path_bytes]).ok()?;
+        let (parent, _) = text.rsplit_once('/')?;
+        if !matches!(self.cache.file.native.mkdir(parent), Ok(()) | Err(Error::Exists)) { return None; }
+        self.work.fd = self.cache.file.native.open(text, Open::CreateExclusive).ok();
+        self.work.fd
     }
 }
 impl<N: Native> WorkFile for IndexBuildStore<'_, '_, N> {
     fn append(&mut self, input: &[u8]) -> bool {
         let Some(bytes) = u32::try_from(input.len()).ok().and_then(|n| self.work.bytes.checked_add(n)) else { return false; };
-        if u64::from(bytes) > newt_core::cache_names::namespace::INDEX_QUOTA || !self.open() { return false; }
-        let fd = self.work.fd.unwrap();
+        if u64::from(bytes) > newt_core::cache_names::namespace::INDEX_QUOTA { return false; }
+        let Some(fd) = self.open() else { return false; };
         if self.cache.file.native.seek(fd, self.work.bytes) != Ok(u64::from(self.work.bytes)) { return false; }
         if self.cache.file.native.write(fd, input) != Ok(input.len()) { return false; }
         self.work.bytes = bytes;
@@ -63,13 +62,14 @@ impl<N: Native> WorkFile for IndexBuildStore<'_, '_, N> {
     fn sync_work(&mut self) -> bool {
         self.work.fd.is_none_or(|fd| self.cache.file.native.sync(fd).is_ok())
     }
+    /// Also forgets the name, so a reused state picks a fresh one for its next build.
     fn remove_work(&mut self) -> bool {
+        let path_bytes = core::mem::take(&mut self.work.path_bytes);
+        self.work.bytes = 0;
         let Some(fd) = self.work.fd.take() else { return true; };
         let closed = self.cache.file.native.close(fd).is_ok();
-        let path = self.work.path;
-        let name = core::str::from_utf8(&path[..self.work.path_bytes]).expect("route UTF-8");
-        let removed = matches!(self.cache.file.native.unlink(name), Ok(()) | Err(Error::Missing));
-        self.work.bytes = 0;
+        let removed = core::str::from_utf8(&self.work.path[..path_bytes])
+            .is_ok_and(|name| matches!(self.cache.file.native.unlink(name), Ok(()) | Err(Error::Missing)));
         closed && removed
     }
 }

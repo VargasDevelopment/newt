@@ -135,10 +135,10 @@ impl<W: WorkFile + ?Sized> Package<'_, '_, W> {
             return;
         }
         let mut arena = Arena::new(&mut self.path);
-        let path = resolve_href_checked(&mut arena, Some(self.dir), Some(href), None);
+        let resolved = resolve_href_checked(&mut arena, Some(self.dir), Some(href), None);
         self.path_peak = self.path_peak.max(arena.used());
-        let hash = match path {
-            Ok(path) => name_hash(arena.view(path).unwrap()),
+        let hash = match resolved.and_then(|path| arena.view(path).ok_or(HrefError::Capacity)) {
+            Ok(path) => name_hash(path),
             Err(error) => {
                 self.fail(match error {
                     HrefError::TooLong => Status::PathTooLong,
