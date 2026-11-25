@@ -11,7 +11,9 @@
 #include <SPI.h>
 #include <SD.h>
 #include "sd_shared_bus.h"
+#include "sd_card_folders.h"
 #include "../../native_io/native/sd_card_paths.h"
+#include <sys/stat.h>
 #include <driver/gpio.h>
 #include <esp_sleep.h>
 #include <esp_system.h>
@@ -41,7 +43,7 @@ int32_t nb_probe_panel(struct nb_probe *out) {
             uint8_t(d.valid), uint8_t(d.busyTimedOut), uint8_t(promoted)};
     return NB_OK; // Inconclusive is evidence, not a transport error.
 }
-// Same pinned SdLibrary::mount setup, without a second descriptor owner.
+// Same pinned SdLibrary::mount setup, then best-effort Update folder creation.
 int32_t nb_mount_sd(void) {
     const auto& board = BoardConfig::ACTIVE;
     if (board.board != BoardConfig::Board::XteinkX3 &&
@@ -53,7 +55,10 @@ int32_t nb_mount_sd(void) {
     } pins;
     if (!newt::firmware::prepareSharedSdBus(SPI, pins, board)) return NB_IO;
     const uint32_t hz = board.sd.spiHz != 0 ? board.sd.spiHz : 40000000u;
-    return SD.begin(board.sd.cs, SPI, hz, newt::firmware::kSdMountPoint, 3, false)
+    const bool mounted = SD.begin(board.sd.cs, SPI, hz, newt::firmware::kSdMountPoint, 3, false);
+    return newt::firmware::prepareSdFolders(mounted,
+        newt::firmware::kSdMountPoint, newt::firmware::kSdUpdateDirectory,
+        [](const char* path) { return ::mkdir(path, 0700); })
         ? NB_OK : NB_IO;
 }
 int32_t nb_frame(void *display, struct nb_frame *out) {

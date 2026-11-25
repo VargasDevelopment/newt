@@ -26,7 +26,8 @@ int32_t nb_select_x3(void *display);
 void nb_release_sd(void);
 int32_t nb_probe_panel(struct nb_probe *out);
 int32_t nb_begin(void *display);
-/* Idle bus only; pinned shared-SPI setup, no formatting, three VFS slots. */
+/* Idle bus only; pinned shared-SPI setup, no formatting, three VFS slots.
+ * A successful mount attempts Update folders; their errors don't change status. */
 int32_t nb_mount_sd(void);
 int32_t nb_frame(void *display, struct nb_frame *out);
 struct nb_storage { uint8_t *data; size_t len; };

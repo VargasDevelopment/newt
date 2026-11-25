@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3980720,
+      "flash_bytes": 3980848,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "1d9dff5f1ddf5f2d1f4cae7196b93f530cecce9a",
-      "before": 3978496,
-      "after": 3980720,
-      "reason": "Rebased onto main 83903c92 (3,978,496 B): measured clean build at 1d9dff5f1ddf5f2d1f4cae7196b93f530cecce9a is 3,980,720 B (+2,224 B) for Progress::supersedes durability arbitration, attempted-sequence provenance across ProgressStore/ExternalProgressStore/ReaderCheckpoint/PendingRecovery and packed into SleepRecord::recovery bits 4..=31, RestoreExpectation boot restore struct, and late-reload durable reconciliation (#111). RAM 124,096 -> 124,096 B; RTC 300 -> 300 B (.rtc_noinit 208 -> 208 B); lent Wi-Fi 22,528 -> 22,528 B; selected stack frames remain 0/16/32/48/480 B (ceiling 656 B); all memory floors unchanged.",
-      "reviewer": "Astra round 2 (2026-11-25, cross-family review; clean apart from one accepted 28-bit attempted_delta saturation nit)"
+      "source_revision": "5503a788fe34f390a2d07441a8d5f9216f560e7c",
+      "before": 3980720,
+      "after": 3980848,
+      "reason": "+128 B over measured main f4628cb3 (3,980,720 -> 3,980,848 B), measured by a clean pinned-Python firmware-build.py --clean --health-report of committed 5503a788. Creates the canonical Update path and its parents best effort after each boot's first successful card mount; errors do not change the mount result. The component walk supports changed mount points and Update paths without a second hardcoded Newt root. No new idle state or heap. RAM 124,096 -> 124,096 B; RTC 300 -> 300 B; lent Wi-Fi 22,528 -> 22,528 B. Selected compiler frames remain 0/16/32/48/480 B. Native nb_mount_sd grows 32 -> 80 B for the bounded path buffer; no memory floor or other resource ceiling changes.",
+      "reviewer": "Newt Lead (cross-family review: Opus 5.5 xhigh, 2026-11-25)"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
