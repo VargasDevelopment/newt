@@ -1,5 +1,6 @@
 #include "../rust/salamander/board/native/sd_shared_bus.h"
 #include "../rust/salamander/board/native/sd_card_folders.h"
+#include "../rust/salamander/native_io/native/sd_card_paths.h"
 #include <array>
 #include <cassert>
 #include <cerrno>
@@ -36,6 +37,21 @@ struct Spi {
     return beginOk;
   }
 };
+template <std::size_t Size, std::size_t Count>
+void folders(const char* mount, const char (&update)[Size], const std::array<const char*, Count>& expected) {
+  for (int parent : {0, EEXIST, EACCES, ENOENT, EIO}) {
+    for (int child : {0, EEXIST, EACCES, ENOENT, EIO}) {
+      std::size_t calls = 0;
+      auto mkdir = [&](const char* path) {
+        assert(calls < Count && std::strcmp(path, expected[calls]) == 0);
+        errno = calls++ == 0 ? parent : child;
+        return errno ? -1 : 0;
+      };
+      assert(!newt::firmware::prepareSdFolders(false, mount, update, mkdir) && calls == 0);
+      assert(newt::firmware::prepareSdFolders(true, mount, update, mkdir) && calls == Count);
+    }
+  }
+}
 }  // namespace
 int main() {
   Board board;
@@ -49,18 +65,11 @@ int main() {
   failed.beginOk = false;
   assert(!newt::firmware::prepareSharedSdBus(failed, otherPins, board) && !failed.initialized);
   std::puts("PASS: idle shared bus deselects both devices, reattaches SD MISO after display-first initialization, and reports begin failure");
-  // Fresh/existing folders, read-only cards and full cards all keep the mount.
-  for (int root : {0, EEXIST, EACCES, ENOSPC}) {
-    for (int update : {0, EEXIST, EACCES, ENOSPC}) {
-      unsigned calls = 0;
-      auto mkdir = [&](const char* path) {
-        assert(calls < 2);
-        assert(std::strcmp(path, calls == 0 ? "/newt-sd/Newt" : "/newt-sd/Newt/Update") == 0);
-        return calls++ == 0 ? root : update;
-      };
-      assert(!newt::firmware::prepareSdFolders(false, mkdir) && calls == 0);
-      assert(newt::firmware::prepareSdFolders(true, mkdir) && calls == 2);
-    }
-  }
-  std::puts("PASS: Update folder creation follows a successful mount and never blocks a mounted card");
+  folders(newt::firmware::kSdMountPoint, newt::firmware::kSdUpdateDirectory,
+          std::array<const char*, 2>{"/newt-sd/Newt", "/newt-sd/Newt/Update"});
+  folders("/card", "/card/Other/Deep/Update",
+          std::array<const char*, 3>{"/card/Other", "/card/Other/Deep", "/card/Other/Deep/Update"});
+  folders("/card", "/fixture/Newt/Update",
+          std::array<const char*, 3>{"/fixture", "/fixture/Newt", "/fixture/Newt/Update"});
+  std::puts("PASS: canonical and overridden folder paths follow mount success; POSIX errors preserve its result");
 }
