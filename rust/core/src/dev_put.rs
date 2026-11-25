@@ -70,6 +70,12 @@ pub trait Wire {
     fn connected(&mut self) -> bool;
     /// One received byte, or a negative value when none is waiting.
     fn read_byte(&mut self) -> i32;
+    /// Receives up to `out.len()` raw bytes, or 0 when none is waiting.
+    fn read(&mut self, out: &mut [u8]) -> usize {
+        if out.is_empty() { return 0; }
+        let byte = self.read_byte();
+        if byte < 0 { 0 } else { out[0] = byte as u8; 1 }
+    }
     fn write(&mut self, bytes: &[u8]) -> usize;
     fn now(&mut self) -> u32;
     /// True once for each physical input since the last call (takeover).

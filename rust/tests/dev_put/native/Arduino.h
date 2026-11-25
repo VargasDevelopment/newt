@@ -14,11 +14,12 @@ using portMUX_TYPE = int;
 #define portEXIT_CRITICAL(lock) do { (void)(lock); --fake_critical; } while (0)
 struct HWCDC {
     std::deque<uint8_t> queued;
+    unsigned available_calls = 0;
     void begin(unsigned long) {}
     void setTxTimeoutMs(uint32_t) {}
     size_t write(const uint8_t*, size_t n) { return n; }
     explicit operator bool() const { return true; }
-    int available() { return static_cast<int>(queued.size()); }
+    int available() { ++available_calls; return static_cast<int>(queued.size()); }
     int read() {
         if (queued.empty()) return -1;
         auto byte = queued.front(); queued.pop_front(); return byte;

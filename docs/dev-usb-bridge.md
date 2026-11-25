@@ -187,7 +187,9 @@ The code is `rust/core/src/dev_put.rs`; the firmware glue is
 The old 150-byte Base64 blocks came from HWCDC's default 256-byte RX queue:
 its ISR drops bytes when that queue fills. That queue stays unchanged.
 For a granted PUT only, an exclusive receive token masks the RX interrupt,
-drains bytes already in the SDK queue first, then polls the C3 hardware FIFO.
+drains bytes already in the SDK queue first, then reads directly from the C3
+hardware FIFO in bounded chunks into the existing DATA buffer (re-checking the
+SDK queue only until it empties under the active RX mask).
 An empty FIFO is polled for about 250 microseconds before sleeping, so a
 short gap within a USB burst does not impose a millisecond sleep per packet.
 The FIFO applies USB backpressure while the lease fills its bounded buffer.

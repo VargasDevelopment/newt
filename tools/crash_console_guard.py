@@ -84,8 +84,8 @@ def rust_registers(base_code, base_data, functions, reading_only=False):
     """Same reviewed register/numeric roles for Rust's concrete linked owners."""
     code = dict(base_code)
     code["nsc_wake_transmitter"] = code.pop("newt::firmware::UsbChannel::wakeTransmitter(unsigned int)")
-    put_rx = dict.fromkeys(("nsc_put_rx_begin", "nsc_put_rx_end", "nsc_put_rx_read_byte"),
-                          "reviewed by Newt Lead, cross-family native review: Astra, 2026-11-24 (325bb44a, delta 7896ff2b)")
+    put_rx = dict.fromkeys(("nsc_put_rx_begin", "nsc_put_rx_end", "nsc_put_rx_read"),
+                          "reviewed by Newt Lead, cross-family native review: Astra, 2026-11-24 (325bb44a, delta 7896ff2b); bulk-read rename #135")
     if any(name in functions for name in put_rx):
         code.update(put_rx)
     # Rust 1.93.1 core/fmt/mod.rs: default FormattingOptions flags are

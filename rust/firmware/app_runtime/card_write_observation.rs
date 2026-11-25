@@ -61,12 +61,16 @@ impl Counters {
             _ => 0,
         };
     }
-    pub fn read(&mut self, byte: i32) {
-        if byte < 0 { self.empty = self.empty.saturating_add(1); }
+    pub fn read_chunk(&mut self, got: usize) {
+        if got == 0 { self.empty = self.empty.saturating_add(1); }
         else {
-            self.bytes += 1;
-            if self.phase == 1 { self.received += 1; }
+            self.bytes += got as u64;
+            if self.phase == 1 { self.received = self.received.saturating_add(got as u32); }
         }
+    }
+    #[cfg(test)]
+    pub fn read(&mut self, byte: i32) {
+        self.read_chunk(usize::from(byte >= 0));
     }
     pub fn paused(&mut self, elapsed: u32) {
         self.pauses = self.pauses.saturating_add(1);

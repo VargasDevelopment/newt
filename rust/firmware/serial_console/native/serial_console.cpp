@@ -44,11 +44,33 @@ void nsc_put_rx_end(uint32_t previous) {
     portEXIT_CRITICAL(&lock);
     // Do not clear RX raw status: the ISR must see any pending next request.
 }
-int nsc_put_rx_read_byte(void) {
-    // Bytes queued before masking precede those still in the hardware FIFO.
-    if (nsc_port_available(Serial) > 0) return nsc_port_read_byte(Serial);
-    uint8_t byte;
-    return usb_serial_jtag_ll_read_rxfifo(&byte, 1) == 1 ? byte : -1;
+// Drains bytes queued before masking ahead of the hardware RX FIFO, writing at
+// most max_len bytes. Caller must hold nsc_put_rx_begin() so hw_cdc_isr_handler
+// cannot push into Serial's rx_queue once *queue_empty transitions to 1.
+size_t nsc_put_rx_read(uint8_t *out, size_t max_len, uint8_t *queue_empty) {
+    if (!out || !max_len) return 0;
+    size_t got = 0;
+    bool drained = queue_empty && *queue_empty;
+    if (!drained) {
+        int queued = nsc_port_available(Serial);
+        while (got < max_len && queued > 0) {
+            int byte = nsc_port_read_byte(Serial);
+            if (byte < 0) break;
+            out[got++] = static_cast<uint8_t>(byte);
+            --queued;
+        }
+        if (queued <= 0) {
+            drained = true;
+            if (queue_empty) *queue_empty = 1;
+        }
+    }
+    if (drained && got < max_len) {
+        const size_t rem = max_len - got;
+        const uint32_t want = rem > 4096u ? 4096u : static_cast<uint32_t>(rem);
+        const int fifo = usb_serial_jtag_ll_read_rxfifo(out + got, want);
+        if (fifo > 0) got += static_cast<size_t>(fifo);
+    }
+    return got;
 }
 uint8_t nsc_connected(void) { return nsc_port_connected(Serial); }
 int nsc_available(void) { return nsc_port_available(Serial); }

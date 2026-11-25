@@ -471,3 +471,78 @@ fn lease_counters_separate_receive_write_ack_and_latch_the_first_exit() {
     counters.row(150, &mut row).unwrap();
     assert_eq!(row, "\nPUT_STATS reason=4 id=123 offset=12132352 received=2 expected=4096 bytes=2 empty=1 pauses=1 pause_ms=1 rx_ms=10 write_ms=20 ack_ms=3 commit_ms=5\n");
 }
+
+#[test]
+fn lease_counters_account_bulk_reads_and_empty_polls() {
+    use dev_put::{ExitReason, Observation};
+    let mut counters = observation::Counters::default();
+    counters.observe(10, Observation::Request(9));
+    counters.observe(10, Observation::Receiving { offset: 0, expected: 4096 });
+    counters.read_chunk(64);
+    counters.read_chunk(0);
+    counters.read_chunk(4032);
+    counters.observe(15, Observation::Writing);
+    counters.observe(20, Observation::Exit(ExitReason::Done));
+    let mut row = String::new();
+    counters.row(20, &mut row).unwrap();
+    assert_eq!(row, "\nPUT_STATS reason=0 id=9 offset=0 received=4096 expected=4096 bytes=4096 empty=1 pauses=0 pause_ms=0 rx_ms=5 write_ms=5 ack_ms=0 commit_ms=0\n");
+}
+
+#[test]
+fn bulk_read_preserves_order_split_chunks_and_trailing_commands() {
+    // Coalesce headers and raw bytes (including LF/NUL/HELLO) in one continuous stream
+    // and vary bulk burst sizes to prove line mode never over-reads into raw data and
+    // raw bulk reads never over-read into the next command header.
+    let mut bytes = pattern(CHUNK_BYTES * 2 + 137);
+    bytes[..11].copy_from_slice(b"N1 HELLO\n\0\r");
+    bytes[CHUNK_BYTES - 1] = b'\n';
+    bytes[CHUNK_BYTES..CHUNK_BYTES + 9].copy_from_slice(b"N1 HELLO\n");
+    for read_limit in [1usize, 7, 63, 64, 65, 4096] {
+        let mut card = FakeCard::default();
+        let mut host = Host::new();
+        host.put("dev", "runtime.bin", &bytes);
+        let mut coalesced = Vec::new();
+        for event in host.script {
+            match event {
+                Event::Line(line) => coalesced.extend_from_slice(line.as_bytes()),
+                Event::Bytes(raw) => coalesced.extend_from_slice(&raw),
+                _ => unreachable!(),
+            }
+        }
+        let mut wire = FakeWire::new(vec![Event::Bytes(coalesced)]);
+        wire.read_limit = read_limit;
+        let outcome = lease_with(&mut card, wire);
+        assert_eq!(outcome.last(), done(&bytes), "read_limit={read_limit}");
+        assert_eq!(card.file(TARGET), Some(bytes.as_slice()), "read_limit={read_limit}");
+        assert_eq!(card.file(TEMP), None);
+    }
+}
+
+#[test]
+fn overlength_bulk_read_cancels_without_writing() {
+    struct OverRead(FakeWire);
+    impl dev_put::Wire for OverRead {
+        fn connected(&mut self) -> bool { self.0.connected() }
+        fn read_byte(&mut self) -> i32 { self.0.read_byte() }
+        fn read(&mut self, out: &mut [u8]) -> usize { out.len() + 1 }
+        fn write(&mut self, bytes: &[u8]) -> usize { self.0.write(bytes) }
+        fn now(&mut self) -> u32 { self.0.now() }
+        fn physical_input(&mut self) -> bool { self.0.physical_input() }
+        fn pause(&mut self) { self.0.pause(); }
+        fn observe(&mut self, event: dev_put::Observation) { self.0.observe(event); }
+    }
+    let bytes = pattern(CHUNK_BYTES);
+    let mut card = FakeCard::default();
+    card.put_file(TARGET, b"old");
+    let mut host = Host::new();
+    host.file("dev", "runtime.bin", &bytes).line(&format!("DATA 0 {CHUNK_BYTES}"))
+        .then(Event::Bytes(bytes));
+    let mut wire = OverRead(FakeWire::new(host.script));
+    let mut memory: Box<[u8; MEMORY_BYTES]> = vec![0; MEMORY_BYTES].try_into().unwrap();
+    let session = Session { boot: BOOT, session: SESSION, request: PUT_ID };
+    assert_eq!(dev_put::run(session, &mut memory, &mut wire, &mut card, &mut HostHash::default()), End::Cancelled);
+    let replies = wire.0.replies(BOOT, SESSION);
+    assert_eq!(replies.last().unwrap().1, "ERROR abandoned reason=line");
+    assert_eq!(card.count("write"), 0, "invalid bulk count never writes to card");
+    unchanged(&card, Some(b"old"));
+}
