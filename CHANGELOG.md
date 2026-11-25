@@ -15,6 +15,32 @@ Source-import closure for PR #16: immutable checkpoint
 authorship and subjects through an explicit bounded frozen-source import exception. New integration commits remain strictly conventional;
 no firmware version, tag or installed image is changed by that closure.
 
+## v0.5.0
+
+### Feat
+- **sleep**: a pilgrim hat for the sleeping newt on Thanksgiving (#117) (#119)
+- **reader**: reader-chosen text size (#41) (#108)
+- **covers**: show cover generation status and no-cover reasons (#48) (#110)
+- **reader**: offer both landscape directions (#42) (#95)
+### Fix
+- **reader**: mirror all four front buttons in clockwise landscape (#114) (#122)
+- **dev-usb**: avoid Linux reset sequence when opening the port (#113) (#120)
+- **reader**: keep the resume picture across firmware updates (#105) (#118)
+- **dev-usb**: flush 64-byte HWCDC TX tail with a ZLP (#38) (#116)
+- **reader**: durable reader settings win at power-on (#107) (#109)
+- **dev**: retry the pending cover observation (#84) (#91)
+- **reader**: explain metadata and path refusals (#60) (#104)
+- **reader**: render source pages beyond the cache limit (#60) (#100)
+- **covers**: decode Adobe APP14 transform 0 RGB JPEGs to grey (#50) (#102)
+- **reader**: keep Contents usable at metadata limits (#72) (#99)
+- **ci**: stop cancelled public CI runs from failing gate (#70) (#97)
+- **reader**: share link slots across segments and move overflow lines (#83) (#93)
+- **release**: keep the repeated standard note (#87) (#90)
+- **release**: retry a missing new draft (#88) (#89)
+- **covers**: admit CRC workspace before pending writes (#85) (#92)
+### Refactor
+- **dev**: clarify cover telemetry outcomes (#84) (#112)
+
 ## v0.4.1
 
 ### Fix
