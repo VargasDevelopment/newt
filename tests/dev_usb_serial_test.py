@@ -1,6 +1,8 @@
 """Fake serial-driver tests: never imports pyserial or opens a device."""
 import errno
 import importlib.util
+import json
+import tempfile
 from pathlib import Path
 import subprocess
 import struct
@@ -198,8 +200,8 @@ class DiagnosticPeer(module.ProtocolClient):
 
 def wake_request_validation():
     class WakePeer(DiagnosticPeer):
-        def __init__(self, response, stale=False):
-            super().__init__('DIAG available=0')
+        def __init__(self, response, stale=False, boot=12345, diagnostic='DIAG version=2 available=0'):
+            super().__init__(diagnostic, boot, capabilities='press,status,frame,diag2')
             self.response, self.wake_stale = response, stale
         def write_data(self, data, remaining):
             if data.decode().split()[-1] != 'WAKE':
@@ -232,10 +234,32 @@ def wake_request_validation():
             assert 'error' not in report, report
             assert report['wake_timing']['available'] is (response == available)
             if response == available:
-                assert report['wake_timing']['page_kind'] == 'picture'
+                assert report['wake_timing']['valid'] is False
+                assert report['wake_timing']['status'] == 'freshness unverified, not valid'
+                assert 'stamps' not in report['wake_timing']
         writes = len(peer.writes)
         rejects(lambda: peer.request('WAKE extra'), 'Unsupported bounded command')
         assert len(peer.writes) == writes
+
+    diagnostic = ('DIAG version=2 available=1 reset=1 cause=0 record=0 requested=0 restored=0 '
+                  'checkpoint_saved=0 book=0 spine=0 character=0 reader_status=0 reader_open=0 '
+                  'progress_ready=0 actual_spine=0 actual_character=0 first_input=255 '
+                  'current_book=0 heap=100000 largest=50000 opening=0 '
+                  'library_count=0 library_selected=0 device=0123456789abcdef')
+    with tempfile.TemporaryDirectory() as directory:
+        args.wake_timing = False
+        before = module.run_session(WakePeer(available, diagnostic=diagnostic), args)
+        assert 'error' not in before, before
+        args.wake_before = Path(directory)/'before.json'
+        args.wake_before.write_text(json.dumps(before))
+        args.wake_timing = True
+        for boot, expected in ((12346, True), (12345, False)):
+            report = module.run_session(WakePeer(available, boot=boot, diagnostic=diagnostic), args)
+            assert 'error' not in report, report
+            timing = report['wake_timing']
+            assert timing['valid'] is expected, timing
+            assert ('since_entry_us' in timing) is expected
+            assert timing['raw']['body'] == available
 
 
 def diagnostic_validation():
@@ -505,7 +529,8 @@ def main():
     for body in ('FRAME format=pbm1', 'FRAME gen=1 gen=2', 'FRAME gen=', 'FRAME broken'):
         rejects(lambda: module.decode_fields(body, {'gen'}), 'metadata')
     script = ROOT / 'tools/dev-usb.py'
-    for args in (['live'], ['live', '--port', 'COM3', '--expect-build', 'x'],
+    for args in (['live', '--port', '/dev/mock-only', '--expect-build', 'x', '--wake-before', 'before.json'],
+                 ['live'], ['live', '--port', 'COM3', '--expect-build', 'x'],
                  ['live', '--port', 'rfc2217://example.invalid', '--expect-build', 'x'],
                  ['live', '--port', '/dev/mock-only'], ['simulate'],
                  ['live', '--port', '/dev/mock-only', '--expect-build', 'x', '--press', 'sleep', '--press', 'next'],

@@ -329,10 +329,22 @@ retain their normal image/partition limits.
 
 The optional `WAKE` command follows the same fresh session and request-ID rules
 as `DIAG`. It performs no input, display, card or clock-setting work. Use
-`dev-usb.py live --diagnostics --wake-timing` after the page appears, without
-`--press` or `--output`, and redirect stdout to the trial's JSON receipt. The
-ordinary DIAG schema and shared acceptance receipt are unchanged. A normal
-build answers `ERROR command`.
+`dev-usb.py live --diagnostics --wake-timing --wake-before before.json`
+after the page appears, without `--press` or `--output`, and redirect stdout to
+the trial's JSON receipt. Before sleep, save `before.json` with
+`dev-usb.py live --diagnostics` on the same device. Both calls also need the
+explicit `--port` and `--expect-build`. The ordinary DIAG schema and shared
+acceptance receipt are unchanged. A normal build answers `ERROR command`.
+
+The boot-local 32-bit microsecond clock wraps every 71.58 minutes. Its raw
+payload cannot reveal completed wraps. The client reports timings as valid
+only with a live pre-sleep receipt from the same device, a different boot ID,
+and a host-time gap under 70 minutes from that receipt's DIAG response. This
+leaves about 95 seconds below the wrap period. Keep the host clock correct;
+the witness uses its UTC timestamps. Missing, corrupt, same-boot, foreign-device
+or expired witnesses yield `freshness unverified, not valid`, with no decoded
+timings. The JSON retains the payload under `raw` for inspection. It never
+infers freshness from PANEL or from the timestamp values alone.
 
 Before a real page finishes, the reply is `WAKE version=1 available=0`. After
 that it is `WAKE version=1 available=1 data=HEX`, with exactly 192 lowercase
@@ -359,3 +371,6 @@ starts a new observation. Battery power-off or a reset on cable replug can
 lose it. No SD fallback is provided. Firmware clocks do not timestamp the
 physical wake press or divide ROM from bootloader time; use the owner's video
 for visible latency and keep that separate from stage durations.
+
+Reset clearing of the snapshot is not yet verified on physical hardware.
+Fresh-boot trials must check it; host and Virtual X3 checks are separate evidence.

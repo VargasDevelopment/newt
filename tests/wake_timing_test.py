@@ -9,9 +9,11 @@ import sys
 import tempfile
 import time
 import unittest
+from datetime import datetime, timedelta, timezone
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
+import dev_usb_wake as wake
 from dev_usb_wake import decode_wake_timing
 from gate_tier import negative_controls
 
@@ -35,6 +37,64 @@ class Decode(unittest.TestCase):
             with self.subTest(index=index, value=value), self.assertRaises(ValueError):
                 decode_wake_timing(self.payload(bad))
         with self.assertRaises(ValueError): decode_wake_timing(self.payload(words) + ' extra=1')
+
+
+class Witness(unittest.TestCase):
+    def test_fresh_boot_witness_and_each_refusal_with_controls(self):
+        now = datetime(2026, 11, 25, 12, tzinfo=timezone.utc)
+        device = '0123456789abcdef'
+        words = [0] * 24
+        words[13:16] = [5, 10, 20]
+        words[16:] = [1, 0xe001, 0x101, 1, 0, 160, 0x10401, 2]
+        body = Decode().payload(words)
+        def witness(boot=1, seconds=10, unit=device):
+            return {'simulation': False, 'protocol': {'boot': boot, 'records': [
+                {'direction': 'response', 'kind': 'DIAG', 'boot': boot,
+                 'utc': (now - timedelta(seconds=seconds)).isoformat()}]},
+                'diagnostics': {'available': True, 'device': unit}}
+        cases = [('valid', witness(), True), ('same boot', witness(boot=2), False),
+                 ('too old', witness(seconds=wake.MAX_WAKE_GAP_SECONDS), False),
+                 ('missing', None, False), ('other device', witness(unit='ffffffffffffffff'), False),
+                 ('future', witness(seconds=-1), False), ('corrupt', {}, False)]
+        def check(before, valid, read=wake.read_wake_timing):
+            result = read(body, before=before, boot=2, device=device, now=now)
+            self.assertIs(result['valid'], valid)
+            self.assertEqual(result['raw']['body'], body)
+            if valid:
+                self.assertEqual(result['since_entry_us']['page_complete'], 20)
+            else:
+                self.assertEqual(result['status'], 'freshness unverified, not valid')
+                self.assertNotIn('stamps', result)
+                self.assertNotIn('since_entry_us', result)
+        for name, before, valid in cases:
+            with self.subTest(case=name):
+                check(before, valid)
+        if negative_controls(__file__):
+            controls = (
+                (0, 'return age if 0 <= age < MAX_WAKE_GAP_SECONDS else None', 'return None'),
+                (1, 'or previous == boot', 'or False'),
+                (2, 'age < MAX_WAKE_GAP_SECONDS', 'age < float("inf")'),
+                (3, 'age = witness_age(before, boot, device, now or datetime.now(timezone.utc))', 'age = 0'),
+            )
+            source = (ROOT/'tools/dev_usb_wake.py').read_text()
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory)/'wake_control.py'
+                for case, good, bad in controls:
+                    self.assertEqual(source.count(good), 1)
+                    path.write_text(source.replace(good, bad))
+                    spec = importlib.util.spec_from_file_location('wake_control', path)
+                    control = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(control)
+                    name, before, valid = cases[case]
+                    with self.subTest(control=name), self.assertRaises(AssertionError):
+                        check(before, valid, control.read_wake_timing)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'before.json'
+            path.write_text(json.dumps(witness()))
+            self.assertEqual(wake.load_wake_before(path), witness())
+            path.write_text('{')
+            self.assertIsNone(wake.load_wake_before(path))
+            self.assertIsNone(wake.load_wake_before(path.with_name('missing.json')))
 
 
 def rust_checks():
@@ -149,7 +209,7 @@ def preview_checks():
 
 
 if __name__ == '__main__':
-    suite = unittest.defaultTestLoader.loadTestsFromTestCase(Decode)
+    suite = unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__])
     if not unittest.TextTestRunner().run(suite).wasSuccessful(): raise SystemExit(1)
     rust_checks()
     preview_checks()
