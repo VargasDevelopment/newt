@@ -405,12 +405,12 @@ pub fn open_catalog<'a, 'scratch, 'storage, S: BookSource + ?Sized, B: ParserBac
 ) -> Result<Book<'a, 'storage, S, B>, Status> {
     if required {
         // The OPF inflate has not started, so its idle dictionary holds the order.
-        let Some(order) = r.decoder.as_mut().and_then(|d| d.dictionary.get_mut(..2 * entries.len())) else {
+        let view = CatalogView::new(entries, arena, directory_offset);
+        let Some(idle) = r.decoder.as_mut().filter(|d| view.fits_order(d)) else {
             return Err(Status::OutOfMemory);
         };
         admission::emit_to(on_yield, observer, WorkKind::CompareBegin, 0);
-        let (duplicate, comparisons) =
-            duplicate_names(CatalogView::new(entries, arena, directory_offset), order);
+        let (duplicate, comparisons) = view.duplicate_names(idle);
         admission::emit_to(on_yield, observer, WorkKind::CompareEnd, comparisons);
         if duplicate {
             return Err(Status::Unsupported);
@@ -447,10 +447,53 @@ pub fn open_catalog<'a, 'scratch, 'storage, S: BookSource + ?Sized, B: ParserBac
     }
 }
 
-/// Exact duplicate member names, in O(n log n) with no heap. Heapsorts a u16
-/// index permutation, kept as byte pairs in `order`, by (name hash, exact name),
-/// then compares neighbours. Equal names sort together; the bytes decide, so a
-/// hash collision is never a duplicate. Returns (duplicate, comparisons).
+impl CatalogView<'_, '_> {
+    /// Whether `idle`'s dictionary can hold the sort order for this catalog.
+    pub fn fits_order(&self, idle: &InflateScratch<'_>) -> bool {
+        2 * self.len() <= idle.dictionary.len()
+    }
+    /// Exact duplicate member names, in O(n log n) with no heap. Heapsorts a u16
+    /// index permutation by (name hash, exact name), then compares neighbours.
+    /// Equal names sort together; the bytes decide, so a hash collision is
+    /// never a duplicate. Returns (duplicate, comparisons).
+    ///
+    /// The permutation lives in `idle`'s inflate dictionary, borrowed only for
+    /// this call, so the sort can run before or after a member inflate:
+    ///
+    /// ```
+    /// # use newt_core::{canonical::CatalogView, zip_container::{Entry, InflateScratch, Reader}};
+    /// # use newt_core::zip_window::source::BookSource;
+    /// fn sort_then_read<S: BookSource>(view: CatalogView<'_, '_>, source: &mut S,
+    ///     idle: &mut InflateScratch<'_>, member: &Entry) {
+    ///     view.duplicate_names(idle);
+    ///     let mut reader = Reader::new(source, Some(InflateScratch {
+    ///         state: &mut *idle.state, dictionary: &mut *idle.dictionary, input: &mut *idle.input }));
+    ///     reader.open(member);
+    ///     reader.read(&mut [0; 1]);
+    /// }
+    /// ```
+    ///
+    /// but never while an inflate holds that dictionary:
+    ///
+    /// ```compile_fail
+    /// # use newt_core::{canonical::CatalogView, zip_container::{Entry, InflateScratch, Reader}};
+    /// # use newt_core::zip_window::source::BookSource;
+    /// fn sort_during_read<S: BookSource>(view: CatalogView<'_, '_>, source: &mut S,
+    ///     idle: &mut InflateScratch<'_>, member: &Entry) {
+    ///     let mut reader = Reader::new(source, Some(InflateScratch {
+    ///         state: &mut *idle.state, dictionary: &mut *idle.dictionary, input: &mut *idle.input }));
+    ///     reader.open(member);
+    ///     view.duplicate_names(idle);
+    ///     reader.read(&mut [0; 1]);
+    /// }
+    /// ```
+    ///
+    /// Panics if the order does not fit; check [`Self::fits_order`] first.
+    pub fn duplicate_names(self, idle: &mut InflateScratch<'_>) -> (bool, i32) {
+        duplicate_names(self, &mut idle.dictionary[..2 * self.len()])
+    }
+}
+
 fn duplicate_names(view: CatalogView<'_, '_>, order: &mut [u8]) -> (bool, i32) {
     struct Sort<'v, 's, 'o> {
         view: CatalogView<'v, 's>,

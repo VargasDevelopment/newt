@@ -119,6 +119,19 @@ pub fn locate(source: &mut dyn BookSource, wanted: &[u8], out: &mut Member) -> S
         Ok((_, data)) => { out.data = data; S::Ok }
         Err(Status::IoError) => S::IoError,
         Err(Status::Encrypted | Status::Unsupported) => S::Unsupported,
-        Err(_) => S::Malformed,
+        // A damaged cover gives no art, like any malformed one.
+        Err(
+            Status::Damaged
+            | Status::Truncated
+            | Status::Ok
+            | Status::NotZip
+            | Status::NotEpub
+            | Status::OutOfMemory
+            | Status::ParseError
+            | Status::NotFound
+            | Status::Stale
+            | Status::MetadataTooLarge
+            | Status::PathTooLong,
+        ) => S::Malformed,
     }
 }
