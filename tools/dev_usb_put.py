@@ -91,7 +91,9 @@ class Lease:
             raise ValueError('Session request IDs exhausted; request a fresh handshake')
         identity = client.boot, client.session, client.request_id
         started = time.monotonic()
-        self.progress['last_sent'] = {'kind': kind, 'id': client.request_id, 'monotonic': started}
+        self.progress['last_sent'] = {'kind': kind, 'id': client.request_id, 'monotonic': started,
+                                      'write_completed': False}
+        self.progress['write_seconds'] = 0
         if kind == 'DATA':
             _, offset, length = body.split()
             self.progress['last_sent'].update(offset=int(offset), length=int(length))
@@ -106,6 +108,7 @@ class Lease:
         try:
             client.write_data(data, seconds)
             self.written = True
+            self.progress['last_sent']['write_completed'] = True
             self.progress['write_seconds'] = time.monotonic() - started
             boot, session, identifier, reply = client.record(deadline)
         except (ValueError, OSError, KeyboardInterrupt) as error:

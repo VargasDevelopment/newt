@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3976576,
+      "flash_bytes": 3978432,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "b71f081d03f28a1b96cd7182ef3a702c574d27f3",
+      "source_revision": "65da33d6e6ad4ee6e7d0b115b35efe91e5f75679",
       "before": 3975136,
-      "after": 3976576,
-      "reason": "+1,440 B for DEV PUT at validated card-relative paths, u64 lengths and 4 KiB raw DATA, preserving sync, card read-back SHA-256 and atomic replacement. The C3 RX loan masks only RX, drains queued bytes before FIFO polling and restores the prior RX bit on every exit; the 256 B SDK queue and TX path stay unchanged. Released main a59fe9b1: 3,975,136 B (release clean record, CI 45520546225) -> fresh clean rebased PUT 3,976,576 B. RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi 22,528 -> 22,528 B; selected static frames 0/16/32/48/480 -> 0/16/32/48/480 B. Each RX native leaf has a 16 B static frame; runtime evidence is separate.",
-      "reviewer": "Newt Lead (cross-family review: Gemini)"
+      "after": 3978432,
+      "reason": "Released main a59fe9b1 measured 3,975,136 B (release clean record, CI 45520546225) -> 3,978,432 B, +3,296 B total for DEV PUT card paths, u64 sizes, raw DATA and scoped RX, plus bounded per-lease diagnostics. The clean measured b5da3310 PUT candidate was 3,976,576 B; typed exit/phase counters cost +1,856 B. They distinguish RX polling/pause, card-write, ACK enqueue and commit time and retain partial block offset/bytes on failure. No timeout widening, new native MMIO or extra idle heap. RAM 124,096 -> 124,096 B; RTC 300 -> 300 B; lent Wi-Fi 22,528 -> 22,528 B; selected frames remain 0/16/32/48/480 B and all three RX leaves remain 16 B. Counters are held only during a granted DEV lease; non-DEV wiring does not call them. Clean committed-tree measurement at 65da33d6; original feature plus diagnostic allocation approved by Lead, full cross-family re-review pending.",
+      "reviewer": "Newt Lead (diagnostic allocation approved; cross-family re-review pending)"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",

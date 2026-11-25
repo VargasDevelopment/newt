@@ -210,7 +210,7 @@ impl Lease<'_> {
         let decoded = decoded as usize;
         let fd = open.fd.ok_or(Refused::Order)?;
         // Length framing makes every byte, including LF, NUL and HELLO, data.
-        // The whole header+block fits RX; cancellation never writes a prefix.
+        // The raw block fits the lease buffer; cancellation never writes a prefix.
         self.wire.observe(Observation::Receiving { offset: written, expected: decoded as u32 });
         let mut received = 0;
         let activity = self.wire.now();
