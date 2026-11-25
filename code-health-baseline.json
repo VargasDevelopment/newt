@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3982384,
+      "flash_bytes": 3987776,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "a11a15c5254974aa70f0348a043341ae449349a1",
-      "before": 3981440,
-      "after": 3982384,
-      "reason": "Rebased onto main 9f2e915f (3,981,440 B): measured clean build at a11a15c5254974aa70f0348a043341ae449349a1 is 3,982,384 B (+944 B) for on-demand source verification, explicit owed selection/progress commit settlement, explicit requested-mark preservation across prerequisite saves, and on-demand reading-stats seeding for Mark as finished (#125). RAM 124,096 -> 124,096 B; RTC 300 -> 300 B (.rtc_noinit 208 -> 208 B); lent Wi-Fi 22,528 -> 22,528 B; selected stack frames remain 0/16/32/48/480 B (ceiling 656 B); all memory floors unchanged.",
-      "reviewer": "Newt Lead (2026-11-25; cross-family review: Astra)"
+      "source_revision": "3c23c8626a1463b22d0406087d96dd0f99281087",
+      "before": 3982384,
+      "after": 3987776,
+      "reason": "#20 return to the official release: exact source/target receipt, cold validation, shared eligibility/installer guard, explicit older-version confirmation. Measured main 38654935 3,982,384 -> 3,987,776 B (+5,392), clean pinned-Python firmware-build.py --clean --health-report of committed 3c23c8626a1463b22d0406087d96dd0f99281087. RAM unchanged at 124,096 B; RTC 300 -> 300 B; lent Wi-Fi 22,528 B unchanged. Selected compiler frames measure 0/16/32/48/480 B, within existing 0/16/32/48/656 B ceilings; stack ceilings unchanged. No new idle heap; owner exists only in update boot. Floors unchanged. Real Wi-Fi return acceptance remains pending.",
+      "reviewer": "Newt Lead (cross-family review: Opus 5.5 xhigh, CLEAN logic task b9f11dea-a334-437c-b41a-f0ae4f63822c and copy delta task 09863e8d-9ecb-4614-b816-1b0cadc8493b; rebased source unchanged except portable test count)"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",

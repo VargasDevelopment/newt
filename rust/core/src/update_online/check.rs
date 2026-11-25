@@ -1,13 +1,13 @@
 use super::*;
 
 /// One frozen workflow over required borrowed capabilities; caller owns all data.
-pub fn fetch_online_update(http: &mut dyn Http, card: &mut dyn CardDownload, hash: &mut dyn Hash, clock: &mut dyn Clock, progress: &mut dyn Progress, work: &mut OnlineWork<'_>, test_builds: TestBuilds, running: Option<&CStr>, manifest: &mut UpdateManifest) -> OnlineCheck {
+pub fn fetch_online_update(http: &mut dyn Http, card: &mut dyn CardDownload, hash: &mut dyn Hash, clock: &mut dyn Clock, progress: &mut dyn Progress, work: &mut OnlineWork<'_>, test_builds: TestBuilds, running: Option<&crate::update_card::slot_installer::identity::NewtAppIdentity>, manifest: &mut UpdateManifest) -> OnlineCheck {
     fetch_online_update_with_http(http, card, hash, clock,
         &mut |_, done, total| progress.report(done, total), work, test_builds, running, manifest)
 }
 
 /// Same workflow and report sites, with the concrete client's short loan.
-pub fn fetch_online_update_with_http<H: Http + ?Sized>(http: &mut H, card: &mut dyn CardDownload, hash: &mut dyn Hash, clock: &mut dyn Clock, progress: &mut dyn FnMut(&mut H, u32, u32), work: &mut OnlineWork<'_>, test_builds: TestBuilds, running: Option<&CStr>, manifest: &mut UpdateManifest) -> OnlineCheck {
+pub fn fetch_online_update_with_http<H: Http + ?Sized>(http: &mut H, card: &mut dyn CardDownload, hash: &mut dyn Hash, clock: &mut dyn Clock, progress: &mut dyn FnMut(&mut H, u32, u32), work: &mut OnlineWork<'_>, test_builds: TestBuilds, running: Option<&crate::update_card::slot_installer::identity::NewtAppIdentity>, manifest: &mut UpdateManifest) -> OnlineCheck {
     let mut head = HttpHead::default();
     copy_url(work.url, test_builds.release_url());
     http.limit(30000, clock);
@@ -37,7 +37,18 @@ pub fn fetch_online_update_with_http<H: Http + ?Sized>(http: &mut H, card: &mut 
         manifest.size > USABLE_SLOT_BYTES || manifest.size < SLOT_HEAD_BYTES ||
         (assets.image_size >= 0 && assets.image_size != i64::from(manifest.size)) { return OnlineCheck::WrongFile; }
     let version = CStr::from_bytes_until_nul(&manifest.version).ok();
-    if semver2_compare(version, running) <= 0 { return OnlineCheck::Latest; }
+    if test_builds == TestBuilds::Off && !crate::update_manifest::semver2_is_stable(version) {
+        return OnlineCheck::WrongFile;
+    }
+    let running_version = running.and_then(|source| CStr::from_bytes_until_nul(&source.version).ok());
+    let returning = match running.map(|source| crate::official_return::ReturnAuthorization::from_check(source, manifest, test_builds)).transpose() {
+        Ok(value) => value,
+        Err(crate::official_return::ReturnIssue::Incompatible) => return OnlineCheck::ReturnIncompatible,
+        Err(crate::official_return::ReturnIssue::CheckAgain) => None,
+    };
+    if semver2_compare(version, running_version) <= 0 && returning.is_none() {
+        return OnlineCheck::Latest;
+    }
     for tries in 1..=3 {
         progress(http, 0, manifest.size);
         http.limit(300000, clock);
@@ -64,7 +75,10 @@ pub fn fetch_online_update_with_http<H: Http + ?Sized>(http: &mut H, card: &mut 
             else if end != BodyEnd::Whole || done != manifest.size || !hashed || !hash.finish(&mut digest) { OnlineCheck::Interrupted }
             else if digest != manifest.sha256 { OnlineCheck::WrongFile } else { OnlineCheck::Ready };
         if outcome == OnlineCheck::Ready {
-            return if card.finish(&work.manifest[..*work.manifest_length]) { OnlineCheck::Ready } else { OnlineCheck::CardFailed };
+            let bytes = &work.manifest[..*work.manifest_length];
+            return if let Some(authorization) = returning.as_ref() {
+                if card.finish_return(bytes, authorization) { OnlineCheck::Ready } else { OnlineCheck::CheckAgain }
+            } else if card.finish(bytes) { OnlineCheck::Ready } else { OnlineCheck::CardFailed };
         }
         card.abort();
         if outcome != OnlineCheck::CardFailed || tries == 3 { return outcome; }

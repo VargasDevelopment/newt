@@ -17,6 +17,18 @@ pub fn empty_view(running: &CStr) -> UpdateView<'_> {
     UpdateView::new(running, SecretBytes::empty(), SecretBytes::empty())
 }
 
+pub fn running_identity(slots: &mut newt_c3_board::image::ImagePartitions<'_, '_>) -> newt_core::update_card::slot_installer::identity::NewtAppIdentity {
+    use newt_core::update_card::slot_installer::{classify_slot, identity::{self, NewtAppIdentity}};
+    let mut identity = NewtAppIdentity::default();
+    let mut head = [0; 512];
+    let running = slots.running_slot();
+    if running >= 0 && slots.read_app(running as usize, 0, &mut head).is_ok()
+        && classify_slot(&head) == newt_core::update_card::SlotImage::Newt {
+        let _ = identity::read_newt_identity(&head, &mut identity);
+    }
+    identity
+}
+
 /// A Wi-Fi-only boot skips card offers; Quick Start Wi-Fi still reads them.
 pub fn needs_card_offers(request: UpdateModeRequest) -> bool {
     matches!(request, UpdateModeRequest::Update | UpdateModeRequest::QuickStartWifi)

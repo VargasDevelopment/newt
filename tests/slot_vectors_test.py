@@ -30,9 +30,12 @@ CARD = 'core/src/update_card.rs'
 IMAGE, INSTALL, HEADS, SELECTIONS = ('image_check_matches_every_vector', 'card_install_accepts_only_intact_images',
                                      'slot_names_match_every_head', 'boot_and_switch_records_match_every_selection')
 WRITE = 'card_install_writes_only_the_image'
-TESTS = 5
+RETURN = 'official_return::only_a_confirmed_matching_return_can_erase'
+TESTS = 6
 # (what breaks, file under rust/, its text, the broken text, the test that must fail, the vector it fails on)
 CONTROLS = (
+    ('an older hand-copied pair bypasses the return authorization', INSTALLER,
+     'if order < 0 {', 'if order < 0 && false {', RETURN, 'official return'),
     ('the image magic is not checked', IDENTITY, "header[0] != 0xe9 || ", "", IMAGE, 'magic'),
     ('the chip id is not checked', IDENTITY, " || chip != 5", "", IMAGE, 'chip'),
     ('a segment may end past the slot', IDENTITY, "at + u64::from(length) > u64::from(slot_bytes) || ", "",
@@ -80,6 +83,12 @@ def flatten(vectors):
         boot = '-' if v['boot'] is None else f"{v['boot']['record']}:{v['boot']['slot']}"
         select = [s if isinstance(s, str) else f"{s['into']}:{s['record']}" for s in v['select']]
         rows.append(('selection', v['name'], *v['records'], boot, *select))
+    # Synthetic intact images exercise the real installer, not just SemVer.
+    sys.path.insert(0, str(ROOT / 'rust/host/preview'))
+    from update_fixtures import newt_image, manifest
+    for version in ('0.5.1-dev.20261125.1', '0.5.0', '0.5.0+changed'):
+        image = newt_image(version)
+        rows.append(('official', version, image.hex(), manifest(version, image).hex()))
     return ''.join('\t'.join(map(str, row)) + '\n' for row in rows)
 
 

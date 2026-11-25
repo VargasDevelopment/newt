@@ -76,9 +76,18 @@ def native_io(text: str) -> str:
 
 
 def download(text: str) -> str:
-    """download.c on the preview card; its clock is the fake board clock."""
+    """download.c on the preview card, sharing its clock and card fault hooks."""
     text = text.replace('#include <unistd.h>', '#include <unistd.h>\n'
-                        'extern char *fixture_path(const char *);\nextern uint32_t nb_millis(void);', 1)
+                        'extern char *fixture_path(const char *);\nextern uint32_t nb_millis(void);\n'
+                        'extern void preview_io_open(int32_t, const char *);\n'
+                        'extern int preview_io_fault(const char *, int32_t);', 1)
+    text = text.replace('    *fd = result;', '    preview_io_open(result, path);\n    *fd = result;', 1)
+    text = text.replace('    const ssize_t result = write(fd, bytes, count);',
+                        '    if (preview_io_fault("card-write", fd) == 1) return EIO;\n'
+                        '    const ssize_t result = write(fd, bytes, count);', 1)
+    text = text.replace('    const int result = fsync(fd);',
+                        '    if (preview_io_fault("card-sync", fd) == 2) return EIO;\n'
+                        '    const int result = fsync(fd);', 1)
     start = text.index('uint32_t newt_download_millis(void) {')
     text = text[:start] + 'uint32_t newt_download_millis(void) { return nb_millis(); }\n'
     return relocate(text)

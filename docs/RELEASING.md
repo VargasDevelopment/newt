@@ -476,6 +476,16 @@ test build of `main`: a GitHub pre-release with the same three assets as a
 release. Every other device never sees it, because `/releases/latest` skips
 pre-releases. A nightly has had no bench or hardware check.
 
+**Saved-data compatibility for return.** Before changing a durable writer or
+the meaning of its payload, review `official_return::MINIMUM` in
+`rust/core/src/official_return.rs` and its compatibility vectors. This includes
+meaning changes that keep the record version, such as packed resume settings.
+If the current official release cannot read the new data, raise the compiled
+minimum to the first compatible release and update the vectors in the same
+change. Until that release is published, Check must refuse a return and keep
+the nightly. Review all authoritative formats (preferences, progress, resume,
+statistics, scalar settings, Wi-Fi, apps and sample state), not layout caches.
+
 **When.** Public CI's `nightly` job runs after the `gate` job passes on an
 owner push to `main`, and by hand (Actions, "Public CI", Run workflow on
 `main`). A push builds a nightly only when something the image is built from

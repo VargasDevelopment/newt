@@ -34,7 +34,7 @@ impl TestBuilds {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
-pub enum OnlineCheck { Joining, Looking, Downloading, Ready, Latest, NoNetwork, NoJoin, Unreachable, NoRelease, WrongFile, Interrupted, CardFailed }
+pub enum OnlineCheck { Joining, Looking, Downloading, Ready, Latest, NoNetwork, NoJoin, Unreachable, NoRelease, WrongFile, Interrupted, CardFailed, ReturnIncompatible, CheckAgain }
 impl OnlineCheck { pub fn running(self) -> bool { (self as u8) < Self::Ready as u8 } }
 #[derive(Clone, Copy, Debug)]
 pub struct HttpHead { pub status: i32, pub length: i64, pub location_cut: bool, pub date: u32 }
@@ -58,6 +58,9 @@ pub trait CardDownload {
     /// Sync/close image, then write/sync/close manifest last. False is a failure,
     /// not authority for the policy to erase or retry this possibly durable pair.
     fn finish(&mut self, manifest: &[u8]) -> bool;
+    /// A return offer is usable only after its target-bound sidecar is durable.
+    /// A port must explicitly confirm that capability or refuse.
+    fn finish_return(&mut self, manifest: &[u8], authorization: &crate::official_return::ReturnAuthorization) -> bool;
     fn abort(&mut self);
 }
 pub trait Hash {

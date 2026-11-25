@@ -65,6 +65,18 @@ pub fn semver2_valid(version: Option<&CStr>) -> bool {
     version.is_some_and(|v| valid_bytes(v.to_bytes()))
 }
 
+/// Classification uses the same validated SemVer spans as version ordering.
+pub fn semver2_is_stable(version: Option<&CStr>) -> bool {
+    version.and_then(|v| split(v.to_bytes())).is_some_and(|v| v.pre.is_empty())
+}
+pub fn semver2_is_nightly(version: Option<&CStr>) -> bool {
+    let Some(v) = version.and_then(|v| split(v.to_bytes())) else { return false; };
+    let Some(rest) = v.pre.strip_prefix(b"dev.") else { return false; };
+    let Some(dot) = rest.iter().position(|&c| c == b'.') else { return false; };
+    let (date, tail) = rest.split_at(dot); let sequence = &tail[1..];
+    date.len() == 8 && numeric(date) && numeric(sequence) && sequence != b"0"
+}
+
 fn compare_numbers(a: &[u8], b: &[u8]) -> Ordering {
     a.len().cmp(&b.len()).then_with(|| a.cmp(b))
 }

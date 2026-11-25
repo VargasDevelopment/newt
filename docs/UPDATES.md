@@ -311,11 +311,26 @@ Devices ignore them unless Test builds is On. That switch is on a hidden
 Developer page: open About's first newt, then press Previous, Next,
 Previous, Next. With it On, Check reads `NEWEST_RELEASE_URL` instead:
 `/releases?per_page=1`, the newest release of either kind, as a list of one.
-Turning it Off keeps an installed nightly until a newer release comes.
+Turning it Off does not install anything. On a nightly, Check can offer
+**Return** to the latest official release, even when it is older. A separate
+confirmation shows both versions and says it is older; Back keeps the current
+image. A stable build never offers a stable-to-stable downgrade.
 The choice is the card record `newt_builds` (`TestBuildsCodec` in
 `rust/core/src/durable.rs`), Off when missing or corrupt. Update mode
 restores it with the clock choices at its own boot. Versions, like
 every manifest version, are at most 23 characters.
+
+**Returning to official Newt.** The minimum compatible official release is
+`0.5.0` (`official_return::MINIMUM`). Check refuses an older target that cannot
+read the saved-data formats written by this build. A successful Check syncs
+and verifies a small `Newt/Update/official.return` sidecar, using a temporary
+file and rename. It binds the staged image digest to the running nightly's
+version and build. After a restart, Newt validates it again and asks for
+confirmation again. It is deleted after installation or a mismatch. A missing,
+corrupt or unconfirmed sidecar means **Check again**, before any erase. Merely
+copying an older image and manifest onto the card does not grant a return.
+The sidecar prevents accidental installs; it does not authenticate a card
+against someone who can replace its contents.
 
 **Assets.** A release has three: `newt.bin`, `newt.manifest` and
 `NOTICES.txt` (`tools/release_publish.py`;
@@ -325,7 +340,8 @@ The release JSON is parsed as a stream (`rust/core/src/update_release.rs`).
 
 **Checks** (`rust/core/src/update_online/check.rs`). The manifest must parse,
 be kind `newt`, fit the usable slot, match the release's size for
-`newt.bin`, and be newer than the running version. `newt.bin` must match its
+`newt.bin`, and be newer than the running version, or qualify for the explicit
+official return above. `newt.bin` must match its
 size (and Content-Length, when sent) and SHA-256. Newt follows redirects
 itself, at most 5 per file, only to `https://` URLs.
 

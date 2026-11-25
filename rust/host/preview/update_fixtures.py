@@ -123,6 +123,9 @@ def update_world(name):
         # needs an empty other slot.
         if name == 'same':
             world['app1'] = None
+    elif name in ('firmware-lower', 'firmware-higher'):
+        version = '0.4.0' if name == 'firmware-lower' else '1.2.0'
+        world.update(offer=None, files={'other.bin': image('CrossInk', version)})
     elif name in ('firmware', 'firmware-other-slot', 'firmware-empty-slot'):
         world['files'] = CARD_FILES
         world['app1'] = {'firmware': newt_image(RUNNING), 'firmware-other-slot': 'other',
@@ -169,6 +172,8 @@ def update_world(name):
         world.update(saved=True, conf={'wifi-saved': {}, 'wifi-joining': {'freeze': 'wifi.join'},
                                        'wifi-wrong-password': {'wifi.join': 'wrong-password'},
                                        'wifi-not-found': {'wifi.join': 'not-found'}}[name])
+    elif name == 'official-return':
+        world.update(offer=None, saved=True, running='0.5.1-dev.20261125.1', http=release('0.5.0'))
     elif name in ('check-latest', 'check-no-release', 'check-ready', 'check-downloading'):
         world.update(offer=None, saved=True, http=release(RUNNING if name == 'check-latest' else NEWER))
         if name == 'check-no-release':
@@ -200,9 +205,11 @@ def write(directory, update=None, other_firmware='crossink', run=None):
         raise ValueError(f'unknown other firmware: {other_firmware}')
     conf = {'wifi.networks': ';'.join(f'{rssi},{open_},{name}' for rssi, open_, name in NETWORKS),
             'wifi.first': '7', **OTHER_CONF.get(other_firmware, {})}
+    if 'running' in world:
+        conf['image.version'] = world['running']
     partitions = directory / 'partitions'
     partitions.mkdir(parents=True, exist_ok=True)
-    (partitions / 'app0.bin').write_bytes(newt_image(RUNNING))
+    (partitions / 'app0.bin').write_bytes(newt_image(world.get('running', RUNNING)))
     app1 = OTHERS[other_firmware] if world['app1'] == 'other' else world['app1']
     if app1:
         (partitions / 'app1.bin').write_bytes(app1)

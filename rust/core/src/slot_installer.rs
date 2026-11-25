@@ -17,10 +17,10 @@ pub const SECTOR_BYTES: usize = super::WINDOW_BYTES;
 pub const ERASE_BYTES: u32 = 65536;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
-pub enum InstallIssue { None, Unreadable, Size, Digest, Image, Identity, Older, Same, TargetUnreadable, Unsettled, Consent, Write, Readback, Selection, Unconfirmed }
-pub fn install_changed_nothing(issue: InstallIssue) -> bool { issue != InstallIssue::None && issue != InstallIssue::Unsettled && (issue as u8) < InstallIssue::Write as u8 }
+pub enum InstallIssue { None, Unreadable, Size, Digest, Image, Identity, Older, Same, TargetUnreadable, Unsettled, Consent, Write, Readback, Selection, Unconfirmed, CheckAgain }
+pub fn install_changed_nothing(issue: InstallIssue) -> bool { issue == InstallIssue::CheckAgain || issue != InstallIssue::None && issue != InstallIssue::Unsettled && (issue as u8) < InstallIssue::Write as u8 }
 #[derive(Clone, Copy, Debug, Default)]
-pub struct InstallConsent { pub confirmed: bool, pub reinstall: bool }
+pub struct InstallConsent { pub confirmed: bool, pub reinstall: bool, pub official_return: Option<crate::official_return::ConfirmedReturn> }
 pub trait Source {
     fn size(&self) -> u32;
     /// False may leave a partial output prefix; the entire slice is lent only for this call.
@@ -110,9 +110,16 @@ impl<'a> SlotInstaller<'a> {
         let target = install_target_slot(self.ports.running());
         let issue = check_update_image(self.source, manifest, self.hash, self.ports.slot_bytes(), running, &mut digest, &mut order, &mut bytes);
         if issue != InstallIssue::None { return issue; }
-        if order < 0 { return InstallIssue::Older; }
-        if order == 0 && !consent.reinstall { return InstallIssue::Same; }
         let mut head = [0;512];
+        if order < 0 {
+            let Some(permission) = consent.official_return else { return InstallIssue::CheckAgain; };
+            let running_slot = self.ports.running();
+            let mut source = identity::NewtAppIdentity::default();
+            if running_slot < 0 || !self.ports.read_slot(running_slot, 0, &mut head)
+                || classify(&head) != SlotImage::Newt || !identity::read_newt_identity(&head, &mut source)
+                || !permission.matches(&source, manifest) { return InstallIssue::CheckAgain; }
+        }
+        if order == 0 && !consent.reinstall { return InstallIssue::Same; }
         if !self.ports.read_slot(target, 0, &mut head) { return InstallIssue::TargetUnreadable; }
         if (classify(&head) == SlotImage::Other || manifest.kind == UpdateKind::Firmware) && !consent.confirmed { return InstallIssue::Consent; }
         if !self.settle() { return InstallIssue::Unsettled; }

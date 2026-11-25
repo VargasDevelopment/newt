@@ -5,7 +5,7 @@
 
 #[path = "update_manifest/semver.rs"]
 mod semver;
-pub use semver::{semver2_compare, semver2_valid};
+pub use semver::{semver2_compare, semver2_valid, semver2_is_stable, semver2_is_nightly};
 
 pub const MAX_BYTES: usize = 512;
 pub const FORMAT: &[u8] = b"newt-update-1";
