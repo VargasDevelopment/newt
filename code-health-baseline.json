@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3988384,
+      "flash_bytes": 3989200,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,10 +28,10 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "a99f9fe0e5b21bd170003e06f19af1962b640521",
-      "before": 3987776,
-      "after": 3988384,
-      "reason": "#124 changed-book reimport interrupt handling: snapshot prior selection/progress before reimport and roll back cleanly when Back/Confirm+Back interrupts prepare_image or open_selected_profile, clearing transient ReaderIssue/notices without revoking Home cover eligibility or leaving stale candidate digests. Measured main 00267409 3,987,776 -> 3,988,384 B (+608 B), clean pinned-Python firmware-build.py --clean --health-report of committed a99f9fe0e5b21bd170003e06f19af1962b640521. RAM unchanged at 124,096 B; RTC unchanged at 300 B (.rtc_noinit 208 B); lent Wi-Fi unchanged at 22,528 B; selected compiler stack frames and floors unchanged.",
+      "source_revision": "d4700ed6804f57ba2c0ae69662e76b0923438bc8",
+      "before": 3988384,
+      "after": 3989200,
+      "reason": "#101 adaptive reader footer slots for 4+ digit page counters: derive a page-independent chapter upper bound directly from newt_ui_canvas::atlas digit advances and kerning ('0'..'9' and digit->'/' plus '/total') so Portrait expands cleanly into unused overall-percent space without clipping or jumping across pages, while keeping 1..=999 chapters unchanged. Measured main 3d168ea8 3,988,384 -> 3,989,200 B (+816 B; +384 B over the earlier +432 B '8'-filled estimate for the atlas advance/kerning scan), clean pinned-Python firmware-build.py --clean --health-report of committed d4700ed6804f57ba2c0ae69662e76b0923438bc8. RAM unchanged at 124,096 B; RTC unchanged at 300 B (.rtc_noinit 208 B); lent Wi-Fi unchanged at 22,528 B; selected compiler stack frames (0/16/32/48/480 B vs 0/16/32/48/656 B ceilings) and floors unchanged.",
       "reviewer": "Newt Lead (2026-11-25; cross-family review: Astra)"
     },
     "ram_bytes": {
