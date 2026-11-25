@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-//! Home's clock source and its four durable preferences (time zone, clock
-//! format, Sleep screen and the Developer page's Test builds).
+//! Home's clock source and its five durable preferences (time zone, clock
+//! format, Sleep screen, Holiday outfits and the Developer page's Test builds).
 //!
 //! Firmware Home borrows one six-byte HH:MM snapshot. A full Home composition
 //! refreshes it once; focus and status passes keep the time already shown. The
