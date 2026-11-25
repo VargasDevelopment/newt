@@ -7,11 +7,15 @@
 use crate::cache_names::Digest;
 use crate::page_cache::CacheStorage;
 use crate::page_envelope::MAX_PAYLOAD;
+use crate::phased_metadata::BookLanguage;
 use crate::zip_record_rules::EPUB_MAX_EXPANDED_BYTES;
 
 /// Bump when the payload layout or meaning changes; older indexes rebuild.
 pub const SCHEMA: u32 = 1;
-pub const HEADER_BYTES: u32 = 128;
+pub const HEADER_BYTES: u32 = 384;
+/// The display title as the reader keeps it: at most 255 bytes, cut on a
+/// UTF-8 boundary, NUL-terminated (`copy_display_title`).
+pub const TITLE_BYTES: usize = 256;
 pub const MEMBER_BYTES: u32 = 32;
 pub const SPINE_BYTES: u32 = 16;
 /// 65,535 is the classic ZIP count sentinel for ZIP64.
@@ -44,9 +48,14 @@ pub struct Header {
     pub spine: u32,
     /// Sum of expanded spine member bytes, counting repeats.
     pub spine_bytes: u64,
+    /// Today's navigation choice: the EPUB 3 nav when the manifest lists
+    /// one, else the NCX. At most one is set; NONE for both when the chosen
+    /// file is missing from the ZIP.
     pub nav: u32,
     pub ncx: u32,
     pub cover: u32,
+    pub language: BookLanguage,
+    pub title: [u8; TITLE_BYTES],
 }
 
 /// One ZIP member, keyed by the 64-bit hash of its normalized path.
@@ -64,6 +73,8 @@ pub struct Member {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SpineItem {
+    /// The member this item reads, or NONE when its manifest file is missing
+    /// from the ZIP: the item keeps its number and fails when it opens.
     pub member: u32,
     /// Expanded spine bytes before this item; drives estimated progress.
     pub before: u64,
@@ -97,6 +108,10 @@ fn get32(b: &[u8], at: usize) -> u32 {
 fn get64(b: &[u8], at: usize) -> u64 {
     u64::from(get32(b, at)) | (u64::from(get32(b, at + 4)) << 32)
 }
+fn language_code(language: BookLanguage) -> u8 {
+    BookLanguage::ALL.iter().position(|&l| l == language).unwrap_or(0) as u8
+}
+
 fn optional(value: u32, count: u32) -> bool {
     value == NONE || value < count
 }
@@ -126,6 +141,13 @@ impl Header {
         out[60..64].copy_from_slice(&self.nav.to_le_bytes());
         out[64..68].copy_from_slice(&self.ncx.to_le_bytes());
         out[68..72].copy_from_slice(&self.cover.to_le_bytes());
+        out[72] = language_code(self.language);
+        out[80..80 + TITLE_BYTES].copy_from_slice(&self.title);
+    }
+    /// The title bytes before its NUL.
+    pub fn title(&self) -> &[u8] {
+        let end = self.title.iter().position(|&b| b == 0).unwrap_or(TITLE_BYTES);
+        &self.title[..end]
     }
     /// None unless the header is this schema, built for `expected`, and its
     /// counts describe exactly `payload` bytes.
@@ -141,14 +163,24 @@ impl Header {
             nav: get32(input, 60),
             ncx: get32(input, 64),
             cover: get32(input, 68),
+            language: BookLanguage::ALL.get(usize::from(input[72])).copied()?,
+            title: input[80..80 + TITLE_BYTES].try_into().ok()?,
         };
+        // The title is a non-empty UTF-8 C string padded with zeros.
+        let title = header.title();
+        let title_valid = !title.is_empty() && title.len() < TITLE_BYTES
+            && core::str::from_utf8(title).is_ok()
+            && header.title[title.len()..].iter().all(|&b| b == 0);
         let valid = input[..4] == MAGIC
             && get32(input, 4) == SCHEMA
             && header.identity == *expected
             && header.payload_bytes() == Some(payload)
             && header.spine_bytes <= EPUB_MAX_EXPANDED_BYTES
             && [header.nav, header.ncx, header.cover].iter().all(|&m| optional(m, header.members))
-            && input[72..].iter().all(|&b| b == 0);
+            && (header.nav == NONE || header.ncx == NONE)
+            && title_valid
+            && input[73..80].iter().all(|&b| b == 0)
+            && input[80 + TITLE_BYTES..].iter().all(|&b| b == 0);
         valid.then_some(header)
     }
 }
@@ -188,7 +220,7 @@ impl SpineItem {
     /// Empty chapters may sit at the end, so `before` may equal the total.
     pub fn decode(input: &[u8; SPINE_BYTES as usize], header: &Header) -> Option<Self> {
         let item = Self { member: get32(input, 0), before: get64(input, 4) };
-        (item.member < header.members && item.before <= header.spine_bytes
+        (optional(item.member, header.members) && item.before <= header.spine_bytes
             && input[12..].iter().all(|&b| b == 0))
             .then_some(item)
     }

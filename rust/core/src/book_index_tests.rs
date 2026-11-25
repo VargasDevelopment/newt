@@ -7,8 +7,16 @@ use crate::page_envelope::{route, MAX_PAYLOAD};
 
 const BOOK: Identity = Identity { digest: [7; 32], policy: 3 };
 
+fn title(text: &[u8]) -> [u8; TITLE_BYTES] {
+    let mut out = [0; TITLE_BYTES];
+    out[..text.len()].copy_from_slice(text);
+    out
+}
 fn header(members: u32, spine: u32) -> Header {
-    Header { identity: BOOK, members, spine, spine_bytes: 900, nav: 1, ncx: NONE, cover: 0 }
+    Header {
+        identity: BOOK, members, spine, spine_bytes: 900, nav: 1, ncx: NONE, cover: 0,
+        language: BookLanguage::Japanese, title: title("A Book — 本".as_bytes()),
+    }
 }
 fn encoded(h: &Header) -> [u8; HEADER_BYTES as usize] {
     let mut out = [0; HEADER_BYTES as usize];
@@ -18,43 +26,50 @@ fn encoded(h: &Header) -> [u8; HEADER_BYTES as usize] {
 
 #[test]
 fn layout_bounds_and_offsets() {
-    assert_eq!(payload_bytes(1, 1), Some(128 + 32 + 16));
+    assert_eq!(payload_bytes(1, 1), Some(384 + 32 + 16));
     for (members, spine) in [(0, 1), (1, 0), (MAX_MEMBERS + 1, 1), (1, MAX_SPINE + 1)] {
         assert_eq!(payload_bytes(members, spine), None, "{members} members, {spine} spine");
     }
     let largest = payload_bytes(MAX_MEMBERS, MAX_SPINE).unwrap();
-    assert_eq!(largest, 2_621_504);
+    assert_eq!(largest, 2_621_760);
     assert!(largest <= MAX_PAYLOAD);
     let h = header(3, 2);
-    assert_eq!((h.member_offset(0), h.member_offset(2), h.member_offset(3)), (Some(128), Some(192), None));
-    assert_eq!((h.spine_offset(0), h.spine_offset(1), h.spine_offset(2)), (Some(224), Some(240), None));
-    assert_eq!(h.payload_bytes(), Some(256));
+    assert_eq!((h.member_offset(0), h.member_offset(2), h.member_offset(3)), (Some(384), Some(448), None));
+    assert_eq!((h.spine_offset(0), h.spine_offset(1), h.spine_offset(2)), (Some(480), Some(496), None));
+    assert_eq!(h.payload_bytes(), Some(512));
 }
 
 #[test]
 fn header_round_trip_and_every_refusal() {
     let h = header(3, 2);
     let bytes = encoded(&h);
-    assert_eq!(Header::decode(&bytes, &BOOK, 256), Some(h));
+    assert_eq!(Header::decode(&bytes, &BOOK, 512), Some(h));
     // Another book, another admission policy, or a payload of another size.
-    assert_eq!(Header::decode(&bytes, &Identity { digest: [8; 32], ..BOOK }, 256), None);
-    assert_eq!(Header::decode(&bytes, &Identity { policy: 4, ..BOOK }, 256), None);
-    assert_eq!(Header::decode(&bytes, &BOOK, 257), None);
-    let mutations: [(usize, u8); 4] = [(0, b'X'), (4, 2), (72, 1), (127, 1)];
+    assert_eq!(Header::decode(&bytes, &Identity { digest: [8; 32], ..BOOK }, 512), None);
+    assert_eq!(Header::decode(&bytes, &Identity { policy: 4, ..BOOK }, 512), None);
+    assert_eq!(Header::decode(&bytes, &BOOK, 513), None);
+    // Magic, schema, an unknown language, padding, a title byte past its
+    // NUL, a title that is not UTF-8, and the header's last byte.
+    let end = 80 + h.title().len();
+    let mutations: [(usize, u8); 7] = [(0, b'X'), (4, 2), (72, 4), (73, 1), (end + 1, b'x'), (80, 0xff), (383, 1)];
     for (at, value) in mutations {
         let mut bad = bytes;
         bad[at] = value;
-        assert_eq!(Header::decode(&bad, &BOOK, 256), None, "byte {at}");
+        assert_eq!(Header::decode(&bad, &BOOK, 512), None, "byte {at}");
     }
     for bad in [
         Header { nav: 3, ..h },
         Header { cover: 3, ..h },
         Header { spine_bytes: EPUB_MAX_EXPANDED_BYTES + 1, ..h },
+        // Only one navigation choice, and a title is never empty.
+        Header { ncx: 0, ..h },
+        Header { title: [0; TITLE_BYTES], ..h },
+        Header { title: [b'x'; TITLE_BYTES], ..h },
     ] {
-        assert_eq!(Header::decode(&encoded(&bad), &BOOK, 256), None, "{bad:?}");
+        assert_eq!(Header::decode(&encoded(&bad), &BOOK, 512), None, "{bad:?}");
     }
-    let none = Header { nav: NONE, ncx: NONE, cover: NONE, ..h };
-    assert_eq!(Header::decode(&encoded(&none), &BOOK, 256), Some(none));
+    let none = Header { nav: NONE, ncx: NONE, cover: NONE, language: BookLanguage::Default, ..h };
+    assert_eq!(Header::decode(&encoded(&none), &BOOK, 512), Some(none));
 }
 
 #[test]
@@ -82,7 +97,7 @@ fn member_and_spine_round_trip_and_bounds() {
     assert_eq!(Member::decode(&m, &h), None);
 
     let mut s = [0; SPINE_BYTES as usize];
-    for item in [SpineItem { member: 2, before: 0 }, SpineItem { member: 0, before: 900 }] {
+    for item in [SpineItem { member: 2, before: 0 }, SpineItem { member: 0, before: 900 }, SpineItem { member: NONE, before: 900 }] {
         item.encode(&mut s);
         assert_eq!(SpineItem::decode(&s, &h), Some(item));
     }
@@ -183,7 +198,7 @@ fn written_index_reads_back_by_hash_and_position() {
     let mut s = Memory::default();
     // A 4 KiB buffer turns 202 records into two card writes, not 202.
     build(&mut s, &hashes, &mut [0; 4096]).unwrap();
-    assert_eq!(s.writes, [4096, 128 + 200 * 32 + 2 * 16 - 4096]);
+    assert_eq!(s.writes, [4096, 384 + 200 * 32 + 2 * 16 - 4096]);
 
     let index = Reader::open(&mut s, &BOOK).unwrap();
     assert_eq!(*index.header(), header(200, 2));
@@ -207,7 +222,7 @@ fn written_index_reads_back_by_hash_and_position() {
 fn writer_refuses_collisions_order_and_counts_before_publishing() {
     let refused = |hashes: &[u64]| {
         let mut s = Memory::default();
-        let result = build(&mut s, hashes, &mut [0; 128]);
+        let result = build(&mut s, hashes, &mut [0; 384]);
         assert!(s.files.is_empty());
         result
     };
@@ -215,12 +230,12 @@ fn writer_refuses_collisions_order_and_counts_before_publishing() {
     assert_eq!(refused(&[5, 9, 7]), Err(WriteError::Invalid));
 
     let mut s = Memory::default();
-    let mut buffer = [0; 128];
+    let mut buffer = [0; 384];
     // Header counts outside the layout, or no room for a header, never reach the card.
     for bad in [header(0, 2), Header { nav: 3, ..header(3, 2) }] {
         assert_eq!(Writer::begin(&mut s, bad, &mut buffer).err(), Some(WriteError::Invalid));
     }
-    assert_eq!(Writer::begin(&mut s, header(3, 2), &mut [0; 127]).err(), Some(WriteError::Invalid));
+    assert_eq!(Writer::begin(&mut s, header(3, 2), &mut [0; 383]).err(), Some(WriteError::Invalid));
     assert!(s.open.is_none());
 
     let one = Member { hash: 1, ..Member::default() };
@@ -242,7 +257,7 @@ fn writer_refuses_collisions_order_and_counts_before_publishing() {
 #[test]
 fn storage_faults_never_publish() {
     let mut s = Memory { refuse_writes: true, ..Memory::default() };
-    assert_eq!(build(&mut s, &[1, 2, 3], &mut [0; 128]), Err(WriteError::Storage));
+    assert_eq!(build(&mut s, &[1, 2, 3], &mut [0; 384]), Err(WriteError::Storage));
     let mut s = Memory::default();
     let mut buffer = [0; 4096];
     let mut w = Writer::begin(&mut s, header(3, 2), &mut buffer).unwrap();

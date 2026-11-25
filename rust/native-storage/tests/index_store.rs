@@ -9,7 +9,8 @@ mod model;
 
 use chapter_cache::{ChapterCacheState, ChapterCacheStorage};
 use model::{Effect, Fault, Model, Op};
-use newt_core::book_index::{self, Header, Identity, Member, Reader, SpineItem, WriteError, Writer, NONE};
+use newt_core::book_index::{self, Header, Identity, Member, Reader, SpineItem, WriteError, Writer, NONE, TITLE_BYTES};
+use newt_core::phased_metadata::BookLanguage;
 use newt_core::page_cache::CacheStorage;
 use newt_core::page_cache_access::VerifiedAccess;
 use newt_core::page_envelope::VerifiedStore;
@@ -152,7 +153,12 @@ const SPINE: [SpineItem; 3] = [
     SpineItem { member: 2, before: 200 },
 ];
 fn header(identity: Identity) -> Header {
-    Header { identity, members: 200, spine: 3, spine_bytes: 300, nav: 3, ncx: NONE, cover: NONE }
+    let mut title = [0; TITLE_BYTES];
+    title[..6].copy_from_slice(b"A Book");
+    Header {
+        identity, members: 200, spine: 3, spine_bytes: 300, nav: 3, ncx: NONE, cover: NONE,
+        language: BookLanguage::Default, title,
+    }
 }
 
 fn write(store: &mut ChapterCacheStorage<'_, Card>, identity: Identity) -> core::result::Result<(), WriteError> {
@@ -233,7 +239,7 @@ fn a_damaged_stale_or_foreign_index_is_refused() {
 
     // A flipped byte in the header block refuses the open; one in member
     // 152, in the second block, refuses only records read from that block.
-    for (at, opens) in [(60, false), (128 + 152 * 32, true)] {
+    for (at, opens) in [(60, false), (384 + 152 * 32, true)] {
         let mut bad = good.clone();
         bad.durable[at] ^= 1;
         bad.readable[at] ^= 1;
