@@ -5,7 +5,8 @@
 def source_files(args):
     chain = ['app_runtime/run_loop.rs', 'app_image.rs', 'reader_image_app.rs',
              'reader_image_work.rs', 'reader_image_operation.rs', 'reader_image_producer.rs',
-             'reader_image_sources.rs', 'reader_image_index.rs',
+             'reader_image_sources.rs', 'reader_image_index.rs', 'reader_index_invalidation.rs',
+             'reader_selected_source.rs', 'reader_selected_index_loan.rs',
              'reader_image_drive.rs', 'serial_console.rs', 'app_runtime/trace.rs',
              'reader_book_run.rs', 'reader_producer.rs', 'reader_image_metadata.rs',
              'reader_book_metadata.rs', 'reader_book_import.rs', 'reader_image_verification.rs',

@@ -375,6 +375,7 @@ impl Runtime {
         };
         let result = self.operate_image(home, ui, logical, events, Some(super::drive::Opening {
             accepted_save: !recovery_open || session_checkpoint, at, indexed }), None, true, profile, None);
+        self.invalidate_failed_index(home);
         match result {
             Ok(exit) => {
                 self.restore_failure = newt_reader_ui::RestoreFailure::None;

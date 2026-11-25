@@ -38,12 +38,13 @@ impl<S: Native> SdSourceFile<'_, S> {
         self.state.position = 0;
         true
     }
-    pub fn close(&mut self) {
-        if self.state.descriptor >= 0 {
-            let _ = self.native.close(self.state.descriptor);
-        }
+    pub fn close(&mut self) { let _ = self.release_checked(); }
+    /// A failed/uncertain close cannot grant another publication descriptor.
+    pub fn release_checked(&mut self) -> bool {
+        let closed = self.state.descriptor < 0 || self.native.close(self.state.descriptor).is_ok();
         self.state.descriptor = -1;
         self.state.position = usize::MAX;
+        closed
     }
     /// X3 fstat lacks modification timestamps: freshness uses path stat.
     pub fn stat_path(&mut self, path: &str) -> Option<Stat> {

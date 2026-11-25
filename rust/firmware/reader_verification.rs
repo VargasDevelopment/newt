@@ -43,8 +43,8 @@ impl<H: RevisionHasher> ReaderVerification<H> {
         match self.control.phase {
             Phase::Uninitialized | Phase::Ready => Verification::Verified,
             Phase::Pending => Verification::Pending,
-            Phase::Changed => Verification::Changed,
-            Phase::Failed => Verification::Failed,
+            Phase::Changed | Phase::ChangedRevoked => Verification::Changed,
+            Phase::Failed | Phase::FailedRevoked => Verification::Failed,
         }
     }
 
@@ -77,13 +77,24 @@ impl<H: RevisionHasher> ReaderVerification<H> {
         }
     }
 
+    /// Terminal tags remember successful revocation, without another owner
+    /// field or repeated directory work on every idle tick. begin/reset clear it.
+    pub fn index_revoked(&self) -> bool {
+        matches!(self.control.phase,Phase::ChangedRevoked|Phase::FailedRevoked)
+    }
+    pub fn mark_index_revoked(&mut self) {
+        self.control.phase=match self.control.phase {
+            Phase::Changed=>Phase::ChangedRevoked,Phase::Failed=>Phase::FailedRevoked,other=>other,
+        };
+    }
+
     pub fn mark_changed(&mut self) { self.clear(); self.control.phase = Phase::Changed; }
     pub fn mark_failed(&mut self) { self.clear(); self.control.phase = Phase::Failed; }
     /// A new source preparation retires the prior verifier/producer epoch.
     pub fn reset(&mut self) { self.clear(); self.control = SessionControl::new(); }
     pub fn producer_ready(&self) -> bool { self.control.phase == Phase::Ready }
     pub fn adopt_changed(&mut self) -> bool {
-        if self.control.phase != Phase::Changed { return false; }
+        if self.state() != Verification::Changed { return false; }
         self.control.phase = Phase::Uninitialized;
         true
     }

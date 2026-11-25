@@ -63,6 +63,7 @@ impl Runtime {
         delay: &mut u32,
     ) -> bool {
         if !self.session.as_ref().is_some_and(|s| s.verification.state() == Verification::Pending) {
+            self.invalidate_failed_index(home);
             return false;
         }
         // `due` deliberately ignores the battery gate: 30 s durable checkpoints
@@ -132,12 +133,24 @@ impl Runtime {
             })
         });
         if !matches!(result, Ok(Ok(Ok(())))) { session.verification.mark_failed(); }
+        self.invalidate_failed_index(home);
         let Ok(native) = home.bus.board.frame() else { crate::app_power::stop(); };
         let Ok(native) = native.try_into() else { crate::app_power::stop(); };
         if !frame::restore_native_frame_prefix(logical, native,
             if idle { 4096 } else { newt_core::frame::FRAME_BYTES }, self.settings.orientation) {
             crate::app_power::stop();
         }
+    }
+
+    #[inline(never)]
+    pub(super) fn invalidate_failed_index(&mut self,home:&mut Home<'_>) {
+        let Some(session)=self.session.as_mut() else { return; };
+        if !matches!(session.verification.state(),Verification::Changed|Verification::Failed) { return; }
+        let digest=self.selection.digest();
+        let _=home.with_reader_io(|scope| {
+            let mut native=scope.card.port(scope.io);
+            super::index_invalidation::invalidate_failed_index(session,&mut native,digest,&super::boot::NoCancel,millis)
+        });
     }
 
     pub(super) fn commit_verified_image(&mut self, home: &mut Home<'_>, trace: crate::reader_action::Trace<'_>) -> bool {

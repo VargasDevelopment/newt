@@ -148,3 +148,6 @@ impl<F: File> Drop for SourceLoan<'_, '_, F> {
         }
     }
 }
+
+#[path = "reader_selected_index_loan.rs"]
+mod index_loan;

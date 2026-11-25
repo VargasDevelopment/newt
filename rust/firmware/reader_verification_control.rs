@@ -3,7 +3,7 @@
 //! bytes. Keeping them with verification avoids paying for that gap twice.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub(super) enum Phase { Uninitialized, Ready, Pending, Changed, Failed }
+pub(super) enum Phase { Uninitialized, Ready, Pending, Changed, Failed, ChangedRevoked, FailedRevoked }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]

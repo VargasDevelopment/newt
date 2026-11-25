@@ -33,7 +33,10 @@ impl Phase<'_> {
             identity, store, &mut progress, hook)?;
         crate::index_build::counts(hook, members.get(), spine.get());
         if store.spilled() {
-            if !live.borrow_mut().source.release() { return Ok((false, true, false)); }
+            stage(hook,7);
+            let closed=live.borrow_mut().source.release();
+            stage(hook,4);
+            if !closed { return Ok((false, true, false)); }
             released.set(true);
         }
         if !store.release_pages() { return Err(Status::IoError); }
@@ -43,7 +46,9 @@ impl Phase<'_> {
         let published = publish(prepared, store, &mut state, &mut progress, &mut receipt);
         // Publish consumes/removes work before reopening, so even a live
         // receipt leaves room for the source under the three-file mount cap.
+        if released.get() { stage(hook,8); }
         let reopened = !released.get() || live.borrow_mut().source.reopen();
+        stage(hook,0);
         if !reopened { return Err(Status::IoError); }
         let (members, spine, removed) = published?;
         crate::index_build::counts(hook, members, spine);

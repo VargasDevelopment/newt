@@ -31,6 +31,15 @@ impl<'a, S: Native> ChapterCacheStorage<'a, S> {
     ) -> core::result::Result<Self, LoanError> {
         Ok(Self { file: FilePort::lend(&mut owner.file, native, route, "Pages")?, state: &mut owner.state })
     }
+    /// A failed source verification revokes this digest's derived index too.
+    #[inline(never)]
+    pub fn invalidate_index(&mut self, digest: &[u8;32]) -> bool {
+        if !self.access().release_for_admission() { return false; }
+        let mut name=[0;69];
+        newt_core::book_index::name(digest,&mut name);
+        let Ok(name)=core::str::from_utf8(&name) else { return false; };
+        self.file.route.remove_record(self.file.native,"Index",name,false)
+    }
     /// A foreground loan, without producer policy. Dropping it owes nothing.
     pub fn access(&mut self) -> ChapterCacheAccess<'_, 'a, S> {
         ChapterCacheAccess {

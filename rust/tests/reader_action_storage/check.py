@@ -54,7 +54,7 @@ def main():
             raise RuntimeError(result.stderr[-6000:])
         return result
     run([cargo, 'build', '--lib', '-p', 'newt-c3-board', '-p', 'newt-device-ui',
-         '-p', 'newt-library-current', '--target', HOST, '--manifest-path', ROOT / 'rust/Cargo.toml',
+         '-p', 'newt-library-current', '--features', 'newt-phased-reader/dev-usb', '--target', HOST, '--manifest-path', ROOT / 'rust/Cargo.toml',
          '--offline', '--frozen', '--locked', '--jobs', '2', '--target-dir', target,
          '--message-format=json'])
     libraries = {}
@@ -121,7 +121,17 @@ def main():
     run([*command, control, '-o', out / 'wrong-route-control'])
     rejected = run([out / 'wrong-route-control', book, 'synthetic.epub'], succeeds=False)
     assert rejected.returncode == 101 and 'index and operate_image must lend the same cache route' in rejected.stderr, rejected.stderr
-    print('PASS actual operate_image action/idle loans and index loan agreement on both branches and encoded nested names; compact, idle-lending and route-drift controls rejected')
+    invalidation = ROOT / 'rust/firmware/reader_index_invalidation.rs'
+    keep = invalidation.read_text().replace('pages.invalidate_index(digest)', 'true')
+    assert keep != invalidation.read_text()
+    replacement = out / 'keep-index.rs'
+    replacement.write_text(paths(keep, invalidation.parent))
+    control = out / 'keep-index-host.rs'
+    control.write_text(paths(fixture, HERE, {invalidation: replacement}))
+    run([*command, control, '-o', out / 'keep-index-control'])
+    rejected = run([out / 'keep-index-control', book, 'synthetic.epub'], succeeds=False)
+    assert rejected.returncode == 101 and 'failed verification must remove the derived index' in rejected.stderr, rejected.stderr
+    print('PASS actual operation/index loans, physical spill release/reopen, reopen refusal, power-cut cold reads and verification revocation; compact, idle-lending, route-drift and retained-index controls rejected')
     common = [cargo, 'test', '--offline', '--frozen', '--locked',
               '--manifest-path', ROOT / 'rust/Cargo.toml', '--target', HOST,
               '--target-dir', target, '--jobs', '2']

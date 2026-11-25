@@ -113,6 +113,7 @@ mod reader_hash {
     pub unsafe fn hash_source(_: &mut dyn BookSource, _: &mut Digest, _: &mut dyn FnMut(), _: Option<&dyn SourceHashObserver>) -> bool { panic!("no strict-source fallback in source-loan fixture") }
 }
 #[path = "../../firmware/reader_verification.rs"] mod reader_verification;
+#[path = "../../firmware/reader_selected_source.rs"] mod physical_selected;
 mod selected {
     use super::*;
     pub trait FileObserver {}
@@ -125,7 +126,9 @@ mod selected {
             let n = bytes.len().min(out.len()); out[..n].copy_from_slice(&bytes[..n]); n as i32
         }
     }
+    impl newt_phased_reader::index_build::ReleasableSource for SelectedSource {}
     impl SelectedSource {
+        pub fn with_index_source<N,R>(&mut self,_:&mut N,_:&[u8],_:&mut[u8],_:Option<&dyn newt_native_storage::Authority>,_:Option<&dyn FileObserver>,work:impl FnOnce(&mut dyn newt_phased_reader::index_build::ReleasableSource)->R)->core::result::Result<R,()> {Ok(work(self))}
         pub fn bound(&self) -> bool { true }
         pub fn with_source_observed<N, R>(&mut self, _: &mut N, _: Option<&dyn newt_native_storage::Authority>, _: Option<&dyn FileObserver>, work: impl FnOnce(&mut dyn BookSource) -> R) -> core::result::Result<R, ()> { Ok(work(self)) }
     }
@@ -209,6 +212,7 @@ mod image {
         pub fn restore_policy_image(&self) -> newt_reader_ui::RestorePolicy { newt_reader_ui::RestorePolicy::ExactPage }
         pub fn refuse_checkpoint_image(&mut self, _: u32, _: bool) { panic!("no requested save in source-loan fixture") }
     }
+    #[path = "../../firmware/reader_index_invalidation.rs"] pub(crate) mod index_invalidation;
     pub mod drive {
         use super::*;
         pub struct Opening { pub accepted_save: bool, pub at: u32, pub indexed: newt_phased_reader::index_build::Indexed }
@@ -274,6 +278,7 @@ fn main() {
     let reads = Rc::new(RefCell::new(Vec::new()));
     let mut source = Box::new(selected::SelectedSource { bytes, reads:reads.clone() });
     let mut digest = [0;32]; assert!(reader_hash::package_hash(&source.bytes,&mut digest));
+    image::index_loans::physical_handoffs(&mut home,&source.bytes,&digest);
     let filename = std::env::args().nth(2).expect("catalog name");
     let mut key = [0;64];
     let key = reader_book::route_key(&filename,&mut reader_hash::PackageHasher::from_live_sdk(),&mut key).unwrap();
@@ -344,6 +349,7 @@ fn main() {
         reader_book::BookStep::Idle { checkpoint:false, admitted:false });
     assert_eq!(reads.borrow().as_slice(),&[256;32],"idle keeps compact scratch");
     assert!(logical.iter().all(|b|*b==0x7d),"idle must preserve the published logical frame");
+    image::index_loans::failed_verification_revokes_index(&mut runtime,&mut home,&digest);
     // Distinct probe names prevent a session record from hiding standalone
     // route drift. Return the session's descriptor before withdrawing its owner.
     let mut session=runtime.session.take().unwrap();

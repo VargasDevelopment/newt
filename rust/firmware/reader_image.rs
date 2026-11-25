@@ -55,6 +55,8 @@ mod idle_save;
 mod drive;
 #[path = "reader_image_hints.rs"]
 mod hints;
+#[path = "reader_index_invalidation.rs"]
+mod index_invalidation;
 #[path = "reader_image_verification.rs"]
 mod verification;
 #[path = "reader_image_changed.rs"]
