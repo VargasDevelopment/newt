@@ -94,6 +94,10 @@ CONTROLS = (
     # A stylesheet read needs a Checked member, so styles.rs cannot skip the
     # check and still compile; this proves the stylesheet read runs it.
     ("a damaged stylesheet passes the open-time check", MEMBER_CHECK, "if got != expected {", "if false {", "damaged-css"),
+    ("a stylesheet read failure is taken for damage", "phased-reader/src/styles.rs",
+     "Some(Err(Status::IoError)) => {\n                    status = Status::IoError;\n                    break;\n                }",
+     "Some(Err(Status::IoError)) => *member = Member { link: Link::Damaged, ..Member::default() },",
+     "css-read-failure"),
     # SD books never probe images; the built-in sample path does.
     ("a damaged sample image passes the open-time check", MEMBER_CHECK, "if got != expected {", "if false {", "damaged-image"),
     ("duplicate names are compared by hash only", "core/src/canonical.rs",

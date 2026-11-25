@@ -524,6 +524,8 @@ CASES: tuple[Case, ...] = (
          BookSpec(chapters=2, chapter_paragraphs=40, stylesheet="p { margin-top: 5em; }"), expected_styled=True),
     Case("damaged-css", "member-check", "fast", "Ok", "Ok", "styled", "Damaged stylesheet local header: chapter 0 reads without its styles, like a missing stylesheet",
          BookSpec(chapters=2, chapter_paragraphs=40, stylesheet="p { margin-top: 5em; }", damage=("css", "name")), expected_styled=False),
+    Case("css-read-failure", "member-check", "fast", "Ok", "IoError", "styled-io", "One failed read of the stylesheet's local header fails the open, as before #60, instead of dropping the styles",
+         BookSpec(chapters=2, chapter_paragraphs=40, stylesheet="p { margin-top: 5em; }")),
     Case("sample-image", "member-check", "fast", "Ok", "Ok", "image", "The built-in sample path sizes and places chapter 0's image (control for damaged-image)",
          BookSpec(chapters=2, image=True, compress=False), expected_image=True),
     Case("damaged-image", "member-check", "fast", "Ok", "Ok", "image", "Damaged image local header: the sample path skips the image, like a missing image",

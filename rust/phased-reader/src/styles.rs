@@ -1144,7 +1144,8 @@ pub fn resolve<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
         }
     };
     // The scan cannot read members while the chapter streams, so stylesheets
-    // are checked here. A damaged one is skipped, as a missing one is.
+    // are checked here. A damaged one is skipped, as a missing one is; a read
+    // failure fails the scan, as it did when the stylesheet was opened.
     if let Some(catalog) = book.catalog {
         let SourceScan { out, members, links, .. } = &mut handler;
         for (member, &index) in out.links[..*links].iter_mut().zip(members.iter()) {
@@ -1153,6 +1154,10 @@ pub fn resolve<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
             }
             match catalog.entry(usize::from(index)).map(|entry| catalog.check(&mut tracked, entry)) {
                 Some(Ok(checked)) => (member.record, member.checked) = (CheckedRecord::from(&checked), true),
+                Some(Err(Status::IoError)) => {
+                    status = Status::IoError;
+                    break;
+                }
                 None | Some(Err(_)) => *member = Member { link: Link::Damaged, ..Member::default() },
             }
         }

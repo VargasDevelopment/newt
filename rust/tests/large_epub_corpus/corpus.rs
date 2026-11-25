@@ -45,12 +45,14 @@ struct PlanText([u8; TEXT]);
 struct FileSource {
     file: File,
     len: u64,
+    /// The next read starting here fails once, like a flaky card read.
+    fail_once_at: Option<u64>,
 }
 impl FileSource {
     fn open(path: &Path) -> Self {
         let file = File::open(path).expect("open generated EPUB");
         let len = file.metadata().expect("stat generated EPUB").len();
-        Self { file, len }
+        Self { file, len, fail_once_at: None }
     }
 }
 impl BookSource for FileSource {
@@ -60,6 +62,10 @@ impl BookSource for FileSource {
     fn read_at(&mut self, at: u64, out: &mut [u8]) -> i32 {
         if out.is_empty() || at >= self.len {
             return 0;
+        }
+        if self.fail_once_at == Some(at) {
+            self.fail_once_at = None;
+            return -1;
         }
         if self.file.seek(SeekFrom::Start(at)).is_err() {
             return -1;
@@ -330,9 +336,27 @@ fn sample_places_an_image(path: &Path) -> bool {
     sink.0 > 0
 }
 
+/// Offset of the first local header whose name ends with `suffix`.
+fn local_header_ending(path: &Path, suffix: &[u8]) -> u64 {
+    let bytes = std::fs::read(path).expect("read generated EPUB");
+    (0..bytes.len().saturating_sub(30))
+        .find(|&at| {
+            bytes[at..at + 4] == *b"PK\x03\x04" && {
+                let name = usize::from(u16::from_le_bytes([bytes[at + 26], bytes[at + 27]]));
+                bytes.get(at + 30..at + 30 + name).is_some_and(|n| n.ends_with(suffix))
+            }
+        })
+        .expect("generated EPUB has the member") as u64
+}
+
 fn run_open_phased(path: &Path, mode: &str) -> OpenMetrics {
     let mut m = OpenMetrics::default();
     let mut source = FileSource::open(path);
+    if mode == "styled-io" {
+        // Open resolves the styles: one failed read of the stylesheet's local
+        // header must fail the open, not silently drop the styles.
+        source.fail_once_at = Some(local_header_ending(path, b".css"));
+    }
     let mut shared = Box::new(Bank([0u8; BANK_BYTES]));
     let mut native = Box::new(Bank([0u8; BANK_BYTES]));
     let mut storage = PhaseStorage::new(&mut shared.0);
