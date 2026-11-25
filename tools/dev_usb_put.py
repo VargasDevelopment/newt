@@ -14,6 +14,8 @@ CHUNK_BYTES = 4096
 LINE_BYTES = 4351
 OFFER = f'PUT line={LINE_BYTES} chunk={CHUNK_BYTES} path=hex data=raw'
 MAX_FILES = 64
+# Generated FatFs short aliases contain '~'; a batch must never target one.
+FORBIDDEN_NAME_CHARS = '<>:"/\\|?*~'
 FILE_SECONDS = 30  # FILE may first count the card's free clusters
 READ_BACK_RATE = 100_000  # bytes/s the device reads the temp back at, at least
 
@@ -35,7 +37,7 @@ def card_name(name):
     stem = name.split('.', 1)[0].upper()
     device = stem in ('CON', 'PRN', 'AUX', 'NUL') or re.fullmatch(r'(COM|LPT)[1-9]', stem)
     if (not name or name.lower() in ('newt.put', 'newt.old', 'newt.mrk', '.newt-put', '.newt-old', '.newt-old-name') or len(name.encode('utf-16-le')) > 510 or device or '..' in name
-            or name.endswith(('.', ' ')) or any(ord(c) < 32 or 127 <= ord(c) <= 159 or c in '<>:"/\\|?*' for c in name)):
+            or name.endswith(('.', ' ')) or any(ord(c) < 32 or 127 <= ord(c) <= 159 or c in FORBIDDEN_NAME_CHARS for c in name)):
         raise ValueError(f'Invalid FAT card name {name!r}')
     return name
 

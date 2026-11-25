@@ -242,6 +242,49 @@ def committed_tables_match(tables):
     assert fatfs_case_generate.generated(tables) in source, 'Regenerated table block differs'
 
 
+def short_alias_destinations():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        long_name, alias = root / 'abcdefghijk.txt', root / 'ABCDEF~1.TXT'
+        long_name.write_bytes(b'first')
+        alias.write_bytes(b'second')
+        assert put.plan([long_name])[0][1] == long_name.name, 'long names remain supported'
+        # Refuse the whole ordered batch before the first file can be written.
+        for paths, name in (([long_name, alias], None), ([alias, long_name], None),
+                            ([long_name], alias.name), ([alias], None)):
+            try:
+                put.plan(paths, name)
+            except ValueError as error:
+                assert 'Invalid FAT card name' in str(error) and alias.name in str(error), str(error)
+            else:
+                raise AssertionError('FatFs short alias accepted as a batch destination')
+        # The same boundary owns directory components, not just basenames.
+        for folder in ('SHORT~1', 'Newt/SHORT~12/Books', 'Newt/Books~'):
+            try:
+                put.card_target(folder, long_name.name)
+            except ValueError as error:
+                assert 'Invalid FAT card name' in str(error), str(error)
+            else:
+                raise AssertionError('Short-alias directory accepted')
+        result = subprocess.run([sys.executable, str(ROOT / 'tools/dev-usb.py'), 'put',
+                                 '--port', '/dev/mock-only', '--expect-build', BUILD,
+                                 '--folder', 'Newt/Books', '--file', str(long_name), '--file', str(alias)],
+                                capture_output=True, text=True)
+        assert result.returncode == 2 and not result.stdout, result
+        assert alias.name in result.stderr and 'Invalid FAT card name' in result.stderr, result.stderr
+
+
+def short_alias_control():
+    with patch.object(put, 'FORBIDDEN_NAME_CHARS', put.FORBIDDEN_NAME_CHARS.replace('~', '')):
+        try:
+            short_alias_destinations()
+        except AssertionError as error:
+            assert str(error) == 'FatFs short alias accepted as a batch destination', str(error)
+        else:
+            raise AssertionError('Negative control survived: generated short aliases allowed')
+    print('PASS: short-alias batch, rename and parent-path refusals; allowing tilde control fails')
+
+
 def fatfs_parity_and_controls():
     tables = fatfs_case_generate.pinned_tables()
     committed_tables_match(tables)
@@ -330,6 +373,8 @@ def main():
     a_commit_left_for_a_hand_check_is_recovery_needed()
     plans_are_checked_before_the_port_opens()
     unicode_destinations()
+    short_alias_destinations()
+    short_alias_control()
     fatfs_parity_and_controls()
     print('PASS: dev-usb put: verified final SHA-256, bounded lease frames, fragmented replies, '
           'deadlines, short writes, no retry of an unknown commit, recovery-needed and plan refusals; '

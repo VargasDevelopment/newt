@@ -151,7 +151,10 @@ The code is `rust/core/src/dev_put.rs`; the firmware glue is
   `.newt-put`, `.newt-old`, `.newt-old-name` names are reserved.
   Before opening the port, the host refuses batch names that the pinned
   FatFs uppercase table treats as equal (including Unicode aliases such as
-  `σ`/`ς`). Python's Unicode casing is different. Existing files remain
+  `σ`/`ς`). Python's Unicode casing is different. The host also refuses `~`
+  in every component, preventing a later batch destination from resolving to
+  an earlier file's generated FAT short alias (for example `ABCDEF~1.TXT`).
+  Existing files remain
   replaceable through any FatFs-equivalent spelling: FILE is an independent
   atomic replacement, and the device has no batch identity.
 - **Size:** no PUT file-size cap or reserved free-space allowance. FILE checks
@@ -238,6 +241,11 @@ A missing DONE answer gives `"result": "unknown"`; establish a fresh handshake
 and check the card before another write. Receipts include free bytes, total
 seconds and bytes per second, including read-back and commit; DATA is summarized
 once per file. The DONE deadline grows with file size.
+
+DONE verifies the current temporary file before committing it; the protocol
+has no command to read or hash an existing destination after a batch. Batch
+name safety therefore relies on the host's restricted names and the pinned
+FatFs case comparison, rather than a final verification of all destinations.
 
 The client uses committed tables and needs no firmware toolchain. The gate
 checks those tables against `libfatfs.a(ffunicode.c.obj)` in the pinned SDK;
