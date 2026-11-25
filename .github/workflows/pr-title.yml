@@ -1,0 +1,77 @@
+name: Pull request title
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+# Every run finishes: edits must not cancel this required, inexpensive check.
+jobs:
+  pr-title:
+    name: pr-title
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      EXPECTED_COMMIT: ${{ github.event.pull_request.head.sha }}
+      PYTHONDONTWRITEBYTECODE: '1'
+      OPENSSL_CONF: /dev/null
+      UV_CACHE_DIR: ${{ github.workspace }}/.build/python-bootstrap/cache
+      UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.build/python-bootstrap/python
+      UV_PYTHON_BIN_DIR: ${{ github.workspace }}/.build/python-bootstrap/bin
+      UV_TOOL_DIR: ${{ github.workspace }}/.build/python-bootstrap/tools
+      UV_TOOL_BIN_DIR: ${{ github.workspace }}/.build/python-bootstrap/tool-bin
+    steps:
+      - name: Check out the pull request's head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ env.EXPECTED_COMMIT }}
+          fetch-depth: 1
+          persist-credentials: false
+          set-safe-directory: false
+      # The uv wheel docs/toolchain-linux-lock.json pins, so no third-party action.
+      - name: Locked uv for workspace-local Python
+        shell: bash
+        run: |
+          set -euo pipefail
+          wheel="$RUNNER_TEMP/uv.whl"
+          curl --fail --silent --show-error --location --proto '=https' --output "$wheel" \
+            https://files.pythonhosted.org/packages/c6/2b/8700206efe193fc279fe32c11ab9a502c8364e7882e3f6f36a00a6cc8af7/uv-0.12.21-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+          echo "0083454d25479f1cd03547c8c98c235b4af92bd07f0e61c3eae5d1cbb0c1834c  $wheel" | sha256sum --check --strict
+          mkdir -p "$UV_TOOL_BIN_DIR"
+          unzip -p "$wheel" uv-0.12.21.data/scripts/uv > "$UV_TOOL_BIN_DIR/uv"
+          chmod 755 "$UV_TOOL_BIN_DIR/uv"
+          test "$("$UV_TOOL_BIN_DIR/uv" --no-config --version)" = 'uv 0.12.21 (x86_64-unknown-linux-gnu)'
+          echo "$UV_TOOL_BIN_DIR" >> "$GITHUB_PATH"
+      - name: Exact managed Python and real runtime checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e "$UV_PYTHON_INSTALL_DIR"
+          # uv 0.12.21 pins the baseline 20240909 CPython 3.12.6 archive SHA256:
+          # b080463e4f0c452e592cdac1ca97936a6a19bb3d9a64da669a50ca843fce0108
+          request=cpython-3.12.6-linux-x86_64-gnu
+          uv --no-config python install --no-bin "$request" \
+            --mirror https://github.com/astral-sh/python-build-standalone/releases/download
+          python_path="$(uv --no-config python find --managed-python --no-python-downloads "$request")"
+          "$python_path" -I -B - <<'PYTHON'
+          import bz2, ctypes, lzma, os, pathlib, sqlite3, ssl, subprocess, sys, venv, zlib
+          assert sys.version_info[:3] == (3, 12, 6)
+          root = pathlib.Path(os.environ['UV_PYTHON_INSTALL_DIR']).resolve()
+          assert pathlib.Path(sys.executable).resolve().is_relative_to(root)
+          probe = pathlib.Path(os.environ['GITHUB_WORKSPACE']) / '.build/python-bootstrap/probe-venv'
+          venv.EnvBuilder(with_pip=True, symlinks=True).create(probe)
+          subprocess.run([str(probe / 'bin/python'), '-I', '-B', '-c',
+                          'import ssl, sys, venv; assert sys.version_info[:3] == (3, 12, 6)'], check=True)
+          print('PASS exact workspace-local Python 3.12.6, stdlib and venv:', sys.executable)
+          PYTHON
+          test -x "$(dirname "$python_path")/python3"
+          echo "$(dirname "$python_path")" >> "$GITHUB_PATH"
+      - name: Pinned release tools alone (tools/ci_environment.py)
+        run: python3 -B tools/ci_environment.py --prepare-release
+      - name: The pull request's title, its merge subject
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: python3 -B tools/release_tools.py --pr-title "$PR_TITLE"
