@@ -1,8 +1,12 @@
 /* Transitional host backend only. The session, ZIP reader and filter are Rust.
  * Build against frozen Expat, never a system substitute. */
+#include <expat_config.h>
 #include <expat.h>
 #include <stddef.h>
 #include <stdint.h>
+#if !defined(XML_GE) || XML_GE != 1
+#error "Pinned Expat requires XML_GE == 1 for entity amplification limits"
+#endif
 
 typedef void (*start_fn)(void *, const char *, const char **);
 typedef void (*end_fn)(void *, const char *);
@@ -17,7 +21,18 @@ static void XMLCALL bridge_end(void *p, const char *n) {
 static void XMLCALL bridge_text(void *p, const char *t, int n) {
   struct callbacks *c = XML_GetUserData((XML_Parser)p); c->text(c->rust,t,n);
 }
-void *newt_xml_create(void) { return XML_ParserCreate(NULL); }
+void *newt_xml_create(void) {
+  XML_Parser parser = XML_ParserCreate(NULL);
+  if (!parser) return NULL;
+  /* Small OPFs must not spend the open budget expanding megabytes of entities.
+   * Activation is not a document-size cap: ordinary large XML stays valid. */
+  if (!XML_SetBillionLaughsAttackProtectionActivationThreshold(parser, 16384)
+      || !XML_SetBillionLaughsAttackProtectionMaximumAmplification(parser, 8.0f)) {
+    XML_ParserFree(parser);
+    return NULL;
+  }
+  return parser;
+}
 void newt_xml_close(void *p) { XML_ParserFree((XML_Parser)p); }
 int newt_xml_feed(void *p, const char *bytes, int n, int final_chunk,
                   void *context, start_fn start, end_fn end, text_fn text) {

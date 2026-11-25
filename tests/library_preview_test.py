@@ -10,14 +10,80 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 from gate_tier import negative_controls
 from host_common import png_from_pbm
+import preview_driver
 import rust_preview
 
 READING, LIBRARY, HOME, SLEEPING = "4", "6", "0", "3"
+
+
+def firmware_of(binary: Path) -> Path:
+    if binary.is_file():
+        match = re.search(r'--firmware "([^"]+)"', binary.read_text(errors="ignore"))
+        if match:
+            return Path(match.group(1))
+    return rust_preview.FIRMWARE
+
+
+def write_opf_epub(path: Path, opf: bytes) -> None:
+    with zipfile.ZipFile(preview_driver.SAMPLE) as src, zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as dst:
+        for info in src.infolist():
+            dst.writestr(info, opf if info.filename == "OEBPS/content.opf" else src.read(info))
+
+
+def opf_entity_expansion_refusal(firmware: Path) -> None:
+    """Entity-expansion OPFs take the exact existing ParseError refusal path and
+    notice text on the real firmware, while a plain OPF >16 KiB still opens."""
+    base_opf = zipfile.ZipFile(preview_driver.SAMPLE).read("OEBPS/content.opf")
+
+    def run_single_book(opf: bytes):
+        with tempfile.TemporaryDirectory(prefix="newt-opf-limits-") as td:
+            directory = Path(td)
+            preview_driver.first_boots(firmware, directory, [preview_driver.SKIP_QUICK_START])
+            books = directory / "card/Newt/Books"
+            books.mkdir(parents=True, exist_ok=True)
+            write_opf_epub(books / "Synthetic Book.epub", opf)
+            preview_driver.fresh(directory)
+            preview_driver.play(firmware, directory, [preview_driver.CONFIRM, preview_driver.CONFIRM])
+            frame = (directory / "frame.pbm").read_bytes()
+            png_from_pbm(frame)
+            fields = dict(re.findall(r"([a-z_]+)=(\d+)", (directory / "receipt.txt").read_text()))
+            return frame, fields
+
+    decl, sep, rest = base_opf.partition(b"<package")
+    assert sep == b"<package"
+    items = "".join(
+        f'<item id="extra-{i:03d}" href="one.xhtml" media-type="application/xhtml+xml"/>'
+        for i in range(300)
+    ).encode()
+    large_plain = base_opf.replace(b"</manifest>", items + b"</manifest>", 1)
+    assert len(large_plain) > 22_000
+    _, plain_fields = run_single_book(large_plain)
+    assert plain_fields["screen"] == READING and plain_fields["reader_open"] == "1", plain_fields
+
+    malformed_frame, malformed_fields = run_single_book(b"<package><")
+    assert malformed_fields["screen"] == LIBRARY and malformed_fields["reader_open"] == "0", malformed_fields
+
+    unit = b"x" * 1024
+    nested_dtd = b"<!DOCTYPE package [<!ENTITY a '" + unit + b"'><!ENTITY b '" + b"&a;" * 32 + b"'>]>"
+    flat_dtd = b"<!DOCTYPE package [<!ENTITY a '" + unit + b"'>]>"
+    assert b"The Small Lantern" in rest and b'<item id="one"' in rest
+    bombs = (
+        decl + nested_dtd + sep + rest.replace(b"The Small Lantern", b"&b;" * 32, 1),
+        decl + flat_dtd + sep + rest.replace(b"The Small Lantern", b"&a;" * 1024, 1),
+        decl + nested_dtd + sep + rest.replace(b'<item id="one"', b'<item id="one" title="' + b"&b;" * 32 + b'"', 1),
+    )
+    for bomb in bombs:
+        assert b"&a;" in bomb or b"&b;" in bomb
+        frame, fields = run_single_book(bomb)
+        assert fields["screen"] == LIBRARY and fields["reader_open"] == "0", fields
+        assert frame == malformed_frame, "entity-expansion OPF must take the exact ParseError refusal screen and notice"
 
 
 def previewer(binary):
@@ -112,6 +178,7 @@ def main():
     loading, fields = preview(fixture="loading")
     assert loading not in states and loading != initial
     assert preview(fixture="long-title")[1]["library_count"] == "1"
+    opf_entity_expansion_refusal(firmware_of(binary))
     if negative_controls(__file__):
         # The control opens the first book whatever Library selected.
         control = rust_preview.build(edits=[("reader_image_work.rs",

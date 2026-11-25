@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3993920,
+      "flash_bytes": 3994048,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "19c3cc43ded0ce6081612cae938414833e8c3bad",
-      "before": 3993888,
-      "after": 3993920,
-      "reason": "+32 B over the 3,993,888 B ceiling (main 445edb17): replaces the Nov 25, 2026 What's new line in rust/device-ui/whats_new_notes.h (\"Newt dresses up for Thanksgiving.\" -> \"Choose which holidays Newt dresses up for in Sleep screen settings.\") so it matches #128's opt-in holiday outfits (+32 B .rodata: 1,986,596 -> 1,986,628 B; .text unchanged at 1,889,194 B). Clean regional DEV USB build with the pinned Python: main 445edb17 3,993,888 B (its record); 19c3cc43 3,993,920 B. RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, selected stack frames 0/16/32/48/480 B (within 0/16/32/48/656 B ceilings; 330 frames).",
-      "reviewer": "Newt Lead (2026-11-25; cross-family review of What's new note update; no independent target build or hardware test)"
+      "source_revision": "4e8984afe26226766ccd57a0d37c3e321da74fd4",
+      "before": 3993920,
+      "after": 3994048,
+      "reason": "+128 B over the 3,993,920 B ceiling (main 0106552e; actual clean build 3,993,872 B after #155's -48 B -> 3,994,048 B, +176 B code cost): #153 (NEWT-203) configures Expat's existing entity amplification limits (16,384 B activation threshold and 8.0 maximum amplification, freeing and refusing creation if either setter fails) in rust/target-expat/native/expat_bridge.c::newt_xml_create. Expected linked cost of the refusal path is newt_xml_create (+56 B: 4 -> 60 B, 0 -> 16 B static frame) plus the two previously unlinked Expat setters XML_SetBillionLaughsAttackProtectionActivationThreshold (28 B) and XML_SetBillionLaughsAttackProtectionMaximumAmplification (80 B, using ROM __unordsf2/__ltsf2) (+164 B .text: 1,889,140 -> 1,889,304 B; +8 B .rodata: 1,986,628 -> 1,986,636 B; +4 B padding). Clean regional DEV USB build with the pinned Python: main 0106552e 3,993,872 B (3,993,920 B ceiling); 4e8984af 3,994,048 B. RAM 124,096 -> 124,096 B, RTC unchanged at 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, selected stack frames 0/16/32/48/480 B (within 0/16/32/48/656 B ceilings; 330 frames).",
+      "reviewer": "Newt Lead (2026-11-25): cross-family source review by gpt-6-astra xhigh, CLEAN; flash numbers checked against the CI clean firmware health build; no hardware test"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
