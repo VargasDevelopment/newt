@@ -67,8 +67,8 @@ fn online_text<'a>(view: &OnlineStatus<'_>, line: &'a mut [u8; 96]) -> &'a [u8] 
         OnlineCheck::Joining => "Connecting to Wi-Fi…".as_bytes(),
         OnlineCheck::Looking => "Looking for an update on GitHub…".as_bytes(),
         OnlineCheck::Downloading => "Downloading…".as_bytes(),
-        OnlineCheck::CheckAgain => b"Check again. The return to the official release was not confirmed on the card.",
-        OnlineCheck::ReturnIncompatible => b"The official release is too old for saved data. No return is available.",
+        OnlineCheck::CheckAgain => b"Couldn't confirm the return on the card. Check again.",
+        OnlineCheck::ReturnIncompatible => b"This official release is too old for your saved books and settings, so Newt can't return to it.",
         OnlineCheck::Ready => b"Downloaded to the card.",
         OnlineCheck::Latest => {
             let prefix = b"No newer Newt on GitHub. This X3 has ";

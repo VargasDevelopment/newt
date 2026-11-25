@@ -75,7 +75,7 @@ fn render_list<P, S>(view: &UpdateView<'_, P, S>, bar: &SystemBar, frame: Option
     };
     if returning {
         if let Some(index) = offer {
-            joined(&mut note, &[b"Return to official release: ", view.running.to_bytes(), b" -> ", &view.offers[index].manifest.version, b". This version is older."]);
+            joined(&mut note, &[b"Return to the official release: ", view.running.to_bytes(), b" to ", &view.offers[index].manifest.version, b". This version is older."]);
             paragraph(&note);
         }
     } else if let Some(index) = offer { offer_note(view, &view.offers[index], &mut note); paragraph(&note); }
@@ -180,10 +180,8 @@ fn render_confirm<P, S>(view: &UpdateView<'_, P, S>, bar: &SystemBar, frame: Opt
     let mut text = [0; 160]; let other = firmware_title(view.target_name);
     if !firmware(offer) {
         if returning {
-            joined(&mut text, &[b"Return to official release? ", view.running.to_bytes(), b" -> ", &offer.manifest.version, b". This version is older. Back keeps this Newt."]);
+            joined(&mut text, &[b"Return to the official release? ", view.running.to_bytes(), b" to ", &offer.manifest.version, b". This version is older. Back keeps this version."]);
             paragraph(&text, 24);
-            joined(&mut text, &[b"Saved data needs Newt ", newt_core::official_return::MINIMUM.to_bytes(), b" or newer."]);
-            paragraph(&text, 21);
             if view.target == SlotImage::Other {
                 joined(&mut text, &[b"This replaces ", other, b" on this X3."]); paragraph(&text, 21);
             }
