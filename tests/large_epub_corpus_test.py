@@ -6,6 +6,8 @@ newt_core::admission::admit and PhasedReader::open_phased (real 48 KiB banks),
 and checks each boundary case. Runs the fast subset by default so the normal
 gate stays quick; pass --full for the complete 64 MiB and multi-thousand-page
 corpus, and --measure to print per-case timings and arena metrics.
+--negative-controls runs only the negative controls: the gate runs them as
+their own phase so neither half outgrows one phase's CPU budget.
 """
 import argparse
 import importlib.util
@@ -21,7 +23,6 @@ import time
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
-from gate_tier import negative_controls
 import large_epub_corpus as corpus
 
 ADMISSION = "core/src/admission.rs"
@@ -393,17 +394,32 @@ def run_sweep(binary, run, workspace, out_dir):
     print(f"extra ZIP entries (e/0000, chapters=2): max extra = {max_extra_zip} (total entries={max_extra_zip + 6})", flush=True)
 
 
+def run_controls(binary, run, workspace, target, support, epubs_dir, output):
+    """Every negative control. Each target case is generated here and must pass
+    on unchanged code first, so this needs nothing from the clean-case run."""
+    cache_limit_cases(run, workspace, target, support, controls=True)
+    by_name, verified = {}, set()
+    prepare_control_baselines(binary, run, workspace, epubs_dir, output, support, by_name, verified, CONTROLS)
+    verify_control_baseline_guard(binary, run, workspace, epubs_dir, output, support, by_name)
+    for row in CONTROLS:
+        case_name = row[4]
+        case_manifest = output / f"ctrl-{case_name}.tsv"
+        write_manifest(case_manifest, [by_name[case_name]])
+        run_control(run, workspace, target, support, case_manifest, verified, *row)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--full", action="store_true", help="Run the full corpus (includes 64 MiB and >4,096-page cases)")
     parser.add_argument("--measure", action="store_true", help="Print per-case timings, arena high-water, and cache sizes")
     parser.add_argument("--sweep", action="store_true", help="Also run chapter/entry count sweep against 48 KiB banks")
-    parser.add_argument("--no-controls", action="store_true", help="Skip negative controls")
+    parser.add_argument("--negative-controls", action="store_true",
+                        help="Run only the negative controls, instead of the corpus cases")
     args = parser.parse_args(argv)
 
     started = time.perf_counter()
     subset = "full" if args.full else "fast"
-    cases = corpus.select_cases(subset=subset)
+    cases = [] if args.negative_controls else corpus.select_cases(subset=subset)
 
     support = load("large_epub_support", ROOT / "rust/tests/inflate/run_support.py")
     support.install_signal_handlers()
@@ -426,11 +442,23 @@ def main(argv=None):
         run = support.Run(output / "logs", support.verify_tools(), time.monotonic() + 600)
         run.env["CARGO_BUILD_JOBS"] = os.environ.get("CARGO_BUILD_JOBS", "6")
         objects = compile_native_objects(run, workspace, output / "objs")
-        run.env["RUSTFLAGS"] = rustflags(objects, warnings=True)
+        # Mutants may warn, so controls build without denied warnings from the
+        # start; the corpus-case run is the one that holds the code to them.
+        run.env["RUSTFLAGS"] = rustflags(objects, warnings=not args.negative_controls)
+        if args.negative_controls:
+            # Each control rebuilds after a one-line edit: incremental builds
+            # without debug info halve that. A stale build could only keep the
+            # code unbroken, which fails the control, so it cannot hide one.
+            run.env.update(CARGO_INCREMENTAL="1", CARGO_PROFILE_DEV_DEBUG="0")
         run.env["NEWT_LARGE_EPUB_MANIFEST"] = str(manifest)
         target = output / "target"
         try:
             binary = test_binary(run, workspace, target)
+            if args.negative_controls:
+                run_controls(binary, run, workspace, target, support, epubs_dir, output)
+                print(f"PASS large-EPUB corpus controls ({len(CONTROLS) + len(CACHE_LIMIT_CONTROLS)} controls; "
+                      f"total {time.perf_counter() - started:.2f}s)", flush=True)
+                return
             exec_t0 = time.perf_counter()
             out = run_clean_cases(binary, run, workspace, support, manifest)
             exec_s = time.perf_counter() - exec_t0
@@ -440,20 +468,8 @@ def main(argv=None):
                         print(line)
             if args.sweep:
                 run_sweep(binary, run, workspace, output / "sweep")
-            unit_controls = not args.no_controls and negative_controls(__file__)
             run.env["RUSTFLAGS"] = rustflags(objects, warnings=False)
-            cache_limit_cases(run, workspace, target, support, controls=unit_controls)
-            if not args.no_controls and negative_controls(__file__):
-                by_name = {r["name"]: r for r in records}
-                verified = set(by_name)
-                prepare_control_baselines(binary, run, workspace, epubs_dir, output, support, by_name, verified, CONTROLS)
-                verify_control_baseline_guard(binary, run, workspace, epubs_dir, output, support, by_name)
-                run.env["RUSTFLAGS"] = rustflags(objects, warnings=False)
-                for row in CONTROLS:
-                    case_name = row[4]
-                    case_manifest = output / f"ctrl-{case_name}.tsv"
-                    write_manifest(case_manifest, [by_name[case_name]])
-                    run_control(run, workspace, target, support, case_manifest, verified, *row)
+            cache_limit_cases(run, workspace, target, support, controls=False)
         except RuntimeError:
             for log in sorted((output / "logs").glob("*.std*"))[-2:]:
                 print(log.read_text(), file=sys.stderr, end="")

@@ -551,15 +551,19 @@ class PlanTests(unittest.TestCase):
                                   {phase.name for phase in push})
 
     def test_large_epub_corpus_runs_full_only_in_full_tier(self):
-        for controls, want_full in (
-            (None, True),
-            (lambda _: False, False),
-            (lambda script: script == 'large_epub_corpus_test.py', False),
+        """The corpus cases always run; its controls are a second phase that runs
+        whenever the test's controls are selected."""
+        for controls, want_full, want_controls in (
+            (None, True, True),
+            (lambda _: False, False, False),
+            (lambda script: script == 'large_epub_corpus_test.py', False, True),
         ):
             phases = [phase for phase in gate_plan.plan('linux', False, controls)
                       if any(Path(arg).name == 'large_epub_corpus_test.py' for arg in phase.command)]
-            self.assertEqual(len(phases), 1)
-            self.assertEqual('--full' in phases[0].command, want_full)
+            cases = [phase for phase in phases if '--negative-controls' not in phase.command]
+            self.assertEqual(len(cases), 1)
+            self.assertEqual('--full' in cases[0].command, want_full)
+            self.assertEqual(len(phases) - len(cases), int(want_controls))
 
 
 class StartOrderTests(unittest.TestCase):

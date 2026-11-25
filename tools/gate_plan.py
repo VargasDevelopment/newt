@@ -125,6 +125,9 @@ def plan(profile: str, fresh_objects: bool, controls=None) -> list[Phase]:
     test("dev_put_test.py")
     test("dev_usb_live_capture_test.py")
     test("large_epub_corpus_test.py", "--full")
+    # Its controls are a phase of their own: together the two outgrow one
+    # phase's CPU budget (tools/gate-cpu-budgets.json).
+    test("large_epub_corpus_test.py", "--negative-controls", full_only=True)
     test("update_publish_test.py")
     test("release_publish_test.py", "--negative-controls")
     test("nightly_test.py", "--negative-controls")
