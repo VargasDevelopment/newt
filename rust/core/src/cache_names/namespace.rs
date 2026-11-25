@@ -116,7 +116,9 @@ pub const PAGE_SEGMENT_BATCH: u8 = 4;
 /// Book indexes have their own LRU quota, outside Pages: losing one costs a
 /// rebuild, so orphans of deleted books age out under pressure.
 pub const INDEX_QUOTA: u64 = 16 * 1024 * 1024;
-/// Provisional: set from the Virtual X3 census timing over 256 files.
+/// Provisional until the bench times a census over 256 index files: above
+/// about 20 ms, the cap drops to fit. The census runs only before a new index
+/// is written, never on a repeat open.
 pub const INDEX_ENTRY_CAP: u32 = 256;
 pub const INDEX_ENTRY_RESERVE: u32 = 8;
 pub const INDEX_ENTRY_GRANT: u8 = (INDEX_ENTRY_CAP - INDEX_ENTRY_RESERVE) as u8;
