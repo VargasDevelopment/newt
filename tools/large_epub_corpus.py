@@ -92,7 +92,10 @@ class BookSpec:
     seed: int = 1
     # Chapter 0 links this CSS; chapter 1 is the same text without the link.
     stylesheet: str | None = None
-    # (member, fault): member is container, opf, css or chapter (chapter 2).
+    # Chapter 0 shows img.png, a PNG header the sample path can size. The
+    # sample path takes only small stored books, so image cases set compress=False.
+    image: bool = False
+    # (member, fault): member is container, opf, css, image or chapter (chapter 2).
     damage: tuple[str, str] | None = None
     # Extra stored entries with exact names, so duplicates and collisions are possible.
     extra_names: tuple[str, ...] = ()
@@ -120,6 +123,8 @@ class Case:
     expected_chapter: str | None = None
     # Whether chapter 0's stylesheet changed its layout (check_mode "styled").
     expected_styled: bool | None = None
+    # Whether the sample path placed chapter 0's image (check_mode "image").
+    expected_image: bool | None = None
 
 
 # A local-header fault per name; each makes the local header disagree with
@@ -168,6 +173,14 @@ def chapter_xhtml(chapter: int, *, seed: int = 1, target_bytes: int = 0, paragra
 def _link_stylesheet(chapter: bytes) -> bytes:
     link = b'<link rel="stylesheet" type="text/css" href="style.css"/>'
     return chapter.replace(b"</head>", link + b"</head>", 1)
+
+
+def _show_image(chapter: bytes) -> bytes:
+    return chapter.replace(b"</body>", b'<p><img src="img.png" alt=""/></p></body>', 1)
+
+
+# Only the 26 B header is probed: signature, IHDR length/type, 600 x 1600.
+PNG_HEADER = b"\x89PNG\r\n\x1a\n" + struct.pack(">I4sII", 13, b"IHDR", 600, 1600) + b"\x08\x00\x00\x00\x00"
 
 
 def _chapter_href(spec: BookSpec, index: int) -> str:
@@ -359,6 +372,8 @@ def build_epub(spec: BookSpec) -> bytes:
     ] + [(name, b"x", False) for name in spec.extra_names]
     if spec.stylesheet is not None:
         extras.append((f"{prefix}style.css", spec.stylesheet.encode("utf-8"), spec.compress))
+    if spec.image:
+        extras.append((f"{prefix}img.png", PNG_HEADER, spec.compress))
 
     chapter_sizes = [spec.chapter_bytes] * spec.chapters
     if spec.first_chapter_bytes > 0:
@@ -390,10 +405,13 @@ def build_epub(spec: BookSpec) -> bytes:
         plain = chapter_xhtml(0, seed=spec.seed, paragraphs=spec.chapter_paragraphs)
         chapters[0] = (chapters[0][0], _link_stylesheet(plain), spec.compress)
         chapters[1] = (chapters[1][0], plain, spec.compress)
+    if spec.image:
+        chapters[0] = (chapters[0][0], _show_image(chapters[0][1]), spec.compress)
     damage = None
     if spec.damage is not None:
         member, fault = spec.damage
         names = {"container": "META-INF/container.xml", "opf": opf_path, "css": f"{prefix}style.css",
+                 "image": f"{prefix}img.png" if spec.image else None,
                  "chapter": chapters[2][0] if len(chapters) > 2 else None}
         if names.get(member) is None:
             raise ValueError(f"cannot damage {member} in this book")
@@ -506,6 +524,10 @@ CASES: tuple[Case, ...] = (
          BookSpec(chapters=2, chapter_paragraphs=40, stylesheet="p { margin-top: 5em; }"), expected_styled=True),
     Case("damaged-css", "member-check", "fast", "Ok", "Ok", "styled", "Damaged stylesheet local header: chapter 0 reads without its styles, like a missing stylesheet",
          BookSpec(chapters=2, chapter_paragraphs=40, stylesheet="p { margin-top: 5em; }", damage=("css", "name")), expected_styled=False),
+    Case("sample-image", "member-check", "fast", "Ok", "Ok", "image", "The built-in sample path sizes and places chapter 0's image (control for damaged-image)",
+         BookSpec(chapters=2, image=True, compress=False), expected_image=True),
+    Case("damaged-image", "member-check", "fast", "Ok", "Ok", "image", "Damaged image local header: the sample path skips the image, like a missing image",
+         BookSpec(chapters=2, image=True, compress=False, damage=("image", "name")), expected_image=False),
     Case("hash-collision", "duplicate-names", "fast", "Ok", "Ok", "admit", "Two different names with the same 32-bit name hash are not duplicates",
          BookSpec(chapters=2, extra_names=HASH_COLLISION)),
     Case("duplicate-name", "duplicate-names", "fast", "Unsupported", "Unsupported", "admit", "Two members with the same exact name are refused",

@@ -862,7 +862,8 @@ fn bind_menu_book<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     if live != Status::Ok { return Err(live); }
     let mut project = |arena: &Arena<'_>, toc: &[TocEntry]| {
         bind(&Metadata { arena, package: &package, manifest: &manifest[..package.manifest_count],
-            spine: &spine[..package.spine_count], toc, entries: &entries[..entry_count] }, navigation)
+            spine: &spine[..package.spine_count], toc, entries: &entries[..entry_count],
+            directory_offset }, navigation)
     };
     let optional = if let Some((entry, epub3)) = declaration {
         let href = entry.name.and_then(|n| arena.c_string(n)).map(crate::xml_input::c_bytes);

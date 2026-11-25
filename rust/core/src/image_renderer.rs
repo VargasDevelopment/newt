@@ -235,16 +235,18 @@ pub fn render_png(
     Ok(status)
 }
 /// Directory lookup is borrowed; the accepted Catalog can supply this without copying data.
+/// Newt: the lookup returns a checked member, so the render never reads one
+/// that skipped the open-time check.
 pub trait EntryLookup {
-    fn find_entry(&self, href: &[u8]) -> Option<crate::zip_container::Entry>;
+    fn find_entry(&self, href: &[u8]) -> Option<crate::member_check::Checked>;
 }
 /// A resolved accepted Catalog entry can release the catalog borrow before borrowing its source.
 pub struct ResolvedEntry<'a> {
     pub href: &'a [u8],
-    pub entry: crate::zip_container::Entry,
+    pub entry: crate::member_check::Checked,
 }
 impl EntryLookup for ResolvedEntry<'_> {
-    fn find_entry(&self, href: &[u8]) -> Option<crate::zip_container::Entry> {
+    fn find_entry(&self, href: &[u8]) -> Option<crate::member_check::Checked> {
         (href == self.href).then_some(self.entry)
     }
 }

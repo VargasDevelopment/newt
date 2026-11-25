@@ -8,7 +8,8 @@ use newt_core::{
     chapter_layout::types::*,
     xml_input::EntityFilter,
     xml_session::{Resources, XmlStream},
-    zip_container::Entry,
+    member_check::Checked,
+    zip_container::Status,
     zip_window::source::BookSource,
 };
 use std::io::{self, Read};
@@ -150,14 +151,14 @@ impl Sink for Output {
     }
 }
 struct Catalog {
-    entry: Entry,
+    entry: Checked,
 }
 impl newt_core::chapter_layout::images::Catalog for Catalog {
-    fn find(&self, path: &[u8]) -> Option<Entry> {
-        (path == b"img.png").then_some(self.entry)
+    fn member(&self, _: &mut dyn BookSource, path: &[u8]) -> Result<Checked, Status> {
+        (path == b"img.png").then_some(self.entry).ok_or(Status::NotFound)
     }
-    fn find_hash(&self, h: u32) -> Option<Entry> {
-        (h == newt_core::css::hash(b"img.png")).then_some(self.entry)
+    fn member_by_hash(&self, _: &mut dyn BookSource, h: u32) -> Result<Checked, Status> {
+        (h == newt_core::css::hash(b"img.png")).then_some(self.entry).ok_or(Status::NotFound)
     }
 }
 struct Policy { enabled: bool, cancel: i64, polls: i64 }
@@ -280,7 +281,7 @@ fn run(line: &str) {
         paragraph_links: &mut pl,
     };
     let mut backend = expat::Expat::default();
-    let entry = Entry::raw(source.bytes.len() as u32);
+    let entry = Checked::raw(source.bytes.len() as u32);
     let mut buffer = [0; 2048];
     let mut filter = EntityFilter::default();
     let mut book = Source {
@@ -291,7 +292,7 @@ fn run(line: &str) {
         book: true,
     };
     let catalog = Catalog {
-        entry: Entry::raw(book.bytes.len() as u32),
+        entry: Checked::raw(book.bytes.len() as u32),
     };
     let catalog_ref = if p.len() >= 14 && p[13] != "-" {
         Some(&catalog as &dyn newt_core::chapter_layout::images::Catalog)

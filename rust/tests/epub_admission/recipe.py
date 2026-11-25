@@ -167,7 +167,7 @@ def main(argv=None, tool_root=None):
         controls.run(protocol,corpus,next(c for c in cases if c['id']=='valid-nav-not-parsed'),baseline['valid-nav-not-parsed'])
         chapter=next(c for c in cases if c['id']=='chapter-stored')
         controls.run(protocol,corpus,chapter,baseline[chapter['id']])
-        dump(output/'negative-controls.json',dict(protocol_field_deletion=True,field_bounds=True,expectation_tampering=True))
+        dump(output/'negative-controls.json',dict(protocol_field_deletion=True,field_bounds=True,expectation_tampering=True,regeneration_semantic_change=True))
         # Dynamic fail-call coverage spans each observed baseline source read.
         valid=next(c for c in cases if c['id']=='valid-nav-not-parsed')
         require(fail_calls == sum(r[0]=='R' for r in baseline[valid['id']]), 'frozen dynamic read corpus changed')

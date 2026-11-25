@@ -1,4 +1,5 @@
 //! EPUB admission checks. Typed resources are caller-owned; no hidden inflater stack.
+use crate::member_check::Checked;
 use crate::zip_container::{self as zip, Directory, Entry, InflateScratch, Reader, Status};
 use crate::zip_record_rules::*;
 use crate::zip_window::{arena::Arena, source::BookSource, window::ZipDirectoryWindow};
@@ -279,6 +280,42 @@ pub fn expand<S: BookSource + ?Sized>(
     on_yield: crate::admission::Yield<'_>,
     observer: Observer,
 ) -> Status {
+    member_events(entry, index, name, on_yield, observer,
+        || stream(source, entry, decoder, chunk, on_yield, observer))
+}
+/// Admission's required member: the open-time check runs inside the member's
+/// MemberBegin/MemberEnd pair, so a damaged member's failure names its stage.
+pub fn check_and_expand<S: BookSource + ?Sized>(
+    source: &mut S,
+    entry: &Entry,
+    index: u16,
+    name: &[u8],
+    directory_offset: u32,
+    decoder: Option<InflateScratch<'_>>,
+    chunk: Option<&mut [u8; 2048]>,
+    on_yield: crate::admission::Yield<'_>,
+    observer: Observer,
+) -> Result<Checked, Status> {
+    let mut checked = None;
+    let status = member_events(entry, index, name, on_yield, observer, || {
+        match crate::member_check::check(source, entry, name, directory_offset) {
+            Ok((member, _)) => stream(source, checked.insert(member), decoder, chunk, on_yield, observer),
+            Err(status) => status,
+        }
+    });
+    match (status, checked) {
+        (Status::Ok, Some(member)) => Ok(member),
+        _ => Err(status),
+    }
+}
+fn member_events(
+    entry: &Entry,
+    index: u16,
+    name: &[u8],
+    on_yield: crate::admission::Yield<'_>,
+    observer: Observer,
+    body: impl FnOnce() -> Status,
+) -> Status {
     let mut event = WorkEvent::new(WorkKind::MemberBegin, 0);
     event.member = index;
     event.method = entry.method as u8;
@@ -286,7 +323,21 @@ pub fn expand<S: BookSource + ?Sized>(
     event.compressed_bytes = entry.compressed_size;
     event.expanded_bytes = entry.uncompressed_size;
     observe(on_yield, observer, event);
-    let result = (|| {
+    let result = body();
+    event.kind = WorkKind::MemberEnd;
+    event.result = result as i32;
+    observe(on_yield, observer, event);
+    result
+}
+fn stream<S: BookSource + ?Sized>(
+    source: &mut S,
+    entry: &Entry,
+    decoder: Option<InflateScratch<'_>>,
+    chunk: Option<&mut [u8; 2048]>,
+    on_yield: crate::admission::Yield<'_>,
+    observer: Observer,
+) -> Status {
+    {
         if !inflate_input_bounded(entry) {
             return Status::Unsupported;
         }
@@ -322,11 +373,7 @@ pub fn expand<S: BookSource + ?Sized>(
                 f.yield_now();
             }
         }
-    })();
-    event.kind = WorkKind::MemberEnd;
-    event.result = result as i32;
-    observe(on_yield, observer, event);
-    result
+    }
 }
 /// A sequential chapter adapter. Successful construction corresponds to open Ok.
 /// On failed open no source object is published (stronger safe API boundary).

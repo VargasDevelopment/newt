@@ -30,6 +30,44 @@ impl core::ops::Deref for Checked {
         &self.0
     }
 }
+/// A [`Checked`] member kept compactly for a later read in the same open
+/// (a stylesheet found while its chapter streams). Only a `Checked` makes one;
+/// the default is `Checked::default()`, the empty raw member.
+/// Packed to 14 bytes so a caller's record keeps its pre-check size.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(C, packed(2))]
+pub struct CheckedRecord {
+    compressed_size: u32,
+    uncompressed_size: u32,
+    local_header_offset: u32,
+    method: u16,
+}
+impl From<&Checked> for CheckedRecord {
+    fn from(member: &Checked) -> Self {
+        Self {
+            compressed_size: member.compressed_size,
+            uncompressed_size: member.uncompressed_size,
+            local_header_offset: member.local_header_offset,
+            method: member.method,
+        }
+    }
+}
+impl Default for CheckedRecord {
+    fn default() -> Self {
+        Self::from(&Checked::default())
+    }
+}
+impl CheckedRecord {
+    pub fn member(&self) -> Checked {
+        Checked(Entry {
+            compressed_size: self.compressed_size,
+            uncompressed_size: self.uncompressed_size,
+            local_header_offset: self.local_header_offset,
+            method: self.method,
+            ..Entry::default()
+        })
+    }
+}
 impl Default for Checked {
     fn default() -> Self {
         Self::raw(0)

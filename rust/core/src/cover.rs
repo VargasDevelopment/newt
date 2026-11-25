@@ -11,7 +11,8 @@ use crate::zip_window::source::BookSource;
 pub enum MetadataStatus { Ok, NotFound, Unsupported, Malformed, IoError, OutOfMemory, Busy }
 #[derive(Clone, Copy, Default)]
 pub struct Member {
-    pub entry: crate::zip_container::Entry,
+    /// Only `discovery::locate` fills it, after the open-time check.
+    pub entry: crate::member_check::Checked,
     pub crc32: u32,
     pub data: u64,
 }

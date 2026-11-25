@@ -93,6 +93,7 @@ pub fn locate(source: &mut dyn BookSource, wanted: &[u8], out: &mut Member) -> S
         || le32(&header[12..]) != d.bytes || le32(&header[16..]) != d.offset
         || end + 22 + u64::from(le16(&header[20..])) != source.size() { return S::Malformed; }
     let (mut at, mut expanded, mut found) = (u64::from(d.offset), 0, false);
+    let mut entry = Entry::default();
     let mut name = [0; 512];
     for _ in 0..d.count {
         let next = match directory_member(source, at, end, d.offset, &mut expanded, &mut header, &mut name) {
@@ -105,7 +106,7 @@ pub fn locate(source: &mut dyn BookSource, wanted: &[u8], out: &mut Member) -> S
             let uncompressed_size = le32(&header[24..]);
             if method == 0 && compressed_size != uncompressed_size { return S::Unsupported; }
             found = true;
-            out.entry = Entry { name: None, name_hash: hash_path(wanted), compressed_size,
+            entry = Entry { name: None, name_hash: hash_path(wanted), compressed_size,
                 uncompressed_size, local_header_offset: le32(&header[42..]), method,
                 flags: le16(&header[8..]) };
             out.crc32 = le32(&header[16..]);
@@ -115,8 +116,8 @@ pub fn locate(source: &mut dyn BookSource, wanted: &[u8], out: &mut Member) -> S
     if at != end { return S::Malformed; }
     if !found { return S::NotFound; }
     // Checked last, after the whole directory, as the full walk used to order it.
-    match member_check::check(source, &out.entry, wanted, d.offset) {
-        Ok((_, data)) => { out.data = data; S::Ok }
+    match member_check::check(source, &entry, wanted, d.offset) {
+        Ok((member, data)) => { (out.entry, out.data) = (member, data); S::Ok }
         Err(Status::IoError) => S::IoError,
         Err(Status::Encrypted | Status::Unsupported) => S::Unsupported,
         // A damaged cover gives no art, like any malformed one.

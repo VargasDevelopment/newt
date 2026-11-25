@@ -75,25 +75,20 @@ pub enum Link {
     Damaged,
     WorkLimit,
 }
+/// The resolved record outlives its metadata Book; names and hashes do not.
 #[derive(Clone, Copy, Default)]
 #[repr(C)]
 pub struct Member {
-    pub compressed_size: u32,
-    pub uncompressed_size: u32,
-    pub local_header_offset: u32,
-    pub method: u16,
+    record: CheckedRecord,
     pub link: Link,
+    /// Set only when a resolved stylesheet passes the open-time check.
+    checked: bool,
 }
+// Four sit in every style source record inside the shared bank.
+const _: () = assert!(core::mem::size_of::<Member>() == 16);
 impl Member {
-    // The resolved record outlives its metadata Book; names and hashes do not.
-    fn entry(&self) -> Entry {
-        Entry {
-            compressed_size: self.compressed_size,
-            uncompressed_size: self.uncompressed_size,
-            local_header_offset: self.local_header_offset,
-            method: self.method,
-            ..Entry::default()
-        }
+    fn checked(&self) -> Option<Checked> {
+        (self.link == Link::Resolved && self.checked).then(|| self.record.member())
     }
 }
 
@@ -758,11 +753,10 @@ pub fn build<S: BookSource + ?Sized>(
             let m = &sources.links[link];
             link += 1;
             issues |= link_issue(m.link);
-            if m.link != Link::Resolved {
+            let Some(entry) = m.checked() else {
                 continue;
-            }
+            };
             let bytes = source.size();
-            let entry = m.entry();
             let mut tracked = FaultTrack {
                 source,
                 bytes,
@@ -778,11 +772,11 @@ pub fn build<S: BookSource + ?Sized>(
                 ) {
                     Err(e) => e,
                     Ok(mut chapter) => {
-                        admission.begin(true, m.uncompressed_size);
+                        admission.begin(true, entry.uncompressed_size);
                         let mut at = 0;
                         let mut status = Status::Ok;
-                        while at < m.uncompressed_size {
-                            let want = (m.uncompressed_size - at).min(256) as usize;
+                        while at < entry.uncompressed_size {
+                            let want = (entry.uncompressed_size - at).min(256) as usize;
                             let n =
                                 chapter.read_at(at as u64, &mut admission.scratch.chunk[..want]);
                             if n <= 0 {
@@ -834,6 +828,7 @@ use crate::{
     xml_session::{Attributes, Handler, ParserBackend, Resources, XmlStream},
 };
 use newt_core::canonical::CatalogView;
+use newt_core::member_check::{Checked, CheckedRecord};
 pub struct Book<'a, 's> {
     pub manifest: &'a [ManifestItem],
     pub arena: &'a Arena<'s>,
@@ -955,10 +950,6 @@ impl SourceScan<'_, '_, '_, '_, '_> {
                         };
                         if out.link == Link::Resolved {
                             self.members[self.links] = index as u16;
-                            out.compressed_size = entry.compressed_size;
-                            out.uncompressed_size = entry.uncompressed_size;
-                            out.local_header_offset = entry.local_header_offset;
-                            out.method = entry.method;
                         }
                     }
                 }
@@ -1157,12 +1148,12 @@ pub fn resolve<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     if let Some(catalog) = book.catalog {
         let SourceScan { out, members, links, .. } = &mut handler;
         for (member, &index) in out.links[..*links].iter_mut().zip(members.iter()) {
-            let damaged = member.link == Link::Resolved
-                && catalog
-                    .entry(usize::from(index))
-                    .is_none_or(|entry| catalog.check(&mut tracked, entry).is_err());
-            if damaged {
-                *member = Member { link: Link::Damaged, ..Member::default() };
+            if member.link != Link::Resolved {
+                continue;
+            }
+            match catalog.entry(usize::from(index)).map(|entry| catalog.check(&mut tracked, entry)) {
+                Some(Ok(checked)) => (member.record, member.checked) = (CheckedRecord::from(&checked), true),
+                None | Some(Err(_)) => *member = Member { link: Link::Damaged, ..Member::default() },
             }
         }
     }

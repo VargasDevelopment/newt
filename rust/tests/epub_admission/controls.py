@@ -22,6 +22,17 @@ def run(protocol, corpus, case, rows):
         try: corpus.check(case,altered)
         except RuntimeError: pass
         else: raise RuntimeError('wrong chapter payload accepted')
+    if case['id']=='valid-nav-not-parsed':
+        # expected-v3 is Newt's own capture, so a regeneration from code that
+        # skips a required member must still fail: the reply stays well-formed,
+        # and only corpus.py's independent member order refuses it.
+        begin=max(i for i,r in enumerate(rows) if r[:2]==['E','7'])
+        end=next(i for i in range(begin,len(rows)) if rows[i][:2]==['E','10'])
+        altered=copy.deepcopy(rows[:begin]+rows[end+1:])
+        protocol.response(raw(altered),wire)
+        try: corpus.check(case,altered)
+        except RuntimeError: pass
+        else: raise RuntimeError('regenerated reference without a required member accepted')
     changed={**case,'status':(case['status']+1)%14}
     try: corpus.check(changed,rows)
     except RuntimeError: return

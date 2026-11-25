@@ -151,17 +151,6 @@ impl<'a, 'storage, S: BookSource + ?Sized, B: ParserBackend + ?Sized> Book<'a, '
         CatalogView::new(self.entries, self.arena, self.directory_offset)
             .check(self.workflow.source, entry)
     }
-    /// [`CatalogView::member`] against this book's own source.
-    pub fn member(&mut self, path: &[u8]) -> Result<(usize, Checked), Status> {
-        CatalogView::new(self.entries, self.arena, self.directory_offset)
-            .member(self.workflow.source, path)
-    }
-    /// [`Book::member`] for a path held in this book's arena (an OPF href).
-    pub fn member_at(&mut self, path: CStringRef) -> Result<(usize, Checked), Status> {
-        let path = self.arena.c_string(path).ok_or(Status::NotFound)?;
-        CatalogView::new(self.entries, self.arena, self.directory_offset)
-            .member(self.workflow.source, path)
-    }
     pub fn manifest_item(&self, index: usize) -> Option<&ManifestItem> {
         self.manifest[..self.result.manifest_count].get(index)
     }
@@ -175,37 +164,44 @@ impl<'a, 'storage, S: BookSource + ?Sized, B: ParserBackend + ?Sized> Book<'a, '
     pub fn navigation_is_epub3(&self) -> bool {
         self.result.nav_index.is_some()
     }
-    fn required(&mut self, index: usize, member: &Checked, on_yield: crate::admission::Yield<'_>, observer: Observer) -> Status {
-        let Some(name) = CatalogView::new(self.entries, self.arena, self.directory_offset).name(&self.entries[index]) else {
-            return Status::Unsupported;
+    /// Check a found member before anything reads it. At admission
+    /// (`required`) it is also expanded, and the check runs inside its
+    /// MemberBegin/MemberEnd pair so a damaged member names its stage.
+    fn open_found(&mut self, found: Option<(usize, Entry)>, required: bool,
+        on_yield: crate::admission::Yield<'_>, observer: Observer,
+    ) -> Result<Checked, Status> {
+        let (index, entry) = found.ok_or(Status::NotFound)?;
+        if !required {
+            return self.check(&entry);
+        }
+        let Some(name) = CatalogView::new(self.entries, self.arena, self.directory_offset).name(&entry) else {
+            return Err(Status::Damaged);
         };
         let decoder = self.workflow.decoder.as_mut().map(|s| InflateScratch {
             state: &mut *s.state,
             dictionary: &mut *s.dictionary,
             input: &mut *s.input,
         });
-        admission::expand(
+        admission::check_and_expand(
             self.workflow.source,
-            member,
+            &entry,
             index as u16,
             name,
+            self.directory_offset,
             decoder,
             self.chunk.as_deref_mut(),
             on_yield,
             observer,
         )
     }
+    fn find_at(&self, path: CStringRef) -> Option<(usize, Entry)> {
+        self.catalog().find(self.arena.c_string(path)?)
+    }
     pub fn validate_selection(mut self, on_yield: crate::admission::Yield<'_>, observer: Observer) -> Status {
         if let Some(href) = self.navigation_item().and_then(|m| m.href) {
-            match self.member_at(href) {
-                Err(Status::NotFound) => {}
+            match self.open_found(self.find_at(href), true, on_yield, observer) {
+                Ok(_) | Err(Status::NotFound) => {}
                 Err(status) => return status,
-                Ok((index, member)) => {
-                    let status = self.required(index, &member, on_yield, observer);
-                    if status != Status::Ok {
-                        return status;
-                    }
-                }
             }
         }
         for i in 0..self.result.spine_count {
@@ -238,16 +234,10 @@ impl<'a, 'storage, S: BookSource + ?Sized, B: ParserBackend + ?Sized> Book<'a, '
             -> Result<(&'a mut [ManifestItem], &'scratch mut [u32]), Status>,
         allocate_spine: impl FnOnce(&mut Arena<'storage>, usize) -> Result<&'a mut [u16], Status>,
     ) -> Status {
-        match self.member(b"META-INF/encryption.xml") {
+        match self.open_found(self.catalog().find(b"META-INF/encryption.xml"), required, on_yield, observer) {
             Err(Status::NotFound) => {}
             Err(status) => return status,
-            Ok((index, member)) => {
-                if required {
-                    let s = self.required(index, &member, on_yield, observer);
-                    if s != Status::Ok {
-                        return s;
-                    }
-                }
+            Ok(member) => {
                 let mut scan = EncryptionScan { encrypted: false };
                 let status = self.workflow.pass(&member, &mut scan);
                 if status != Status::Ok || scan.encrypted {
@@ -255,33 +245,22 @@ impl<'a, 'storage, S: BookSource + ?Sized, B: ParserBackend + ?Sized> Book<'a, '
                 }
             }
         }
-        let (index, member) = match self.member(b"META-INF/container.xml") {
-            Ok(found) => found,
+        let member = match self.open_found(self.catalog().find(b"META-INF/container.xml"), required, on_yield, observer) {
+            Ok(member) => member,
             Err(Status::NotFound) => return Status::NotEpub,
             Err(status) => return status,
         };
-        if required {
-            let s = self.required(index, &member, on_yield, observer);
-            if s != Status::Ok {
-                return s;
-            }
-        }
         let mut path = None;
         let status = package::parse_container(&mut self.workflow, &member, self.arena, &mut path);
         if status != Status::Ok {
             return status;
         }
-        let (index, member) = match path.map(|p| self.member_at(p)) {
-            Some(Ok(found)) => found,
-            None | Some(Err(Status::NotFound)) => return Status::NotEpub,
-            Some(Err(status)) => return status,
+        let found = path.and_then(|p| self.find_at(p));
+        let member = match self.open_found(found, required, on_yield, observer) {
+            Ok(member) => member,
+            Err(Status::NotFound) => return Status::NotEpub,
+            Err(status) => return status,
         };
-        if required {
-            let s = self.required(index, &member, on_yield, observer);
-            if s != Status::Ok {
-                return s;
-            }
-        }
         let Some(path) = path.and_then(|p| self.arena.c_string(p)) else {
             return Status::NotEpub;
         };
@@ -461,10 +440,10 @@ impl CatalogView<'_, '_> {
     /// this call, so the sort can run before or after a member inflate:
     ///
     /// ```
-    /// # use newt_core::{canonical::CatalogView, zip_container::{Entry, InflateScratch, Reader}};
+    /// # use newt_core::{canonical::CatalogView, member_check::Checked, zip_container::{InflateScratch, Reader}};
     /// # use newt_core::zip_window::source::BookSource;
     /// fn sort_then_read<S: BookSource>(view: CatalogView<'_, '_>, source: &mut S,
-    ///     idle: &mut InflateScratch<'_>, member: &Entry) {
+    ///     idle: &mut InflateScratch<'_>, member: &Checked) {
     ///     view.duplicate_names(idle);
     ///     let mut reader = Reader::new(source, Some(InflateScratch {
     ///         state: &mut *idle.state, dictionary: &mut *idle.dictionary, input: &mut *idle.input }));
@@ -476,10 +455,10 @@ impl CatalogView<'_, '_> {
     /// but never while an inflate holds that dictionary:
     ///
     /// ```compile_fail
-    /// # use newt_core::{canonical::CatalogView, zip_container::{Entry, InflateScratch, Reader}};
+    /// # use newt_core::{canonical::CatalogView, member_check::Checked, zip_container::{InflateScratch, Reader}};
     /// # use newt_core::zip_window::source::BookSource;
     /// fn sort_during_read<S: BookSource>(view: CatalogView<'_, '_>, source: &mut S,
-    ///     idle: &mut InflateScratch<'_>, member: &Entry) {
+    ///     idle: &mut InflateScratch<'_>, member: &Checked) {
     ///     let mut reader = Reader::new(source, Some(InflateScratch {
     ///         state: &mut *idle.state, dictionary: &mut *idle.dictionary, input: &mut *idle.input }));
     ///     reader.open(member);
