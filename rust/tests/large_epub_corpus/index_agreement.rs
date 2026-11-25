@@ -114,9 +114,17 @@ fn agreement_variant(source: &mut impl BookSource, name: &str, buffer_bytes: usi
             let mut storage = PhaseStorage::new(&mut shared.0);
             let mut loan = HostLoan(&mut native);
             let mut navigation = Navigation::default();
+            store.index_opens = 0;
             storage.with_loan(&mut loan, |phase| phase.navigation_indexed(parts.workflow.source,
                 parts.workflow.backend, &mut store, &identity.digest, &reader, Default::default(),
                 &mut navigation, Some((newt_reader_navigation::Section::default(), 0)), None)).unwrap();
+            assert_eq!(store.index_opens, 0, "index-opens: Contents binding reuses the open reader ({name})");
+            let mut selections = [Selection::default(), Selection::default()];
+            let mut physical = PhasedReader::new(&mut selections, None, PageLayout::PORTRAIT);
+            store.index_opens = 0;
+            assert!(storage.with_loan(&mut loan, |phase| physical.select_indexed(parts.workflow.source,
+                &mut store, &identity.digest, 0, phase, parts.workflow.backend, false)).is_ok());
+            assert_eq!(store.index_opens, 1, "index-opens: selection opens once ({name})");
             let authored = parts.result.nav_index.or(parts.result.ncx_index).is_some();
             let expected = if authored && chosen.is_none() { ContentsFallback::Invalid } else { ContentsFallback::None };
             assert_eq!(navigation.contents_fallback(), expected, "{name}: same Contents fallback message");
@@ -377,6 +385,18 @@ pub fn navigation_declarations_agree() {
     }
 }
 
+fn index_opens_do_not_grow_with_toc() {
+    let opf = package("", &(item("chapter", "c.xhtml", "") +
+        "<item id='nav' href='nav.xhtml' media-type='application/xhtml+xml' properties='nav'/>"),
+        "<itemref idref='chapter'/>");
+    for count in [1, 12, 120] {
+        let rows = "<li><a href='c.xhtml'>Chapter</a></li>".repeat(count);
+        let nav = format!("<html><body><nav><ol>{rows}</ol></nav></body></html>");
+        agreement_variant(&mut book(&opf, &[("OEBPS/c.xhtml", b"<html/>"),
+            ("OEBPS/nav.xhtml", nav.as_bytes())]), "index-opens", 32768, 512, 32768, false, true);
+    }
+}
+
 fn colliding_32_bit_ids_select_the_exact_indexed_item() {
     let (first, second) = ("ica4fef2f4f5e837e", "iebf558cad0143146");
     assert_eq!(newt_core::zip_container::hash_path(first.as_bytes()), newt_core::zip_container::hash_path(second.as_bytes()));
@@ -420,6 +440,7 @@ fn colliding_32_bit_ids_select_the_exact_indexed_item() {
 }
 
 pub fn small_cases() {
+    index_opens_do_not_grow_with_toc();
     colliding_32_bit_ids_select_the_exact_indexed_item();
     stylesheet_declarations_agree();
     contents_requires_one_supported_text_spine_item();
@@ -433,7 +454,7 @@ pub fn small_cases() {
 }
 
 #[derive(Default)]
-struct BuildStore { work: Vec<u8>, cache: Vec<u8>, pending: Vec<u8> }
+struct BuildStore { work: Vec<u8>, cache: Vec<u8>, pending: Vec<u8>, index_opens: usize }
 impl builder::WorkFile for BuildStore {
     fn append(&mut self, bytes: &[u8]) -> bool { self.work.extend_from_slice(bytes); true }
     fn read_at(&mut self, at: u32, out: &mut [u8]) -> bool {
@@ -447,6 +468,7 @@ impl CacheStorage for BuildStore {
     fn remove(&mut self, _: &[u8]) -> bool { self.cache.clear(); true }
     fn file_size(&mut self, _: &[u8]) -> i64 { self.cache.len() as i64 }
     fn read_at(&mut self, _: &[u8], at: u32, out: &mut [u8]) -> i32 {
+        if at == 0 && out.len() == index::HEADER_BYTES as usize { self.index_opens += 1; }
         let Some(input) = self.cache.get(at as usize..at as usize + out.len()) else { return -1; };
         out.copy_from_slice(input); out.len() as i32
     }

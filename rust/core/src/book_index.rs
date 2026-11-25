@@ -189,40 +189,40 @@ impl Header {
     }
     /// None unless the header is this schema, built for `expected`, and its
     /// counts describe exactly `payload` bytes.
+    #[inline(always)]
     pub fn decode(input: &[u8; HEADER_BYTES as usize], expected: &Identity, payload: u32) -> Option<Self> {
-        let header = Self {
-            identity: Identity {
-                digest: input[12..44].try_into().ok()?,
-                policy: get32(input, 8),
-            },
-            members: get32(input, 44),
-            spine: get32(input, 48),
-            spine_bytes: get64(input, 52),
-            nav: get32(input, 60),
-            ncx: get32(input, 64),
-            cover: get32(input, 68),
-            language: BookLanguage::ALL.get(usize::from(input[72])).copied()?,
-            stylesheets: input[73] & 1 != 0,
-            navigation_declared: input[73] & 2 != 0,
-            title: input[80..80 + TITLE_BYTES].try_into().ok()?,
-        };
-        // The title is a non-empty UTF-8 C string padded with zeros.
-        let title = header.title();
-        let title_valid = !title.is_empty() && title.len() < TITLE_BYTES
-            && core::str::from_utf8(title).is_ok()
-            && header.title[title.len()..].iter().all(|&b| b == 0);
+        let members = get32(input, 44);
+        let spine = get32(input, 48);
+        let spine_bytes = get64(input, 52);
+        let nav = get32(input, 60);
+        let ncx = get32(input, 64);
+        let cover = get32(input, 68);
+        let language = BookLanguage::ALL.get(usize::from(input[72])).copied()?;
+        // Validate the encoded title before copying it into the returned header.
+        let title = &input[80..80 + TITLE_BYTES];
+        let end = title.iter().position(|&b| b == 0).unwrap_or(TITLE_BYTES);
+        let title_valid = end != 0 && end < TITLE_BYTES
+            && core::str::from_utf8(&title[..end]).is_ok()
+            && title[end..].iter().all(|&b| b == 0);
         let valid = input[..4] == MAGIC
             && get32(input, 4) == SCHEMA
-            && header.identity == *expected
-            && header.payload_bytes() == Some(payload)
-            && header.spine_bytes <= EPUB_MAX_EXPANDED_BYTES
-            && [header.nav, header.ncx, header.cover].iter().all(|&m| optional(m, header.members))
-            && (header.nav == NONE || header.ncx == NONE)
+            && input[12..44] == expected.digest
+            && get32(input, 8) == expected.policy
+            && payload_bytes(members, spine) == Some(payload)
+            && spine_bytes <= EPUB_MAX_EXPANDED_BYTES
+            && [nav, ncx, cover].iter().all(|&m| optional(m, members))
+            && (nav == NONE || ncx == NONE)
             && title_valid
             && input[73] & !3 == 0
             && input[74..80].iter().all(|&b| b == 0)
             && input[80 + TITLE_BYTES..].iter().all(|&b| b == 0);
-        valid.then_some(header)
+        if !valid { return None; }
+        Some(Self {
+            identity: *expected, members, spine, spine_bytes, nav, ncx, cover, language,
+            stylesheets: input[73] & 1 != 0,
+            navigation_declared: input[73] & 2 != 0,
+            title: title.try_into().ok()?,
+        })
     }
 }
 
@@ -384,6 +384,7 @@ pub struct Reader {
 
 impl Reader {
     /// None for a missing, damaged, stale or foreign index: rebuild it.
+    #[inline(never)]
     pub fn open<S: CacheStorage + ?Sized>(s: &mut S, identity: &Identity) -> Option<Self> {
         let file=*FileName::new(&identity.digest,FileKind::Index).as_bytes();
         let payload = u32::try_from(s.file_size(&file)).ok()?;

@@ -20,7 +20,7 @@ impl Phase<'_> {
         let mut arena = Arena::new(shared.0);
         let nav = index.header().nav.min(index.header().ncx);
         let checked = if nav == book_index::NONE { Err(Status::NotFound) } else {
-            let member = crate::reader::query_book_index(source, store, digest, self.parse, |index, store| {
+            let member = crate::reader::query_index_store(source, store, digest, self.parse, |store| {
                 index.member(store, nav).ok_or(Status::IoError)
             })?;
             let mut zip = newt_core::zip_container::Directory::default();
@@ -58,7 +58,8 @@ impl Phase<'_> {
     }
 }
 
-#[inline(always)]
+// TOC parser workspace is not needed while binding the resulting navigation.
+#[inline(never)]
 fn parse_toc<B: ParserBackend + ?Sized>(parse: &mut [u8], source: &mut dyn BookSource,
     backend: &mut B, checked: &Result<Checked, Status>, path: &[u8], directory: &mut [u8; 512],
     arena: &mut Arena<'_>, kind: TocKind, entries: Option<&mut [TocEntry]>,
@@ -94,7 +95,7 @@ fn bind_indexed<C: ReadScope>(parse: &mut [u8], source: &mut dyn BookSource,
         if failed.get().is_some() { return book_index::NONE; }
         let mut access = access.borrow_mut();
         let (source, store, query) = &mut *access;
-        let result = crate::reader::query_book_index(*source, *store, digest, query, |index, store| {
+        let result = crate::reader::query_index_store(*source, *store, digest, query, |store| {
             index.find(store, book_index::name_hash(href)).map(|hit| hit.map_or(book_index::NONE,
                 |(_, member)| member.contents_spine)).map_err(|_| Status::IoError)
         });
@@ -108,7 +109,7 @@ fn bind_indexed<C: ReadScope>(parse: &mut [u8], source: &mut dyn BookSource,
         let rows = Parts(&mut *parts.0).array::<index_mapping::HashRow>(toc.len())?;
         let mut access = access.borrow_mut();
         let (source, store, query) = &mut *access;
-        crate::reader::query_book_index(*source, *store, digest, query, |index, store| {
+        crate::reader::query_index_store(*source, *store, digest, query, |store| {
             index_mapping::declared_spines(&book, index, store, mapping, rows).map_err(|_| Status::IoError)
         })?;
         Some(mapping)
@@ -136,11 +137,12 @@ mod tests {
         fn size(&self) -> u64 { 1 }
         fn read_at(&mut self, _: u64, out: &mut [u8]) -> i32 { if out.is_empty() { 0 } else { -1 } }
     }
-    struct Store { bytes: Vec<u8>, scopes: usize, reads: usize }
+    struct Store { bytes: Vec<u8>, scopes: usize, reads: usize, opens: usize }
     impl CacheStorage for Store {
         fn file_size(&mut self, _: &[u8]) -> i64 { self.bytes.len() as i64 }
         fn read_at(&mut self, _: &[u8], at: u32, out: &mut [u8]) -> i32 {
             self.reads += 1;
+            if at == 0 && out.len() == book_index::HEADER_BYTES as usize { self.opens += 1; }
             let Some(bytes) = self.bytes.get(at as usize..at as usize + out.len()) else { return -1; };
             out.copy_from_slice(bytes); out.len() as i32
         }
@@ -174,7 +176,7 @@ mod tests {
         let mut title = [0; book_index::TITLE_BYTES]; title[0] = b'T';
         let header = Header { identity, members: 1, spine: 1, spine_bytes: 1, nav: book_index::NONE,
             ncx: book_index::NONE, cover: book_index::NONE, language: Default::default(), stylesheets: false, navigation_declared: false, title };
-        let mut store = Store { bytes: vec![0; header.payload_bytes().unwrap() as usize], scopes: 0, reads: 0 };
+        let mut store = Store { bytes: vec![0; header.payload_bytes().unwrap() as usize], scopes: 0, reads: 0, opens: 0 };
         header.encode((&mut store.bytes[..384]).try_into().unwrap());
         Member { hash: book_index::name_hash(b"c"), contents_spine: 0, ..Default::default() }
             .encode((&mut store.bytes[384..416]).try_into().unwrap());
@@ -192,17 +194,20 @@ mod tests {
             let trace = Trace(core::cell::Cell::new(false));
             let mut navigation = Navigation::default();
             store.scopes = 0;
+            store.opens = 0;
             bind_indexed(&mut bank, &mut Source, &mut store, &identity.digest, &index,
                 ProgressInputs { index: 0, count: 1, total: 1, current: 1, valid: true, ..Default::default() },
                 &arena, &vec![entry; count], &mut navigation, None, Some(&trace)).unwrap();
             assert_eq!(navigation.section(0).spine, 0);
             if count <= CONTENTS_BATCH_ROWS { assert_eq!(store.scopes, 1); }
             else { assert!(store.scopes >= count); }
+            assert_eq!(store.opens, 0, "index-opens: binding reuses the pass reader");
             assert_eq!(trace.0.get(), cfg!(feature = "dev-usb") && count > CONTENTS_BATCH_ROWS);
             bank[BANK_BYTES - 8192..].fill(0xa5);
             bind_indexed(&mut bank, &mut Source, &mut store, &identity.digest, &index,
                 Default::default(), &arena, &vec![entry; count], &mut navigation,
                 Some((Section::default(), 0)), Some(&trace)).unwrap();
+            assert_eq!(store.opens, 0, "index-opens: menu reuses the pass reader");
             assert!(bank[BANK_BYTES - 8192..].iter().all(|&byte| byte == 0xa5),
                 "contents-margin: menu binding preserves the stated 8 KiB scratch margin");
         }

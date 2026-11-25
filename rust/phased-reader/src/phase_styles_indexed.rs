@@ -5,7 +5,7 @@ use core::cell::RefCell;
 impl Phase<'_> {
     pub(crate) fn styles_indexed<B: ParserBackend + ?Sized, C: ReadScope>(
         &mut self, source: &mut dyn BookSource, backend: &mut B, store: &mut C,
-        digest: &[u8; 32], selected: &crate::Selection,
+        digest: &[u8; 32], index: &newt_core::book_index::Reader, selected: &crate::Selection,
         hook: newt_core::admission::Yield<'_>,
     ) -> Result<Status, Status> {
         let base = self.shared.as_ptr() as usize;
@@ -27,7 +27,7 @@ impl Phase<'_> {
         let lookup = |source: &mut dyn BookSource, path: &[u8]| {
             let mut access = access.borrow_mut();
             let (store, query, name) = &mut *access;
-            let member = crate::reader::query_book_index(source, *store, digest, query, |index, store| {
+            let member = crate::reader::query_index_store(source, *store, digest, query, |store| {
                 index.find(store, newt_core::book_index::name_hash(path)).map(|hit| hit.map(|(_, member)| member))
                     .map_err(|_| Status::IoError)
             })?;

@@ -117,6 +117,8 @@ impl<'source, R: Reader, C: Cache<R> + ?Sized> Session<'_, 'source, R, C> {
         }
         self.finish_prepared_import()
     }
+    // Import can build a chapter; its workspace must not burden other owner requests.
+    #[inline(never)]
     pub fn finish_prepared_import(&mut self) -> Status {
         self.reader.close();
         if !self.revision.provisional() || !self.revision.good() {

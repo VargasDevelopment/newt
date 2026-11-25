@@ -2,18 +2,29 @@
 use newt_core::book_index::{self, Identity as IndexIdentity, Reader as BookIndex};
 use crate::phase_storage::ReadScope;
 
+// Keep header opening workspace out of the query caller and its sibling phases.
+#[inline(never)]
 pub(crate) fn query_book_index<C: ReadScope, R>(
     source: &mut dyn BookSource, store: &mut C, digest: &[u8; 32],
     scratch: &mut [u8], read: impl FnOnce(&BookIndex, &mut dyn newt_core::page_cache::CacheStorage) -> Result<R, Status>,
 ) -> Result<R, Status> {
+    query_index_store(source, store, digest, scratch, |store| {
+        let identity = IndexIdentity { digest: *digest, policy: admission::POLICY_VERSION };
+        let index = BookIndex::open(store, &identity).ok_or(Status::Damaged)?;
+        read(&index, store)
+    })
+}
+
+// Reuse the pass's checked header while retaining each storage scope's checked exit.
+#[inline(never)]
+pub(crate) fn query_index_store<C: ReadScope, R>(
+    source: &mut dyn BookSource, store: &mut C, digest: &[u8; 32], scratch: &mut [u8],
+    read: impl FnOnce(&mut dyn newt_core::page_cache::CacheStorage) -> Result<R, Status>,
+) -> Result<R, Status> {
     let name = book_index::FileName::new(digest, book_index::FileKind::Index);
-    let identity = IndexIdentity { digest: *digest, policy: admission::POLICY_VERSION };
     let bytes = source.size();
     let scoped = store.query_index(name.as_bytes(), digest, false, scratch,
-        &mut || validate(source, bytes) == Status::Ok, |store| {
-            let index = BookIndex::open(store, &identity).ok_or(Status::Damaged)?;
-            read(&index, store)
-        });
+        &mut || validate(source, bytes) == Status::Ok, read);
     let result = match scoped {
         Ok((result, true)) => result,
         Ok((_, false)) => Err(Status::Stale),
@@ -25,15 +36,14 @@ pub(crate) fn query_book_index<C: ReadScope, R>(
     result
 }
 
-struct IndexedSelection {
-    index: BookIndex,
-    progress: newt_reader_navigation::ProgressInputs,
-}
+// Selection workspace must return before navigation and style parsing begin.
+#[inline(never)]
 fn select_indexed_entry<C: ReadScope>(
     source: &mut dyn BookSource, store: &mut C, digest: &[u8; 32], spine: u32,
     scratch: &mut [u8], scan: &mut [u8; 4099], selected: &mut Selection,
-) -> Result<IndexedSelection, Status> {
-    let (index, member, before, end) = query_book_index(source, store, digest, scratch, |index, store| {
+    opened: &mut Option<BookIndex>,
+) -> Result<newt_reader_navigation::ProgressInputs, Status> {
+    let (member, before, end) = query_book_index(source, store, digest, scratch, |index, store| {
         if spine >= index.header().spine { return Err(Status::NotFound); }
         let item = index.spine(store, spine).ok_or(Status::Damaged)?;
         if item.member == book_index::NONE { return Err(Status::NotFound); }
@@ -42,7 +52,8 @@ fn select_indexed_entry<C: ReadScope>(
             index.spine(store, spine + 1).ok_or(Status::Damaged)?.before
         } else { index.header().spine_bytes };
         if end < item.before { return Err(Status::Damaged); }
-        Ok((*index, member, item.before, end))
+        *opened = Some(*index);
+        Ok((member, item.before, end))
     })?;
     let mut directory = crate::zip_container::Directory::default();
     let status = crate::zip_container::locate(source, scan, &mut directory);
@@ -52,13 +63,14 @@ fn select_indexed_entry<C: ReadScope>(
     if !newt_core::phased_metadata::admissible_href(selected.href(), selected.href.len()) {
         return Err(Status::Unsupported);
     }
+    let index = opened.as_ref().ok_or(Status::Damaged)?;
     selected.title.copy_from_slice(&index.header().title);
     selected.language = index.header().language;
     selected.spines = index.header().spine;
     let progress = newt_reader_navigation::ProgressInputs { before, current: end - before,
         total: index.header().spine_bytes, index: spine, count: index.header().spine,
         valid: index.header().spine_bytes != 0 };
-    Ok(IndexedSelection { index, progress })
+    Ok(progress)
 }
 
 impl PhasedReader<'_, '_> {
@@ -69,16 +81,18 @@ impl PhasedReader<'_, '_> {
     ) -> Result<bool, Status> {
         let _work = WorkScope::new_scoped(self.on_yield, self.work, WorkPhase::Metadata);
         let selected = &mut self.selections[self.active ^ 1];
-        let opened = phase.with_index_open(|query, scan| {
-            select_indexed_entry(source, store, digest, spine, query, scan, selected)
+        let mut opened = None;
+        let progress = phase.with_index_open(|query, scan| {
+            select_indexed_entry(source, store, digest, spine, query, scan, selected, &mut opened)
         })?;
-        phase.navigation_indexed(source, backend, store, digest, &opened.index,
-            opened.progress, &mut selected.navigation, None, self.on_yield)?;
-        let undeclared = !opened.index.header().stylesheets;
+        let index = opened.as_ref().ok_or(Status::Damaged)?;
+        phase.navigation_indexed(source, backend, store, digest, index,
+            progress, &mut selected.navigation, None, self.on_yield)?;
+        let undeclared = !index.header().stylesheets;
         if plain { return Ok(false); }
         if undeclared { phase.defer(spine)?; }
         else {
-            let status = phase.styles_indexed(source, backend, store, digest, selected, self.on_yield)?;
+            let status = phase.styles_indexed(source, backend, store, digest, index, selected, self.on_yield)?;
             if status == Status::OutOfMemory { return Ok(false); }
             if status != Status::Ok { return Err(status); }
             let status = phase.build_styles(source, backend, &selected.entry, selected.href(), spine, self.on_yield)?;
@@ -113,6 +127,7 @@ impl PhasedReader<'_, '_> {
         Status::Ok
     }
 
+    #[inline(never)]
     pub fn prepare_chapter_menu_indexed<C: ReadScope, B: ParserBackend + ?Sized>(
         &mut self, source: &mut dyn BookSource, store: &mut C, digest: &[u8; 32], focus: u32,
         storage: &mut PhaseStorage<'_>, lender: &mut impl BuildLoan, backend: &mut B,

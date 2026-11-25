@@ -515,6 +515,8 @@ impl CacheBuild<'_> {
         result.unwrap_or_else(BuildResult::status)
     }
 }
+// Layout workspace is a sibling of index selection, not its stack ancestor.
+#[inline(never)]
 #[allow(clippy::too_many_arguments)]
 fn physical_cache_pass<S: BookSource + ?Sized, B: ParserBackend + ?Sized, C: CacheStorage>(
     source: &mut S,

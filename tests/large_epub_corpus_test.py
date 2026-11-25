@@ -519,6 +519,15 @@ def run_controls(binary, run, workspace, target, support, epubs_dir, output):
                 "menu binding retains the finished sort loan", "phased-reader/src/phase_navigation_indexed.rs",
                 "Parts(&mut *parts.0).array::<index_mapping::HashRow>(toc.len())?",
                 "parts.array::<index_mapping::HashRow>(toc.len())?", "contents-margin", unit=True, test_filter=margin_test)
+    unit_binary = test_binary(run, workspace, target, unit=True)
+    opens = run.run([unit_binary, margin_test, "--nocapture"], workspace)
+    support.require("test result: ok. 1 passed; 0 failed" in opens, "index open-count baseline absent")
+    builds.admit(unit_binary, None)
+    run_control(run, workspace, target, support, manifest, {"index-opens"}, builds,
+                "per-href lookup reopens the index", "phased-reader/src/phase_navigation_indexed.rs",
+                "query_index_store(*source, *store, digest, query, |store| {\n            index.find",
+                "query_book_index(*source, *store, digest, query, |index, store| {\n            index.find",
+                "index-opens", unit=True, test_filter=margin_test)
     cache_limit_cases(run, workspace, target, support, builds=builds)
     by_name, verified = {}, set()
     prepare_control_baselines(binary, run, workspace, epubs_dir, output, support, by_name, verified, CONTROLS)
@@ -579,7 +588,7 @@ def main(argv=None):
             binary = test_binary(run, workspace, target)
             if args.negative_controls:
                 run_controls(binary, run, workspace, target, support, epubs_dir, output)
-                print(f"PASS large-EPUB corpus controls ({len(CONTROLS) + len(CACHE_LIMIT_CONTROLS) + 6} controls; "
+                print(f"PASS large-EPUB corpus controls ({len(CONTROLS) + len(CACHE_LIMIT_CONTROLS) + 7} controls; "
                       f"total {time.perf_counter() - started:.2f}s)", flush=True)
                 return
             exec_t0 = time.perf_counter()

@@ -105,6 +105,8 @@ impl<B: ParserBackend + ?Sized, L: BuildLoan, C: ReadScope + CachePresence>
             self.store.present(name, opening)
         })
     }
+    // Cache production ends before import stages the selected index entry.
+    #[inline(never)]
     fn build(
         &mut self,
         source: &mut dyn BookSource,
