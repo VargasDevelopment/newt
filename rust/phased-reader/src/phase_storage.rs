@@ -1016,3 +1016,22 @@ pub(crate) fn with_writer_index<R>(
 mod producer_cache_read;
 
 include!("phase_index.rs");
+
+/// After the nav inflater returns, mapping and verified reads share the parse
+/// bank. Keep 8 KiB spare for scalar/alignment changes, independently of TOC
+/// strings and entries in the shared bank.
+pub const CONTENTS_BATCH_ROWS: usize = 2000;
+const CONTENTS_QUERY_BYTES: usize = 4160 + 4096;
+const _: () = assert!(CONTENTS_BATCH_ROWS * (12 + 4) + CONTENTS_QUERY_BYTES + 8192 <= BANK_BYTES);
+impl Phase<'_> {
+    pub fn with_contents_mapping<R>(&mut self, count: usize,
+        operation: impl FnOnce(Option<(&mut [u32], &mut [newt_reader_navigation::index_mapping::HashRow])>, &mut [u8]) -> R,
+    ) -> Result<R, Status> {
+        let mut parts = Parts(self.parse);
+        let query = parts.bytes(CONTENTS_QUERY_BYTES, 16)?;
+        if count > CONTENTS_BATCH_ROWS { return Ok(operation(None, query)); }
+        let mapping = parts.array::<u32>(count)?;
+        let rows = parts.array::<newt_reader_navigation::index_mapping::HashRow>(count)?;
+        Ok(operation(Some((mapping, rows)), query))
+    }
+}

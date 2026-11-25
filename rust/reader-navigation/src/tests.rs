@@ -518,3 +518,39 @@ fn contents_menu_uses_the_batch_hook() {
     assert_eq!(mapping, vec![1; book.toc_count()]);
     assert!(navigation.menu_info().authored);
 }
+
+#[test]
+fn indexed_view_matches_parser_navigation_with_batch_and_per_row_mapping() {
+    use crate::{index_mapping::{self, HashRow}, index_view::IndexedBook};
+    use newt_core::{package_parsers::TocEntry, zip_window::arena::Arena};
+    let oracle = fixture();
+    let (mut storage, index) = mapping_index(&oracle);
+    let mut bytes = [0; 512];
+    let mut arena = Arena::new(&mut bytes);
+    let toc: Vec<_> = oracle.toc.iter().map(|entry| TocEntry {
+        title: arena.copy_nul_ref(Some(entry.title)), href: arena.copy_nul_ref(Some(entry.href)),
+        fragment: arena.copy_nul_ref(Some(entry.fragment)), depth: entry.depth,
+    }).collect();
+    let lookup = |href: &[u8]| readable_spine(&oracle, href);
+    let mut book = IndexedBook { header: index.header(), arena: &arena, toc: &toc,
+        mapping: None, lookup: &lookup, progress: oracle.progress_inputs(1) };
+    let mut mapping = vec![0; toc.len()];
+    index_mapping::declared_spines(&book, &index, &mut storage, &mut mapping,
+        &mut vec![HashRow::default(); toc.len()]).unwrap();
+    let mut expected = Navigation::default();
+    for batch in [false, true] {
+        assert!(expected.bind(&oracle, 1));
+        book.mapping = batch.then_some(&mapping);
+        let mut actual = Navigation::default();
+        assert!(actual.bind(&book, 1));
+        assert_eq!(actual.progress_inputs(), expected.progress_inputs());
+        assert_eq!(actual.section(0), expected.section(0));
+        assert_eq!(actual.issues(), expected.issues());
+        let mut actual_mapping = vec![0; toc.len()];
+        let mut expected_mapping = vec![0; toc.len()];
+        assert_eq!(actual.bind_menu(&book, Section::default(), 0, &mut actual_mapping),
+            expected.bind_menu(&oracle, Section::default(), 0, &mut expected_mapping));
+        assert_eq!(actual.menu_info(), expected.menu_info());
+        for row in 0..actual.menu_info().count { assert_eq!(actual.menu_row(row), expected.menu_row(row)); }
+    }
+}
