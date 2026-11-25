@@ -74,7 +74,9 @@ the tools refuse; use the install page or that firmware's card install.
 
 ## Card install
 
-**Card files** live in `/Newt/Update/` (`rust/core/src/update_card.rs`). A
+**Card files** live in `/Newt/Update/` (`rust/core/src/update_card.rs`). Newt
+creates this folder after mounting the card. Creation is best effort and
+never makes a mounted card unavailable for reading. A
 Newt update is `newt.bin` and `newt.manifest`, the same pair for every
 source. The manifest is LF-terminated lines in this exact order, at most 512
 bytes (`rust/core/src/update_manifest.rs`):

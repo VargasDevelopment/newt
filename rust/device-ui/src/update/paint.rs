@@ -77,7 +77,7 @@ fn render_list<P, S>(view: &UpdateView<'_, P, S>, bar: &SystemBar, frame: Option
     else if wifi { paragraph(b"Save a Wi-Fi network to check GitHub for updates."); }
     else { paragraph(b"Downloads a newer Newt from GitHub to the card with the saved Wi-Fi network."); }
     if check && view.card_ready && count == 0 {
-        paragraph(b"Or copy newt.bin and newt.manifest to /Newt/Update/. Make the folder if it isn't there.");
+        paragraph(b"Or copy newt.bin and newt.manifest to /Newt/Update/.");
         paragraph(b"To install another firmware, copy its .bin file there.");
     }
     if view.more_files { paragraph(b"Newt lists the first three .bin files in /Newt/Update/ by name."); }

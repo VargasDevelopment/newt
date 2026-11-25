@@ -70,8 +70,8 @@ Copy EPUB books anywhere on the card.
   Update, and pick Check GitHub for updates. Newt downloads the update to the
   card, then offers it to install.
 - **From the card:** copy `newt.bin` and `newt.manifest` from the latest
-  release to the `Newt/Update` folder on the card (make the folder if it
-  isn't there), then open Settings, Update.
+  release to the `Newt/Update` folder, which Newt creates on the card, then
+  open Settings, Update.
 
 Your books, reading progress and settings stay as they are. Reading never
 needs Wi-Fi.
@@ -88,7 +88,7 @@ get it before you update.
   Newt. Install Newt again the same way.
 - **Install another firmware:** on the install page, click **Install another
   firmware** and pick its `.bin` file. Or copy the file to the `Newt/Update`
-  folder on the card (make it if it isn't there), open Settings, Update, and
+  folder, which Newt creates on the card, open Settings, Update, and
   pick it. It replaces the spare; Newt stays in its own slot.
 - **Come back to Newt** from another firmware the same way you installed it.
 

@@ -84,7 +84,7 @@ Copy EPUB books anywhere on the card.
 - **Over Wi-Fi:** save your network in Settings, Wi-Fi. Then open
   Settings, Update, and pick Check GitHub for updates.
 - **From the card:** copy `newt.bin` and `newt.manifest` from a release to
-  the `Newt/Update` folder (make the folder if it isn't there), then open
+  the `Newt/Update` folder, which Newt creates on the card, then open
   Settings, Update.
 
 Your books, reading progress and settings stay as they are.
@@ -118,7 +118,7 @@ that, you need its `.bin` file, so get it before you update.
   Newt stays in its own slot. If that firmware updates itself, it replaces
   Newt. Install Newt again the same way.
 - **Install another firmware:** copy its `.bin` file to the `Newt/Update`
-  folder (make it if it isn't there), open Settings, Update, and pick it. It
+  folder, which Newt creates on the card, open Settings, Update, and pick it. It
   replaces the spare; Newt stays in its own slot, and the X3 restarts into
   the new firmware.
 

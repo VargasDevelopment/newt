@@ -11,7 +11,9 @@
 #include <SPI.h>
 #include <SD.h>
 #include "sd_shared_bus.h"
+#include "sd_card_folders.h"
 #include "../../native_io/native/sd_card_paths.h"
+#include <sys/stat.h>
 #include <driver/gpio.h>
 #include <esp_sleep.h>
 #include <esp_system.h>
@@ -53,7 +55,9 @@ int32_t nb_mount_sd(void) {
     } pins;
     if (!newt::firmware::prepareSharedSdBus(SPI, pins, board)) return NB_IO;
     const uint32_t hz = board.sd.spiHz != 0 ? board.sd.spiHz : 40000000u;
-    return SD.begin(board.sd.cs, SPI, hz, newt::firmware::kSdMountPoint, 3, false)
+    return newt::firmware::prepareSdFolders(
+        SD.begin(board.sd.cs, SPI, hz, newt::firmware::kSdMountPoint, 3, false),
+        [](const char* path) { return ::mkdir(path, 0700); })
         ? NB_OK : NB_IO;
 }
 int32_t nb_frame(void *display, struct nb_frame *out) {

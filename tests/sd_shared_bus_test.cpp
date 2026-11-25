@@ -1,6 +1,9 @@
 #include "../rust/salamander/board/native/sd_shared_bus.h"
+#include "../rust/salamander/board/native/sd_card_folders.h"
 #include <array>
 #include <cassert>
+#include <cerrno>
+#include <cstring>
 #include <cstdio>
 
 namespace {
@@ -46,4 +49,18 @@ int main() {
   failed.beginOk = false;
   assert(!newt::firmware::prepareSharedSdBus(failed, otherPins, board) && !failed.initialized);
   std::puts("PASS: idle shared bus deselects both devices, reattaches SD MISO after display-first initialization, and reports begin failure");
+  // Fresh/existing folders, read-only cards and full cards all keep the mount.
+  for (int root : {0, EEXIST, EACCES, ENOSPC}) {
+    for (int update : {0, EEXIST, EACCES, ENOSPC}) {
+      unsigned calls = 0;
+      auto mkdir = [&](const char* path) {
+        assert(calls < 2);
+        assert(std::strcmp(path, calls == 0 ? "/newt-sd/Newt" : "/newt-sd/Newt/Update") == 0);
+        return calls++ == 0 ? root : update;
+      };
+      assert(!newt::firmware::prepareSdFolders(false, mkdir) && calls == 0);
+      assert(newt::firmware::prepareSdFolders(true, mkdir) && calls == 2);
+    }
+  }
+  std::puts("PASS: Update folder creation follows a successful mount and never blocks a mounted card");
 }
