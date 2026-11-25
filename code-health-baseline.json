@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3989200,
+      "flash_bytes": 3989712,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,10 +28,10 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "d4700ed6804f57ba2c0ae69662e76b0923438bc8",
-      "before": 3988384,
-      "after": 3989200,
-      "reason": "#101 adaptive reader footer slots for 4+ digit page counters: derive a page-independent chapter upper bound directly from newt_ui_canvas::atlas digit advances and kerning ('0'..'9' and digit->'/' plus '/total') so Portrait expands cleanly into unused overall-percent space without clipping or jumping across pages, while keeping 1..=999 chapters unchanged. Measured main 3d168ea8 3,988,384 -> 3,989,200 B (+816 B; +384 B over the earlier +432 B '8'-filled estimate for the atlas advance/kerning scan), clean pinned-Python firmware-build.py --clean --health-report of committed d4700ed6804f57ba2c0ae69662e76b0923438bc8. RAM unchanged at 124,096 B; RTC unchanged at 300 B (.rtc_noinit 208 B); lent Wi-Fi unchanged at 22,528 B; selected compiler stack frames (0/16/32/48/480 B vs 0/16/32/48/656 B ceilings) and floors unchanged.",
+      "source_revision": "4e7bbf031949f9a6f9dbd9638acc14e858ea2c62",
+      "before": 3989200,
+      "after": 3989712,
+      "reason": "+512 B over the 3,989,200 B ceiling (main 8103ec83): #60 (NEWT-166) slice B1 adds the book index store, not yet called by the reader. The linked cost is in shared chapter cache code: cache names now recognise a second block-envelope kind (.fibx, routed to Cache/Index) through one envelope_kind check, and the entry census reads its folder, name kind, quota, file caps and backup policy (keep_backups) from a Policy so Cache/Pages and Cache/Index share one census. The index codec, writer, reader and index census are not linked until a caller exists. The first B1 measurement (a0c91c4a over main 9f2e915f) was +464 B. Since then the only non-test source changes are the keep_backups policy in the linked entry census, doc comments, and the census wrappers building their Request directly (no flash change: 3,989,712 B before and after it); main moved to 8103ec83. Clean regional DEV USB build with the pinned Python: main 8103ec83 3,989,200 B (its record); 4e7bbf03 3,989,712 B. RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, selected stack frames 0/16/32/48/480 B (within 0/16/32/48/656 B ceilings; 330 frames).",
       "reviewer": "Newt Lead (2026-11-25; cross-family review: Astra)"
     },
     "ram_bytes": {
