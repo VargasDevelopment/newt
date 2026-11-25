@@ -31,6 +31,7 @@ PAGE_CACHE = "core/src/page_cache.rs"
 PHASE_STORAGE = "phased-reader/src/phase_storage.rs"
 PHASED = "phased-reader/src/reader_phased.rs"
 READER = "phased-reader/src/reader.rs"
+MEMBER_CHECK = "core/src/member_check.rs"
 
 SYNC_SIX_CHUNKS = (
     "let mut text_parts = Parts(&mut text[..TEXT_BYTES]);\n"
@@ -83,6 +84,18 @@ CONTROLS = (
      "return Err(metadata_capacity_error(status));\n    }\n    if filler.error != Status::Ok", "runtime-parser-fill-oom"),
     ("generic Contents fallback returns invalid/empty menu", READER, "Err(status) => (project(arena, &[]), status),", "Err(status) => (false, status),", "toc-nav-over-arena"),
     ("the 64 MiB source-file cap is removed", PHASED, "if bytes > admission::EXTERNAL_MAX_BYTES {", "if false {", "file-size-over"),
+    ("the open-time check skips the local-header rule", MEMBER_CHECK,
+     ") == ZipLocalHeaderRule::Mismatch", ") == ZipLocalHeaderRule::Mismatch && false", "damaged-chapter-flags"),
+    ("the open-time check skips the local name bytes", MEMBER_CHECK, "if got != expected {", "if false {", "damaged-chapter-name"),
+    ("the open-time check skips the data range", MEMBER_CHECK,
+     "if data > directory || u64::from(entry.compressed_size) > directory - data {", "if false {", "damaged-chapter-range"),
+    ("a damaged chapter is read instead of refused", PHASED,
+     "selected.entry = book.check(&entry)?;", "selected.entry = book.check(&entry).unwrap_or_default();", "damaged-chapter-signature"),
+    ("a damaged stylesheet is still applied", "phased-reader/src/styles.rs",
+     "is_none_or(|entry| catalog.check(&mut tracked, entry).is_err())", "is_none()", "damaged-css"),
+    ("duplicate names are compared by hash only", "core/src/canonical.rs",
+     "if sort.view.name(sort.at(i - 1)) == sort.view.name(sort.at(i)) {",
+     "if sort.at(i - 1).name_hash == sort.at(i).name_hash {", "hash-collision"),
 )
 
 
@@ -212,6 +225,8 @@ def write_manifest(path: Path, records: list[dict]) -> None:
             _opt_bool(r.get("expected_small32")),
             "-" if pr is None else f"{pr[0]}..{pr[1]}",
             r.get("expected_fallback") or "-",
+            r.get("expected_chapter") or "-",
+            _opt_bool(r.get("expected_styled")),
         )))
     path.write_text("\n".join(lines) + "\n")
 
@@ -413,7 +428,7 @@ def main(argv=None):
             exec_s = time.perf_counter() - exec_t0
             if args.measure:
                 for line in out.splitlines():
-                    if line.startswith(("SIZES ", "CASE ")):
+                    if line.startswith(("SIZES ", "CASE ", "CHAPTER ")):
                         print(line)
             if args.sweep:
                 run_sweep(binary, run, workspace, output / "sweep")
