@@ -68,6 +68,7 @@ jobs:
   # The gate, split into parallel parts: the host gate's shards, cut from its own
   # plan (tools/gate_tier.py), and the one clean firmware build.
   check:
+    name: ${{ matrix.display_name }}
     needs: classify
     if: >-
       needs.classify.outputs.lane == 'full' &&
@@ -80,6 +81,23 @@ jobs:
       fail-fast: false
       matrix:
         part: ['0/7', '1/7', '2/7', '3/7', '4/7', '5/7', '6/7', native]
+        include:
+          - part: '0/7'
+            display_name: Host tests (part 1 of 7)
+          - part: '1/7'
+            display_name: Host tests (part 2 of 7)
+          - part: '2/7'
+            display_name: Host tests (part 3 of 7)
+          - part: '3/7'
+            display_name: Host tests (part 4 of 7)
+          - part: '4/7'
+            display_name: Host tests (part 5 of 7)
+          - part: '5/7'
+            display_name: Host tests (part 6 of 7)
+          - part: '6/7'
+            display_name: Host tests (part 7 of 7)
+          - part: native
+            display_name: Firmware build
     env:
       # A pull request's github.sha is GitHub's own trial "Merge X into Y" commit,
       # which nothing merges; gate the PR's head instead. Main's push run then

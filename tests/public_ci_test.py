@@ -127,6 +127,10 @@ class PublicWorkflow(unittest.TestCase):
         parts = self.check['strategy']['matrix']['part']
         count = len(parts) - 1
         self.assertEqual(parts, [f'{index}/{count}' for index in range(count)] + ['native'])
+        self.assertEqual(self.check['name'], '${{ matrix.display_name }}')
+        self.assertEqual(self.check['strategy']['matrix']['include'], [
+            *({'part': f'{index}/7', 'display_name': f'Host tests (part {index+1} of 7)'} for index in range(7)),
+            {'part': 'native', 'display_name': 'Firmware build'}])
         self.assertEqual(self.check['strategy']['fail-fast'], 'false')
         self.assertEqual(self.check['env']['PART'], '${{ matrix.part }}')
         gate = self.step('This part of the gate')
@@ -137,6 +141,19 @@ class PublicWorkflow(unittest.TestCase):
         self.assertEqual(ci_gate.commands(ROOT, python, 'push', 'native'), native)
         for part in parts[:-1]:
             self.assertEqual(ci_gate.commands(ROOT, python, 'push', part), [(host[0], [*host[1], '--shard', part])])
+
+    def test_required_check_names_stay_exact(self):
+        jobs = {'gate': self.workflow['jobs']['gate'],
+                'pr-title': workflow('pr-title.yml')['jobs']['pr-title']}
+        def require_names(candidate):
+            self.assertEqual({key: job.get('name', key) for key, job in candidate.items()},
+                             {'gate': 'gate', 'pr-title': 'pr-title'})
+        require_names(jobs)
+        # Run the same check with each required context renamed: it must fail.
+        for key in jobs:
+            renamed = {**jobs, key: {**jobs[key], 'name': 'All checks passed'}}
+            with self.subTest(context=key), self.assertRaises(AssertionError):
+                require_names(renamed)
 
     def test_shards_run_every_phase_of_the_tier_exactly_once(self):
         count = len(self.check['strategy']['matrix']['part']) - 1
