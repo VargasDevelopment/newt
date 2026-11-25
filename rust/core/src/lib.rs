@@ -62,6 +62,7 @@ pub mod zip_window;
 pub mod inflate;
 
 pub mod zip_container;
+pub mod member_check;
 
 pub mod css;
 

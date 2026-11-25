@@ -116,7 +116,8 @@ pub fn locate(source: &mut dyn BookSource, wanted: &[u8], out: &mut Member) -> S
             if method == 0 && compressed_size != uncompressed_size { return S::Unsupported; }
             found = true;
             out.entry = Entry { name: None, name_hash: hash_path(wanted), compressed_size,
-                uncompressed_size, local_header_offset: le32(&header[42..]), method };
+                uncompressed_size, local_header_offset: le32(&header[42..]), method,
+                flags: le16(&header[8..]) };
             out.crc32 = le32(&header[16..]); out.data = data;
         }
         at = next;
