@@ -216,7 +216,7 @@ def main():
     an_unknown_commit_is_never_retried()
     a_commit_left_for_a_hand_check_is_recovery_needed()
     plans_are_checked_before_the_port_opens()
-    print('PASS: dev-usb put: verified final SHA-256, lines within the receive queue, fragmented replies, '
+    print('PASS: dev-usb put: verified final SHA-256, bounded lease frames, fragmented replies, '
           'deadlines, short writes, no retry of an unknown commit, recovery-needed and plan refusals; '
           'no device access')
 
