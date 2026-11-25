@@ -52,24 +52,14 @@ pub fn trace_reader_details(sink: &mut (impl TraceSink + ?Sized), profile: &Read
     emit(sink, 64, format_args!("Reader rows: emitted={} expected=8191\n", mask));
 }
 
+// Two rows so each fits emit's 160 B line (worst case 154 and 122 B with
+// u32::MAX values). Kept out of line: the open profile inlines this module's
+// rows, and its local frame has a 672 B ceiling (tools/rust_open_stack.py).
+#[inline(never)]
 fn index_row(sink: &mut (impl TraceSink + ?Sized), p: &ReaderWorkProfile) {
-    use core::fmt::Write;
-    struct Row { bytes: [u8; 384], len: usize }
-    impl core::fmt::Write for Row {
-        fn write_str(&mut self, text: &str) -> core::fmt::Result {
-            let end = self.len.checked_add(text.len()).ok_or(core::fmt::Error)?;
-            let out = self.bytes.get_mut(self.len..end).ok_or(core::fmt::Error)?;
-            out.copy_from_slice(text.as_bytes());
-            self.len = end;
-            Ok(())
-        }
-    }
-    let mut row = Row { bytes: [0; 384], len: 0 };
-    if write!(row, "Reader index: outcome={} status={} census_ms={} central_ms={} opf_ms={} join_ms={} write_ms={} commit_ms={} members={} spine={} work_written={} work_read={} work_removed={}\n",
-        p.index[0].get(), p.index[7].get(), p.index[1].get()/1000, p.index[2].get()/1000,
-        p.index[3].get()/1000, p.index[4].get()/1000, p.index[5].get()/1000, p.index[6].get()/1000,
-        p.index[8].get(), p.index[9].get(), p.index[11].get(), p.index[12].get(), p.index[10].get()).is_ok()
-        && sink.available_for_write() >= row.len as i32 {
-        sink.write(&row.bytes[..row.len]);
-    }
+    let ms = |slot: usize| p.index[slot].get() / 1000;
+    emit(sink, 160, format_args!("Reader index: outcome={} status={} census_ms={} central_ms={} opf_ms={} join_ms={} write_ms={} commit_ms={}\n",
+        p.index[0].get(), p.index[7].get(), ms(1), ms(2), ms(3), ms(4), ms(5), ms(6)));
+    emit(sink, 160, format_args!("Reader index io: members={} spine={} work_written={} work_read={} work_removed={}\n",
+        p.index[8].get(), p.index[9].get(), p.index[11].get(), p.index[12].get(), p.index[10].get()));
 }
