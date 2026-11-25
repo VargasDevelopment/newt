@@ -6,7 +6,7 @@ use crate::{
     styles::{self, Slot, Sources, State as StyleState},
     watch::Watch,
     xml_session::{self, Attributes, Handler, ParserBackend, XmlStream},
-    zip_container::{Entry, Status, hash_path},
+    zip_container::{Status, hash_path},
     zip_window::{arena::Arena, source::BookSource},
 };
 use newt_core::{
@@ -1057,7 +1057,7 @@ fn pass_stream<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
         None,
     )?;
     let mut watch = Watch::begin(&mut chapter, slot.state);
-    let raw = Entry::raw(selected.entry.uncompressed_size);
+    let raw = Checked::raw(selected.entry.uncompressed_size);
     let mut metrics = ReaderAtlas;
     let atlas = ReaderAtlas;
     let output = match plan {
@@ -1185,7 +1185,7 @@ impl Handler for ExactAnchor<'_> {
 /// Pinned standalone exact-ID validation; a parser/I/O error precedes missing ID.
 pub fn validate_exact_anchor<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     source: &mut S,
-    entry: &Entry,
+    entry: &Checked,
     wanted: &[u8],
     r: &mut canonical::Resources<'_, B>,
     on_yield: newt_core::admission::Yield<'_>,
@@ -1200,7 +1200,7 @@ pub fn validate_exact_anchor<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
 }
 pub(crate) fn validate_exact_anchor_stream<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     source: &mut S,
-    entry: &Entry,
+    entry: &Checked,
     wanted: &[u8],
     r: &mut crate::phase_storage::ParseResources<'_, B>,
     on_yield: newt_core::admission::Yield<'_>,
@@ -1219,7 +1219,7 @@ pub(crate) fn validate_exact_anchor_stream<S: BookSource + ?Sized, B: ParserBack
         Ok(c) => c,
         Err(e) => return e,
     };
-    let raw = Entry::raw(entry.uncompressed_size);
+    let raw = Checked::raw(entry.uncompressed_size);
     let mut handler = ExactAnchor {
         wanted,
         hash: hash_path(wanted),

@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+use newt_core::member_check::Checked;
 use newt_core::{
     inflate::State,
     zip_container::{Catalog, Entry, InflateScratch, Reader, Status},
@@ -38,7 +39,7 @@ pub fn catalog(
 }
 pub fn stream(
     input: &[u8],
-    entry: &Entry,
+    entry: &Checked,
     state: &mut State,
     dict: &mut [u8; 32768],
     buf: &mut [u8; 2048],

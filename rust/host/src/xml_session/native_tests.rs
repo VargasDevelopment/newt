@@ -1,6 +1,7 @@
 use super::expat;
 use newt_core::xml_session::*;
 use newt_core::{
+    member_check::Checked,
     zip_container::{Entry, Status},
     zip_window::source::BookSource,
 };
@@ -63,7 +64,7 @@ fn real_xml_valid_malformed_strict_entities_and_filtering() {
     for &(xml, filtering, expected, events) in cases {
         for max in [1, 2, 2048] {
             let mut source = Source(xml, max);
-            let entry = Entry::raw(xml.len() as u32);
+            let entry = Checked::raw(xml.len() as u32);
             let mut parser = expat::Expat::default();
             let mut handler = Sink::default();
             let mut buffer = [0; 2048];
@@ -98,7 +99,7 @@ impl ProcessingPolicy for NeverCancel {
 fn producer_typed_resources_and_scoped_real_expat_create_oom() {
     for missing in 0..4 {
         let mut source = Source(b"<r/>", 2048);
-        let entry = Entry::raw(4);
+        let entry = Checked::raw(4);
         let mut parser = expat::Expat::default();
         parser.fail_create = missing == 2;
         let mut handler = Sink::default();
@@ -144,12 +145,12 @@ fn producer_missing_decoder_precedes_other_admission() {
     let mut local = [0; 30];
     local[..4].copy_from_slice(b"PK\x03\x04");
     let mut source = Source(&local, 2048);
-    let entry = Entry {
+    let entry = Checked::unverified(Entry {
         method: 8,
         compressed_size: 2,
         uncompressed_size: 1,
         ..Default::default()
-    };
+    });
     let mut backend = expat::Expat::default();
     let mut handler = Sink::default();
     let mut policy = NeverCancel;

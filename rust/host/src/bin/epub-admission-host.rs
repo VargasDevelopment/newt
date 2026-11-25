@@ -9,6 +9,7 @@ use newt_core::{
     inflate::{BitBuffer, DICTIONARY_SIZE, State},
     package_parsers::{ManifestItem, PackageResult},
     xml_input::EntityFilter,
+    member_check::Checked,
     zip_container::{Catalog, Entry, InflateScratch, Status},
     zip_window::{arena::Arena, source::BookSource},
 };
@@ -167,7 +168,7 @@ fn request(line: &str) -> Result<(), ()> {
         let status = zip.open(&mut scan, &mut sequential);
         if status != Status::Ok {
             status
-        } else if let Some(entry) = zip.entry(member).copied() {
+        } else if let Some(entry) = zip.entry(member).copied().map(Checked::unverified) {
             let decoder = Some(InflateScratch {
                 state: &mut state,
                 dictionary: &mut dictionary,

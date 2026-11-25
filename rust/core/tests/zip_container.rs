@@ -1,3 +1,4 @@
+use newt_core::member_check::Checked;
 use newt_core::{
     zip_container::*,
     zip_window::{arena::Arena, source::BookSource},
@@ -108,14 +109,16 @@ fn raw_short_reads_zero_length_and_failed_reopen_reset() {
     let mut r = Reader::new(&mut s, None);
     let mut out = [0; 8];
     assert_eq!(r.read(&mut out), -1);
+    let e = Checked::unverified(e);
     assert_eq!(r.open(&e), Status::Ok);
     assert_eq!(r.read(&mut []), 0);
     assert_eq!(r.read(&mut out), 2);
     assert_eq!(&out[..2], b"ab");
     assert_eq!(r.total_produced(), 2);
+    let bad = Checked::unverified(bad);
     assert_eq!(r.open(&bad), Status::Unsupported);
     assert_eq!(r.total_produced(), 0);
-    assert_eq!(r.entry(), Some(&bad));
+    assert_eq!(r.entry(), Some(&*bad));
 }
 #[test]
 fn catalog_failure_unpublishes_old_entries_and_keeps_consumed_name_storage() {
@@ -170,6 +173,7 @@ fn borrowed_deflate_stored_block_pending_delivery_and_reopen() {
         }),
     );
     let mut out = [0; 4];
+    let e = Checked::unverified(e);
     assert_eq!(r.open(&e), Status::Ok);
     assert_eq!(r.read(&mut out[..1]), 1);
     assert_eq!(out[0], b'a');
@@ -206,6 +210,7 @@ fn deflate_truncation_commits_no_produced_count_on_failed_call() {
             input: input.as_mut_slice().try_into().unwrap(),
         }),
     );
+    let e = Checked::unverified(e);
     assert_eq!(r.open(&e), Status::Ok);
     let mut out = [0xa5; 8];
     assert_eq!(r.read(&mut out), -1);

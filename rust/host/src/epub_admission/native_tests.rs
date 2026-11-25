@@ -3,7 +3,8 @@ use newt_core::xml_session::Handler;
 use newt_core::{
     xml_input::EntityFilter,
     xml_session::{Resources, XmlStream},
-    zip_container::{Entry, Status},
+    member_check::Checked,
+    zip_container::Status,
     zip_window::source::BookSource,
 };
 struct Bytes(&'static [u8]);
@@ -31,7 +32,7 @@ fn native_scope_cleanup_success_parse_failure_early_drop_and_create_failure() {
         let mut source = Bytes(bytes);
         let mut backend = Expat::default();
         backend.fail_create = fail;
-        let entry = Entry::raw(bytes.len() as u32);
+        let entry = Checked::raw(bytes.len() as u32);
         let mut buffer = [0; 2048];
         let mut filter = EntityFilter::new();
         {

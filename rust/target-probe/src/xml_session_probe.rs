@@ -1,8 +1,9 @@
 //! Runtime-borrowed RV32 probe source. Backend is supplied by the target caller;
 //! this does not supply/validate a target XML parser or target Expat integration.
+use newt_core::member_check::Checked;
 use newt_core::xml_session::{Handler, ParserBackend, Resources, XmlSaxSession};
 use newt_core::{
-    zip_container::{Entry, InflateScratch, Status},
+    zip_container::{InflateScratch, Status},
     zip_window::source::BookSource,
 };
 
@@ -10,7 +11,7 @@ use newt_core::{
 #[inline(never)]
 pub fn newt_rust_xml_session_probe<'a>(
     source: &'a mut dyn BookSource,
-    entry: &'a Entry,
+    entry: &'a Checked,
     decoder: Option<InflateScratch<'a>>,
     backend: &'a mut dyn ParserBackend,
     handler: &'a mut dyn Handler,
@@ -38,7 +39,7 @@ pub fn newt_rust_xml_session_probe<'a>(
 #[inline(never)]
 pub fn newt_rust_xml_producer_probe<'a>(
     source: &'a mut dyn BookSource,
-    entry: &'a Entry,
+    entry: &'a Checked,
     decoder: Option<InflateScratch<'a>>,
     backend: &'a mut dyn newt_core::xml_session::ProducerBackend,
     handler: &'a mut dyn Handler,

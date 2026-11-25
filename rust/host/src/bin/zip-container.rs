@@ -1,4 +1,5 @@
 //! Strict host transport; the core remains no_std and allocation-free.
+use newt_core::member_check::Checked;
 use newt_core::{
     inflate::{BitBuffer, State},
     zip_container::*,
@@ -170,8 +171,10 @@ fn main() {
             } else {
                 None
             };
+            // The oracle reads raw catalog entries, so the harness skips the check.
+            let e = Checked::unverified(*e);
             let mut r = Reader::new(&mut source, storage);
-            let status = r.open(e);
+            let status = r.open(&e);
             println!("OPEN {i} {}", status as u8);
             if status != Status::Ok {
                 continue;

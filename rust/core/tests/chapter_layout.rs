@@ -412,7 +412,7 @@ fn bounded_mock_backend_and_handler_reborrow() {
         chapter_layout::session::{ChapterSession, LayoutHandler, State},
         xml_input::EntityFilter,
         xml_session::{Handler, ParserBackend, Resources, XmlStream},
-        zip_container::{Entry, Status},
+        zip_container::Status, member_check::Checked,
         zip_window::source::BookSource,
     };
     struct Source;
@@ -442,7 +442,7 @@ fn bounded_mock_backend_and_handler_reborrow() {
     let mut sink = Capture::default();
     fixture(&mut sink, 128, |e| {
         let (mut source, mut backend) = (Source, Backend::default());
-        let entry = Entry::raw(4096);
+        let entry = Checked::raw(4096);
         let mut buffer = [0; 2048];
         let mut filter = EntityFilter::new();
         let mut session = ChapterSession::new(XmlStream::new(&mut source, None, &mut backend));

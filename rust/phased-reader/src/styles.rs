@@ -2,7 +2,7 @@
 use crate::{
     css::{CssDecl, CssRule, CssStylesheet, CssStylesheetBuilder, TextAlign},
     scan::{Scanner, Sink, Token},
-    zip_container::{Entry, InflateScratch, Status},
+    zip_container::{InflateScratch, Status},
     zip_window::{arena::Arena, source::BookSource},
 };
 pub const ID: u32 = 0x4e53540a;
@@ -1078,7 +1078,7 @@ pub struct ResolveScratch<'a, 'storage> {
 pub fn resolve<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     book: &Book<'_, '_>,
     source: &mut S,
-    chapter: &Entry,
+    chapter: &Checked,
     href: Option<&[u8]>,
     backend: &mut B,
     scratch: ResolveScratch<'_, '_>,
@@ -1121,7 +1121,7 @@ pub fn resolve<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     ) {
         Err(e) => e,
         Ok(mut decoded) => {
-            let raw = Entry::raw(chapter.uncompressed_size);
+            let raw = Checked::raw(chapter.uncompressed_size);
             let mut session = XmlStream::with_policy(&mut decoded, None, backend, crate::xml_session::OptionalPolicy(policy));
             let mut status = session.open(&raw, scratch.xml, true);
             let mut end = false;

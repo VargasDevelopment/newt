@@ -1,3 +1,4 @@
+use newt_core::member_check::Checked;
 use newt_core::{
     admission::*,
     zip_container::{Entry, Status},
@@ -105,6 +106,7 @@ fn premature_zero_is_scheduled_error() {
 fn chapter_sequential_eof_and_failure() {
     let mut s = Source::new(b"abc".to_vec(), 1);
     let e = Entry::raw(3);
+    let e = Checked::unverified(e);
     let mut c = ChapterSource::open(&mut s, &e, None, None, None).unwrap();
     assert_eq!(c.read_at(1, &mut [0]), -1);
     assert_eq!(c.read_at(0, &mut [0; 8]), 1);
@@ -121,7 +123,7 @@ fn required_stream_probe_and_oom() {
     assert_eq!(
         expand(
             &mut s,
-            &Entry::raw(3),
+            &Checked::raw(3),
             0,
             b"x.xml",
             None,
@@ -132,10 +134,11 @@ fn required_stream_probe_and_oom() {
         Status::Ok
     );
     assert_eq!(
-        expand(&mut s, &Entry::raw(3), 0, b"x", None, None, None, None),
+        expand(&mut s, &Checked::raw(3), 0, b"x", None, None, None, None),
         Status::OutOfMemory
     );
     let e = Entry::raw(4);
+    let e = Checked::unverified(e);
     assert_eq!(
         expand(&mut s, &e, 0, b"x", None, Some(&mut chunk), None, None),
         Status::IoError
@@ -195,7 +198,7 @@ fn exact_required_events() {
     assert_eq!(
         expand(
             &mut s,
-            &Entry::raw(2),
+            &Checked::raw(2),
             7,
             b"a.XML",
             None,

@@ -61,7 +61,7 @@ fn rust(id:u32,b:&[u8])->Output{
   let mut scheduled=ScheduledSource::new(input,None,policy);let mut output=[0;3000];
   let status=if matches!(id,10|11|12|18){let got=scheduled.read_at(if id==12{b.len() as u64}else{0},&mut output[..if id==12{0}else{3000}]);if id==11{let _=scheduled.read_at(0,&mut output[..1]);}if got<0{Status::IoError}else{Status::Ok}}
    else if id==20{if producer.read_at(0,&mut output)<0{Status::IoError}else{Status::Ok}}
-   else{let entry=Entry::raw(b.len() as u32);let mut chapter=ChapterSource::open(&mut scheduled,&entry,None,None,policy).unwrap();if id==17{t.stop.set(true)}let got=chapter.read_at(if id==14{1}else{0},&mut output[..if id==15{1}else{3000}]);if got<0{Status::IoError}else{if id==16{t.stop.set(true)}if chapter.finish(){Status::Ok}else{Status::Truncated}}};
+   else{let entry=newt_core::member_check::Checked::raw(b.len() as u32);let mut chapter=ChapterSource::open(&mut scheduled,&entry,None,None,policy).unwrap();if id==17{t.stop.set(true)}let got=chapter.read_at(if id==14{1}else{0},&mut output[..if id==15{1}else{3000}]);if got<0{Status::IoError}else{if id==16{t.stop.set(true)}if chapter.finish(){Status::Ok}else{Status::Truncated}}};
   t.out.borrow_mut().status=status as u32;t.out.borrow_mut().interrupted=cancel.interrupted() as u32;return t.out.into_inner();
  }
  let mut shared=[0;BANK_BYTES];let mut native=vec![0xa5;newt_phased_sink::FRAME_BYTES];let signal=Signals::default();let mut loan=Loan{bytes:&mut native,signal:&signal,returns:0};let mut storage=Storage::new(&mut shared);

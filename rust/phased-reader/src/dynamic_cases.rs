@@ -157,7 +157,7 @@ pub fn toc_scope_policy_fixture<S: BookSource + ?Sized, B: ParserBackend + ?Size
     let mut arena = Arena::new(bytes);
     let capacity = arena.capacity();
     let mut xml = [0; 2048];
-    let entry = Entry::raw(length);
+    let entry = newt_core::member_check::Checked::raw(length);
     let mut workflow = Workflow {
                 policy: None,
         source,

@@ -1,10 +1,11 @@
 #![forbid(unsafe_code)]
+use crate::member_check::Checked;
 use super::{engine::{Engine, EngineState}, types::Backend};
 use crate::{
     xml_session::{
         Attributes, Handler, NoPolicy, ParserBackend, Resources, SessionPolicy, XmlStream,
     },
-    zip_container::{Entry, Status},
+    zip_container::Status,
     zip_window::source::BookSource,
 };
 /// Engine loan for the ordinary session methods.
@@ -59,10 +60,10 @@ impl<'a, S: BookSource + ?Sized, B: ParserBackend + ?Sized, P: SessionPolicy<B>>
     }
     /// Engine and pre-scanned image resources are constructed by the caller before
     /// begin; no owning session contains a reference into itself.
-    pub fn begin(&mut self, entry: &'a Entry, res: Resources<'a>, engine: &Engine<'_>) -> Status {
+    pub fn begin(&mut self, entry: &'a Checked, res: Resources<'a>, engine: &Engine<'_>) -> Status {
         self.begin_state(entry, res, &engine.state)
     }
-    pub fn begin_state(&mut self, entry: &'a Entry, res: Resources<'a>, engine: &EngineState<'_>) -> Status {
+    pub fn begin_state(&mut self, entry: &'a Checked, res: Resources<'a>, engine: &EngineState<'_>) -> Status {
         self.abort();
         if engine.params.width <= 0 || engine.params.height <= 0 {
             return Status::Unsupported;

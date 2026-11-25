@@ -1,7 +1,8 @@
 //! Runtime-borrowed no_std probe bodies. Parent must export/link and inspect
 //! RV32 artifacts; these functions alone are not evidence of target execution.
+use newt_core::member_check::Checked;
 use newt_core::css::*;
-use newt_core::zip_container::{Entry, InflateScratch, Status};
+use newt_core::zip_container::{InflateScratch, Status};
 use newt_core::zip_window::source::BookSource;
 struct Borrowed<'a>(&'a [u8]);
 impl BookSource for Borrowed<'_> {
@@ -41,7 +42,7 @@ pub fn text(
 #[inline(never)]
 pub fn sheet(
     input: &[u8],
-    entry: &Entry,
+    entry: &Checked,
     slots: &mut [CssRule],
     decode: Option<InflateScratch<'_>>,
     text: &mut [u8],

@@ -168,7 +168,7 @@ pub fn prescan<
     P: crate::xml_session::SessionPolicy<B>,
 >(
     chapter: &mut S,
-    entry: &Entry,
+    entry: &Checked,
     backend: &mut B,
     mut chapter_decoder: Option<InflateScratch<'_>>,
     buffer: &mut [u8; 2048],

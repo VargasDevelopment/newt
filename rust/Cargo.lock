@@ -49,6 +49,7 @@ dependencies = [
 name = "newt-core"
 version = "0.0.0"
 dependencies = [
+ "newt-core",
  "salamander-device",
 ]
 

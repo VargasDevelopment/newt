@@ -8,9 +8,16 @@ publish = false
 
 [features]
 dev-usb = []
+# Pinned-translation harnesses compare against oracles that never ran the
+# open-time member check, so they build unchecked members. Never on firmware.
+pinned-harness = []
 
 [dependencies]
 salamander-device = { path = "../salamander/device" }
+
+# Integration tests include pinned-translation harnesses (see pinned-harness).
+[dev-dependencies]
+newt-core = { path = ".", features = ["pinned-harness"] }
 
 # Needs the shared slot vectors, so only tests/slot_vectors_test.py runs it
 # (with them and its negative controls); a plain cargo test skips it.

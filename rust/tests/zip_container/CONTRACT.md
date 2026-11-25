@@ -89,3 +89,10 @@ pinned trace, statuses and mutation anchors are unchanged.
   open-time member check returns it (`core/src/member_check.rs`, reached via
   `canonical::CatalogView::check`), when a local header disagrees with its
   central record.
+- `Reader::open` takes `&Checked`, not `&Entry`. Only the entry type in the
+  signatures changed, so the compiler refuses any read of a member that
+  skipped the open-time check. A `Checked` reads as its `Entry`, so behavior
+  and traces are byte-identical, and the oracle and expected files are
+  untouched. The pinned harness reads raw catalog entries, as the SDK does, so
+  it wraps them with `Checked::unverified`. That exists only under the
+  `pinned-harness` feature, which RV32 (firmware) builds refuse to compile.

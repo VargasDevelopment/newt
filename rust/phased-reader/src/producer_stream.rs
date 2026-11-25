@@ -2,7 +2,8 @@
 #![forbid(unsafe_code)]
 use super::super::super::{PhasedReader, reader_parameters};
 use crate::{phase_storage::{Phase, producer::{Attempt, WriterView}}, producer::{Route}, producer_writer::CappedWriter, resources};
-use newt_core::{admission::{ChapterSource, ScheduledSource, WorkPhase, WorkScope}, chapter_layout::{engine::EngineState, session::{ChapterSession, LayoutOperation, OperationHandler}, types::{LineBreak, Page, Sink, SplitBackend}}, css::CssStylesheetBuilder, page_cache::{CacheStorage, WriterMemory}, xml_session::{self, BorrowedPolicy, ProducerBackend, XmlStream}, zip_container::{Entry, Status}, zip_window::source::BookSource};
+use newt_core::member_check::Checked;
+use newt_core::{admission::{ChapterSource, ScheduledSource, WorkPhase, WorkScope}, chapter_layout::{engine::EngineState, session::{ChapterSession, LayoutOperation, OperationHandler}, types::{LineBreak, Page, Sink, SplitBackend}}, css::CssStylesheetBuilder, page_cache::{CacheStorage, WriterMemory}, xml_session::{self, BorrowedPolicy, ProducerBackend, XmlStream}, zip_container::Status, zip_window::source::BookSource};
 use newt_reader_atlas::ReaderAtlas;
 
 struct Writing<'a, 'index, 'loan, 'ctx, C: ?Sized, S> {
@@ -113,7 +114,7 @@ impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::Pro
                 Ok(chapter) => chapter,
                 Err(status) => { cancellation.result(false); return status; }
             };
-            let raw = Entry::raw(selected.entry.uncompressed_size);
+            let raw = Checked::raw(selected.entry.uncompressed_size);
             let mut images = lr.images.for_chapter(&selected.href);
             let mut engine = match EngineState::new(params, resources::storage(&mut lr.storage),
                 lr.breaker, &mut images, None, CssStylesheetBuilder::default()) {

@@ -33,7 +33,7 @@ fn complete_native_view_lookup_survives_iterator_exhaustion() {
 #[path = "../../../target-probe/src/package_parsers_probe.rs"]
 mod probes;
 use newt_core::package_parsers::*;
-use newt_core::zip_container::{Entry, Status};
+use newt_core::{member_check::Checked, zip_container::Status};
 use newt_core::zip_window::{arena::Arena, source::BookSource};
 struct BorrowedSource<'a>(&'a [u8]);
 impl BookSource for BorrowedSource<'_> {
@@ -90,7 +90,7 @@ fn all_target_probe_signatures_accept_borrowed_source_and_backend() {
         buffer: Some(&mut buffer),
         filter: None,
     };
-    let entry = Entry::raw(xml.len() as u32);
+    let entry = Checked::raw(xml.len() as u32);
     let mut path = None;
     assert_eq!(
         probes::newt_rust_container_probe(&mut workflow, &entry, &mut arena, &mut path),
@@ -170,7 +170,7 @@ fn typed_admission_boundaries_preserve_publication_and_pass_order() {
             };
             parse_package(
                 &mut workflow,
-                &Entry::raw(xml.len() as u32),
+                &Checked::raw(xml.len() as u32),
                 b"",
                 &mut arena,
                 PackageStorage {
@@ -213,7 +213,7 @@ fn typed_admission_boundaries_preserve_publication_and_pass_order() {
             };
             parse_toc(
                 &mut workflow,
-                &Entry::raw(xml.len() as u32),
+                &Checked::raw(xml.len() as u32),
                 b"",
                 &mut arena,
                 TocKind::Nav,
@@ -247,7 +247,7 @@ fn container_capacity_failure_keeps_the_first_rootfile_decision() {
         let status = parse_container(&mut Workflow {
             policy: None, source: &mut source, backend: &mut backend,
             decoder: None, buffer: Some(&mut buffer), filter: None,
-        }, &Entry::raw(xml.len() as u32), &mut arena, &mut path);
+        }, &Checked::raw(xml.len() as u32), &mut arena, &mut path);
         if capacity == 2 {
             assert_eq!(status, Status::MetadataTooLarge);
             assert_eq!(path, None);

@@ -4,7 +4,7 @@ mod expat;
 #[path = "../xml_session/native_tests.rs"]
 mod native_tests;
 use newt_core::xml_session::*;
-use newt_core::{zip_container::Entry, zip_window::source::BookSource};
+use newt_core::{member_check::Checked, zip_container::Entry, zip_window::source::BookSource};
 use std::io::{self, Read};
 fn hex(bytes: &[u8]) -> String {
     if bytes.is_empty() {
@@ -172,6 +172,7 @@ fn run(line: &str) -> Result<(), ()> {
         entry.local_header_offset = 0;
         entry.compressed_size -= 30;
     }
+    let entry = Checked::unverified(entry);
     let mut source = Source {
         bytes,
         max,
@@ -228,7 +229,7 @@ fn run(line: &str) -> Result<(), ()> {
 }
 fn execute<'a, P: SessionPolicy<expat::Expat>>(
     source: &'a mut Source,
-    entry: &'a Entry,
+    entry: &'a Checked,
     decoder: Option<newt_core::zip_container::InflateScratch<'a>>,
     backend: &'a mut expat::Expat,
     sink: &'a mut Sink,

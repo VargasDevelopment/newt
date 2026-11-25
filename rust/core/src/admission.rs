@@ -272,7 +272,7 @@ pub fn category(name: &[u8]) -> u8 {
 /// Scratch presence is the typed-domain OOM decision, independent of byte arena.
 pub fn expand<S: BookSource + ?Sized>(
     source: &mut S,
-    entry: &Entry,
+    entry: &Checked,
     index: u16,
     name: &[u8],
     decoder: Option<InflateScratch<'_>>,
@@ -331,7 +331,7 @@ fn member_events(
 }
 fn stream<S: BookSource + ?Sized>(
     source: &mut S,
-    entry: &Entry,
+    entry: &Checked,
     decoder: Option<InflateScratch<'_>>,
     chunk: Option<&mut [u8; 2048]>,
     on_yield: crate::admission::Yield<'_>,
@@ -387,7 +387,7 @@ pub struct ChapterSource<'a, S: BookSource + ?Sized> {
 impl<'a, S: BookSource + ?Sized> ChapterSource<'a, S> {
     pub fn open(
         source: &'a mut S,
-        entry: &'a Entry,
+        entry: &'a Checked,
         decoder: Option<InflateScratch<'a>>,
         on_yield: Yield<'a>,
         policy: Option<&'a dyn crate::xml_session::SourcePolicy>,

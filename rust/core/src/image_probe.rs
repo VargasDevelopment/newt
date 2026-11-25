@@ -1,7 +1,8 @@
 // Copyright (c) 2026 FreeInk. MIT; see rust/THIRD_PARTY.md.
 //! Exact pinned ImageProbe algorithm; caller-owned decoder and skip storage.
 #![forbid(unsafe_code)]
-use crate::zip_container::{Entry, InflateScratch, Reader, Status};
+use crate::member_check::Checked;
+use crate::zip_container::{InflateScratch, Reader, Status};
 use crate::zip_window::source::BookSource;
 
 pub const SKIP_BYTES: usize = 1024;
@@ -94,7 +95,7 @@ impl Replay<'_> {
 /// 26 bytes, or a later segment, deliberately returns Ok/Unknown.
 pub fn probe<S: BookSource + ?Sized>(
     source: &mut S,
-    entry: &Entry,
+    entry: &Checked,
     decode: Option<InflateScratch<'_>>,
     staging: &mut [u8],
     out: &mut ImageInfo,

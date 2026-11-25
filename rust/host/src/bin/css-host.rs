@@ -1,4 +1,5 @@
 //! Strict host-only transport. Heap construction here is not target runtime.
+use newt_core::member_check::Checked;
 use newt_core::{
     inflate::{BitBuffer, State},
     zip_container::{Entry, InflateScratch},
@@ -177,13 +178,13 @@ fn run() -> Result<(), ()> {
                     calls: 0,
                     trace: Vec::new(),
                 };
-                let e = Entry {
+                let e = Checked::unverified(Entry {
                     method,
                     compressed_size,
                     uncompressed_size,
                     local_header_offset,
                     ..Entry::default()
-                };
+                });
                 let mut state = Box::new(State::new(BitBuffer::Bits32));
                 let mut dict = Box::new([0; 32768]);
                 let mut input = [0; 2048];

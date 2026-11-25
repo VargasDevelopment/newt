@@ -5,6 +5,7 @@
 //! (container, OPF, nav, chapter, stylesheet, image or cover), the caller
 //! looks it up in a live catalog and passes it through [`check`]. A damaged
 //! member then fails where it is used, and the rest of the book stays readable.
+//! `Reader::open` takes only a [`Checked`], so the compiler enforces this.
 use crate::zip_container::{Entry, RAW_HEADER_OFFSET, Status};
 use crate::zip_record_rules::{
     EPUB_MAX_MEMBER_NAME_BYTES, ZipCentralRecordRule, ZipLocalHeaderRule, zip_local_header_rule,
@@ -22,8 +23,16 @@ impl Checked {
     pub const fn raw(size: u32) -> Self {
         Self(Entry::raw(size))
     }
+    /// Pinned-translation harnesses only: their oracles read members without
+    /// the open-time check, so the comparison must too.
+    #[cfg(feature = "pinned-harness")]
+    pub const fn unverified(entry: Entry) -> Self {
+        Self(entry)
+    }
 }
-/// Read-only: a `Checked` reads as its entry, but only [`check`] makes one.
+#[cfg(all(feature = "pinned-harness", target_arch = "riscv32"))]
+compile_error!("pinned-harness skips the open-time member check; never enable it on firmware");
+/// Read-only: a `Checked` reads as its entry but cannot be edited into another.
 impl core::ops::Deref for Checked {
     type Target = Entry;
     fn deref(&self) -> &Entry {
