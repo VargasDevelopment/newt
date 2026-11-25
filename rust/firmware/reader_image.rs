@@ -43,6 +43,8 @@ mod home_stats;
 mod crossink_hash;
 #[path = "reader_image_producer.rs"]
 mod producer;
+#[path = "reader_image_sources.rs"]
+mod sources;
 #[path = "reader_image_operation.rs"]
 mod operation;
 #[path = "reader_image_idle_save.rs"]

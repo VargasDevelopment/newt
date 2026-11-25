@@ -5,12 +5,12 @@ use crate::{app_image::{Application, Events, Home}, home_startup::CardPort,
     reader_book::{self, BookExit, BookFailure, BookOpen, BookRequest, BookStep,
         ProducerCallbacks},
     reader_duty::ReaderDuty,
-    reader_pages::ReaderPages, sd_revision::SdRevisionStorage};
+    };
 use core::cell::Cell;
 use newt_core::{admission::WorkEvent, app::Screen, frame::Frame, reader_work_profile::ReaderWorkProfile,
     selection_authority::flag, zip_container::Status};
-use newt_native_storage::{Authority, chapter_cache::{ChapterCacheStorage, ChapterCacheState}, RouteState};
-use newt_phased_reader::imported_revision::{RevisionPorts, RevisionHasher};
+use newt_native_storage::Authority;
+use newt_phased_reader::imported_revision::RevisionHasher;
 use newt_reader_ui::{DeviceInfo, PhysicalOpen, StrictSource};
 
 struct Cancel<'a, 'task>(&'a ReaderDuty<'a, 'task>, Option<&'a dyn Fn() -> bool>);
@@ -159,17 +159,15 @@ impl Runtime {
             let run_turn = |prepared| super::drive::Turn { initialize, paint_first, accepted_save,
                 step, settings, open: if initialize && prepared { PhysicalOpen::Prepared }
                     else { PhysicalOpen::Selected { digest, spine: saved.locator.spine } } };
-            let Some(context) = context.as_mut() else {
-                let mut key = [0; 64];
-                let key = reader_book::route_key(filename, &mut crate::reader_hash::PackageHasher::from_live_sdk(),
-                    &mut key).ok_or(BookFailure::Route)?;
-                let route_state = RouteState::new(reader_book::CACHE_ROOT, key);
-                let route = route_state.lend(&cancel, millis);
-                let mut state = ChapterCacheState::new();
-                let result = {
-                    let mut pages = ReaderPages(ChapterCacheStorage::lend(&mut state, &mut pages_native, &route)
-                        .map_err(|_| BookFailure::Route)?);
-                    source.with_source_observed(&mut source_native, Some(&cancel), file_observer, |raw| {
+            // Only foreground composition owns the full repaint contract.
+            let action_storage = if initialize || paint_first
+                || matches!(step, Some(BookStep::Action(_) | BookStep::Sleep(_))) {
+                Some(&mut logical[..])
+            } else { None };
+            super::sources::with_sources(context.as_deref_mut(), source, filename,
+                &mut source_native, &mut receipt_native, &mut pages_native,
+                &cancel, file_observer, &yielded, action_storage, |pages, source| match source {
+                    super::sources::Source::Strict(raw) => {
                         let mut authorize = |raw: &mut dyn newt_core::zip_window::source::BookSource,
                             expected: &[u8; 32], _scratch: &mut [u8], allowed: &dyn Fn() -> bool| {
                             if !allowed() { return false; }
@@ -188,34 +186,12 @@ impl Runtime {
                             accepted: &mut accepted, metadata: exit_metadata, flags: None, settings: current_settings }
                             .run(super::drive::Ports { io: scope.io, panel: &mut *scope.bus.panel,
                                 card: &mut *scope.card, preferences: &mut *scope.preferences,
-                                nvs: &mut *scope.nvs, facts: &mut *scope.facts }, &mut pages, &mut strict, &request, &callbacks, &mut pause,
+                                nvs: &mut *scope.nvs, facts: &mut *scope.facts }, pages, &mut strict, &request, &callbacks, &mut pause,
                                 None, run_turn(false), &yielded, &observed, saves, title_deferred)
-                    }).map_err(|_| BookFailure::Source)?
-                };
-                let closed = state.close(&mut pages_native, &route);
-                return if !closed.is_ok_and(|outcome| outcome.clean) { Err(BookFailure::Source) } else { result };
-            };
-            let context = &mut **context;
-            let session::Session { route, receipt, pages, whole, block, scratch,
-                source: state, verification } = context;
-            let prepared = verification.control().flags.prepared();
-            if initialize { verification.control().flags.set_prepared(false); }
-            let route = route.lend(&cancel, millis);
-            let mut receipt = SdRevisionStorage::lend(receipt, &mut receipt_native, &route)
-                .map_err(|_| BookFailure::Route)?;
-            let mut pages = ReaderPages(ChapterCacheStorage::lend(pages, &mut pages_native, &route)
-                .map_err(|_| BookFailure::Route)?);
-            let mut whole = whole.borrow_with_yield(&yielded);
-            let mut block = block.borrow_with_yield(&yielded);
-            // Background/save work may leave the displayed frame unchanged.
-            // Only foreground composition owns the full repaint contract.
-            let action_storage = if initialize || paint_first
-                || matches!(step, Some(BookStep::Action(_) | BookStep::Sleep(_))) {
-                Some(&mut logical[..])
-            } else { None };
-            source.with_source_observed(&mut source_native, Some(&cancel), file_observer, |source| {
-                session::with_source_lent(state, RevisionPorts { source: Some(source), store: &mut receipt,
-                    whole: &mut whole, block: Some(&mut block), scratch }, action_storage, |revision| {
+                    }
+                    super::sources::Source::Session(revision, verification) => {
+                    let prepared = verification.control().flags.prepared();
+                    if initialize { verification.control().flags.set_prepared(false); }
                     if verification.state() == crate::reader_verification::Verification::Pending {
                         let mut finish = |raw: &mut dyn newt_core::zip_window::source::BookSource,
                             expected: &[u8; 32], scratch: &mut [u8], allowed: &dyn Fn() -> bool| {
@@ -228,7 +204,7 @@ impl Runtime {
                             accepted: &mut accepted, metadata: exit_metadata, flags: None, settings: current_settings }
                             .run(super::drive::Ports { io: scope.io, panel: &mut *scope.bus.panel,
                                 card: &mut *scope.card, preferences: &mut *scope.preferences,
-                                nvs: &mut *scope.nvs, facts: &mut *scope.facts }, &mut pages, &mut pending, &request, &callbacks, &mut pause,
+                                nvs: &mut *scope.nvs, facts: &mut *scope.facts }, pages, &mut pending, &request, &callbacks, &mut pause,
                                 None, run_turn(false), &yielded, &observed, saves, title_deferred)
                     } else {
                         if verification.state() != crate::reader_verification::Verification::Verified {
@@ -240,12 +216,12 @@ impl Runtime {
                                 accepted: &mut accepted, metadata: exit_metadata, flags: Some(selection.flags_mut()), settings: current_settings }
                                 .run(super::drive::Ports { io: scope.io, panel: &mut *scope.bus.panel,
                                 card: &mut *scope.card, preferences: &mut *scope.preferences,
-                                nvs: &mut *scope.nvs, facts: &mut *scope.facts }, &mut pages, revision, &request, &callbacks, &mut pause,
+                                nvs: &mut *scope.nvs, facts: &mut *scope.facts }, pages, revision, &request, &callbacks, &mut pause,
                                     Some((ledger, view)), run_turn(prepared), &yielded, &observed, saves, title_deferred))
                             .ok_or(BookFailure::Revision)?
                     }
-                }).map_err(|_| BookFailure::Revision)?
-            }).map_err(|_| BookFailure::Source)?
+                    }
+                })
         }).map_err(|_| BookFailure::Source).and_then(|result| result));
         if initialize && accepted_save && result.is_ok() { self.selection.retire_checkpoint_metadata(); }
         if producer_metadata_owed || (matches!(step, Some(BookStep::Idle { checkpoint: true, .. }))
