@@ -201,7 +201,7 @@ impl<S: Native> Operation<'_, '_, S> {
                 .is_some_and(|name|name.kind()==newt_core::book_index::FileKind::Index))
             || suffix.is_empty()
             || suffix.len() > 127
-            || suffix.contains("..")
+            || suffix.as_bytes().windows(2).any(|pair| pair == b"..")
             || suffix.ends_with(".bak")
             || (!newt_core::book_index::FileName::parse(suffix.as_bytes()).is_some()
                 && !suffix.bytes().all(|b| b.is_ascii_digit() || b.is_ascii_lowercase() || b == b'-' || b == b'.'))
