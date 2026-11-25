@@ -38,6 +38,7 @@ impl Runtime {
                 Some(BookStep::Action(action)), false, None, None) {
                 Ok(mut exit) => {
                     self.finish_pending_turn_image(home, ui, logical, events, action, before, &mut exit);
+                    self.finish_pending_mark_image(home, ui, logical, events, &mut exit);
                     self.observe_operation(&exit);
                     self.update_home_image(home, events.action);
                     if before != self.book().map(|book| book.reader.info()) {
@@ -126,6 +127,102 @@ impl Runtime {
         match self.operate_image(home, ui, logical, events, None, Some(BookStep::Action(action)), false, None, None) {
             Ok(retried) => *exit = retried,
             Err(error) => self.open_failed(error),
+        }
+    }
+
+    fn finish_pending_mark_image(&mut self, home: &mut Home<'_>, ui: &mut Application<'_>,
+        logical: &mut Frame, events: &mut Events<'_, '_>, exit: &mut BookExit,
+    ) {
+        use newt_core::selection_authority::flag;
+        if exit.intent != Some(ReaderUiIntent::MarkFinished) { return; }
+        let before_digest = *self.selection.digest();
+        // Capture the requested finish direction before prerequisite saves run:
+        // a BookStep::Save lease on the last page can auto-finish and flip ui.finish.
+        let requested_mark = if self.reader_ui.finish == newt_reader_ui::ReaderFinishRow::Undo {
+            newt_core::reading_stats::StatsMark::NotFinished
+        } else {
+            newt_core::reading_stats::StatsMark::Finished
+        };
+        let pending = self.session.as_ref().is_some_and(|session|
+            session.verification.state() == crate::reader_verification::Verification::Pending);
+        // Capture explicit commit debt before verification runs: committing a
+        // selection restores an empty store as a synthetic zero acknowledgement
+        // (or loads an older checkpoint) without saving live progress or NWBR.
+        let selection_commit_owed = self.selection.flags() & flag::COMMIT_OWED != 0;
+        let accepted_open_owed = self.selection.flags() & flag::ACCEPTED_OPEN_OWED != 0;
+        let needs_verify = pending
+            || selection_commit_owed
+            || self.session.as_ref().is_some_and(|session|
+                session.verification.state() != crate::reader_verification::Verification::Verified);
+        if pending {
+            self.acknowledge_work_image(home, ui, logical, newt_reader_ui::SlowWork::Saving,
+                events.control, events.action);
+        }
+        if needs_verify && !self.finish_verification_core(home, ui, logical, events, false, false) {
+            let still_pending = self.session.as_ref().is_some_and(|session|
+                session.verification.state() == crate::reader_verification::Verification::Pending);
+            if self.reader_ui.notice == ReaderUiNotice::BookChanged {
+                self.reader_ui.panel = ReaderPanel::Page;
+                self.reader_ui.selected = 0;
+            } else {
+                self.selection.publish_selection_notice(&mut self.saves);
+                self.reader_ui.notice = if still_pending {
+                    ReaderUiNotice::FinishOpening
+                } else if self.selection.flags() & flag::SAVE_FAILED != 0 {
+                    ReaderUiNotice::FinishUnconfirmed
+                } else {
+                    ReaderUiNotice::FinishSaveFailed
+                };
+            }
+            exit.intent = Some(ReaderUiIntent::Repaint);
+            return;
+        }
+        if *self.selection.digest() != before_digest
+            || self.reader_ui.notice == ReaderUiNotice::BookChanged
+            || !self.opened() {
+            if self.reader_ui.notice == ReaderUiNotice::BookChanged {
+                self.reader_ui.panel = ReaderPanel::Page;
+                self.reader_ui.selected = 0;
+            }
+            exit.intent = Some(ReaderUiIntent::Repaint);
+            return;
+        }
+        let progress_owed = selection_commit_owed
+            || accepted_open_owed
+            || self.selection.flags() & flag::ACCEPTED_OPEN_OWED != 0
+            || self.checkpoint.acknowledged_for(&before_digest).is_none()
+            || self.checkpoint.page_unconfirmed()
+            || self.saves.page_unconfirmed();
+        if progress_owed {
+            match self.operate_image(home, ui, logical, events, None,
+                Some(BookStep::Save), false, None, None) {
+                Ok(saved) => {
+                    self.observe_operation(&saved);
+                    let settled = saved.statistics.checkpoint.progress
+                        == crate::reader_book::checkpoint::Outcome::Verified
+                        && saved.statistics.checkpoint.destination
+                            != crate::reader_book::checkpoint::Outcome::Unconfirmed;
+                    if !settled {
+                        *exit = saved;
+                        self.reader_ui.notice = ReaderUiNotice::FinishUnconfirmed;
+                        exit.intent = Some(ReaderUiIntent::Repaint);
+                        return;
+                    }
+                }
+                Err(error) => {
+                    self.open_failed(error);
+                    exit.intent = Some(ReaderUiIntent::Repaint);
+                    return;
+                }
+            }
+        }
+        match self.operate_image(home, ui, logical, events, None,
+            Some(BookStep::MarkFinished(requested_mark)), false, None, None) {
+            Ok(marked) => *exit = marked,
+            Err(error) => {
+                self.open_failed(error);
+                exit.intent = Some(ReaderUiIntent::Repaint);
+            }
         }
     }
 }

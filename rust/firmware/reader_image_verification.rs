@@ -17,6 +17,13 @@ impl Runtime {
     pub(super) fn finish_verification_image(&mut self, home: &mut Home<'_>, ui: &mut Application<'_>,
         logical: &mut Frame, events: &mut Events<'_, '_>, queue_turns: bool,
     ) -> bool {
+        self.finish_verification_core(home, ui, logical, events, queue_turns, true)
+    }
+
+    pub(super) fn finish_verification_core(&mut self, home: &mut Home<'_>, ui: &mut Application<'_>,
+        logical: &mut Frame, events: &mut Events<'_, '_>, queue_turns: bool,
+        record_checkpoint_failure: bool,
+    ) -> bool {
         if !self.selection.active() { return !self.selection.selection_blocked(); }
         let Events { queue, control, task, action: trace } = events;
         control.with_open(millis(), |control, _owned| {
@@ -28,8 +35,10 @@ impl Runtime {
                 self.reopen_changed_image(home, ui, logical, &mut events);
                 state = self.session.as_ref().map_or(Verification::Verified, |s| s.verification.state());
                 if !self.book().is_some_and(|book| book.owner.state.opened()) {
-                    self.saves.checkpoint(ReadingCommitResult { progress: SaveOutcome::Unconfirmed,
-                        destination: SaveOutcome::Unchanged });
+                    if record_checkpoint_failure {
+                        self.saves.checkpoint(ReadingCommitResult { progress: SaveOutcome::Unconfirmed,
+                            destination: SaveOutcome::Unchanged });
+                    }
                     return false;
                 }
             }
@@ -39,8 +48,10 @@ impl Runtime {
                 } else if state == Verification::Changed { ReaderUiNotice::BookChanged }
                 else if state == Verification::Failed { ReaderUiNotice::VerificationFailed }
                 else { self.reader_ui.notice };
-                self.saves.checkpoint(ReadingCommitResult { progress: SaveOutcome::Unconfirmed,
-                    destination: SaveOutcome::Unchanged });
+                if record_checkpoint_failure {
+                    self.saves.checkpoint(ReadingCommitResult { progress: SaveOutcome::Unconfirmed,
+                        destination: SaveOutcome::Unchanged });
+                }
                 return false;
             }
             self.commit_verified_image(home, events.action)
@@ -55,8 +66,7 @@ impl Runtime {
             return false;
         }
         let due = millis().wrapping_sub(self.last_progress.get()) >= 30000;
-        let optional = ui.displayed.valid && self.book().is_some_and(|book|
-            book.ui.panel == newt_reader_ui::ReaderPanel::Page)
+        let optional = ui.displayed.valid
             && ((ui.info.charging_known && ui.info.charging)
                 || (ui.info.battery_known && ui.info.battery_percent >= 20));
         if !due && !optional { return false; }

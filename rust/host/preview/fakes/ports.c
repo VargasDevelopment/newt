@@ -538,13 +538,20 @@ static int open_fault(const char *path) {
 }
 /* "card.back=TEXT": the first card read of a path holding TEXT presses Back
  * (or "card.button=N"), optionally once refreshes >= "card.after_refresh",
- * as a hand would while that work still reads, on any boot. */
-static int card_back_used;
+ * as a hand would while that work still reads, on any boot.
+ * "card.slow=TEXT": stalls that read past the 20 s work budget instead. */
+static int card_back_used, card_slow_used;
 static void card_back(const char *path) {
     const char *text = preview_conf("card.back");
+    const char *slow = preview_conf("card.slow");
     const char *after = preview_conf("card.after_refresh");
-    if (card_back_used || !text || !*text || !strstr(path, text) || !task_started || task_suspended) return;
     if (after && *after && refreshes < (unsigned)atoi(after)) return;
+    if (!card_slow_used && slow && *slow && strstr(path, slow)) {
+        card_slow_used = 1;
+        preview_advance(20001);
+        return;
+    }
+    if (card_back_used || !text || !*text || !strstr(path, text) || !task_started || task_suspended) return;
     const char *button = preview_conf("card.button");
     card_back_used = 1;
     press(button && *button ? atoi(button) : 0);
