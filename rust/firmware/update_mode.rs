@@ -122,10 +122,13 @@ fn scan_offers(ui: &mut ModeUi<'_>, view: &mut UpdateView<'_>, card_ready: bool)
         ui.bus.board.with_optional_sd_io(|board, io| {
             let mut files = UpdateFiles::new(io); let mut directory = UpdateDirectory::new(io);
             let mut scratch = [0; newt_core::update_manifest::MAX_BYTES + 1];
-            board.with_image_partitions(true, |slots|
-                update_runtime::scan_offers(view, card_ready, &mut files, &mut directory, slots, &mut scratch));
+            let source = board.with_image_partitions(true, |slots| {
+                let source = update_runtime::running_identity(slots);
+                update_runtime::scan_offers(view, card_ready, &mut files, &mut directory, slots, &mut scratch);
+                source
+            });
             view.official_return = crate::update_download::official_return::Store::new(io)
-                .restore(&update_runtime::running_identity(view.running), &view.offers[0].manifest, channel)
+                .restore(&source, &view.offers[0].manifest, channel)
                 .map(update::ReturnOffer::Offered).unwrap_or_default();
         });
         return;

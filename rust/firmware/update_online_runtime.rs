@@ -74,6 +74,7 @@ impl update_mode::Online for Online {
             view.online = outcome.result;
             // This is the actual final manifest after Core's download/abort,
             // not a copy of its parsed promise or an invented Ready offer.
+            let source = ui.bus.board.with_image_partitions(false, crate::update_runtime::running_identity);
             ui.bus.board.with_optional_sd_io(|_, io| {
                 let mut files = UpdateFiles::new(io);
                 let mut scratch = [0; MAX_BYTES + 1];
@@ -82,7 +83,7 @@ impl update_mode::Online for Online {
                     newt_device_ui::update::ReturnOffer::None
                 } else {
                     crate::update_download::official_return::Store::new(io)
-                        .restore(&crate::update_runtime::running_identity(view.running), &view.offers[0].manifest, test_builds)
+                        .restore(&source, &view.offers[0].manifest, test_builds)
                         .map(newt_device_ui::update::ReturnOffer::Offered).unwrap_or_default()
                 };
             });
@@ -149,8 +150,8 @@ fn fetch(board: &mut Board<'_>, parts: &mut Parts<'_, '_>, page: &mut Page<'_>, 
     let fetched: Result<(), ImageError> = board.with_optional_sd_io(|board, io| {
         let mut card = Download::new(io);
         board.with_image_partitions(false, |slots| slots.with_hash(|slots, hash| {
+            let running = crate::update_runtime::running_identity(slots);
             let board = slots.board();
-            let running = crate::update_runtime::running_identity(page.running);
             outcome.result = update_online::fetch_online_update_with_http(http, &mut card, hash, &mut clock,
                 &mut |http, done, total| {
                     if page.progress(board, parts, http, events, done, total).is_err() { crate::app_power::stop(); }

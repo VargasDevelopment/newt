@@ -15,7 +15,7 @@ impl<'ui> Store<'ui> {
     }
     pub fn remove(&mut self) -> bool { self.remove_path(official_return::RECEIPT) }
     fn read_path(&mut self, path: &CStr) -> Option<[u8; RECEIPT_BYTES]> {
-        let fd = self.0.open_cstr(path, Open::SourceReadOnly).ok()?;
+        let fd = self.0.open(path.to_str().ok()?, Open::SourceReadOnly).ok()?;
         let mut bytes = [0; RECEIPT_BYTES];
         let read = self.0.fstat(fd).is_ok_and(|info| info.kind == Kind::Regular && info.size == RECEIPT_BYTES as i64)
             && (|| {
