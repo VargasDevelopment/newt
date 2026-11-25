@@ -29,6 +29,7 @@ fn only_menu_workspace_failures_are_optional() {
         Status::NotZip,
         Status::NotEpub,
         Status::Encrypted,
+        Status::Damaged,
     ] {
         let mut owner = ReaderOwnerState::from_open(true, Status::Ok, 5);
         owner.menu_result(status);
@@ -39,6 +40,16 @@ fn only_menu_workspace_failures_are_optional() {
     let mut owner = ReaderOwnerState::from_open(true, Status::Ok, 5);
     owner.note_failure(Status::OutOfMemory); // final PAINT failure is consequential
     assert!(!owner.opened());
+}
+#[test]
+fn a_damaged_chapter_shows_the_chapter_notice_like_a_read_failure() {
+    let notice = |status| ReaderOwnerState::from_open(true, status, 5).chapter_notice();
+    assert!(notice(Status::Damaged));
+    assert!(notice(Status::IoError));
+    // Book-level and workspace failures are not the chapter's own.
+    assert!(!notice(Status::Ok));
+    assert!(!notice(Status::OutOfMemory));
+    assert!(!notice(Status::Stale));
 }
 #[test]
 fn readable_bound_is_the_single_last_page_authority() {

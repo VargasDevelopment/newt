@@ -29,7 +29,18 @@ pub fn chapter_failure_message(f: &ReaderChapterFailure) -> &'static [u8] {
         Status::ParseError => {
             b"This chapter can't be read (malformed content). Your place is kept."
         }
-        _ => b"This chapter can't be read (too large or unsupported). Your place is kept.",
+        Status::Ok
+        | Status::NotZip
+        | Status::NotEpub
+        | Status::Encrypted
+        | Status::Unsupported
+        | Status::OutOfMemory
+        | Status::NotFound
+        | Status::Stale
+        | Status::MetadataTooLarge
+        | Status::PathTooLong => {
+            b"This chapter can't be read (too large or unsupported). Your place is kept."
+        }
     }
 }
 fn field(

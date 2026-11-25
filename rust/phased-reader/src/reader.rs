@@ -809,6 +809,28 @@ fn bind_menu_source<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
         })
 }
 
+/// An optional TOC failure ends the open only when the book source itself
+/// failed. Anything about the TOC member (damaged, unparsable, too big)
+/// degrades to no TOC, like a missing one. Exhaustive so a new status needs a
+/// decision here.
+pub(crate) fn optional_toc_ends_open(status: Status) -> bool {
+    match status {
+        Status::IoError | Status::Stale => true,
+        Status::Ok
+        | Status::NotZip
+        | Status::NotEpub
+        | Status::Encrypted
+        | Status::Truncated
+        | Status::Unsupported
+        | Status::OutOfMemory
+        | Status::ParseError
+        | Status::NotFound
+        | Status::MetadataTooLarge
+        | Status::PathTooLong
+        | Status::Damaged => false,
+    }
+}
+
 fn contents_fallback(authored: bool, status: Status) -> crate::ContentsFallback {
     use crate::ContentsFallback;
     if !authored || status == Status::Ok { ContentsFallback::None }
@@ -872,7 +894,7 @@ fn bind_menu_book<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     arena.release(mark);
     let live = guarded.guard();
     if live != Status::Ok { return Err(live); }
-    if matches!(optional, Status::IoError | Status::Stale) { return Err(optional); }
+    if optional_toc_ends_open(optional) { return Err(optional); }
     if !bound { navigation.invalidate_menu(); return Err(Status::Unsupported); }
     navigation.set_contents_fallback(contents_fallback(authored, optional));
     Ok(())

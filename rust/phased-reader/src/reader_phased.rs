@@ -134,7 +134,7 @@ pub(crate) fn select_book_metadata<
     if live != Status::Ok {
         return Err(live);
     }
-    if matches!(optional, Status::IoError | Status::Stale) {
+    if crate::reader::optional_toc_ends_open(optional) {
         return Err(optional);
     }
     if !bound {

@@ -126,10 +126,8 @@ impl ExternalOwner {
             invalid_text: reader.malformed_utf8,
         });
         self.current = Some(failure);
-        self.failure_shown = matches!(
-            self.state.status(),
-            Status::IoError | Status::Truncated | Status::ParseError | Status::Unsupported
-        ) && reader.has_page()
+        self.failure_shown = self.state.chapter_notice()
+            && reader.has_page()
             && reader.source_available(source);
         if self.failure_shown && self.known(spine).is_none() {
             self.failures[self.next_failure] = Some(failure);
