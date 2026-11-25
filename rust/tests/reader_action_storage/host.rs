@@ -92,7 +92,7 @@ mod reader_hash {
     }
     #[derive(Default)] pub struct MbedHasher(Vec<u8>);
     pub struct Loan<'a>(&'a mut MbedHasher);
-    impl MbedHasher { pub fn borrow_with_yield(&mut self, _: &dyn Fn()) -> Loan<'_> { Loan(self) } }
+    impl MbedHasher { pub unsafe fn new(_: Option<&dyn Fn()>) -> Self { Self::default() } pub fn borrow_with_yield(&mut self, _: &dyn Fn()) -> Loan<'_> { Loan(self) } }
     impl RevisionHasher for MbedHasher {
         fn begin(&mut self) -> bool { self.0.clear(); true }
         fn update(&mut self, input: &[u8]) -> bool { self.0.extend_from_slice(input); true }
@@ -110,7 +110,16 @@ mod reader_hash {
     impl newt_phased_reader::hash_provider::CacheHash for PackageHasher {
         fn hash(&mut self, input: &[u8], out: &mut Digest) -> bool { package_hash(input, out) }
     }
-    pub unsafe fn hash_source(_: &mut dyn BookSource, _: &mut Digest, _: &mut dyn FnMut(), _: Option<&dyn SourceHashObserver>) -> bool { panic!("no strict-source fallback in source-loan fixture") }
+    pub unsafe fn hash_source(source: &mut dyn BookSource, digest: &mut Digest, _: &mut dyn FnMut(), _: Option<&dyn SourceHashObserver>) -> bool {
+        let mut bytes=vec![0;source.size() as usize];
+        let mut at=0;
+        while at<bytes.len() {
+            let n=source.read_at(at as u64,&mut bytes[at..]);
+            if n<=0 {return false;}
+            at+=n as usize;
+        }
+        package_hash(&bytes,digest)
+    }
 }
 #[path = "../../firmware/reader_verification.rs"] mod reader_verification;
 #[path = "../../firmware/reader_selected_source.rs"] mod physical_selected;
@@ -212,6 +221,7 @@ mod image {
         pub fn restore_policy_image(&self) -> newt_reader_ui::RestorePolicy { newt_reader_ui::RestorePolicy::ExactPage }
         pub fn refuse_checkpoint_image(&mut self, _: u32, _: bool) { panic!("no requested save in source-loan fixture") }
     }
+    #[path = "../../firmware/reader_index_reopen.rs"] pub(crate) mod index_reopen;
     #[path = "../../firmware/reader_index_invalidation.rs"] pub(crate) mod index_invalidation;
     pub mod drive {
         use super::*;

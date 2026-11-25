@@ -96,6 +96,15 @@ pub(crate) fn physical_handoffs(home:&mut app_image::Home<'_>,bytes:&[u8],digest
                     home:true,reader_open:false,opening:true }),Err(newt_core::dev_put::Busy::Opening));
                 assert_eq!(newt_core::dev_put::admit(newt_core::dev_put::Facts {
                     home:true,reader_open:true,opening:false }),Err(newt_core::dev_put::Busy::Reading));
+                if self.cut==10 && event.result==8 {
+                    // Same length and path defeat the cheap reopen size check.
+                    let mut state=self.card.0.borrow_mut();
+                    let file=state.model.files.get_mut(self.path).unwrap();
+                    file.readable[100]^=1;file.durable[100]^=1;
+                }
+                if self.cut==11 && event.result==8 {
+                    self.card.0.borrow_mut().model.files.remove(self.path);
+                }
                 if self.cut==9 && event.result==8 {
                     self.card.0.borrow_mut().model.faults.push(crate::model::Fault::new(
                         crate::model::Op::Open,1,1,crate::model::Effect::Errno("EIO"),0));
@@ -104,7 +113,7 @@ pub(crate) fn physical_handoffs(home:&mut app_image::Home<'_>,bytes:&[u8],digest
             }
         }
     }
-    for cut in [0,5,8,9] {
+    for cut in [0,5,8,9,10,11] {
         let old_files=home.card.0.borrow().model.files.clone();
         home.card.seed(path,bytes.to_vec());
         home.card.seed("/newt-sd/Newt/Cache/handoff-receipt",vec![1]);
@@ -128,13 +137,17 @@ pub(crate) fn physical_handoffs(home:&mut app_image::Home<'_>,bytes:&[u8],digest
                 let result=source.with_index_source(&mut source_native,name.as_bytes_with_nul(),&mut logical,Some(&crate::Never),None,|raw| {
                     let result=index_build::open_releasing(raw,digest,&mut storage,scope.bus.panel,
                         &mut Metadata {items:1500},&mut pages,Some(hook),Verification::Verified);
+                    let result=super::index_reopen::complete(result,&mut pages,raw,digest,None,&|| {});
+                    if cut==10 {assert!(result.is_err(),"changed reopened bytes must fail verification");}
                     if let Ok(indexed)=&result {
                         assert!(indexed.source_reopened());
+                        assert_eq!(indexed.digest(),digest,"publication must bind the bytes digest");
                         assert_eq!(raw.read_at(0,&mut []),0);
                     }
                     result
                 });
-                if cut==9 {assert!(matches!(result,Err(crate::physical_selected::SourceLoanError::BindingLost)));}
+                if matches!(cut,9|11) {assert!(matches!(result,Err(crate::physical_selected::SourceLoanError::BindingLost)));}
+                else if cut==10 {assert!(result.unwrap().is_err());}
                 else {result.unwrap().unwrap();}
                 drop(pages);assert!(state.close(&mut pages_native,&route).unwrap().clean);
                 source_native.close(receipt).unwrap();source.close(&mut source_native);
@@ -165,7 +178,7 @@ pub(crate) fn physical_handoffs(home:&mut app_image::Home<'_>,bytes:&[u8],digest
             }
             drop(pages);assert!(state.close(&mut native,&route).unwrap().clean);found
         }).unwrap();
-        assert_eq!(present,cut!=5);
+        assert_eq!(present,!matches!(cut,5|9|10|11),"failed or missing reopened source must revoke its index");
         let mut state=home.card.0.borrow_mut();assert!(state.handles.is_empty());
         state.model.files=old_files;
         // Keep only durable fixture files; stale temp/work names from cuts are

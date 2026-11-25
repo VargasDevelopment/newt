@@ -11,6 +11,8 @@ use newt_phased_reader::{index_build::{self, Indexed, Verification}, imported_re
 use crate::{reader_hash::MbedHasher, reader_pages::ReaderPages,
     reader_verification::{ReaderVerification, Verification as SourceVerification}};
 use super::sources::{Operation, Source};
+#[path = "reader_index_reopen.rs"]
+mod reopen;
 
 struct Cancel<'loan, 'task>(&'loan ReaderDuty<'loan, 'task>);
 impl Authority for Cancel<'_, '_> {
@@ -76,13 +78,9 @@ impl<N: Native + PageEntries, L: BuildLoan> Operation<N, Indexed> for IndexPass<
         let mut parser = newt_target_expat::Expat::default();
         match source {
             Source::Strict(raw) => {
-                let indexed=index_build::open_releasing(raw, digest, storage, lender,
-                    &mut parser, pages, hook, Verification::Verified).map_err(BookFailure::Open)?;
-                if indexed.source_reopened() && !verify_standalone_reopen(raw,digest,yielded) {
-                    pages.0.invalidate_index(digest);
-                    return Err(BookFailure::Source);
-                }
-                Ok(indexed)
+                let result=index_build::open_releasing(raw, digest, storage, lender,
+                    &mut parser, pages, hook, Verification::Verified);
+                reopen::complete(result, pages, raw, digest, None, yielded)
             },
             Source::Session(raw, verification) => {
                 let mode = verification.state();
@@ -94,34 +92,11 @@ impl<N: Native + PageEntries, L: BuildLoan> Operation<N, Indexed> for IndexPass<
                     SourceVerification::Verified => Verification::Verified,
                     _ => return Err(BookFailure::Open(Status::Stale)),
                 };
-                let indexed=index_build::open_releasing(raw, digest, storage, lender, &mut parser, pages, hook, mode)
-                    .map_err(BookFailure::Open)?;
-                if indexed.source_reopened() && !restart_verification(verification,raw) {
-                    pages.0.invalidate_index(digest);
-                    return Err(BookFailure::Source);
-                }
-                Ok(indexed)
+                let result=index_build::open_releasing(raw, digest, storage, lender, &mut parser, pages, hook, mode);
+                reopen::complete(result, pages, raw, digest, Some(verification), yielded)
             }
         }
     }
-}
-
-// These frames run only after the deep builder has returned. A reopened FD
-// needs the existing background verifier, or a full check if no session fits.
-#[inline(never)]
-fn restart_verification(verification:&mut ReaderVerification<MbedHasher>,
-    raw:&dyn newt_core::zip_window::source::BookSource)->bool {
-    verification.begin(raw,|| {
-        // SAFETY: the enclosing Home retains the initialized pinned SDK.
-        unsafe { MbedHasher::new(None) }
-    })
-}
-#[inline(never)]
-fn verify_standalone_reopen(raw:&mut dyn newt_core::zip_window::source::BookSource,
-    expected:&[u8;32],yielded:&dyn Fn())->bool {
-    let mut actual=[0;32];
-    // SAFETY: this is the held selected source under the enclosing Home SDK.
-    (unsafe { crate::reader_hash::hash_source(raw,&mut actual,&mut || yielded(),None) }) && actual==*expected
 }
 
 // Hashing finishes before attempt(). Its SDK/update closure frames must not

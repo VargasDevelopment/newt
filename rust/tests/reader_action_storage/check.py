@@ -43,6 +43,14 @@ def main():
                CARGO_INCREMENTAL='0', CARGO_PROFILE_DEV_DEBUG='0')
     commands = []
     def run(command, succeeds=True):
+        if Path(command[0]).name in {'cargo', 'rustc', 'clang++'}:
+            subprocess.run(['free', '-g'], check=True)
+            subprocess.run(['df', '-h', '.'], cwd=ROOT, check=True)
+            available = int(next(line.split()[1] for line in Path('/proc/meminfo').read_text().splitlines()
+                                 if line.startswith('MemAvailable:')))
+            assert available >= 8 * 1024 * 1024, 'build requires 8 GiB available'
+            disk = os.statvfs(ROOT)
+            assert (disk.f_blocks - disk.f_bfree) / disk.f_blocks < .8, 'build requires disk below 80%'
         result = subprocess.run(list(map(str, command)), cwd=ROOT, env=env,
                                 capture_output=True, text=True)
         index = len(commands)
@@ -131,6 +139,30 @@ def main():
     run([*command, control, '-o', out / 'keep-index-control'])
     rejected = run([out / 'keep-index-control', book, 'synthetic.epub'], succeeds=False)
     assert rejected.returncode == 101 and 'failed verification must remove the derived index' in rejected.stderr, rejected.stderr
+    reopen = ROOT / 'rust/firmware/reader_index_reopen.rs'
+    loans = HERE / 'index_loans.rs'
+    controls = [
+        ('skip-reopened-verification', reopen,
+         'None => verify_standalone_reopen(raw, digest, yielded)', 'None => true',
+         'changed reopened bytes must fail verification'),
+        ('trust-orphan', reopen,
+         'pages.0.invalidate_index(digest);', '/* retain orphan */',
+         'failed or missing reopened source must revoke its index'),
+        ('stale-published-digest', loans,
+         'index_build::open_releasing(raw,digest,', 'index_build::open_releasing(raw,&[0;32],',
+         'publication must bind the bytes digest'),
+    ]
+    for name, source_file, before, after, witness in controls:
+        source_text = source_file.read_text()
+        assert before in source_text
+        replacement = out / (name + '.rs')
+        replacement.write_text(paths(source_text.replace(before, after, 1), source_file.parent))
+        control = out / (name + '-host.rs')
+        control.write_text(paths(fixture, HERE, {source_file: replacement}))
+        run([*command, control, '-o', out / name])
+        rejected = run([out / name, book, 'synthetic.epub'], succeeds=False)
+        assert rejected.returncode == 101 and witness in rejected.stderr, rejected.stderr
+    print('PASS changed reopened bytes, byte-digest publication and missing-source revocation; skip-verification, stale-digest and trusted-orphan controls rejected')
     print('PASS actual operation/index loans, physical spill release/reopen, reopen refusal, power-cut cold reads and verification revocation; compact, idle-lending, route-drift and retained-index controls rejected')
     common = [cargo, 'test', '--offline', '--frozen', '--locked',
               '--manifest-path', ROOT / 'rust/Cargo.toml', '--target', HOST,
