@@ -16,6 +16,8 @@ use newt_core::{
 };
 
 mod sleep_scratch;
+mod scratch_value;
+pub use scratch_value::{scratch_value, ScratchValue};
 pub mod bounded;
 pub mod bounded_chapters;
 
@@ -40,7 +42,7 @@ pub struct ParseResources<'a, B: ParserBackend + ?Sized> {
 
 // This cursor is private to this file, used only to initialize the concrete
 // phase arrays below. Taking a prefix removes it permanently from the cursor;
-// no reset, raw-pointer escape, arbitrary destructor, or overlapping view API.
+// no reset, raw-pointer escape, or overlapping view API.
 struct Parts<'a>(&'a mut [u8]);
 impl<'a> Parts<'a> {
     fn bytes(&mut self, count: usize, alignment: usize) -> Result<&'a mut [u8], Status> {
