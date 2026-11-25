@@ -219,3 +219,63 @@ fn failed_verification_never_enters_the_builder_or_mints_a_token() {
     assert_eq!((card.census, card.creates, card.writes), (0, 0, 0));
     assert!(card.file.is_empty() && card.work.is_empty());
 }
+
+struct HandoffSource {
+    source: Source,
+    released: std::rc::Rc<Cell<bool>>,
+    releases: u32,
+    reopens: u32,
+    fail_reopen: bool,
+}
+impl BookSource for HandoffSource {
+    fn size(&self) -> u64 { self.source.size() }
+    fn read_at(&mut self, at: u64, bytes: &mut [u8]) -> i32 {
+        assert!(!self.released.get(), "no live-source probe while released");
+        self.source.read_at(at, bytes)
+    }
+}
+impl ReleasableSource for HandoffSource {
+    fn release(&mut self) -> bool { self.releases += 1; self.released.set(true); true }
+    fn reopen(&mut self) -> bool {
+        self.reopens += 1;
+        if self.fail_reopen { return false; }
+        self.released.set(false);
+        true
+    }
+    fn cancelled(&self) -> bool { self.source.cancelled.get() }
+}
+#[test]
+fn only_spilled_builds_release_publish_and_reopen() {
+    for items in [1,1500] {
+        let mut card = Card::default();
+        let mut source = HandoffSource { source:zip(),released:card.source_released.clone(),
+            releases:0,reopens:0,fail_reopen:false };
+        let mut shared = Box::new([0; crate::phase_storage::BANK_BYTES]);
+        let mut storage = Storage::new(&mut shared);
+        let mut loan = Loan(vec![0; crate::phase_storage::BANK_BYTES+15]);
+        let indexed = open_releasing(&mut source,&[7;32],&mut storage,&mut loan,
+            &mut Parser { items },&mut card,None,Verification::Verified).unwrap();
+        assert_eq!((source.releases,source.reopens),(u32::from(items>1),u32::from(items>1)));
+        assert_eq!(indexed.source_reopened(),items>1);
+        assert_eq!(indexed.digest(),&[7;32]);
+        assert!(header(&mut card).is_some());
+        assert!(card.removed && card.work.is_empty());
+        assert_eq!(card.most,3);
+    }
+}
+#[test]
+fn reopen_failure_refuses_the_open_after_a_complete_publication() {
+    let mut card = Card::default();
+    let mut source = HandoffSource { source:zip(),released:card.source_released.clone(),
+        releases:0,reopens:0,fail_reopen:true };
+    let mut shared = Box::new([0; crate::phase_storage::BANK_BYTES]);
+    let mut storage = Storage::new(&mut shared);
+    let mut loan = Loan(vec![0; crate::phase_storage::BANK_BYTES+15]);
+    let result = open_releasing(&mut source,&[7;32],&mut storage,&mut loan,
+        &mut Parser { items:1500 },&mut card,None,Verification::Verified);
+    assert!(matches!(result,Err(Status::IoError)));
+    assert_eq!((source.releases,source.reopens),(1,1));
+    assert!(card.removed && card.work.is_empty() && card.pending.is_empty());
+    assert!(header(&mut card).is_some(),"failed reopen may leave only a complete index");
+    assert_eq!(card.most,3);
+}

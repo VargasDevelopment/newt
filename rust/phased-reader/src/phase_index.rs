@@ -2,10 +2,10 @@ use newt_core::zip_window::source::BookSource;
 // Included inside phase_storage: all scratch belongs to the one physical loan.
 impl Phase<'_> {
     pub(crate) fn build_index<B: ParserBackend + ?Sized>(&mut self,
-        source: &mut dyn crate::zip_window::source::BookSource, backend: &mut B,
+        source: &mut dyn crate::index_build::ReleasableSource, backend: &mut B,
         identity: newt_core::book_index::Identity, store: &mut dyn crate::index_build::Store,
         hook: newt_core::admission::Yield<'_>,
-    ) -> Result<(bool, bool), Status> {
+    ) -> Result<(bool, bool, bool), Status> {
         use newt_core::{admission::ScheduledSource, book_index_build::Phase as Step};
         use crate::index_build::stage;
         // Preserve the resolved style slot at the top of shared. The run buffer
@@ -16,6 +16,7 @@ impl Phase<'_> {
         let live = core::cell::RefCell::new(&mut scheduled);
         let members = core::cell::Cell::new(0u32);
         let spine = core::cell::Cell::new(0u32);
+        let released = core::cell::Cell::new(false);
         let mut progress = |p: newt_core::book_index_build::Progress| {
             if p.phase == Step::Central {
                 members.set(u32::try_from(p.done + 1).unwrap_or(0));
@@ -25,18 +26,28 @@ impl Phase<'_> {
             stage(hook, match p.phase { Step::Central => 2, Step::Package => 3,
                 Step::Join | Step::Merge | Step::Rank => 4, Step::Publish => 5 });
             if let Some(hook) = hook { hook.yield_now(); }
-            live.borrow_mut().read_at(0, &mut []) == 0
+            if released.get() { !live.borrow().source.cancelled() }
+            else { live.borrow_mut().read_at(0, &mut []) == 0 }
         };
         let (prepared, mut state) = prepare(run, rest, self.parse, self.policy, backend, &live,
             identity, store, &mut progress, hook)?;
         crate::index_build::counts(hook, members.get(), spine.get());
-        if store.spilled() { return Ok((false, true)); }
+        if store.spilled() {
+            if !live.borrow_mut().source.release() { return Ok((false, true, false)); }
+            released.set(true);
+        }
         if !store.release_pages() { return Err(Status::IoError); }
         stage(hook, 5);
-        let mut receipt = || live.borrow_mut().read_at(0, &mut []) == 0;
-        let (members, spine, removed) = publish(prepared, store, &mut state, &mut progress, &mut receipt)?;
+        let mut receipt = || if released.get() { !live.borrow().source.cancelled() }
+            else { live.borrow_mut().read_at(0, &mut []) == 0 };
+        let published = publish(prepared, store, &mut state, &mut progress, &mut receipt);
+        // Publish consumes/removes work before reopening, so even a live
+        // receipt leaves room for the source under the three-file mount cap.
+        let reopened = !released.get() || live.borrow_mut().source.reopen();
+        if !reopened { return Err(Status::IoError); }
+        let (members, spine, removed) = published?;
         crate::index_build::counts(hook, members, spine);
-        Ok((true, removed))
+        Ok((true, removed, released.get()))
     }
 }
 /// Out of line so publish's frame, the deepest of the build, is not added to

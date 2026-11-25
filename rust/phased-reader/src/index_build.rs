@@ -6,6 +6,21 @@ use newt_core::{admission::{self, Yield}, book_index::{self, Identity},
 use crate::phase_storage::{BuildLoan, ReadScope, Storage};
 use crate::CachePresence;
 
+/// Optional physical handoff, confined to the index pass. Read-only fixture
+/// sources keep the default refusal; product selected sources reopen their
+/// exact catalog path. Cancellation remains observable while no FD is held.
+pub trait ReleasableSource: BookSource {
+    fn release(&mut self) -> bool { false }
+    fn reopen(&mut self) -> bool { false }
+    fn cancelled(&self) -> bool { false }
+}
+struct HeldSource<'a>(&'a mut dyn BookSource);
+impl BookSource for HeldSource<'_> {
+    fn size(&self) -> u64 { self.0.size() }
+    fn read_at(&mut self, at: u64, bytes: &mut [u8]) -> i32 { self.0.read_at(at, bytes) }
+}
+impl ReleasableSource for HeldSource<'_> {}
+
 /// One attempt, over the same card owner as Pages. No source is retained.
 pub trait Store: WorkFile + CacheStorage {
     fn census(&mut self, cancelled: &dyn Fn() -> bool);
@@ -18,13 +33,14 @@ pub trait Store: WorkFile + CacheStorage {
 ///
 /// ```compile_fail
 /// use newt_phased_reader::index_build::Indexed;
-/// let _ = Indexed { digest: [0; 32], verified_now: true };
+/// let _ = Indexed { digest: [0; 32], verified_now: true, reopened: false };
 /// ```
 #[derive(Debug)]
-pub struct Indexed { digest: [u8; 32], verified_now: bool }
+pub struct Indexed { digest: [u8; 32], verified_now: bool, reopened: bool }
 impl Indexed {
     pub fn digest(&self) -> &[u8; 32] { &self.digest }
     pub fn verified_now(&self) -> bool { self.verified_now }
+    pub fn source_reopened(&self) -> bool { self.reopened }
 }
 
 /// A hit needs no full-source hash. A miss must finish verification before
@@ -42,10 +58,19 @@ pub fn open<B: ParserBackend + ?Sized, C: ReadScope + CachePresence>(
     source: &mut dyn BookSource, digest: &[u8; 32],
     storage: &mut Storage<'_>, lender: &mut impl BuildLoan, backend: &mut B,
     store: &mut C, hook: Yield<'_>, verification: Verification<'_>) -> Result<Indexed, Status> {
+    let mut held = HeldSource(source);
+    open_releasing(&mut held, digest, storage, lender, backend, store, hook, verification)
+}
+
+#[inline(always)]
+pub fn open_releasing<B: ParserBackend + ?Sized, C: ReadScope + CachePresence>(
+    source: &mut dyn ReleasableSource, digest: &[u8; 32],
+    storage: &mut Storage<'_>, lender: &mut impl BuildLoan, backend: &mut B,
+    store: &mut C, hook: Yield<'_>, verification: Verification<'_>) -> Result<Indexed, Status> {
     let identity = Identity { digest: *digest, policy: admission::POLICY_VERSION };
     stage(hook, 0);
     let existed = match probe(source, &identity, lender, store, hook) {
-        Ok((true, _)) => { result(hook, 0, Status::Ok, true); return Ok(Indexed { digest: *digest, verified_now: false }); }
+        Ok((true, _)) => { result(hook, 0, Status::Ok, true); return Ok(Indexed { digest: *digest, verified_now: false, reopened: false }); }
         Ok((false, existed)) => existed,
         Err(status) => { result(hook, 3, status, true); return Err(status); }
     };
@@ -56,16 +81,16 @@ pub fn open<B: ParserBackend + ?Sized, C: ReadScope + CachePresence>(
         }
         true
     } else { false };
-    attempt(source, digest, identity, storage, lender, backend, store, hook, existed)?;
-    Ok(Indexed { digest: *digest, verified_now })
+    let reopened = attempt(source, digest, identity, storage, lender, backend, store, hook, existed)?;
+    Ok(Indexed { digest: *digest, verified_now: verified_now && !reopened, reopened })
 }
 
 // Out of line so the work state and the build's frames are not on the stack
 // during the probe, and the probe's are not on it during the build.
 #[inline(never)]
-fn attempt<B: ParserBackend + ?Sized, C: CachePresence>(source: &mut dyn BookSource, digest: &[u8; 32],
+fn attempt<B: ParserBackend + ?Sized, C: CachePresence>(source: &mut dyn ReleasableSource, digest: &[u8; 32],
     identity: Identity, storage: &mut Storage<'_>, lender: &mut impl BuildLoan, backend: &mut B,
-    store: &mut C, hook: Yield<'_>, existed: bool) -> Result<(), Status> {
+    store: &mut C, hook: Yield<'_>, existed: bool) -> Result<bool, Status> {
     store.with_index(digest, |store| {
         build(source, identity, storage, lender, backend, store, hook, existed)
     }).unwrap_or_else(|| {
@@ -95,9 +120,9 @@ fn probe(source: &mut dyn BookSource, identity: &Identity, lender: &mut impl Bui
     Ok((false, existed))
 }
 
-fn build<B: ParserBackend + ?Sized>(source: &mut dyn BookSource, identity: Identity,
+fn build<B: ParserBackend + ?Sized>(source: &mut dyn ReleasableSource, identity: Identity,
     storage: &mut Storage<'_>, lender: &mut impl BuildLoan, backend: &mut B,
-    store: &mut dyn Store, hook: Yield<'_>, existed: bool) -> Result<(), Status> {
+    store: &mut dyn Store, hook: Yield<'_>, existed: bool) -> Result<bool, Status> {
     if !store.release_pages() { result(hook, 3, Status::IoError, true); return Err(Status::IoError); }
     stage(hook, 1);
     {
@@ -115,11 +140,11 @@ fn build<B: ParserBackend + ?Sized>(source: &mut dyn BookSource, identity: Ident
     let removed = store.work_removed;
     store.release_pages();
     match built {
-        Ok((true, work_removed)) => {
+        Ok((true, work_removed, reopened)) => {
             result(hook, if existed { 2 } else { 1 }, Status::Ok, removed && work_removed);
-            Ok(())
+            Ok(reopened)
         }
-        Ok((false, _)) => { result(hook, 4, Status::Ok, removed); Err(Status::Unsupported) }
+        Ok((false, _, _)) => { result(hook, 4, Status::Ok, removed); Err(Status::Unsupported) }
         Err(status) => { result(hook, 3, status, removed); Err(status) }
     }
 }

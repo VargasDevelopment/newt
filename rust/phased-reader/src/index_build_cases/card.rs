@@ -1,6 +1,7 @@
 #[derive(Default)]
 struct Card {
     file: Vec<u8>, pending: Vec<u8>, work: Vec<u8>, census: u32, creates: u32,
+    source_released: std::rc::Rc<Cell<bool>>,
     writes: u32, spilled_once: std::rc::Rc<Cell<bool>>, removed: bool, fail: bool, open: u32, most: u32, verified: bool,
 }
 impl Card {
@@ -9,7 +10,7 @@ impl Card {
 impl Store for Card {
     fn census(&mut self, cancelled: &dyn Fn() -> bool) { self.census += 1; cancelled(); }
     fn spilled(&self) -> bool { !self.work.is_empty() }
-    fn release_pages(&mut self) -> bool { self.pending.clear(); self.open = 2 + u32::from(!self.work.is_empty()); true }
+    fn release_pages(&mut self) -> bool { self.pending.clear(); self.open = 2 - u32::from(self.source_released.get()) + u32::from(!self.work.is_empty()); true }
 }
 impl WorkFile for Card {
     fn append(&mut self, bytes: &[u8]) -> bool {
