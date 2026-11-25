@@ -65,6 +65,8 @@ impl Runtime {
         });
     }
 
+    /// Keep book-switch rollback locals out of the shared work dispatch frame.
+    #[inline(never)]
     fn open_candidate_image(&mut self, home: &mut Home<'_>, ui: &mut Application<'_>,
         logical: &mut Frame, events: &mut Events<'_, '_>, index: usize,
     ) -> bool {

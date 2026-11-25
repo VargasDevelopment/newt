@@ -372,6 +372,8 @@ impl<'sdk> Application<'sdk> {
     }
 
     /// Apps opened: one card scan, read-only. No card is no offer.
+    /// Kept out of the shared work dispatch frame.
+    #[inline(never)]
     pub fn enter_apps(&mut self, home: &mut Home<'_>) -> bool {
         let Self { prompt, installed, .. } = self;
         home.with_storage_io(|_, io| {
@@ -381,6 +383,8 @@ impl<'sdk> Application<'sdk> {
     }
 
     /// Install chosen: the record session reads the card again (app_store).
+    /// Kept out of the shared work dispatch frame.
+    #[inline(never)]
     pub fn install_app(&mut self, home: &mut Home<'_>) -> bool {
         let Self { prompt, installed, tiny, .. } = self;
         home.with_storage_io(|home, io| card_app::install(prompt, installed, tiny,

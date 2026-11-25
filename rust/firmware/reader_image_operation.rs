@@ -29,11 +29,11 @@ impl Runtime {
     ) -> Result<BookExit, BookFailure> {
         let initialize = opening.is_some();
         let opened_at = opening.as_ref().map(|opening| opening.at);
-        if matches!(step, Some(BookStep::Save | BookStep::ReflowCheckpoint)) {
+        if matches!(step, Some(BookStep::Save | BookStep::ReflowCheckpoint { .. })) {
             self.selection.retire_checkpoint_metadata();
         }
         self.checkpoint.begin_operation();
-        let save_requested = matches!(step, Some(BookStep::Save | BookStep::ReflowCheckpoint | BookStep::Idle { checkpoint: true, .. }));
+        let save_requested = matches!(step, Some(BookStep::Save | BookStep::ReflowCheckpoint { .. } | BookStep::Idle { checkpoint: true, .. }));
         let clock = home.bus.board.monotonic_clock();
         let observations = profile.map(|profile| super::profile::Observations { profile, clock });
         let file_observer = observations.as_ref().map(|o| o as &dyn selected::FileObserver);

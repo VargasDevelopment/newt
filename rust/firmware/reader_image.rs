@@ -140,6 +140,13 @@ fn verified_name_digest(io: &newt_native_io::UiIo, name: &[u8], digest: &mut [u8
     loaded && closed.is_ok_and(|outcome| outcome.clean)
 }
 
+/// RAM-only reading position preserved across back-to-back layout reflows.
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct ReflowAnchor {
+    book: core::num::NonZeroU64,
+    locator: newt_core::progress::Locator,
+}
+
 /// The four reader allocations exist only while an admitted reader owns them.
 /// Nothing in this owner borrows the Board, panel, native backend or authority.
 pub struct Runtime {
@@ -156,6 +163,7 @@ pub struct Runtime {
     checkpoint: ReaderCheckpoint,
     statistics: ReadingStatsRuntime,
     recovery: Option<crate::reader_book::PendingRecovery>,
+    reflow_anchor: Option<ReflowAnchor>,
     saves: ReadingSaveNotice,
     cadence: YieldCadence,
     wake: WakeEvidence,
@@ -194,7 +202,7 @@ impl Runtime {
                 reading_available: false, ..HomeData::default() }), source: None, session: None,
             picture: crate::reading_storage::initialize(picture, newt_core::resume_picture::Mark::new),
             checkpoint: ReaderCheckpoint::new(CheckpointRestore::Latest),
-            statistics: ReadingStatsRuntime::default(), recovery: None,
+            statistics: ReadingStatsRuntime::default(), recovery: None, reflow_anchor: None,
             saves: ReadingSaveNotice::default(), cadence: YieldCadence::new(), wake: WakeEvidence::default(),
             cover_generation: 0, reading_refresh: newt_core::refresh::ReadingRefresh::default(),
             standalone_status: newt_core::zip_container::Status::NotFound,
@@ -220,6 +228,17 @@ impl Runtime {
     fn reading(&self) -> Option<ReadingView<'_>> { self.memory.reading(self.standalone_status) }
     fn opened(&self) -> bool { self.reading().is_some_and(|view| view.opened) }
     fn has_progress(&self) -> bool { self.reading().is_some_and(|view| view.has_progress) }
+    pub(super) fn reflow_anchor_for(
+        &mut self,
+        book: u64,
+        fallback: newt_core::progress::Locator,
+    ) -> newt_core::progress::Locator {
+        let Some(book) = core::num::NonZeroU64::new(book) else { return fallback; };
+        let anchor = self.reflow_anchor.filter(|saved| saved.book == book)
+            .unwrap_or(ReflowAnchor { book, locator: fallback });
+        self.reflow_anchor = Some(anchor);
+        anchor.locator
+    }
     pub fn progress(&self) -> &Progress { &self.saved }
     pub fn selection(&self) -> &SelectionAuthority { &self.selection }
     pub(crate) fn cover_generation(&self) -> u32 { self.cover_generation }

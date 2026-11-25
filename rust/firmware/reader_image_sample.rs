@@ -123,8 +123,15 @@ impl Runtime {
     }
 
     pub(super) fn save_sample_image(&mut self, home: &mut Home<'_>, now: u32) -> bool {
+        self.save_sample_at(home, now, None)
+    }
+
+    pub(super) fn save_sample_at(&mut self, home: &mut Home<'_>, now: u32,
+        anchor: Option<newt_core::progress::Locator>,
+    ) -> bool {
         let Some(memory) = self.memory.sample() else { return false; };
-        let candidate = *memory.view().tracker.snapshot(now);
+        let mut candidate = *memory.view().tracker.snapshot(now);
+        if let Some(locator) = anchor { candidate.locator = locator; }
         self.checkpoint.begin_operation();
         let result = home.with_state_store(|_, store|
             self.checkpoint.save_sample(store, candidate, self.progress_ready));
@@ -150,7 +157,7 @@ impl Runtime {
                 progress,
                 attempted_sequence,
                 settings: self.settings,
-                policy: RestorePolicy::ExactPage,
+                policy: if anchor.is_some() { RestorePolicy::Validated } else { RestorePolicy::ExactPage },
             });
         } else { self.recovery = None; }
         self.last_progress.set(now);

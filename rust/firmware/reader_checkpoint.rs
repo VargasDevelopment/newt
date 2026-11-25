@@ -228,11 +228,11 @@ impl ReaderCheckpoint {
             Load::Loaded(selected) if selected.digest == *digest)
     }
 
-    fn reading_intent(saved: &Progress, settings: ViewSettings) -> SleepResumeIntent {
+    fn reading_intent(saved: &Progress, settings: ViewSettings, anchor: bool) -> SleepResumeIntent {
         SleepResumeIntent {
             book: saved.book,
             checkpoint: progress_checkpoint(saved),
-            settings: settings.packed() | 4,
+            settings: settings.packed() | 4 | if anchor { 8 } else { 0 },
         }
     }
 
@@ -250,6 +250,7 @@ impl ReaderCheckpoint {
         digest: &[u8; 32],
         settings: ViewSettings,
         reading: bool,
+        anchor: bool,
         source_verified: bool,
     ) -> CheckpointResult {
         if !source_verified {
@@ -263,7 +264,7 @@ impl ReaderCheckpoint {
             {
                 return self.result;
             }
-            Self::reading_intent(&saved, settings)
+            Self::reading_intent(&saved, settings, anchor)
         } else {
             SleepResumeIntent::default()
         };
@@ -440,7 +441,7 @@ impl ReaderCheckpoint {
         self.reset_attempted(proposed.book, proposed.sequence);
         result.progress = Outcome::Verified;
         if commit_reading {
-            let intent = Self::reading_intent(&proposed, settings);
+            let intent = Self::reading_intent(&proposed, settings, false);
             let confirmed = Self::store_destination(store, intent);
             result.destination = if confirmed {
                 Outcome::Verified

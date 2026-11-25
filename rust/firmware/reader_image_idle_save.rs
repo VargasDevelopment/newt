@@ -67,7 +67,7 @@ pub(super) fn checkpoint(
             let mut native = duty.card.port(duty.io);
             let mut store = ReadingStateRouter::new(crate::nvs::NvsBlobBackend::new(&mut *duty.nvs),
                 &mut *duty.facts, &mut medium, &mut native);
-            duty.checkpoint.publish_destination(&mut store, duty.digest, duty.settings, true, true);
+            duty.checkpoint.publish_destination(&mut store, duty.digest, duty.settings, true, false, true);
         }
         let result = duty.checkpoint.result();
         PendingRecovery::complete_checkpoint(duty.recovery, duty.checkpoint, candidate, duty.settings, duty.digest);

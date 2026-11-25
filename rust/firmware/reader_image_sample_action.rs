@@ -30,6 +30,7 @@ impl Runtime {
                 }
                 if self.opened() && self.reader_ui.panel == newt_reader_ui::ReaderPanel::Page
                     && before != self.reading().map(|view| (view.page.spine, view.page.page)) {
+                    self.reflow_anchor = None;
                     self.reading_refresh.page_changed();
                 }
                 (Some(intent), at)

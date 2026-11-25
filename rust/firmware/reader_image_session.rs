@@ -105,6 +105,7 @@ impl super::Runtime {
     pub(super) fn close_runtime(&mut self, home: &mut crate::app_image::Home<'_>)
         -> Result<(), newt_c3_board::Error> {
         use crate::home_startup::CardPort;
+        self.reflow_anchor = None;
         if let Some(memory) = self.memory.external_mut() {
             memory.lend(|memory| {
                 let book = &mut *memory.runtime;

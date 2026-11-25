@@ -80,6 +80,7 @@ impl<N: nvs::Native> MountedCheckpoint<'_, N> {
             &opened_digest,
             settings,
             sleeping,
+            false,
             revision.source_verified() && revision.digest() == opened_digest,
             request,
         );

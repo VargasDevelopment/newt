@@ -223,6 +223,7 @@ impl Runtime {
         control.with_open(at, |control, owned| {
             let mut events = Events { queue, control, action: *trace, task: task.reborrow() };
             let opened = self.open_selected_armed(home, ui, logical, &mut events, profile, prepared, session_checkpoint, at, owned);
+            if !self.opened() { self.reflow_anchor = None; }
             let snapshot = events.control.snapshot(millis());
             if let Some(profile) = profile { super::profile::finish(self, profile, snapshot, &mut home.bus.log); }
             opened
@@ -234,6 +235,7 @@ impl Runtime {
         events: &mut Events<'_, '_>, profile: Option<&ReaderWorkProfile>,
         prepared: Option<[u8; 32]>, session_checkpoint: bool, at: u32, owned: bool,
     ) -> bool {
+        if !session_checkpoint { self.reflow_anchor = None; }
         let recovery_open = self.recovery.is_some();
         // This open answers an interrupted one's owed reopen.
         if matches!(self.memory, ReaderBacking::Interrupted) { self.memory = ReaderBacking::Closed; }
