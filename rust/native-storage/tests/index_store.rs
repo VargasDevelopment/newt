@@ -31,6 +31,8 @@ struct Card {
     most_open: u32,
     creates: u32,
     cstr_opens: u32,
+    stats: u32,
+    fstats: u32,
     writes: u32,
     armed: bool,
     off: bool,
@@ -77,8 +79,9 @@ impl Native for Card {
     fn seek(&mut self, fd: i32, offset: u32) -> Result<u64> { self.live(|m| m.seek(fd, offset)) }
     fn truncate(&mut self, fd: i32, bytes: u32) -> Result<()> { self.live(|m| m.truncate(fd, bytes)) }
     fn sync(&mut self, fd: i32) -> Result<()> { self.live(|m| m.sync(fd)) }
-    fn fstat(&mut self, fd: i32) -> Result<Stat> { self.live(|m| m.fstat(fd)) }
+    fn fstat(&mut self, fd: i32) -> Result<Stat> { self.fstats += 1; self.live(|m| m.fstat(fd)) }
     fn stat(&mut self, path: &str, no_follow: bool) -> Result<Stat> {
+        self.stats += 1;
         let mut stat = self.live(|m| m.stat(path, no_follow))?;
         stat.seconds = self.times.get(path).copied().unwrap_or_default();
         Ok(stat)
@@ -223,6 +226,7 @@ fn complete(s: &mut dyn CacheStorage, reader: &Reader) -> bool {
 fn an_index_round_trips_with_one_open_file() {
     let mut card = Card::new();
     with_store(&mut card, |store| write(store, BOOK)).unwrap();
+    println!("INDEX PUBLISH stats={} fstats={} writes={}", card.stats, card.fstats, card.writes);
     assert_eq!(card.indexes(), [leaf(&BOOK.digest)]);
     assert_eq!(with_store(&mut card, |store| read(store, &BOOK, complete)), Some(true));
     assert_eq!((card.open, card.most_open), (0, 1));
