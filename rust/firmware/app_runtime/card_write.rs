@@ -3,11 +3,14 @@
 //! the bridge's serial loan and the input gate. Its working memory is one heap
 //! block that exists only while the lease runs.
 #![forbid(unsafe_code)]
-use crate::{app_image::{Events, Home}, board_clock::BoardBus, dev_usb::Bridge, serial_console::DevChannel};
+use crate::{app_image::{Events, Home}, board_clock::BoardBus, dev_usb::Bridge, serial_console::PutChannel};
 use core::ffi::CStr;
 use newt_core::dev_put::{self, Card, Entry, Session, Wire, MEMORY_BYTES};
 use newt_native_io::OsNative;
 use newt_native_storage::{Error, Kind, Native, Open};
+
+#[path = "card_write_observation.rs"]
+mod observation;
 
 const MOUNT: &CStr = c"/newt-sd";
 
@@ -21,10 +24,16 @@ pub fn lease(bridge: &mut Bridge, home: &mut Home<'_>, events: &mut Events<'_, '
     let mut ended = None;
     let mounted = home.with_storage_io(|home, io| {
         let BoardBus { board, log } = &mut home.bus;
-        let mut wire = LeaseWire { channel: log.dev_channel(board.monotonic_clock()), events, tx_flush_pending: false };
+        let clock = board.monotonic_clock();
         let mut card = DevCard(io.port());
         // A failed hash scope leaves `ended` empty: the lease never began.
-        let _ = board.with_sha256(|hash| ended = Some(dev_put::run(session, memory, &mut wire, &mut card, hash)));
+        let _ = board.with_sha256(|hash| {
+            // Acquire only after admission, memory, mount and hash succeeded,
+            // before the offer lets the host send any FILE or DATA bytes.
+            let mut wire = LeaseWire { channel: log.dev_channel(clock).receive_put(), events, tx_flush_pending: false, counters: observation::Counters::default() };
+            ended = Some(dev_put::run(session, memory, &mut wire, &mut card, hash));
+            wire.report();
+        });
     });
     let now = home.bus.board.monotonic_clock().millis();
     match (mounted, ended) {
@@ -35,14 +44,16 @@ pub fn lease(bridge: &mut Bridge, home: &mut Home<'_>, events: &mut Events<'_, '
 }
 
 struct LeaseWire<'a, 'events, 'task> {
-    channel: DevChannel<'a>,
+    channel: PutChannel<'a>,
     events: &'a mut Events<'events, 'task>,
     tx_flush_pending: bool,
+    counters: observation::Counters,
 }
 impl Wire for LeaseWire<'_, '_, '_> {
     fn connected(&mut self) -> bool { self.channel.connected() }
     fn read_byte(&mut self) -> i32 {
         let byte = self.channel.read_byte();
+        self.counters.read(byte);
         if byte < 0 && self.tx_flush_pending && self.channel.flush_tx_tail() {
             self.tx_flush_pending = false;
         }
@@ -56,7 +67,24 @@ impl Wire for LeaseWire<'_, '_, '_> {
     fn now(&mut self) -> u32 { self.channel.now() }
     /// Takes the gate's pending press, as Bridge::drain_pending does.
     fn physical_input(&mut self) -> bool { self.events.task.gate().with_pending(core::mem::take) }
-    fn pause(&mut self) { crate::app_power::delay_ms(1); }
+    fn pause(&mut self) {
+        let start = self.channel.now();
+        crate::app_power::delay_ms(1);
+        self.counters.paused(self.channel.now().wrapping_sub(start));
+    }
+    fn observe(&mut self, event: dev_put::Observation) {
+        self.counters.observe(self.channel.now(), event);
+    }
+}
+
+impl LeaseWire<'_, '_, '_> {
+    fn report(&mut self) {
+        let mut bytes = [0; 384];
+        let mut row = crate::serial_console::Row::new(&mut bytes);
+        if self.counters.row(self.channel.now(), &mut row).is_err() { return; }
+        let count = row.length;
+        observation::report(self, &bytes[..count]);
+    }
 }
 
 /// The card as the lease sees it: errno for the raw download leaves, and the

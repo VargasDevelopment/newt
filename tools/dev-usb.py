@@ -16,10 +16,12 @@ from bench_lease import lease_port
 from dev_usb_panel_telemetry import (
     MAX_PRESS_TELEMETRY, collect_press_telemetry, decode_panel_ring)
 from dev_usb_firmware_rows import MAX_LISTEN_SECONDS, FirmwareRows, listen
-from dev_usb_put import FOLDERS, plan, put_files
+from dev_usb_put import card_target, plan, put_files
 
 RECORD = re.compile(rb'!N1 ([0-9]+) ([0-9]+) ([0-9]+) (.*) \*([0-9a-f]{8})\n\Z')
 MAX_AUDIT_RECORDS = 2048  # Covers both directions of 32 PRESSes and two full captures.
+RESYNC_QUIET_SECONDS = 4.1  # PUT's 3 s receive bound, 1 s statistics output, and cleanup margin.
+FAILURE_TAIL_SECONDS = 1.1  # Includes the firmware's bounded best-effort PUT_STATS output.
 CAPS = ('press,status,frame', 'press,status,frame,diag', 'press,status,frame,diag2',
         'press,status,frame,diag2,put')
 
@@ -34,7 +36,7 @@ def decode_record(line):
         return None
     match = RECORD.fullmatch(line)
     if len(line) > 512 or not match or zlib.crc32(line[:line.rfind(b' *')]) != int(match[5], 16):
-        raise ValueError('Damaged protocol record; restart the session')
+        raise ProtocolDirty('Damaged protocol record; restart the session')
     numbers = tuple(int(match[n]) for n in (1, 2, 3))
     if any(number > 0xffffffff or str(number).encode() != match[n]
            for n, number in enumerate(numbers, 1)):
@@ -109,6 +111,10 @@ class ProtocolTimeout(ValueError):
     """No complete protocol record arrived before the deadline."""
 
 
+class ProtocolDirty(ValueError):
+    """An unfinished prior exchange needs a bounded, read-only resynchronization."""
+
+
 class ProtocolClient:
     def __init__(self, timeout=3, randbelow=secrets.randbelow):
         self.timeout = timeout
@@ -117,6 +123,7 @@ class ProtocolClient:
         self.capabilities = frozenset()
         self.randbelow = randbelow
         self.audit = []
+        self.dirty_drain_lines = 0
         self.untraced = ()  # response prefixes summarised by their caller instead
         self.press_telemetry = []
         self.active_press = None
@@ -183,15 +190,47 @@ class ProtocolClient:
             self.trace('request', *map(int, tokens[1:4]), tokens[4], text.split(' ', 4)[4])
         self.write_data(data, remaining)
 
-    def hello(self, expected_build=None):
+    def drain_responses(self, seconds):
+        """Read-only error tail; records remain in the audit and authorize nothing."""
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            try:
+                self.record(deadline)
+            except ProtocolDirty:
+                self.dirty_drain_lines = min(self.dirty_drain_lines + 1, 0xffffffff)
+                continue
+            except ProtocolTimeout:
+                break
+
+    def establish_session(self, expected_build):
+        try:
+            return self.hello(expected_build)
+        except (ProtocolDirty, ProtocolTimeout) as error:
+            self.trace('recovery', None, None, 0, 'RESYNC', str(error))
+        # Never replay an action or FILE/DATA/DONE. Let an interrupted payload
+        # lease expire, drain its replies, then delimit an ordinary partial line.
+        self.drain_responses(RESYNC_QUIET_SECONDS)
+        self.buffer.clear()
+        self.write_data(b'\n', self.timeout)
+        return self.hello(expected_build, recovering=True)
+
+    def hello(self, expected_build=None, *, recovering=False):
         self.capabilities = frozenset()
         previous = None
         for _ in range(2):
             deadline = time.monotonic() + self.timeout
             self.send('N1 HELLO', deadline)
-            boot, session, identifier, body = self.record(deadline)
-            if identifier != 0 or session == 0 or not body.startswith('HELLO '):
-                raise ValueError('Expected a fresh handshake')
+            while True:
+                try:
+                    boot, session, identifier, body = self.record(deadline)
+                except ProtocolDirty:
+                    if recovering and time.monotonic() < deadline:
+                        continue
+                    raise
+                if identifier == 0 and session != 0 and body.startswith('HELLO '):
+                    break
+                if not recovering or time.monotonic() >= deadline:
+                    raise ProtocolDirty('Expected a fresh handshake')
             fields = decode_fields(body, {'caps', 'wake', 'build'})
             if fields.get('caps') not in CAPS or fields.get('wake') != 'physical-only':
                 raise ValueError('Unsupported bridge capabilities')
@@ -376,7 +415,7 @@ def run_session(client, args):
     # Receipts keep 'simulation' (always False) for their readers.
     report = {'simulation': False, 'actions': []}
     try:
-        report['hello'] = client.hello(args.expect_build)
+        report['hello'] = client.establish_session(args.expect_build)
         if args.mode == 'put':
             report['put'] = {'folder': args.folder, 'files': []}
             put_files(client, args.folder, args.files, args.timeout, report['put'])
@@ -403,6 +442,14 @@ def run_session(client, args):
         report['error'] = str(error) or 'Interrupted by operator'
         if isinstance(error, KeyboardInterrupt) or isinstance(error.__cause__, KeyboardInterrupt):
             report['interrupted'] = True
+        elif args.mode == 'put':
+            # The failed lease emits its statistics after its error reply.
+            # Keep that bounded tail before closing, without sending anything.
+            try:
+                client.drain_responses(FAILURE_TAIL_SECONDS)
+            except (ValueError, OSError, KeyboardInterrupt) as tail:
+                report['failure_tail_error'] = str(tail) or 'Interrupted by operator'
+                if isinstance(tail, KeyboardInterrupt): report['interrupted'] = True
     finally:
         try:
             client.close()
@@ -410,6 +457,10 @@ def run_session(client, args):
             report['error'] = report.get('error', '') + f' Closure failed: {str(error) or "Interrupted by operator"}'
             if isinstance(error, KeyboardInterrupt):
                 report['interrupted'] = True
+        if 'put' in report:
+            report['put']['receive_tail'] = {'buffered_bytes': len(client.buffer),
+                'buffered_protocol_prefix': client.buffer.startswith(b'!N1 '),
+                'dirty_drain_lines': client.dirty_drain_lines}
         report.update(client.receipt(), **client.firmware_rows.report())
     return report
 
@@ -427,9 +478,9 @@ def main():
     parser.add_argument('--output', type=Path, help='host capture basename')
     parser.add_argument('--diagnostics', action='store_true', help='read boot/reader diagnostics after STATUS')
     parser.add_argument('--listen', type=float, default=0, help='after the last press, read firmware rows (0–600 s)')
-    # put writes each --file into one fixed card folder: Newt/Apps, Newt/Update or Newt/Dev (docs/dev-usb-bridge.md).
-    parser.add_argument('--folder', choices=FOLDERS, help='put: the card folder')
-    parser.add_argument('--file', action='append', type=Path, default=[], help='put: a local file, repeatable')
+    # PUT validates every destination before opening the port.
+    parser.add_argument('--folder', help='put: any card-relative directory (e.g. Newt/Books; . for card root); apps/update/dev are aliases')
+    parser.add_argument('--file', action='append', type=Path, default=[], help='put: local file, repeatable; 4 KiB raw blocks, limited by free card space')
     parser.add_argument('--name', help='put: the card name for a single --file (default: its own name)')
     args = parser.parse_args()
     if not 0.1 <= args.timeout <= 30 or len(args.press) > 32 or not 0 <= args.listen <= MAX_LISTEN_SECONDS:
@@ -445,6 +496,8 @@ def main():
             parser.error('put needs --folder and takes no presses, capture or listening')
         try:
             args.files = plan(args.file, args.name)
+            for _, name, _ in args.files:
+                card_target(args.folder, name)
         except (ValueError, OSError) as error:
             parser.error(str(error))
     if 'sleep' in args.press and (args.press[-1] != 'sleep' or args.press.count('sleep') != 1 or args.output or args.diagnostics or args.listen):

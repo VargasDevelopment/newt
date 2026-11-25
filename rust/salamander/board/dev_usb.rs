@@ -4,9 +4,12 @@
 /// Arduino HWCDC's default TX ring buffer size (HWCDC::begin).
 const HWCDC_TX_RING_BYTES: i32 = 256;
 
-// SAFETY: linked native entries forward synchronous SDK Serial observations,
-// one bounded write, or the existing nonblocking HAL transmit-tail wake pair.
+// SAFETY: matching native leaves use SDK Serial normally. The scoped RX
+// leaves use the C3 HAL under an exclusive receive token; no pointer is retained.
 unsafe extern "C" {
+    fn nsc_put_rx_begin() -> u32;
+    fn nsc_put_rx_end(previous: u32);
+    fn nsc_put_rx_read_byte() -> i32;
     fn nsc_connected() -> u8;
     fn nsc_available() -> i32;
     fn nsc_read_byte() -> i32;
@@ -74,4 +77,49 @@ pub fn flush_tx_tail() -> bool {
 pub fn available_for_write() -> i32 {
     // SAFETY: scalar SDK observation, retaining no object or buffer.
     unsafe { nsc_available_for_write() }
+}
+
+/// The sole begun Serial's receive authority. No memory or hardware state is
+/// held; borrowing it prevents concurrent or nested receive loans.
+pub struct ReceiveOwner(core::marker::PhantomData<*mut ()>);
+impl ReceiveOwner {
+    /// # Safety
+    /// Mint once from the sole begun Serial owner on its UI task.
+    pub unsafe fn acquired() -> Self { Self(core::marker::PhantomData) }
+    pub fn receive(&mut self) -> PutReceive<'_> {
+        // SAFETY: the mutable authority loan excludes another receiver until
+        // Drop restores RX. Native atomically masks only its interrupt bit.
+        let previous = unsafe { nsc_put_rx_begin() };
+        PutReceive { previous, _owner: core::marker::PhantomData }
+    }
+}
+const _: () = assert!(core::mem::size_of::<ReceiveOwner>() == 0);
+
+/// One exclusive UI-task receive loan; Drop restores only the prior RX bit.
+/// TX remains on HWCDC throughout. No allocation or standing receive state.
+pub struct PutReceive<'owner> {
+    previous: u32,
+    _owner: core::marker::PhantomData<&'owner mut ReceiveOwner>,
+}
+impl PutReceive<'_> {
+    pub fn read_byte(&mut self, mut micros: impl FnMut() -> u32) -> i32 {
+        // USB packets within a burst arrive between ticks. Drain queued/FIFO
+        // bytes and briefly poll for the next packet before Core sleeps. This
+        // local bound returns control to Core's unchanged lease deadline.
+        const QUIET_US: u32 = 250;
+        let start = micros();
+        loop {
+            // SAFETY: this non-Send guard holds RX exclusion until Drop. Native
+            // drains the SDK queue before the same FIFO its ISR normally reads.
+            let byte = unsafe { nsc_put_rx_read_byte() };
+            if byte >= 0 || micros().wrapping_sub(start) >= QUIET_US { return byte; }
+        }
+    }
+}
+impl Drop for PutReceive<'_> {
+    fn drop(&mut self) {
+        // SAFETY: the guard still holds its exclusive loan. Restore only the
+        // saved RX enable bit; leave pending bytes/raw status and TX untouched.
+        unsafe { nsc_put_rx_end(self.previous) }
+    }
 }

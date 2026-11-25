@@ -18,7 +18,7 @@ pub const FAILED: i32 = -5;
 pub const FREED: &[u8] = b"<freed clusters>";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Node { File(Vec<u8>), Folder }
+pub enum Node { File(Vec<u8>), Folder, Other }
 
 pub struct Handle { path: String, at: usize }
 
@@ -119,6 +119,7 @@ impl Card for FakeCard {
             None => Entry::Missing,
             Some(Node::File(_)) => Entry::File,
             Some(Node::Folder) => Entry::Folder,
+            Some(Node::Other) => Entry::Other,
         })
     }
     fn make_folder(&mut self, path: &CStr) -> Result<(), i32> {
@@ -205,7 +206,7 @@ impl Card for FakeCard {
 
 /// What the host does next, in order. A press or an unplug happens when the
 /// lease next looks while no byte is waiting; after the script, silence.
-pub enum Event { Line(String), Press, Unplug }
+pub enum Event { Line(String), Bytes(Vec<u8>), Wait(u32), Press, Unplug }
 
 pub struct FakeWire {
     script: VecDeque<Event>,
@@ -213,6 +214,7 @@ pub struct FakeWire {
     connected: bool,
     pub clock: u32,
     pub sent: Vec<u8>,
+    pub observations: Vec<newt_core::dev_put::Observation>,
     /// Bytes accepted per write call, so replies go out in pieces.
     pub write_limit: usize,
     /// The host stops reading: every write accepts nothing.
@@ -226,7 +228,7 @@ pub struct FakeWire {
 impl FakeWire {
     pub fn new(script: Vec<Event>) -> Self {
         Self { script: script.into(), pending: VecDeque::new(), connected: true, clock: 1_000, sent: Vec::new(),
-            write_limit: usize::MAX, stalled: false, pressed: Rc::default(), late: Rc::default() }
+            observations: Vec::new(), write_limit: usize::MAX, stalled: false, pressed: Rc::default(), late: Rc::default() }
     }
     fn front(&mut self, wanted: fn(&Event) -> bool) -> bool {
         if !self.pending.is_empty() || !self.script.front().is_some_and(wanted) { return false; }
@@ -261,9 +263,16 @@ impl Wire for FakeWire {
         self.connected
     }
     fn read_byte(&mut self) -> i32 {
-        if self.pending.is_empty() && matches!(self.script.front(), Some(Event::Line(_))) {
-            let Some(Event::Line(line)) = self.script.pop_front() else { unreachable!() };
-            self.pending.extend(line.into_bytes());
+        if self.pending.is_empty() {
+            match self.script.front() {
+                Some(Event::Line(_)) => { let Some(Event::Line(line)) = self.script.pop_front() else { unreachable!() }; self.pending.extend(line.into_bytes()); }
+                Some(Event::Wait(_)) => {
+                    let Some(Event::Wait(ms)) = self.script.pop_front() else { unreachable!() };
+                    self.clock += ms;
+                }
+                Some(Event::Bytes(_)) => { let Some(Event::Bytes(bytes)) = self.script.pop_front() else { unreachable!() }; self.pending.extend(bytes); }
+                _ => {}
+            }
         }
         self.pending.pop_front().map_or(-1, i32::from)
     }
@@ -278,6 +287,7 @@ impl Wire for FakeWire {
         self.pressed.take() || self.front(|event| matches!(event, Event::Press))
     }
     fn pause(&mut self) { self.clock += 1; }
+    fn observe(&mut self, event: newt_core::dev_put::Observation) { self.observations.push(event); }
 }
 
 #[derive(Default)]

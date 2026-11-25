@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //! The lease's line syntax: requests, canonical numbers, the digest's hex,
-//! strict base64 and a bounded reply buffer.
+//! raw-block lengths and a bounded reply buffer.
 use core::fmt;
 
 #[derive(Clone, Copy)]
@@ -37,11 +37,12 @@ impl Request {
     }
 }
 
-pub(super) fn number(text: &str) -> Option<u32> {
+pub(super) fn number(text: &str) -> Option<u32> { wide_number(text)?.try_into().ok() }
+pub(super) fn wide_number(text: &str) -> Option<u64> {
     if text.is_empty() || (text.starts_with('0') && text.len() != 1) { return None; }
-    text.bytes().try_fold(0u32, |value, byte| {
+    text.bytes().try_fold(0u64, |value, byte| {
         if !byte.is_ascii_digit() { return None; }
-        value.checked_mul(10)?.checked_add(u32::from(byte - b'0'))
+        value.checked_mul(10)?.checked_add(u64::from(byte - b'0'))
     })
 }
 
@@ -57,43 +58,6 @@ pub(super) fn digest_hex(text: &str) -> Option<[u8; 32]> {
         *byte = (nibble(pair[0])? << 4) | nibble(pair[1])?;
     }
     Some(digest)
-}
-
-/// Strict, canonical standard base64, decoded over its own first bytes (the
-/// output never overtakes the input).
-pub(super) fn decode_base64_in_place(text: &mut [u8]) -> Option<usize> {
-    if text.is_empty() || text.len() % 4 != 0 { return None; }
-    let value = |b: u8| -> Option<u32> {
-        Some(u32::from(match b {
-            b'A'..=b'Z' => b - b'A',
-            b'a'..=b'z' => b - b'a' + 26,
-            b'0'..=b'9' => b - b'0' + 52,
-            b'+' => 62,
-            b'/' => 63,
-            _ => return None,
-        }))
-    };
-    let groups = text.len() / 4;
-    let mut out = 0;
-    for group in 0..groups {
-        let at = group * 4;
-        let quad = [text[at], text[at + 1], text[at + 2], text[at + 3]];
-        let last = group + 1 == groups;
-        let padding = match quad {
-            [_, _, b'=', b'='] if last => 2,
-            [_, _, _, b'='] if last => 1,
-            _ => 0,
-        };
-        let mut bits = 0;
-        for &b in &quad[..4 - padding] { bits = (bits << 6) | value(b)?; }
-        bits <<= 6 * padding as u32;
-        let bytes = [(bits >> 16) as u8, (bits >> 8) as u8, bits as u8];
-        // Canonical: bits under the padding must be zero.
-        if bytes[3 - padding..].iter().any(|&b| b != 0) { return None; }
-        text[out..out + 3 - padding].copy_from_slice(&bytes[..3 - padding]);
-        out += 3 - padding;
-    }
-    Some(out)
 }
 
 pub(super) struct Cursor<'a> { pub bytes: &'a mut [u8], pub used: usize }

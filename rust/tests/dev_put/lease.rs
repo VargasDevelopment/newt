@@ -6,10 +6,12 @@
 mod commit;
 mod fakes;
 mod sha256;
+mod receive_owner;
+mod wire_deadlines;
 
 use fakes::{Event, FakeCard, FakeWire, HostHash, Node, FAILED};
-use newt_core::dev_put::{self, admit, name_allowed, Busy, End, Facts, Session, CAP_BYTES, CHUNK_BYTES, IDLE_MS,
-    LINE_BYTES, MEMORY_BYTES, RESERVE_BYTES, RX_QUEUE_BYTES};
+use newt_core::dev_put::{self, admit, name_allowed, Busy, End, Facts, Session, CHUNK_BYTES, IDLE_MS,
+    LINE_BYTES, MEMORY_BYTES, FRAME_BYTES};
 use sha256::sha256;
 
 const BOOT: u32 = 7;
@@ -17,11 +19,11 @@ const SESSION: u32 = 0x9000_0001;
 const PUT_ID: u32 = 0x8000_0010;
 const DEV: &str = "/newt-sd/Newt/Dev";
 const TARGET: &str = "/newt-sd/Newt/Dev/runtime.bin";
-const TEMP: &str = "/newt-sd/Newt/Dev/.newt-put";
-const OLD: &str = "/newt-sd/Newt/Dev/.newt-old";
-const MARKER: &str = "/newt-sd/Newt/Dev/.newt-old-name";
+const TEMP: &str = "/newt-sd/NEWT.PUT";
+const OLD: &str = "/newt-sd/NEWT.OLD";
+const MARKER: &str = "/newt-sd/NEWT.MRK";
 const OTHER: &str = "/newt-sd/Newt/Dev/other.bin";
-const BANNER: &str = "PUT line=255 chunk=150 cap=7798784";
+const BANNER: &str = "PUT line=4351 chunk=4096 path=hex data=raw";
 
 /// The host's side of one lease: lines with fresh IDs in the PUT's session.
 struct Host { id: u32, script: Vec<Event> }
@@ -33,11 +35,12 @@ impl Host {
         self
     }
     fn file(&mut self, folder: &str, name: &str, bytes: &[u8]) -> &mut Self {
-        self.line(&format!("FILE {folder} {name} {} {}", bytes.len(), hex(&sha256(bytes))))
+        self.line(&file_line(folder, name, bytes.len() as u64, &hex(&sha256(bytes))))
     }
     fn data(&mut self, bytes: &[u8]) -> &mut Self {
         for (index, chunk) in bytes.chunks(CHUNK_BYTES).enumerate() {
-            self.line(&format!("DATA {} {}", index * CHUNK_BYTES, base64(chunk)));
+            self.line(&format!("DATA {} {}", index * CHUNK_BYTES, chunk.len()));
+            self.script.push(Event::Bytes(chunk.to_vec()));
         }
         self
     }
@@ -77,18 +80,6 @@ fn pattern(length: usize) -> Vec<u8> {
 
 fn hex(bytes: &[u8]) -> String { bytes.iter().map(|b| format!("{b:02x}")).collect() }
 
-fn base64(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::new();
-    for group in bytes.chunks(3) {
-        let bits = group.iter().enumerate().fold(0u32, |bits, (i, &b)| bits | u32::from(b) << (16 - 8 * i));
-        for i in 0..4 {
-            out.push(if i <= group.len() { char::from(ALPHABET[(bits >> (18 - 6 * i) & 63) as usize]) } else { '=' });
-        }
-    }
-    out
-}
-
 fn done(bytes: &[u8]) -> String { format!("DONE size={} sha256={}", bytes.len(), hex(&sha256(bytes))) }
 
 /// After a lease that wrote nothing: no temp, and the target as it was.
@@ -102,39 +93,63 @@ fn resolved(card: &FakeCard) {
     assert_eq!((card.file(OLD), card.file(MARKER)), (None, None));
 }
 
+fn file_line(folder: &str, name: &str, size: u64, digest: &str) -> String {
+    let directory = match folder { "dev" => "Newt/Dev", "apps" => "Newt/Apps", "update" => "Newt/Update", other => other };
+    let target = if directory.is_empty() { name.to_owned() } else { format!("{directory}/{name}") };
+    format!("FILE {} {size} {digest}", hex(target.as_bytes()))
+}
+
 #[test]
 fn names_outside_the_safe_set_are_refused() {
-    // FAT drops a trailing dot, so `newt.bin.` would be `newt.bin`.
-    for bad in [&b""[..], b"..", b"../x", b"a/b", b"/abs", b"a\\b", b".hidden", b"a..b", b"a b", b"x\0",
-        "caf\u{e9}".as_bytes(), &[b'a'; 33], b"a.", b"newt.bin.", b"a.txt "] {
+    for bad in [&b""[..], b"..", b"../x", b"a/b", b"/abs", b"a\\b", b"a..b", b"x\0",
+        &[b'a'; 256], b"a.", b"a.txt ", b"CON", b"nul.txt", b"LPT9", b"x:y", b"a?b", b"x\x7f"] {
         assert!(!name_allowed(bad), "{bad:?}");
     }
-    for good in [&b"newt.bin"[..], b"app-1_x.txt", b"0", &[b'a'; 32]] {
+    for good in [&b"newt.bin"[..], b"app-1_x.txt", b"0", b".hidden", b"a b", "caf\u{e9}".as_bytes(), &[b'a'; 255]] {
         assert!(name_allowed(good), "{good:?}");
     }
-    for name in ["..", "../Books", ".newt-put", "newt.bin."] {
+    for target in ["..", "../Books/a", "Newt/../x", "/absolute", "a//b", "a/", "./x", "a\\b", "C:/x", ".NEWT-PUT", ".newt-old/x", ".newt-old-name", "NEWT.PUT", "newt.old", "Newt.Mrk", "a/NEWT.PUT", "a/nul.txt", "bad."] {
         let mut card = FakeCard::default();
-        let outcome = lease(&mut card, Host::new().line(&format!("FILE dev {name} 0 {}", hex(&sha256(b"")))));
-        assert_eq!(outcome.bodies(), [BANNER, "ERROR name"], "{name}");
-        assert_eq!(card.nodes.len(), 1, "a refused name touches nothing");
+        let outcome = lease(&mut card, Host::new().file("", target, b""));
+        assert_eq!(outcome.bodies(), [BANNER, "ERROR name"], "{target}");
+        assert_eq!(card.nodes.len(), 1, "a refused path touches nothing");
     }
 }
 
 #[test]
-fn only_the_three_dev_folders_are_targets() {
-    for (folder, path) in [("apps", "/newt-sd/Newt/Apps/a.txt"), ("update", "/newt-sd/Newt/Update/a.txt"),
-        ("dev", "/newt-sd/Newt/Dev/a.txt")] {
+fn any_valid_card_relative_destination_is_supported() {
+    for target in ["root.txt", "Newt/Books/generated.epub", "another/deep/subfolder/a b.txt", "Newt/State/.hidden", "caf\u{e9}/reading.txt"] {
         let mut card = FakeCard::default();
-        let outcome = lease(&mut card, Host::new().put(folder, "a.txt", b"hello"));
-        assert_eq!(outcome.last(), done(b"hello"));
-        assert_eq!(card.file(path), Some(&b"hello"[..]));
+        let outcome = lease(&mut card, Host::new().put("", target, b"hello"));
+        assert_eq!(outcome.last(), done(b"hello"), "{target}");
+        assert_eq!(card.file(&format!("/newt-sd/{target}")), Some(&b"hello"[..]));
     }
-    for folder in ["books", "Dev", "../Books", "/newt-sd/Newt/Dev"] {
+    let mut card = FakeCard::default();
+    card.put_file("/newt-sd/not-a-folder", b"existing");
+    assert_eq!(lease(&mut card, Host::new().put("not-a-folder", "x", b"new")).last(), "ERROR target");
+    assert_eq!(card.file("/newt-sd/not-a-folder"), Some(&b"existing"[..]));
+}
+
+#[test]
+fn paths_are_bounded_and_decoded_before_card_access() {
+    let target = format!("{}/{}", "a".repeat(255), "b".repeat(246));
+    assert_eq!(format!("/newt-sd/{target}").len(), 511);
+    let mut card = FakeCard::default();
+    assert_eq!(lease(&mut card, Host::new().put("", &target, b"whole")).last(), done(b"whole"));
+    for encoded in [hex(format!("{target}b").as_bytes()), "f".into(), "zz".into(), "ff".into(), "610062".into()] {
         let mut card = FakeCard::default();
-        let outcome = lease(&mut card, Host::new().file(folder, "a.txt", b"hello"));
-        assert_eq!(outcome.bodies(), [BANNER, "ERROR folder"], "{folder}");
+        let outcome = lease(&mut card, Host::new().line(&format!("FILE {encoded} 0 {}", hex(&sha256(b"")))));
+        assert_eq!(outcome.bodies(), [BANNER, "ERROR name"]);
         assert_eq!(card.nodes.len(), 1);
     }
+}
+
+#[test]
+fn paths_cannot_follow_non_directory_parents() {
+    let mut card = FakeCard::default();
+    card.nodes.insert("/newt-sd/link".into(), Node::Other);
+    assert_eq!(lease(&mut card, Host::new().put("link/deep", "x", b"new")).last(), "ERROR target");
+    assert_eq!(card.nodes.len(), 2);
 }
 
 #[test]
@@ -149,8 +164,9 @@ fn admission_refuses_reading_opening_and_away_from_home() {
 
 #[test]
 fn a_file_lands_whole_under_its_name() {
-    // The runtime spike's largest file: 245 whole chunks and a partial one.
-    let bytes = pattern(36_856);
+    // Full blocks and a partial block have separately acknowledged offsets.
+    let mut bytes = pattern(36_856);
+    bytes[..11].copy_from_slice(b"N1 HELLO\n\0\r");
     let mut card = FakeCard::default();
     let mut host = Host::new();
     host.put("dev", "runtime.bin", &bytes);
@@ -158,7 +174,7 @@ fn a_file_lands_whole_under_its_name() {
     let outcome = lease(&mut card, &mut host);
     assert_eq!(outcome.end, End::Kept { last_id });
     let mut expected = vec![BANNER.to_owned(), format!("FILE free={}", 1u64 << 30)];
-    expected.extend((1..=245).map(|n| format!("DATA {}", n * CHUNK_BYTES)).chain(["DATA 36856".into(), done(&bytes)]));
+    expected.extend((1..=bytes.len() / CHUNK_BYTES).map(|n| format!("DATA {}", n * CHUNK_BYTES)).chain(["DATA 36856".into(), done(&bytes)]));
     assert_eq!(outcome.bodies(), expected);
     let ids: Vec<u32> = outcome.replies.iter().map(|&(id, _)| id).collect();
     assert_eq!(ids, (PUT_ID..=last_id).collect::<Vec<_>>(), "each reply answers its own request");
@@ -188,7 +204,7 @@ fn short_card_writes_and_fragmented_replies_still_complete() {
 
 #[test]
 fn an_existing_file_is_replaced_only_after_verification() {
-    let (old, new) = (pattern(9_000), pattern(4_000));
+    let (old, new) = (pattern(9_000), pattern(CHUNK_BYTES + 100));
     let mut card = FakeCard::default();
     card.put_file(TARGET, &old);
     card.put_file(TEMP, b"left by an abandoned transfer");
@@ -200,10 +216,10 @@ fn an_existing_file_is_replaced_only_after_verification() {
 }
 
 #[test]
-fn every_lease_line_fits_the_receive_queue() {
+fn every_lease_frame_is_bounded() {
     // The longest DATA line: 10-digit boot, session and ID, an offset near the cap.
-    let line = format!("N1 {0} {0} {0} DATA {1} {2}\n", u32::MAX, CAP_BYTES - 1, "A".repeat(CHUNK_BYTES / 3 * 4));
-    assert!(line.len() <= RX_QUEUE_BYTES && LINE_BYTES < RX_QUEUE_BYTES, "{}", line.len());
+    let line = format!("N1 {0} {0} {0} DATA {1} {2}\n", u32::MAX, u64::MAX - 1, CHUNK_BYTES);
+    assert!(line.len() + CHUNK_BYTES <= FRAME_BYTES && LINE_BYTES < FRAME_BYTES, "{}", line.len());
     let (card, outcome) = interrupted(Event::Line(format!("{}\n", "A".repeat(LINE_BYTES + 1))));
     assert_eq!(outcome.last(), "ERROR abandoned reason=line", "a longer line is never taken");
     unchanged(&card, Some(b"old"));
@@ -211,11 +227,11 @@ fn every_lease_line_fits_the_receive_queue() {
 
 #[test]
 fn a_digest_mismatch_leaves_no_final_file() {
-    let (old, bytes) = (b"old".to_vec(), pattern(4_000));
+    let (old, bytes) = (b"old".to_vec(), pattern(CHUNK_BYTES + 100));
     let mut card = FakeCard::default();
     card.put_file(TARGET, &old);
     let mut host = Host::new();
-    host.line(&format!("FILE dev runtime.bin {} {}", bytes.len(), hex(&sha256(b"other bytes"))))
+    host.line(&file_line("dev", "runtime.bin", bytes.len() as u64, &hex(&sha256(b"other bytes"))))
         .data(&bytes).line("DONE");
     let last_id = host.id;
     let outcome = lease(&mut card, &mut host);
@@ -226,7 +242,7 @@ fn a_digest_mismatch_leaves_no_final_file() {
 
 #[test]
 fn the_card_bytes_not_the_received_ones_are_checked() {
-    let bytes = pattern(4_000);
+    let bytes = pattern(CHUNK_BYTES + 100);
     let mut card = FakeCard { flip: Some(3_500), ..FakeCard::default() };
     let outcome = lease(&mut card, Host::new().put("dev", "runtime.bin", &bytes));
     assert_eq!(outcome.last(), "ERROR sha256-mismatch");
@@ -235,9 +251,9 @@ fn the_card_bytes_not_the_received_ones_are_checked() {
 
 #[test]
 fn done_before_every_byte_is_short() {
-    let bytes = pattern(4_000);
+    let bytes = pattern(CHUNK_BYTES + 100);
     let mut card = FakeCard::default();
-    let outcome = lease(&mut card, Host::new().file("dev", "runtime.bin", &bytes).data(&bytes[..2 * CHUNK_BYTES]).line("DONE"));
+    let outcome = lease(&mut card, Host::new().file("dev", "runtime.bin", &bytes).data(&bytes[..CHUNK_BYTES]).line("DONE"));
     assert_eq!(outcome.last(), "ERROR short");
     unchanged(&card, None);
 }
@@ -247,8 +263,44 @@ fn interrupted(event: Event) -> (FakeCard, Outcome) {
     let bytes = pattern(8_000);
     let mut card = FakeCard::default();
     card.put_file(TARGET, b"old");
-    let outcome = lease(&mut card, Host::new().file("dev", "runtime.bin", &bytes).data(&bytes[..2 * CHUNK_BYTES]).then(event));
+    let outcome = lease(&mut card, Host::new().file("dev", "runtime.bin", &bytes).data(&bytes[..CHUNK_BYTES]).then(event));
     (card, outcome)
+}
+
+#[test]
+fn a_raw_block_has_a_nonrenewing_deadline() {
+    let bytes = pattern(CHUNK_BYTES);
+    let mut card = FakeCard::default();
+    card.put_file(TARGET, b"old");
+    let mut host = Host::new();
+    host.file("dev", "runtime.bin", &bytes).line(&format!("DATA 0 {CHUNK_BYTES}"))
+        .then(Event::Bytes(bytes[..32].to_vec())).then(Event::Wait(IDLE_MS - 10))
+        .then(Event::Bytes(bytes[32..64].to_vec())).then(Event::Wait(20))
+        .then(Event::Bytes(bytes[64..].to_vec())).line("DONE");
+    let outcome = lease(&mut card, &mut host);
+    assert_eq!(outcome.end, End::Cancelled);
+    assert_eq!(outcome.last(), "ERROR abandoned reason=timeout");
+    assert!(outcome.wire.observations.iter().any(|event| matches!(event,
+        dev_put::Observation::Exit(dev_put::ExitReason::Timeout))));
+    unchanged(&card, Some(b"old"));
+}
+
+#[test]
+fn an_interrupted_raw_block_never_replaces_the_final_file() {
+    for (event, reason) in [(Event::Press, Some("physical-input")), (Event::Unplug, None), (Event::Line(String::new()), Some("timeout"))] {
+        let mut card = FakeCard::default();
+        card.put_file(TARGET, b"old");
+        let mut host = Host::new();
+        host.file("dev", "runtime.bin", &pattern(CHUNK_BYTES))
+            .line(&format!("DATA 0 {CHUNK_BYTES}"))
+            .then(Event::Bytes(pattern(CHUNK_BYTES / 2))).then(event);
+        let outcome = lease(&mut card, &mut host);
+        assert_eq!(outcome.end, End::Cancelled);
+        if let Some(reason) = reason { assert_eq!(outcome.last(), format!("ERROR abandoned reason={reason}")); }
+        assert_eq!(card.count("write"), 0, "never store an incomplete block");
+        unchanged(&card, Some(b"old"));
+        resolved(&card);
+    }
 }
 
 #[test]
@@ -298,11 +350,10 @@ fn out_of_session_lines_cancel() {
 
 #[test]
 fn bad_chunks_are_refused() {
-    let bytes = pattern(4_000);
-    let whole = base64(&bytes[..CHUNK_BYTES]);
-    for (data, reason) in [(format!("DATA 1 {whole}"), "offset"),
-        (format!("DATA 0 {}", base64(&bytes[..CHUNK_BYTES - 3])), "length"),
-        (format!("DATA 0 *{}", &whole[1..]), "encoding"), ("DATA 0 QR==".into(), "encoding"),
+    let bytes = pattern(CHUNK_BYTES + 100);
+    for (data, reason) in [(format!("DATA 1 {CHUNK_BYTES}"), "offset"),
+        (format!("DATA 0 {}", CHUNK_BYTES - 1), "length"),
+        ("DATA 0 0".into(), "length"), ("DATA 0 -1".into(), "length"),
         ("DATA 0".into(), "arguments")] {
         let mut card = FakeCard::default();
         card.put_file(TARGET, b"old");
@@ -316,24 +367,21 @@ fn bad_chunks_are_refused() {
 }
 
 #[test]
-fn the_size_cap_bounds_one_file() {
-    assert!(CAP_BYTES as usize >= 36_856, "the runtime spike's largest file fits");
+fn free_card_space_is_the_size_limit() {
     let digest = hex(&sha256(b""));
-    let mut card = FakeCard::default();
-    let outcome = lease(&mut card, Host::new().line(&format!("FILE dev runtime.bin {} {digest}", CAP_BYTES + 1)));
-    assert_eq!(outcome.last(), "ERROR size");
-    assert_eq!(card.nodes.len(), 1);
-    let mut card = FakeCard::default();
-    let outcome = lease(&mut card, Host::new().line(&format!("FILE dev runtime.bin {CAP_BYTES} {digest}")));
-    assert_eq!(outcome.bodies()[1], "FILE free=1073741824");
-    assert_eq!(outcome.last(), "ERROR abandoned reason=timeout");
-    unchanged(&card, None);
+    for size in [0x770001u64, 20_853_012, u32::MAX as u64 + 1, u64::MAX] {
+        let mut card = FakeCard { free: size, ..FakeCard::default() };
+        let outcome = lease(&mut card, Host::new().line(&file_line("dev", "runtime.bin", size, &digest)));
+        assert_eq!(outcome.bodies()[1], format!("FILE free={size}"));
+        assert_eq!(outcome.last(), "ERROR abandoned reason=timeout");
+        unchanged(&card, None);
+    }
 }
 
 #[test]
 fn short_free_space_is_refused_before_any_write() {
     let bytes = pattern(5_000);
-    let free = bytes.len() as u64 + RESERVE_BYTES - 1;
+    let free = bytes.len() as u64 - 1;
     let mut card = FakeCard { free, ..FakeCard::default() };
     let outcome = lease(&mut card, Host::new().put("dev", "runtime.bin", &bytes));
     assert_eq!(outcome.bodies(), [BANNER.to_owned(), format!("ERROR card-full free={free}")]);
@@ -344,7 +392,7 @@ fn short_free_space_is_refused_before_any_write() {
 
 #[test]
 fn card_failures_are_reported_with_their_step() {
-    let bytes = pattern(4_000);
+    let bytes = pattern(CHUNK_BYTES + 100);
     for (step, old) in [("free", true), ("create", true), ("write", true), ("sync", true), ("replace", true),
         ("rename", false)] {
         let mut card = FakeCard { fail: Some(if step == "replace" { "rename" } else { step }), ..FakeCard::default() };
@@ -368,4 +416,58 @@ fn a_stalled_reply_cancels() {
     assert_eq!(outcome.end, End::Cancelled);
     assert!(outcome.replies.is_empty());
     unchanged(&card, None);
+}
+
+#[path = "../../firmware/app_runtime/card_write_observation.rs"]
+mod observation;
+
+#[test]
+fn twenty_mib_is_committed_only_after_full_readback() {
+    let bytes = pattern(20 * 1024 * 1024);
+    let mut card = FakeCard::default();
+    let outcome = lease(&mut card, Host::new().put("dev", "runtime.bin", &bytes));
+    assert_eq!(outcome.last(), done(&bytes));
+    assert_eq!(card.file(TARGET), Some(bytes.as_slice()));
+    assert_eq!(card.count("write"), 5120 + 1, "DATA blocks plus the commit marker");
+    assert_eq!(outcome.wire.observations.iter().filter(|event| matches!(event, dev_put::Observation::Writing)).count(), 5120);
+    resolved(&card);
+}
+
+#[test]
+fn a_late_interrupted_large_transfer_keeps_the_old_file_and_next_lease_works() {
+    let bytes = pattern(12 * 1024 * 1024);
+    let mut card = FakeCard::default();
+    card.put_file(TARGET, b"old");
+    let mut host = Host::new();
+    host.line(&file_line("dev", "runtime.bin", 20 * 1024 * 1024, &hex(&sha256(&bytes))))
+        .data(&bytes).line(&format!("DATA {} 4096", bytes.len()))
+        .then(Event::Bytes(vec![0x5a; 17])).then(Event::Wait(IDLE_MS));
+    let outcome = lease(&mut card, &mut host);
+    assert_eq!(outcome.end, End::Cancelled);
+    assert_eq!(outcome.last(), "ERROR abandoned reason=timeout");
+    assert!(outcome.wire.observations.iter().any(|event| matches!(event,
+        dev_put::Observation::Exit(dev_put::ExitReason::Timeout))));
+    unchanged(&card, Some(b"old"));
+    let next = lease(&mut card, Host::new().put("dev", "runtime.bin", b"fresh"));
+    assert_eq!(next.last(), done(b"fresh"));
+    assert_eq!(card.file(TARGET), Some(b"fresh".as_slice()));
+    resolved(&card);
+}
+
+#[test]
+fn lease_counters_separate_receive_write_ack_and_latch_the_first_exit() {
+    use dev_put::{ExitReason, Observation};
+    let mut counters = observation::Counters::default();
+    counters.observe(100, Observation::Request(123));
+    counters.observe(100, Observation::Receiving { offset: 12_132_352, expected: 4096 });
+    counters.read(7); counters.read(8); counters.read(-1); counters.paused(1);
+    counters.observe(110, Observation::Writing);
+    counters.observe(130, Observation::Reply);
+    counters.observe(133, Observation::Waiting);
+    counters.observe(140, Observation::Commit);
+    counters.observe(145, Observation::Exit(ExitReason::Timeout));
+    counters.observe(146, Observation::Exit(ExitReason::TxStall));
+    let mut row = String::new();
+    counters.row(150, &mut row).unwrap();
+    assert_eq!(row, "\nPUT_STATS reason=4 id=123 offset=12132352 received=2 expected=4096 bytes=2 empty=1 pauses=1 pause_ms=1 rx_ms=10 write_ms=20 ack_ms=3 commit_ms=5\n");
 }

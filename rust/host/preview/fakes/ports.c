@@ -294,6 +294,9 @@ int32_t nsc_available(void) {
     return (int32_t)(request_length - request_next);
 }
 int32_t nsc_read_byte(void) { return request_next < request_length ? (uint8_t)request[request_next++] : -1; }
+uint32_t nsc_put_rx_begin(void) { return 1; }
+void nsc_put_rx_end(uint32_t previous) { (void)previous; }
+int32_t nsc_put_rx_read_byte(void) { return nsc_read_byte(); }
 size_t nsc_write(const uint8_t *data, size_t length) {
     if (cover_usb_model()) {
         size_t free_bytes = (size_t)nsc_available_for_write();

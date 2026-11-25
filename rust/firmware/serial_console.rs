@@ -23,6 +23,8 @@ const DEV_TX_TIMEOUT_MS: u32 = 5;
 /// that began it and moves into that task's BoardBus/PanelBus `log`.
 pub struct SerialConsole {
     _task: PhantomData<*mut ()>,
+    #[cfg(feature = "dev-usb")]
+    receive: newt_c3_board::dev_usb::ReceiveOwner,
 }
 
 impl SerialConsole {
@@ -46,13 +48,16 @@ impl SerialConsole {
     /// The DEV bound is the SDK's one global value, for every Serial user.
     pub unsafe fn begin() -> Self {
         // SAFETY: the caller's contract. Each call returns synchronously and
-        // retains nothing.
+        // retains no Rust pointer. The receive authority is zero-sized.
         unsafe {
             nsc_begin();
             #[cfg(feature = "dev-usb")]
             nsc_set_tx_timeout_ms(DEV_TX_TIMEOUT_MS);
+            Self { _task: PhantomData,
+                #[cfg(feature = "dev-usb")]
+                receive: newt_c3_board::dev_usb::ReceiveOwner::acquired(),
+            }
         }
-        Self { _task: PhantomData }
     }
 
     /// The same exclusive serial owner, borrowed only for this bridge poll.
@@ -70,7 +75,12 @@ pub struct DevChannel<'a> {
 }
 
 #[cfg(feature = "dev-usb")]
-impl DevChannel<'_> {
+impl<'a> DevChannel<'a> {
+    /// Consume the sole serial loan for a granted PUT. Other bridge commands
+    /// keep the normal SDK receive path and cannot nest another RX loan.
+    pub fn receive_put(self) -> PutChannel<'a> {
+        PutChannel { rx: self._serial.receive.receive(), clock: self.clock }
+    }
     pub fn connected(&mut self) -> bool {
         newt_c3_board::dev_usb::connected()
     }
@@ -83,6 +93,24 @@ impl DevChannel<'_> {
     pub fn flush_tx_tail(&mut self) -> bool {
         newt_c3_board::dev_usb::flush_tx_tail()
     }
+    pub fn now(&mut self) -> u32 { self.clock.millis() }
+}
+
+/// The active PUT's receive token cannot outlive the exclusive serial loan.
+#[cfg(feature = "dev-usb")]
+pub struct PutChannel<'a> {
+    rx: newt_c3_board::dev_usb::PutReceive<'a>,
+    clock: newt_c3_board::MonotonicClock,
+}
+#[cfg(feature = "dev-usb")]
+impl PutChannel<'_> {
+    pub fn connected(&mut self) -> bool { newt_c3_board::dev_usb::connected() }
+    pub fn read_byte(&mut self) -> i32 {
+        let clock = self.clock;
+        self.rx.read_byte(|| clock.micros())
+    }
+    pub fn flush_tx_tail(&mut self) -> bool { newt_c3_board::dev_usb::flush_tx_tail() }
+    pub fn write(&mut self, bytes: &[u8]) -> usize { newt_c3_board::dev_usb::write(bytes) }
     pub fn now(&mut self) -> u32 { self.clock.millis() }
 }
 

@@ -75,7 +75,7 @@ def procedure_identity(root):
     paths = [Path(root) / name for name in (
         'tools/reading_acceptance.py', 'tools/reading_sampling.py', 'tools/reading-ready.py', 'tools/dev-usb.py',
         'tools/bench_lease.py', 'tools/bench_candidate.py', 'tools/x3_slots.py', 'tools/dev_usb_panel_telemetry.py',
-        'tools/dev_usb_firmware_rows.py', 'tools/dev_usb_put.py', 'tools/reading_latency.py', 'tests/reading_latency_test.py',
+        'tools/dev_usb_firmware_rows.py', 'tools/dev_usb_put.py', 'tools/fatfs_case.py', 'tools/reading_latency.py', 'tests/reading_latency_test.py',
         'tests/dev_usb_serial_test.py', 'tests/dev_usb_telemetry_test.py',
         'tools/release_tools.py', 'tools/code_health_flash_policy.py', 'tools/code_health.py',
         'tests/reading_latency_ready_test.py', 'docs/reading-latency-contract.json',

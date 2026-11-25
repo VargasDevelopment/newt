@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3975136,
+      "flash_bytes": 3978496,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "6f661d87e276afce7f512de9f4e310cfa0c4a2af",
-      "before": 3975104,
-      "after": 3975136,
-      "reason": "+32 B over the 3,975,104 B ceiling (main 57251ee8): release 0.5.0 adds the Nov 25, 2026 What's new entry (six plain-words lines), drops the oldest Nov 24 entry that no longer fits About, and moves the version label 0.4.1 -> 0.5.0 (rust/device-ui/whats_new_notes.h, firmware_version.h). No code change. Clean regional DEV USB builds: main 57251ee8 3,975,104 B; 6f661d87 3,975,136 B (CI run 45520546225 and local clean build agree; 56.7% of the 7,016,448 B usable app flash). RAM, RTC (300 -> 300 B), lent Wi-Fi RAM and selected stack frames within unchanged ceilings.",
-      "reviewer": "Newt Lead (cross-family review: Astra)"
+      "source_revision": "9d281f15caa7c5c25652e60fbcb3dd3c1af5674a",
+      "before": 3975136,
+      "after": 3978496,
+      "reason": "Released main a59fe9b1 measured 3,975,136 B (release clean record, CI 45520546225) -> 3,978,496 B, +3,360 B total for DEV PUT card paths, u64 sizes, raw DATA and scoped RX, plus bounded lease diagnostics and packet polling. The measured b5da3310 PUT candidate was 3,976,576 B; per-lease counters added 1,856 B, and the bounded 250 us packet polling / delimited, reconnect-tolerant exit report adds 64 B above the clean b5989b57 diagnostic image (3,978,432 B). Exact clean committed-tree measurement at 9d281f15: RAM 124,096 -> 124,096 B; RTC 300 -> 300 B; lent Wi-Fi 22,528 -> 22,528 B; selected frames remain 0/16/32/48/480 B and all three native RX leaves remain 16 B. No idle heap, new MMIO or timeout widening; the three-second receive and one-second output bounds remain. Original feature and diagnostic allocations approved by Lead; native source remains the Astra-reviewed source, and Opus reviewed the polling, framing, deadlines and final host delta clean. Counters remain for the next Lead-only bench diagnosis; no speed or long-transfer acceptance is claimed. Floors and selected ceilings remain unchanged.",
+      "reviewer": "Newt Lead (cross-family native review: Astra; counter/polling/exit and host re-review: Opus 5.5, 2026-11-25)"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",

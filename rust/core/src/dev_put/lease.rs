@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 //! The lease itself: its line protocol, the temp file and the checked rename.
-use super::{Card, End, Entry, Folder, Session, Wire, CAP_BYTES, CHUNK_BYTES, IDLE_MS, LINE_BYTES,
-    MEMORY_BYTES, NAME_BYTES, NEWT, PATH_BYTES, RESERVE_BYTES, RX_QUEUE_BYTES, STALL_MS, TOTAL_MS, name_allowed};
+use super::{Card, End, Entry, ExitReason, Observation, Session, Wire, CHUNK_BYTES, IDLE_MS, LINE_BYTES,
+    MEMORY_BYTES, ROOT, PATH_BYTES, TEMP, MARKER, STALL_MS, FRAME_BYTES, target_path};
 use crate::update_online::Hash;
 use crate::wire::crc32;
 use core::ffi::CStr;
 use core::fmt::{self, Write as _};
-use syntax::{decode_base64_in_place, digest_hex, number, Cursor, Request, Verb, HEX};
+use syntax::{digest_hex, wide_number, Cursor, Request, Verb, HEX};
 
 #[path = "commit.rs"]
 mod commit;
@@ -18,19 +18,17 @@ mod syntax;
 pub fn run(session: Session, memory: &mut [u8; MEMORY_BYTES], wire: &mut dyn Wire,
     card: &mut dyn Card, hash: &mut dyn Hash) -> End {
     let (line, reply) = memory.split_at_mut(LINE_BYTES);
-    let started = wire.now();
-    let mut lease = Lease { session, line, reply, wire, card, hash, started, open: None };
+    let mut lease = Lease { session, line, reply, wire, card, hash, open: None };
     let end = lease.serve();
     lease.discard();
     end
 }
 
 struct Open {
-    folder: Folder,
     target: [u8; PATH_BYTES],
     fd: Option<i32>,
-    size: u32,
-    written: u32,
+    size: u64,
+    written: u64,
     sha256: [u8; 32],
 }
 
@@ -41,16 +39,15 @@ struct Lease<'a> {
     wire: &'a mut dyn Wire,
     card: &'a mut dyn Card,
     hash: &'a mut dyn Hash,
-    started: u32,
     open: Option<Open>,
 }
 
 /// A refusal after a current request: answered, then the lease ends.
 #[derive(Debug)]
-enum Refused { Order, Arguments, Folder, Name, Size, Digest, Offset, Length, Encoding, Short,
+enum Refused { Order, Arguments, Name, Size, Digest, Offset, Length, Short,
     CardFull(u64), Target, Temp, SizeMismatch, DigestMismatch, Hash, Card(&'static str, i32),
-    /// A commit the lease cannot prove finished or undone; the folder's
-    /// hidden files and marker stay for a person to check.
+    /// A commit the lease cannot prove finished or undone; the card's
+    /// scratch files and marker stay for a person to check.
     Recovery(&'static str, i32),
     /// DONE stopped before its first rename: answered as an abandoned lease.
     Abandoned(&'static str),
@@ -62,7 +59,7 @@ enum Step { Next, Finished }
 impl Lease<'_> {
     fn serve(&mut self) -> End {
         let id = self.session.request;
-        if !self.send(id, format_args!("PUT line={LINE_BYTES} chunk={CHUNK_BYTES} cap={CAP_BYTES}")) {
+        if !self.send(id, format_args!("PUT line={LINE_BYTES} chunk={CHUNK_BYTES} path=hex data=raw")) {
             return End::Cancelled;
         }
         loop {
@@ -76,6 +73,7 @@ impl Lease<'_> {
             };
             let id = request.id;
             self.session.request = id;
+            self.wire.observe(Observation::Request(id));
             let step = match request.verb {
                 Verb::File => self.file(request.arguments),
                 Verb::Data => self.data(request.arguments),
@@ -83,13 +81,17 @@ impl Lease<'_> {
             };
             match step {
                 Ok(Step::Next) => {}
-                Ok(Step::Finished) => return End::Kept { last_id: id },
+                Ok(Step::Finished) => {
+                    self.wire.observe(Observation::Exit(ExitReason::Done));
+                    return End::Kept { last_id: id };
+                }
                 Err(Refused::Reply) => return End::Cancelled,
                 Err(Refused::Abandoned(reason)) => {
                     self.best_effort(reason);
                     return End::Cancelled;
                 }
                 Err(refused) => {
+                    self.wire.observe(Observation::Exit(ExitReason::Refused));
                     self.refuse(id, &refused);
                     return End::Kept { last_id: id };
                 }
@@ -129,19 +131,21 @@ impl Lease<'_> {
         self.interruption().or(idle.then_some("timeout"))
     }
 
-    /// Takeover, a disconnect or the lease's deadline: checked while waiting
-    /// for a line and through DONE up to its commit point. DONE reads no line,
+    /// Takeover or a disconnect: checked during reception and through DONE
+    /// up to its commit point. DONE reads no line,
     /// so a HELLO sent meanwhile is read after DONE answers.
     fn interruption(&mut self) -> Option<&'static str> {
         if self.wire.physical_input() { return Some("physical-input"); }
         if !self.wire.connected() { return Some("disconnected"); }
-        if self.wire.now().wrapping_sub(self.started) >= TOTAL_MS { return Some("total-time"); }
         None
     }
 
     fn parse(&mut self, length: usize) -> Result<Request, End> {
         let line = &self.line[..length];
-        if line == b"N1 HELLO" { return Err(End::Hello); }
+        if line == b"N1 HELLO" {
+            self.wire.observe(Observation::Exit(ExitReason::Hello));
+            return Err(End::Hello);
+        }
         let Some(request) = Request::parse(line) else {
             self.best_effort("syntax");
             return Err(End::Cancelled);
@@ -161,29 +165,34 @@ impl Lease<'_> {
         if self.open.is_some() { return Err(Refused::Order); }
         let text = core::str::from_utf8(&self.line[arguments.0..arguments.1]).map_err(|_| Refused::Name)?;
         let mut tokens = text.split(' ');
-        let (Some(folder), Some(name), Some(size), Some(digest), None) =
-            (tokens.next(), tokens.next(), tokens.next(), tokens.next(), tokens.next()) else {
+        let (Some(encoded), Some(size), Some(digest), None) =
+            (tokens.next(), tokens.next(), tokens.next(), tokens.next()) else {
             return Err(Refused::Arguments);
         };
-        let folder = Folder::parse(folder).ok_or(Refused::Folder)?;
-        if !name_allowed(name.as_bytes()) { return Err(Refused::Name); }
-        let size = number(size).filter(|&size| size <= CAP_BYTES).ok_or(Refused::Size)?;
+        let target = target_path(encoded).ok_or(Refused::Name)?;
+        let size = wide_number(size).ok_or(Refused::Size)?;
         let sha256 = digest_hex(digest).ok_or(Refused::Digest)?;
-        let target = target_path(folder, name.as_bytes());
 
-        self.folder(NEWT)?;
-        self.folder(folder.path())?;
-        self.recover(folder)?;
+        self.recover()?;
+        // Check every parent without following links, including existing ones.
+        let mut parent = target;
+        for at in ROOT.to_bytes().len() + 1..path(&target).to_bytes().len() {
+            if parent[at] != b'/' { continue; }
+            parent[at] = 0;
+            self.folder(path(&parent))?;
+            parent[at] = b'/';
+        }
+        self.recover_legacy(path(&target))?;
         match self.card.entry(path(&target)).map_err(|code| Refused::Card("target", code))? {
             Entry::Missing | Entry::File => {}
             Entry::Folder | Entry::Other => return Err(Refused::Target),
         }
-        self.remove_hidden(folder.temp())?;
+        self.remove_temp(TEMP)?;
         let free = self.card.free_bytes().map_err(|code| Refused::Card("free", code))?;
-        if u64::from(size) + RESERVE_BYTES > free { return Err(Refused::CardFull(free)); }
+        if size > free { return Err(Refused::CardFull(free)); }
         // Recorded before create, so a failed create's partial temp is removed.
-        self.open = Some(Open { folder, target, fd: None, size, written: 0, sha256 });
-        let fd = self.card.create(folder.temp()).map_err(|code| Refused::Card("create", code))?;
+        self.open = Some(Open { target, fd: None, size, written: 0, sha256 });
+        let fd = self.card.create(TEMP).map_err(|code| Refused::Card("create", code))?;
         if let Some(open) = &mut self.open { open.fd = Some(fd); }
         self.answer(format_args!("FILE free={free}"))
     }
@@ -191,16 +200,30 @@ impl Lease<'_> {
     fn data(&mut self, arguments: (usize, usize)) -> Result<Step, Refused> {
         let Some(open) = &self.open else { return Err(Refused::Order) };
         let (written, size) = (open.written, open.size);
-        let space = self.line[arguments.0..arguments.1].iter().position(|&b| b == b' ').ok_or(Refused::Arguments)?;
-        let offset = core::str::from_utf8(&self.line[arguments.0..arguments.0 + space]).ok()
-            .and_then(number).ok_or(Refused::Offset)?;
+        let text = core::str::from_utf8(&self.line[arguments.0..arguments.1]).map_err(|_| Refused::Arguments)?;
+        let mut fields = text.split(' ');
+        let (Some(offset), Some(length), None) = (fields.next(), fields.next(), fields.next()) else { return Err(Refused::Arguments) };
+        let offset = wide_number(offset).ok_or(Refused::Offset)?;
         if offset != written { return Err(Refused::Offset); }
-        let start = arguments.0 + space + 1;
-        let decoded = decode_base64_in_place(&mut self.line[start..arguments.1]).ok_or(Refused::Encoding)?;
-        if decoded != (size - written).min(CHUNK_BYTES as u32) as usize { return Err(Refused::Length); }
+        let decoded = wide_number(length).ok_or(Refused::Length)?;
+        if decoded == 0 || decoded != (size - written).min(CHUNK_BYTES as u64) { return Err(Refused::Length); }
+        let decoded = decoded as usize;
         let fd = open.fd.ok_or(Refused::Order)?;
-        write_all(self.card, fd, &self.line[start..start + decoded]).map_err(|code| Refused::Card("write", code))?;
-        let written = written + decoded as u32;
+        // Length framing makes every byte, including LF, NUL and HELLO, data.
+        // The raw block fits the lease buffer; cancellation never writes a prefix.
+        self.wire.observe(Observation::Receiving { offset: written, expected: decoded as u32 });
+        let mut received = 0;
+        let activity = self.wire.now();
+        while received < decoded {
+            if let Some(reason) = self.abandoned(activity) { return Err(Refused::Abandoned(reason)); }
+            let byte = self.wire.read_byte();
+            if byte < 0 { self.wire.pause(); continue; }
+            self.line[received] = byte as u8;
+            received += 1;
+        }
+        self.wire.observe(Observation::Writing);
+        write_all(self.card, fd, &self.line[..decoded]).map_err(|code| Refused::Card("write", code))?;
+        let written = written + decoded as u64;
         if let Some(open) = &mut self.open { open.written = written; }
         self.answer(format_args!("DATA {written}"))
     }
@@ -208,28 +231,29 @@ impl Lease<'_> {
     fn done(&mut self) -> Result<Step, Refused> {
         let Some(open) = &mut self.open else { return Err(Refused::Order) };
         if open.written != open.size { return Err(Refused::Short); }
-        let (folder, size, sha256, target) = (open.folder, open.size, open.sha256, open.target);
+        let (size, sha256, target) = (open.size, open.sha256, open.target);
+        self.wire.observe(Observation::Commit);
         let fd = open.fd.take().ok_or(Refused::Order)?;
         let synced = self.card.sync(fd);
         let closed = self.card.close(fd);
         synced.map_err(|code| Refused::Card("sync", code))?;
         closed.map_err(|code| Refused::Card("close", code))?;
         // The card's bytes, not the received ones, are what gets checked.
-        let digest = self.read_back(folder.temp(), size)?;
+        let digest = self.read_back(TEMP, size)?;
         if digest != sha256 { return Err(Refused::DigestMismatch); }
         let target = path(&target);
         // FAT's rename never replaces, so an old file steps aside first.
         let replacing = self.card.entry(target).map_err(|code| Refused::Card("target", code))? == Entry::File;
-        self.mark(folder, &target.to_bytes()[folder.path().to_bytes().len() + 1..])?;
+        self.mark(&target.to_bytes()[ROOT.to_bytes().len() + 1..])?;
         if let Some(reason) = self.interruption() {
             // No rename ran, so the temp the exit removes is no other name's.
-            let _ = self.card.remove(folder.marker());
+            let _ = self.card.remove(MARKER);
             return Err(Refused::Abandoned(reason));
         }
         // The commit point: DONE now finishes, rolls back or reports
         // recovery-needed, and no exit removes the temp while the marker stays.
         self.open = None;
-        self.commit(folder, target, replacing)?;
+        self.commit(target, replacing)?;
         let mut hex = [0; 64];
         for (pair, byte) in hex.chunks_exact_mut(2).zip(digest) {
             pair[0] = HEX[usize::from(byte >> 4)];
@@ -240,7 +264,7 @@ impl Lease<'_> {
         Ok(Step::Finished)
     }
 
-    fn read_back(&mut self, temp: &CStr, size: u32) -> Result<[u8; 32], Refused> {
+    fn read_back(&mut self, temp: &CStr, size: u64) -> Result<[u8; 32], Refused> {
         let fd = self.card.open_read(temp).map_err(|code| Refused::Card("open", code))?;
         let result = self.hash_file(fd, size);
         let closed = self.card.close(fd);
@@ -249,19 +273,19 @@ impl Lease<'_> {
         Ok(digest)
     }
 
-    fn hash_file(&mut self, fd: i32, size: u32) -> Result<[u8; 32], Refused> {
+    fn hash_file(&mut self, fd: i32, size: u64) -> Result<[u8; 32], Refused> {
         if !self.hash.start() { return Err(Refused::Hash); }
         let mut total: u64 = 0;
         loop {
             if let Some(reason) = self.interruption() { return Err(Refused::Abandoned(reason)); }
-            let got = self.card.read(fd, self.line).map_err(|code| Refused::Card("read", code))?;
+            let got = self.card.read(fd, &mut self.line[..CHUNK_BYTES]).map_err(|code| Refused::Card("read", code))?;
             let Some(bytes) = self.line.get(..got) else { return Err(Refused::Card("read", 0)) };
             if bytes.is_empty() { break; }
             total += got as u64;
-            if total > u64::from(size) { return Err(Refused::SizeMismatch); }
+            if total > size { return Err(Refused::SizeMismatch); }
             if !self.hash.update(bytes) { return Err(Refused::Hash); }
         }
-        if total != u64::from(size) { return Err(Refused::SizeMismatch); }
+        if total != size { return Err(Refused::SizeMismatch); }
         let mut digest = [0; 32];
         if !self.hash.finish(&mut digest) { return Err(Refused::Hash); }
         Ok(digest)
@@ -275,8 +299,8 @@ impl Lease<'_> {
         }
     }
 
-    /// A temp or set-aside file a power loss left behind.
-    fn remove_hidden(&mut self, path: &CStr) -> Result<(), Refused> {
+    /// Remove only an abandoned temp after recovery has ruled out a commit.
+    fn remove_temp(&mut self, path: &CStr) -> Result<(), Refused> {
         match self.card.entry(path).map_err(|code| Refused::Card("temp", code))? {
             Entry::Missing => Ok(()),
             Entry::File => self.card.remove(path).map_err(|code| Refused::Card("temp", code)),
@@ -288,8 +312,8 @@ impl Lease<'_> {
     fn discard(&mut self) {
         let Some(open) = self.open.take() else { return };
         if let Some(fd) = open.fd { let _ = self.card.close(fd); }
-        if self.card.entry(open.folder.temp()) == Ok(Entry::File) {
-            let _ = self.card.remove(open.folder.temp());
+        if self.card.entry(TEMP) == Ok(Entry::File) {
+            let _ = self.card.remove(TEMP);
         }
     }
 
@@ -308,6 +332,16 @@ impl Lease<'_> {
 
     /// The session is ending anyway; one attempt, answered with the last ID.
     fn best_effort(&mut self, reason: &str) {
+        let reason_code = match reason {
+            "physical-input" => ExitReason::PhysicalInput,
+            "disconnected" => ExitReason::Disconnected,
+            "timeout" => ExitReason::Timeout,
+            "line" => ExitReason::Line,
+            "session" => ExitReason::Session,
+            "stale-id" => ExitReason::StaleId,
+            _ => ExitReason::Syntax,
+        };
+        self.wire.observe(Observation::Exit(reason_code));
         let _ = self.send(self.session.request, format_args!("ERROR abandoned reason={reason}"));
     }
 
@@ -315,24 +349,39 @@ impl Lease<'_> {
     fn send(&mut self, id: u32, body: fmt::Arguments<'_>) -> bool {
         let Session { boot, session, .. } = self.session;
         let mut out = Cursor { bytes: self.reply, used: 0 };
-        if write!(out, "!N1 {boot} {session} {id} {body}").is_err() { return false; }
+        if write!(out, "!N1 {boot} {session} {id} {body}").is_err() {
+            self.wire.observe(Observation::Exit(ExitReason::TxStall));
+            return false;
+        }
         let checksum = crc32(&out.bytes[..out.used]);
-        if write!(out, " *{checksum:08x}\n").is_err() { return false; }
+        if write!(out, " *{checksum:08x}\n").is_err() {
+            self.wire.observe(Observation::Exit(ExitReason::TxStall));
+            return false;
+        }
+        self.wire.observe(Observation::Reply);
         let mut sent = 0;
         let mut progress = self.wire.now();
         while sent < out.used {
-            if !self.wire.connected() { return false; }
+            if !self.wire.connected() {
+                self.wire.observe(Observation::Exit(ExitReason::Disconnected));
+                return false;
+            }
             let put = self.wire.write(&out.bytes[sent..out.used]);
-            if put > out.used - sent { return false; }
+            if put > out.used - sent {
+                self.wire.observe(Observation::Exit(ExitReason::TxStall));
+                return false;
+            }
             if put != 0 {
                 sent += put;
                 progress = self.wire.now();
             } else if self.wire.now().wrapping_sub(progress) >= STALL_MS {
+                self.wire.observe(Observation::Exit(ExitReason::TxStall));
                 return false;
             } else {
                 self.wire.pause();
             }
         }
+        self.wire.observe(Observation::Waiting);
         true
     }
 }
@@ -342,13 +391,11 @@ impl Refused {
         match self {
             Self::Order => "order",
             Self::Arguments => "arguments",
-            Self::Folder => "folder",
             Self::Name => "name",
             Self::Size => "size",
             Self::Digest => "digest",
             Self::Offset => "offset",
             Self::Length => "length",
-            Self::Encoding => "encoding",
             Self::Short => "short",
             Self::Target => "target",
             Self::Temp => "temp",
@@ -364,16 +411,6 @@ impl Refused {
     }
 }
 
-/// `folder/name` with its NUL; `name` is an allowed name.
-fn target_path(folder: Folder, name: &[u8]) -> [u8; PATH_BYTES] {
-    let mut target = [0; PATH_BYTES];
-    let directory = folder.path().to_bytes();
-    target[..directory.len()].copy_from_slice(directory);
-    target[directory.len()] = b'/';
-    target[directory.len() + 1..][..name.len()].copy_from_slice(name);
-    target
-}
-
 /// Every byte, through short writes; a write that stores nothing fails.
 fn write_all(card: &mut dyn Card, fd: i32, mut bytes: &[u8]) -> Result<(), i32> {
     while !bytes.is_empty() {
@@ -386,13 +423,10 @@ fn write_all(card: &mut dyn Card, fd: i32, mut bytes: &[u8]) -> Result<(), i32> 
 }
 
 fn path(bytes: &[u8; PATH_BYTES]) -> &CStr {
-    // Every target has a NUL: folder and name together stay under PATH_BYTES.
+    // FILE validated the complete path and left its trailing NUL.
     CStr::from_bytes_until_nul(bytes).unwrap_or_default()
 }
 
-const _: () = assert!(c"/newt-sd/Newt/Update/".to_bytes().len() + NAME_BYTES < PATH_BYTES);
-const _: () = assert!(CHUNK_BYTES % 3 == 0);
-// `N1` and three numbers of up to 10 digits, `DATA `, an offset below the cap
-// (7 digits) and a space, then the chunk's base64; with its LF in the queue.
-const _: () = assert!(CAP_BYTES < 10_000_000 && 2 + 3 * 11 + 1 + 5 + 8 + CHUNK_BYTES / 3 * 4 <= LINE_BYTES);
-const _: () = assert!(LINE_BYTES + 1 <= RX_QUEUE_BYTES);
+// Three u32 IDs, a u64 offset and length, LF, then the whole raw block.
+const _: () = assert!(2 + 3 * 11 + 1 + 5 + 21 + 21 + CHUNK_BYTES <= FRAME_BYTES);
+const _: () = assert!(LINE_BYTES + 1 <= FRAME_BYTES);

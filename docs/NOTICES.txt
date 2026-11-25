@@ -906,6 +906,10 @@ This file is part of the lwIP TCP/IP stack.
 
 --- FatFs ---
 
+Also covers the host ff_wtoupper adaptation and generated uppercase tables in
+tools/fatfs_case.py and its C reference in tests/dev_usb_put_test.py, derived
+from ESP-IDF v5.5 components/fatfs/src/ffunicode.c and the pinned libfatfs.a.
+
 /*----------------------------------------------------------------------------/
 /  FatFs - Generic FAT Filesystem module  R0.15                               /
 /-----------------------------------------------------------------------------/

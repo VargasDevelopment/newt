@@ -5,7 +5,6 @@
 //! short alias, on one file, so recovery deletes nothing.
 use super::*;
 use fakes::FREED;
-use newt_core::dev_put::TOTAL_MS;
 
 #[test]
 fn a_failed_rename_puts_the_old_file_back() {
@@ -29,7 +28,7 @@ fn a_failed_restore_keeps_the_backup_and_says_so() {
     assert_eq!(outcome.last(), format!("ERROR recovery-needed step=rename code={FAILED}"));
     assert_eq!(outcome.end, End::Kept { last_id });
     assert_eq!((card.file(TARGET), card.file(TEMP)), (None, Some(&new[..])));
-    assert_eq!((card.file(OLD), card.file(MARKER)), (Some(&b"old"[..]), Some(&b"runtime.bin"[..])));
+    assert_eq!((card.file(OLD), card.file(MARKER)), (Some(&b"old"[..]), Some(&b"Newt/Dev/runtime.bin"[..])));
     // Backup and temp together: the next write deletes neither.
     let outcome = lease(&mut card, Host::new().put("dev", "other.bin", b"other"));
     assert_eq!(outcome.bodies(), [BANNER, "ERROR recovery-needed step=commit code=0"]);
@@ -49,7 +48,7 @@ fn a_rename_that_fails_after_moving_keeps_the_marker() {
         let outcome = lease(&mut card, Host::new().put("dev", "runtime.bin", &new));
         assert_eq!(outcome.last(), format!("ERROR recovery-needed step={step} code={FAILED}"), "{onto} {old}");
         assert_eq!((card.file(TARGET), card.file(OLD), card.file(TEMP)), (target, backup, temp), "{onto} {old}");
-        assert_eq!(card.file(MARKER), Some(&b"runtime.bin"[..]));
+        assert_eq!(card.file(MARKER), Some(&b"Newt/Dev/runtime.bin"[..]));
     }
 }
 
@@ -151,13 +150,11 @@ fn a_press_after_the_first_rename_never_stops_it_halfway() {
 }
 
 #[test]
-fn the_deadline_stops_done_before_its_first_rename() {
+fn active_transfers_have_no_total_size_or_time_cap() {
     for step in [("read", 1), ("sync", 2)] {
-        let (card, outcome, _) = replace_with(FakeCard { late_on: Some((step.0, step.1, TOTAL_MS)), ..FakeCard::default() });
-        assert_eq!(outcome.end, End::Cancelled, "{step:?}");
-        assert_eq!(outcome.last(), "ERROR abandoned reason=total-time", "{step:?}");
-        assert_eq!(card.count("rename"), 0, "{step:?}");
-        unchanged(&card, Some(b"old"));
+        let (card, outcome, new) = replace_with(FakeCard { late_on: Some((step.0, step.1, 600_000)), ..FakeCard::default() });
+        assert_eq!(outcome.last(), done(&new), "{step:?}");
+        assert_eq!(card.file(TARGET), Some(&new[..]));
         resolved(&card);
     }
 }
@@ -176,4 +173,17 @@ fn a_hello_during_done_is_read_after_its_answer() {
     assert_eq!(card.file(TARGET), Some(&new[..]));
     resolved(&card);
     assert_eq!(outcome.wire.unread(), "N1 HELLO\n", "the bridge reads the HELLO next");
+}
+
+#[test]
+fn legacy_folder_recovery_names_are_not_overwritten() {
+    for name in [".newt-old", ".newt-old-name"] {
+        let mut card = FakeCard::default();
+        card.put_file(TARGET, b"old");
+        card.put_file(&format!("{DEV}/{name}"), b"unresolved");
+        let before = card.nodes.clone();
+        let outcome = lease(&mut card, Host::new().put("dev", "runtime.bin", b"new"));
+        assert_eq!(outcome.last(), "ERROR recovery-needed step=legacy code=0");
+        assert_eq!(card.nodes, before, "never touch possible old aliases");
+    }
 }
