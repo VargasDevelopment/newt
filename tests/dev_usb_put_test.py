@@ -111,6 +111,9 @@ def success():
     peer = LeasePeer()
     report = session(peer, FILES)
     assert 'error' not in report, report['error']
+    assert set(report['protocol']) == {'boot', 'session', 'last_request_id', 'records'}
+    assert report['put']['receive_tail'] == {'buffered_bytes': 0, 'buffered_protocol_prefix': False,
+                                           'dirty_drain_lines': 0}
     assert peer.card == {('Newt/Dev', name): data for _, name, data in FILES}
     assert [entry['result'] for entry in report['put']['files']] == ['written'] * 3
     assert report['put']['files'][1]['sha256'] == hashlib.sha256(FILES[1][2]).hexdigest()
@@ -441,9 +444,9 @@ def a_failure_keeps_its_late_statistics_without_writing_again():
                 self.stats_sent = True
             return super().read_data(remaining)
     dirty = session(DirtyTail(answers={'DATA': 'ERROR abandoned reason=timeout'}), FILES[1:])
-    assert dirty['protocol']['dirty_drain_lines'] == 1
+    assert dirty['put']['receive_tail']['dirty_drain_lines'] == 1
     assert dirty['firmware_rows'][0]['reason'] == 4
-    assert dirty['protocol']['buffered_bytes'] == 0
+    assert dirty['put']['receive_tail']['buffered_bytes'] == 0
     class Incomplete(LeasePeer):
         def __init__(self, prefix):
             super().__init__()
@@ -456,8 +459,8 @@ def a_failure_keeps_its_late_statistics_without_writing_again():
         progress = report['put']['files'][0]['protocol_progress']
         assert progress['buffered_bytes'] == len(prefix)
         assert progress['buffered_protocol_prefix'] is prefix.startswith(b'!N1 ')
-        assert report['protocol']['buffered_bytes'] == len(prefix)
-        assert report['protocol']['buffered_protocol_prefix'] is prefix.startswith(b'!N1 ')
+        assert report['put']['receive_tail']['buffered_bytes'] == len(prefix)
+        assert report['put']['receive_tail']['buffered_protocol_prefix'] is prefix.startswith(b'!N1 ')
         assert report['put']['files'][0]['result'] == 'unchanged'
 
 

@@ -138,10 +138,7 @@ class ProtocolClient:
     def receipt(self):
         return {'connection': self.connection,
                 'protocol': {'boot': self.boot, 'session': self.session,
-                             'last_request_id': self.request_id, 'records': self.audit,
-                             'buffered_bytes': len(self.buffer),
-                             'buffered_protocol_prefix': self.buffer.startswith(b'!N1 '),
-                             'dirty_drain_lines': self.dirty_drain_lines}}
+                             'last_request_id': self.request_id, 'records': self.audit}}
 
     def trace(self, direction, boot, session, identifier, kind, body):
         if len(self.audit) >= MAX_AUDIT_RECORDS:
@@ -460,6 +457,10 @@ def run_session(client, args):
             report['error'] = report.get('error', '') + f' Closure failed: {str(error) or "Interrupted by operator"}'
             if isinstance(error, KeyboardInterrupt):
                 report['interrupted'] = True
+        if 'put' in report:
+            report['put']['receive_tail'] = {'buffered_bytes': len(client.buffer),
+                'buffered_protocol_prefix': client.buffer.startswith(b'!N1 '),
+                'dirty_drain_lines': client.dirty_drain_lines}
         report.update(client.receipt(), **client.firmware_rows.report())
     return report
 

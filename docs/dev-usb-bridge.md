@@ -282,7 +282,7 @@ last acknowledged DATA offset and ID, elapsed/write time, cumulative DATA
 frames/time, and the last valid response or transport error. It never stores
 DATA payloads or an unbounded per-frame log. On failure it records only the
 pending receive buffer's length and whether it starts with the protocol prefix,
-never its bytes. The final protocol receipt also counts damaged lines skipped
+never its bytes. The PUT receipt's `receive_tail` also counts damaged lines skipped
 by read-only drains. After a failed PUT, the client keeps a read-only tail for
 at most 1.1 seconds to capture late lease statistics
 before closing; it sends no further command. A successful write is still proved
