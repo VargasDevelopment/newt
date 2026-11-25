@@ -180,6 +180,7 @@ impl ReadingStatsRuntime {
         now: u32,
         zone: TimeZone,
         opening: bool,
+        page_unconfirmed: bool,
         mut read_clock: impl FnMut() -> (StatsClock, u32),
         sha256: Sha256<'_>,
     ) {
@@ -208,6 +209,20 @@ impl ReadingStatsRuntime {
             None,
             sha256,
         );
+        // On a fresh card before idle stats seeding has run, an explicit
+        // Mark as finished seeds the ledger on demand once page durability is known.
+        if self.condition == StatsCondition::Unseeded && !page_unconfirmed {
+            let seeded = seed_stats(store, Some(&book.digest), None);
+            self.note(seeded);
+            if seeded.result != StatsResult::Done {
+                ui.notice = if seeded.result == StatsResult::Unconfirmed {
+                    ReaderUiNotice::FinishUnconfirmed
+                } else {
+                    ReaderUiNotice::FinishSaveFailed
+                };
+                return;
+            }
+        }
         let (clock, _) = read_clock();
         let report = mark_stats(
             store,

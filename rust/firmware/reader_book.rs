@@ -676,6 +676,7 @@ impl<N: nvs::Native> MountedCheckpoint<'_, N> {
                     now,
                     request.zone(),
                     opening,
+                    self.checkpoint.page_unconfirmed(),
                     &mut clock,
                     sha256,
                 );

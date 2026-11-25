@@ -38,6 +38,7 @@ impl Runtime {
                 Some(BookStep::Action(action)), false, None, None) {
                 Ok(mut exit) => {
                     self.finish_pending_turn_image(home, ui, logical, events, action, before, &mut exit);
+                    self.finish_pending_mark_image(home, ui, logical, events, action, &mut exit);
                     self.observe_operation(&exit);
                     self.update_home_image(home, events.action);
                     if before != self.book().map(|book| book.reader.info()) {
@@ -126,6 +127,71 @@ impl Runtime {
         match self.operate_image(home, ui, logical, events, None, Some(BookStep::Action(action)), false, None, None) {
             Ok(retried) => *exit = retried,
             Err(error) => self.open_failed(error),
+        }
+    }
+
+    fn finish_pending_mark_image(&mut self, home: &mut Home<'_>, ui: &mut Application<'_>,
+        logical: &mut Frame, events: &mut Events<'_, '_>, action: Action, exit: &mut BookExit,
+    ) {
+        let pending = self.session.as_ref().is_some_and(|session|
+            session.verification.state() == crate::reader_verification::Verification::Pending);
+        let needs_commit = self.selection.flags() & newt_core::selection_authority::flag::COMMIT_OWED != 0
+            || self.checkpoint.acknowledged_for(self.selection.digest()).is_none();
+        let retry = exit.intent == Some(ReaderUiIntent::MarkFinished)
+            || (exit.intent == Some(ReaderUiIntent::Repaint)
+                && self.book().is_some_and(|book| book.ui.panel == ReaderPanel::Menu
+                    && matches!(book.ui.notice, ReaderUiNotice::FinishOpening | ReaderUiNotice::FinishSaveFailed))
+                && (pending || needs_commit));
+        if !retry { return; }
+        let before_digest = *self.selection.digest();
+        if pending {
+            self.acknowledge_work_image(home, ui, logical, newt_reader_ui::SlowWork::Saving,
+                events.control, events.action);
+        }
+        if !self.finish_verification_core(home, ui, logical, events, false, false) {
+            let still_pending = self.session.as_ref().is_some_and(|session|
+                session.verification.state() == crate::reader_verification::Verification::Pending);
+            if self.reader_ui.notice == ReaderUiNotice::BookChanged {
+                self.reader_ui.panel = ReaderPanel::Page;
+                self.reader_ui.selected = 0;
+            } else {
+                self.reader_ui.notice = if still_pending {
+                    ReaderUiNotice::FinishOpening
+                } else {
+                    ReaderUiNotice::FinishSaveFailed
+                };
+            }
+            exit.intent = Some(ReaderUiIntent::Repaint);
+            return;
+        }
+        if *self.selection.digest() != before_digest
+            || self.reader_ui.notice == ReaderUiNotice::BookChanged
+            || !self.opened() {
+            if self.reader_ui.notice == ReaderUiNotice::BookChanged {
+                self.reader_ui.panel = ReaderPanel::Page;
+                self.reader_ui.selected = 0;
+            }
+            exit.intent = Some(ReaderUiIntent::Repaint);
+            return;
+        }
+        if self.checkpoint.acknowledged_for(&before_digest).is_none() {
+            match self.operate_image(home, ui, logical, events, None,
+                Some(BookStep::Save), false, None, None) {
+                Ok(saved) => self.observe_operation(&saved),
+                Err(error) => {
+                    self.open_failed(error);
+                    exit.intent = Some(ReaderUiIntent::Repaint);
+                    return;
+                }
+            }
+        }
+        match self.operate_image(home, ui, logical, events, None,
+            Some(BookStep::Action(action)), false, None, None) {
+            Ok(retried) => *exit = retried,
+            Err(error) => {
+                self.open_failed(error);
+                exit.intent = Some(ReaderUiIntent::Repaint);
+            }
         }
     }
 }

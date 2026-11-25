@@ -305,6 +305,9 @@ where
                     }
                 }
                 ReaderUiWork::Intent(ReaderUiIntent::MarkFinished) => {
+                    if matches!(route, Route::Short) && revision.source_verification_pending() {
+                        break Some(ReaderUiIntent::MarkFinished);
+                    }
                     checkpoint.stats(
                         io,
                         card,
@@ -319,7 +322,7 @@ where
                         &mut statistics,
                         at,
                         StatsOperation::Mark {
-                            opening: accepted_open_owed,
+                            opening: accepted_open_owed || revision.source_verification_pending(),
                         },
                     );
                     match route {
