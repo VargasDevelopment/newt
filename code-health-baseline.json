@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3978432,
+      "flash_bytes": 3978496,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "65da33d6e6ad4ee6e7d0b115b35efe91e5f75679",
+      "source_revision": "9d281f15caa7c5c25652e60fbcb3dd3c1af5674a",
       "before": 3975136,
-      "after": 3978432,
-      "reason": "Released main a59fe9b1 measured 3,975,136 B (release clean record, CI 45520546225) -> 3,978,432 B, +3,296 B total for DEV PUT card paths, u64 sizes, raw DATA and scoped RX, plus bounded per-lease diagnostics. The clean measured b5da3310 PUT candidate was 3,976,576 B; typed exit/phase counters cost +1,856 B. They distinguish RX polling/pause, card-write, ACK enqueue and commit time and retain partial block offset/bytes on failure. No timeout widening, new native MMIO or extra idle heap. RAM 124,096 -> 124,096 B; RTC 300 -> 300 B; lent Wi-Fi 22,528 -> 22,528 B; selected frames remain 0/16/32/48/480 B and all three RX leaves remain 16 B. Counters are held only during a granted DEV lease; non-DEV wiring does not call them. Clean committed-tree measurement at 65da33d6; original feature plus diagnostic allocation approved by Lead, counter/resource re-review by Opus 5.5 found no allocation issue; final clean confirmation at b5989b57 remains 3,978,432 B. Subsequent host audit/recovery fixes do not alter firmware sources.",
-      "reviewer": "Newt Lead (cross-family native review: Astra; counters/resource re-review: Opus 5.5, 2026-11-25)"
+      "after": 3978496,
+      "reason": "Released main a59fe9b1 measured 3,975,136 B (release clean record, CI 45520546225) -> 3,978,496 B, +3,360 B total for DEV PUT card paths, u64 sizes, raw DATA and scoped RX, plus bounded lease diagnostics and packet polling. The measured b5da3310 PUT candidate was 3,976,576 B; per-lease counters added 1,856 B, and the bounded 250 us packet polling / delimited, reconnect-tolerant exit report adds 64 B above the clean b5989b57 diagnostic image (3,978,432 B). Exact clean committed-tree measurement at 9d281f15: RAM 124,096 -> 124,096 B; RTC 300 -> 300 B; lent Wi-Fi 22,528 -> 22,528 B; selected frames remain 0/16/32/48/480 B and all three native RX leaves remain 16 B. No idle heap, new MMIO or timeout widening; the three-second receive and one-second output bounds remain. Original feature and diagnostic allocations approved by Lead; native source remains the Astra-reviewed source, and Opus reviewed the polling, framing, deadlines and final host delta clean. Counters remain for the next Lead-only bench diagnosis; no speed or long-transfer acceptance is claimed. Floors and selected ceilings remain unchanged.",
+      "reviewer": "Newt Lead (cross-family native review: Astra; counter/polling/exit and host re-review: Opus 5.5, 2026-11-25)"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
