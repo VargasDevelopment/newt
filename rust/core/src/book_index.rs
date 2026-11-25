@@ -10,6 +10,10 @@ use crate::page_envelope::MAX_PAYLOAD;
 use crate::phased_metadata::BookLanguage;
 use crate::zip_record_rules::EPUB_MAX_EXPANDED_BYTES;
 
+#[path = "book_index_name.rs"]
+mod file_name;
+pub use file_name::{FileKind,FileName};
+
 /// Name hashing is fixed by `SCHEMA`: FNV-1a 64 followed by fmix64.
 /// Bytes after the first NUL do not participate.
 pub fn name_hash(name: &[u8]) -> u64 {

@@ -161,6 +161,13 @@ impl<'n> Query<'n> {
             bound: false,
         }
     }
+    /// An 8.3 index name carries only forty bits. The caller supplies all
+    /// thirty-two route bytes from its verified book digest instead.
+    pub fn for_index(name:Option<&'n [u8]>,digest:&Route)->Self {
+        let expected=crate::book_index::FileName::new(digest,crate::book_index::FileKind::Index);
+        Self { name,route:*digest,generation:0,extent:0,payload:0,
+            active:name.map(c_string)==Some(expected.as_bytes().as_slice()),bound:false }
+    }
     pub fn raw(&self, from: &mut impl RawRead, offset: u32, out: &mut [u8]) -> bool {
         self.active
             && self.bound
@@ -197,6 +204,10 @@ impl<'n, 'a> VerifiedStore<'n, 'a> {
             loaded: u32::MAX,
             ready: false,
         }
+    }
+    pub fn for_index(name:Option<&'n [u8]>,digest:&Route,
+        directory:&'a mut [u8;4160],window:&'a mut [u8;4096])->Self {
+        Self {query:Query::for_index(name,digest),directory,window,loaded:u32::MAX,ready:false}
     }
     pub fn attach(&mut self, from: &mut impl RawRead) -> bool {
         let payload = payload_for_extent(self.query.extent);
@@ -292,5 +303,32 @@ impl<'n, 'a> VerifiedStore<'n, 'a> {
     }
     pub fn end_write(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod index_route_tests {
+    use super::*;
+    use crate::book_index::{FileName,FileKind};
+    #[test]
+    fn colliding_short_names_keep_distinct_full_digest_routes() {
+        let a=[17;32];let mut b=a;b[31]^=1;
+        let name=FileName::new(&a,FileKind::Index);
+        assert_eq!(name,FileName::new(&b,FileKind::Index));
+        let first=Query::for_index(Some(name.as_bytes()),&a);
+        let second=Query::for_index(Some(name.as_bytes()),&b);
+        assert!(first.active&&second.active);
+        assert_eq!(first.route,a);assert_eq!(second.route,b);
+        let mut footer=[0;64];manifest(&mut footer,1,&a,0,0);
+        assert!(inspect(&footer,69,&first.route,&mut 0));
+        assert!(!inspect(&footer,69,&second.route,&mut 0));
+    }
+    #[test]
+    fn index_query_needs_the_canonical_name_for_its_digest() {
+        let digest=[7;32];let name=FileName::new(&digest,FileKind::Index);
+        assert!(Query::for_index(Some(name.as_bytes()),&digest).active);
+        assert!(!Query::for_index(Some(name.with_kind(FileKind::Temporary).as_bytes()),&digest).active);
+        assert!(!Query::for_index(Some(b"AAAAAAAA.IDX"),&digest).active);
+        assert!(!Query::for_index(None,&digest).active);
     }
 }
