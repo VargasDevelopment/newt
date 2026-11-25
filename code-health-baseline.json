@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3993888,
+      "flash_bytes": 3993920,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "df9bf1dffd11d47036928c1f53c8ed4d3837be1c",
-      "before": 3990928,
-      "after": 3993888,
-      "reason": "+2,960 B over the 3,990,928 B ceiling (main 5470842a): #128 (NEWT-189) makes the sleeping newt's holiday outfits opt-in (off by default) under Settings -> Sleep screen -> Holiday outfits with individual Halloween, Thanksgiving and Christmas rows. Linked cost is the new HolidayOutfitsCodec SD scalar record (newt_holiday, magic NWTH; RecordStore load/save + HomeClockSource restore/commit packed into zone_holidays with 0 B RAM growth), the 4th Sleep screen row and Holiday outfits submenu renderer and approved copy (+424 B .rodata), DevicePage::HolidayOutfits routing in app.rs, and HolidayHat::chosen gating in sleep_extras_image. Clean regional DEV USB build with the pinned Python: main 5470842a 3,990,928 B (its record); df9bf1df 3,993,888 B. RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, selected stack frames 0/16/32/48/480 B (within 0/16/32/48/656 B ceilings; 330 frames).",
-      "reviewer": "Newt Lead (2026-11-25; cross-family review: Astra, source and receipt review; no independent target build or hardware test)"
+      "source_revision": "19c3cc43ded0ce6081612cae938414833e8c3bad",
+      "before": 3993888,
+      "after": 3993920,
+      "reason": "+32 B over the 3,993,888 B ceiling (main 445edb17): replaces the Nov 25, 2026 What's new line in rust/device-ui/whats_new_notes.h (\"Newt dresses up for Thanksgiving.\" -> \"Choose which holidays Newt dresses up for in Sleep screen settings.\") so it matches #128's opt-in holiday outfits (+32 B .rodata: 1,986,596 -> 1,986,628 B; .text unchanged at 1,889,194 B). Clean regional DEV USB build with the pinned Python: main 445edb17 3,993,888 B (its record); 19c3cc43 3,993,920 B. RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, selected stack frames 0/16/32/48/480 B (within 0/16/32/48/656 B ceilings; 330 frames).",
+      "reviewer": "Newt Lead (2026-11-25; cross-family review of What's new note update; no independent target build or hardware test)"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",

@@ -13,7 +13,7 @@ inline constexpr WhatsNewUpdate kWhatsNew[] = {
       "Covers show when they're being made, or why a book has none.",
       "Reader settings survive a power-off.",
       "After an update, Newt still wakes straight to your page.",
-      "Newt dresses up for Thanksgiving."}},
+      "Choose which holidays Newt dresses up for in Sleep screen settings."}},
     {"Nov 24, 2026",
      {"Book covers appear faster.",
       "Various smaller enhancements."}},
