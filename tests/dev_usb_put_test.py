@@ -434,6 +434,31 @@ def a_failure_keeps_its_late_statistics_without_writing_again():
     interrupted = session(InterruptedTail(answers={'DATA': 'ERROR abandoned reason=timeout'}), FILES[1:])
     assert interrupted['interrupted'] and interrupted['connection']['closed']
     assert interrupted['failure_tail_error'] == 'Interrupted by operator'
+    class DirtyTail(Peer):
+        def read_data(self, remaining):
+            if not self.pending and self.writes[-1:] == ['DATA'] and not getattr(self, 'stats_sent', False):
+                self.pending = b'!N1 incomplete error\n' + row
+                self.stats_sent = True
+            return super().read_data(remaining)
+    dirty = session(DirtyTail(answers={'DATA': 'ERROR abandoned reason=timeout'}), FILES[1:])
+    assert dirty['protocol']['dirty_drain_lines'] == 1
+    assert dirty['firmware_rows'][0]['reason'] == 4
+    assert dirty['protocol']['buffered_bytes'] == 0
+    class Incomplete(LeasePeer):
+        def __init__(self, prefix):
+            super().__init__()
+            self.prefix = prefix
+        def write_data(self, data, remaining):
+            super().write_data(data, remaining)
+            if self.writes[-1] == 'DATA': self.pending = self.prefix
+    for prefix in (b'!N1 partial', b'partial log'):
+        report = session(Incomplete(prefix), FILES[1:])
+        progress = report['put']['files'][0]['protocol_progress']
+        assert progress['buffered_bytes'] == len(prefix)
+        assert progress['buffered_protocol_prefix'] is prefix.startswith(b'!N1 ')
+        assert report['protocol']['buffered_bytes'] == len(prefix)
+        assert report['protocol']['buffered_protocol_prefix'] is prefix.startswith(b'!N1 ')
+        assert report['put']['files'][0]['result'] == 'unchanged'
 
 
 

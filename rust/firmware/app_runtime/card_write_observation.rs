@@ -74,7 +74,8 @@ impl Counters {
     }
     pub fn row(&mut self, now: u32, output: &mut impl Write) -> fmt::Result {
         self.account(now);
-        writeln!(output, "PUT_STATS reason={} id={} offset={} received={} expected={} bytes={} empty={} pauses={} pause_ms={} rx_ms={} write_ms={} ack_ms={} commit_ms={}",
+        // A failed protocol reply may have left a fragment without its LF.
+        writeln!(output, "\nPUT_STATS reason={} id={} offset={} received={} expected={} bytes={} empty={} pauses={} pause_ms={} rx_ms={} write_ms={} ack_ms={} commit_ms={}",
             self.reason.map_or(255, |reason| reason as u8), self.id, self.offset, self.received,
             self.expected, self.bytes, self.empty, self.pauses, self.pause_ms,
             self.rx_ms, self.write_ms, self.ack_ms, self.commit_ms)

@@ -24,11 +24,14 @@ sys.path.insert(0, str(ROOT / 'tools'))
 from gate_tier import negative_controls
 
 BINARY = 'dev_put'
-TESTS = 43
+TESTS = 44
 # Recovery's one rule: a marker the next FILE finds refuses.
 MARKED = '        if self.recovery_file(MARKER, "marker")? { return Err(Refused::Recovery("commit", 0)); }\n'
 # (what breaks, its file under rust/core/src, its text there, the broken text, the test that must fail)
 CONTROLS = (
+    ('a partial reply swallows the undelimited exit row', '../../firmware/app_runtime/card_write_observation.rs',
+     'writeln!(output, "\\nPUT_STATS', 'writeln!(output, "PUT_STATS',
+     'wire_deadlines::a_partial_timeout_reply_cannot_swallow_the_exit_row'),
     ('packet gaps immediately sleep', '../../salamander/board/dev_usb.rs',
      'const QUIET_US: u32 = 250;', 'const QUIET_US: u32 = 0;',
      'receive_owner::packet_gaps_are_polled_but_a_stalled_sender_returns_promptly'),

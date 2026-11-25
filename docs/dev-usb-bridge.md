@@ -182,7 +182,7 @@ The old 150-byte Base64 blocks came from HWCDC's default 256-byte RX queue:
 its ISR drops bytes when that queue fills. That queue stays unchanged.
 For a granted PUT only, an exclusive receive token masks the RX interrupt,
 drains bytes already in the SDK queue first, then polls the C3 hardware FIFO.
-An empty FIFO is polled for at most 250 microseconds before sleeping, so a
+An empty FIFO is polled for about 250 microseconds before sleeping, so a
 short gap within a USB burst does not impose a millisecond sleep per packet.
 The FIFO applies USB backpressure while the lease fills its bounded buffer.
 TX and the SDK's TX interrupt handling are unchanged. HELLO, DIAG, FRAME and
@@ -280,13 +280,17 @@ There is no Home write at startup.
 Each file receipt keeps a bounded `protocol_progress`: the last sent request,
 last acknowledged DATA offset and ID, elapsed/write time, cumulative DATA
 frames/time, and the last valid response or transport error. It never stores
-DATA payloads or an unbounded per-frame log. After a failed PUT, the client
-keeps a read-only tail for at most 1.1 seconds to capture late lease statistics
+DATA payloads or an unbounded per-frame log. On failure it records only the
+pending receive buffer's length and whether it starts with the protocol prefix,
+never its bytes. The final protocol receipt also counts damaged lines skipped
+by read-only drains. After a failed PUT, the client keeps a read-only tail for
+at most 1.1 seconds to capture late lease statistics
 before closing; it sends no further command. A successful write is still proved
 only by the matching DONE response.
 
 A granted DEV lease emits a number-only `PUT_STATS` row on exit, best effort
 with a one-second output bound, including a temporarily disconnected channel.
+It starts with LF so a partial protocol reply cannot swallow the row.
 No row is promised if the host remains gone or stops reading. Counters exist only on the active lease's
 stack, with no idle heap. It reports the current request ID, block offset,
 received/expected bytes, total bytes read, empty receive calls, pause count/time, DATA

@@ -123,6 +123,7 @@ class ProtocolClient:
         self.capabilities = frozenset()
         self.randbelow = randbelow
         self.audit = []
+        self.dirty_drain_lines = 0
         self.untraced = ()  # response prefixes summarised by their caller instead
         self.press_telemetry = []
         self.active_press = None
@@ -137,7 +138,10 @@ class ProtocolClient:
     def receipt(self):
         return {'connection': self.connection,
                 'protocol': {'boot': self.boot, 'session': self.session,
-                             'last_request_id': self.request_id, 'records': self.audit}}
+                             'last_request_id': self.request_id, 'records': self.audit,
+                             'buffered_bytes': len(self.buffer),
+                             'buffered_protocol_prefix': self.buffer.startswith(b'!N1 '),
+                             'dirty_drain_lines': self.dirty_drain_lines}}
 
     def trace(self, direction, boot, session, identifier, kind, body):
         if len(self.audit) >= MAX_AUDIT_RECORDS:
@@ -196,6 +200,7 @@ class ProtocolClient:
             try:
                 self.record(deadline)
             except ProtocolDirty:
+                self.dirty_drain_lines = min(self.dirty_drain_lines + 1, 0xffffffff)
                 continue
             except ProtocolTimeout:
                 break

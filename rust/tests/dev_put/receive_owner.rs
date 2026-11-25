@@ -77,7 +77,7 @@ fn packet_gaps_are_polled_but_a_stalled_sender_returns_promptly() {
     FIFO.lock().unwrap().extend((0..192).map(|i| ((i / 64) * 125, i as u8)));
     let mut receive = owner.receive();
     for expected in 0..192 { assert_eq!(receive.read_byte(micros), expected); }
-    assert!(MICROS.load(Ordering::SeqCst) < 500, "no scheduler sleep between packets");
+    assert!(MICROS.load(Ordering::SeqCst) < 500, "packet gaps return bytes before the quiet bound");
     for start in [500, u32::MAX - 100] {
         MICROS.store(start, Ordering::SeqCst);
         assert_eq!(receive.read_byte(micros), -1);

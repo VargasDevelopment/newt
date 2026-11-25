@@ -112,7 +112,10 @@ class Lease:
             self.progress['write_seconds'] = time.monotonic() - started
             boot, session, identifier, reply = client.record(deadline)
         except (ValueError, OSError, KeyboardInterrupt) as error:
-            self.progress.update(error=str(error) or 'Interrupted by operator', elapsed_seconds=time.monotonic() - started)
+            self.progress.update(error=str(error) or 'Interrupted by operator',
+                                 elapsed_seconds=time.monotonic() - started,
+                                 buffered_bytes=len(client.buffer),
+                                 buffered_protocol_prefix=client.buffer.startswith(b'!N1 '))
             raise
         self.progress.update(elapsed_seconds=time.monotonic() - started,
                              last_response={'boot': boot, 'session': session, 'id': identifier, 'body': reply,

@@ -469,5 +469,5 @@ fn lease_counters_separate_receive_write_ack_and_latch_the_first_exit() {
     counters.observe(146, Observation::Exit(ExitReason::TxStall));
     let mut row = String::new();
     counters.row(150, &mut row).unwrap();
-    assert_eq!(row, "PUT_STATS reason=4 id=123 offset=12132352 received=2 expected=4096 bytes=2 empty=1 pauses=1 pause_ms=1 rx_ms=10 write_ms=20 ack_ms=3 commit_ms=5\n");
+    assert_eq!(row, "\nPUT_STATS reason=4 id=123 offset=12132352 received=2 expected=4096 bytes=2 empty=1 pauses=1 pause_ms=1 rx_ms=10 write_ms=20 ack_ms=3 commit_ms=5\n");
 }
