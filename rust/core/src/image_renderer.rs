@@ -164,8 +164,8 @@ pub struct RenderBuffers<'a> {
     pub sums: &'a mut [u32],
     pub counts: &'a mut [u16],
 }
-/// Matches the original EOF/partial-feed behavior, including its permissive truncation.
-/// Low-level clients can separately require Decoder::eof(); the wrapper does not.
+/// Retains unconsumed tail bytes across reads (matching cover::png) while keeping
+/// the original permissive EOF truncation; low-level clients can require Decoder::eof().
 pub fn render_png(
     input: &mut dyn EntryInput,
     src_w: u16,
@@ -197,32 +197,62 @@ pub fn render_png(
         sink,
         safety: None,
     };
+    let mut held = 0usize;
+    let mut eof = false;
     let mut status = BookStatus::Ok;
     loop {
-        let n = input.read(&mut work.read[..4096]);
-        if n < 0 {
-            status = BookStatus::IoError;
+        let n = if eof {
+            0
+        } else {
+            let got = input.read(&mut work.read[held..4096]);
+            if got < 0 {
+                status = BookStatus::IoError;
+                break;
+            }
+            let got = got as usize;
+            if got > 4096 - held {
+                return Err(SafetyError::RowSlice);
+            }
+            if got == 0 {
+                eof = true;
+            }
+            got
+        };
+        let fed = held + n;
+        if fed == 0 {
             break;
         }
-        if n == 0 {
-            break;
-        }
-        if n > 4096 {
-            return Err(SafetyError::RowSlice);
-        }
-        if let Err(e) = decoder.feed(&work.read[..n as usize], png, inflate, math, &mut state) {
-            status = if matches!(e, Error::Capacity { .. }) {
-                BookStatus::OutOfMemory
-            } else {
-                BookStatus::ParseError
-            };
-            break;
-        }
+        let used = match decoder.feed(&work.read[..fed], png, inflate, math, &mut state) {
+            Ok(used) => used,
+            Err(e) => {
+                status = if matches!(e, Error::Capacity { .. }) {
+                    BookStatus::OutOfMemory
+                } else {
+                    BookStatus::ParseError
+                };
+                break;
+            }
+        };
         if state.unsupported {
             status = BookStatus::Unsupported;
             break;
         }
         if state.scaler.stopped {
+            break;
+        }
+        if used > fed {
+            return Err(SafetyError::RowSlice);
+        }
+        work.read.copy_within(used..fed, 0);
+        held = fed - used;
+        if eof {
+            if used == 0 {
+                break;
+            }
+            continue;
+        }
+        if held == 4096 {
+            status = BookStatus::ParseError;
             break;
         }
     }
