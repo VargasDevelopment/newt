@@ -49,6 +49,11 @@ SYNC_SEVEN_CHUNKS = (
 )
 
 # (what breaks, file under rust/, exact text, broken text, failing case name)
+INDEX_STYLE_CONTROL = (
+    "the index drops stylesheet classification", "core/src/book_index_build/engine.rs",
+    "if next.position & (1 << 16) != 0 { member.flags |= crate::book_index::STYLESHEET; }",
+    "if false { member.flags |= crate::book_index::STYLESHEET; }", "stylesheet-application",
+)
 CONTROLS = (
     ("the 1,024-entry cap is raised", ADMISSION, "d.entries > 1024", "d.entries > 2048", "zip-entries-over"),
     ("the 1 MiB central-directory cap is raised", ADMISSION, "d.size > 1024 * 1024", "d.size > 2 * 1024 * 1024", "central-dir-over"),
@@ -477,6 +482,13 @@ def run_controls(binary, run, workspace, target, support, epubs_dir, output):
     verify_fresh_build_guard(support)
     builds = FreshBuilds()
     builds.admit(binary, None)
+    manifest = Path(run.env["NEWT_LARGE_EPUB_MANIFEST"])
+    baseline = run_clean_cases(binary, run, workspace, support, manifest)
+    support.require("INDEX stylesheet-application " in baseline, "stylesheet oracle baseline absent")
+    run_control(run, workspace, target, support, manifest, {"stylesheet-application"}, builds,
+                *INDEX_STYLE_CONTROL)
+    binary = test_binary(run, workspace, target)
+    builds.admit(binary, None)
     cache_limit_cases(run, workspace, target, support, builds=builds)
     by_name, verified = {}, set()
     prepare_control_baselines(binary, run, workspace, epubs_dir, output, support, by_name, verified, CONTROLS)
@@ -537,7 +549,7 @@ def main(argv=None):
             binary = test_binary(run, workspace, target)
             if args.negative_controls:
                 run_controls(binary, run, workspace, target, support, epubs_dir, output)
-                print(f"PASS large-EPUB corpus controls ({len(CONTROLS) + len(CACHE_LIMIT_CONTROLS)} controls; "
+                print(f"PASS large-EPUB corpus controls ({len(CONTROLS) + len(CACHE_LIMIT_CONTROLS) + 1} controls; "
                       f"total {time.perf_counter() - started:.2f}s)", flush=True)
                 return
             exec_t0 = time.perf_counter()

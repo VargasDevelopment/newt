@@ -14,7 +14,7 @@ fn title(text: &[u8]) -> [u8; TITLE_BYTES] {
 }
 fn header(members: u32, spine: u32) -> Header {
     Header {
-        identity: BOOK, members, spine, spine_bytes: 900, nav: 1, ncx: NONE, cover: 0,
+        stylesheets: false, identity: BOOK, members, spine, spine_bytes: 900, nav: 1, ncx: NONE, cover: 0,
         language: BookLanguage::Japanese, title: title("A Book — 本".as_bytes()),
     }
 }
@@ -51,7 +51,7 @@ fn header_round_trip_and_every_refusal() {
     // Magic, schema, an unknown language, padding, a title byte past its
     // NUL, a title that is not UTF-8, and the header's last byte.
     let end = 80 + h.title().len();
-    let mutations: [(usize, u8); 7] = [(0, b'X'), (4, (SCHEMA + 1) as u8), (72, 4), (73, 1), (end + 1, b'x'), (80, 0xff), (383, 1)];
+    let mutations: [(usize, u8); 7] = [(0, b'X'), (4, (SCHEMA + 1) as u8), (72, 4), (74, 1), (end + 1, b'x'), (80, 0xff), (383, 1)];
     for (at, value) in mutations {
         let mut bad = bytes;
         bad[at] = value;

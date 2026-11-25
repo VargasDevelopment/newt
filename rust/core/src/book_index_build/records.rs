@@ -38,6 +38,16 @@ impl Record for Item {
     }
     fn key(self) -> (u64, u32) { (self.id, self.sequence) }
 }
+/// Same 24-byte items, re-sorted by href after the idref join ends.
+#[derive(Clone, Copy)]
+pub(super) struct StyleItem(pub Item);
+impl Record for StyleItem {
+    const BYTES: usize = Item::BYTES;
+    const KIND: u32 = Item::KIND;
+    fn decode(b: &[u8]) -> Self { Self(Item::decode(b)) }
+    fn encode(self, b: &mut [u8]) { self.0.encode(b); }
+    fn key(self) -> (u64, u32) { (self.0.href, self.0.sequence) }
+}
 #[derive(Clone, Copy)]
 pub(super) struct Reference { pub id: u64, pub position: u32 }
 impl Record for Reference {

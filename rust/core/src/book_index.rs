@@ -42,6 +42,9 @@ impl NameHash {
 
 /// Bump when the payload layout or meaning changes; older indexes rebuild.
 pub const SCHEMA: u32 = 2;
+/// ZIP bit 5 is refused by admission, so it is available in an index record.
+/// Strip it before comparing with a local ZIP header.
+pub const STYLESHEET: u16 = 1 << 5;
 pub const HEADER_BYTES: u32 = 384;
 /// Full digest position in the fixed payload header (also the envelope route).
 pub const DIGEST_AT:u32=12;
@@ -87,6 +90,7 @@ pub struct Header {
     pub ncx: u32,
     pub cover: u32,
     pub language: BookLanguage,
+    pub stylesheets: bool,
     pub title: [u8; TITLE_BYTES],
 }
 
@@ -174,6 +178,7 @@ impl Header {
         out[64..68].copy_from_slice(&self.ncx.to_le_bytes());
         out[68..72].copy_from_slice(&self.cover.to_le_bytes());
         out[72] = language_code(self.language);
+        out[73] = u8::from(self.stylesheets);
         out[80..80 + TITLE_BYTES].copy_from_slice(&self.title);
     }
     /// The title bytes before its NUL.
@@ -196,6 +201,7 @@ impl Header {
             ncx: get32(input, 64),
             cover: get32(input, 68),
             language: BookLanguage::ALL.get(usize::from(input[72])).copied()?,
+            stylesheets: input[73] != 0,
             title: input[80..80 + TITLE_BYTES].try_into().ok()?,
         };
         // The title is a non-empty UTF-8 C string padded with zeros.
@@ -211,13 +217,16 @@ impl Header {
             && [header.nav, header.ncx, header.cover].iter().all(|&m| optional(m, header.members))
             && (header.nav == NONE || header.ncx == NONE)
             && title_valid
-            && input[73..80].iter().all(|&b| b == 0)
+            && input[73] <= 1
+            && input[74..80].iter().all(|&b| b == 0)
             && input[80 + TITLE_BYTES..].iter().all(|&b| b == 0);
         valid.then_some(header)
     }
 }
 
 impl Member {
+    pub fn stylesheet(&self) -> bool { self.flags & STYLESHEET != 0 }
+    pub fn zip_flags(&self) -> u16 { self.flags & !STYLESHEET }
     pub fn encode(&self, out: &mut [u8; MEMBER_BYTES as usize]) {
         out.fill(0);
         out[..8].copy_from_slice(&self.hash.to_le_bytes());

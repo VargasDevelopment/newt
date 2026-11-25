@@ -72,7 +72,7 @@ fn header(identity: Identity) -> Header {
     let mut title = [0; TITLE_BYTES];
     title[..6].copy_from_slice(b"A Book");
     Header {
-        identity, members: 200, spine: 3, spine_bytes: 300, nav: 3, ncx: NONE, cover: NONE,
+        stylesheets: false, identity, members: 200, spine: 3, spine_bytes: 300, nav: 3, ncx: NONE, cover: NONE,
         language: BookLanguage::Default, title,
     }
 }

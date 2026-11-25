@@ -155,7 +155,7 @@ fn unsupported_member_has_no_contents_spine() {
             contents_spine: NONE, ..Member::default() }).unwrap();
         engine.item(&mut store, records::Item { id: 3, href: 7, sequence: 0, flags: TEXT }).unwrap();
         engine.reference(&mut store, records::Reference { id: 3, position: 0 }).unwrap();
-        let mut header = Header { identity: support::IDENTITY, members: 1, spine: 0,
+        let mut header = Header { stylesheets: false, identity: support::IDENTITY, members: 1, spine: 0,
             spine_bytes: 0, nav: NONE, ncx: NONE, cover: NONE,
             language: BookLanguage::Default, title: [0; 256] };
         copy_display_title(&mut header.title, None);
@@ -167,4 +167,15 @@ fn unsupported_member_has_no_contents_spine() {
         let reader = crate::book_index::Reader::open(&mut store, &support::IDENTITY).unwrap();
         assert_eq!(reader.member(&mut store, 0).unwrap().contents_spine, NONE);
     }
+}
+
+#[test]
+fn stylesheet_bit_is_unavailable_to_admitted_zip_flags_and_records_do_not_grow() {
+    use crate::{book_index::{self, Header}, zip_record_rules::{zip_member_flag_rule, ZipCentralRecordRule}};
+    use super::records::Record;
+    assert_eq!(zip_member_flag_rule(book_index::STYLESHEET), ZipCentralRecordRule::Unsupported);
+    assert_eq!(<Member as Record>::BYTES, 24);
+    assert_eq!((book_index::MEMBER_BYTES, book_index::HEADER_BYTES, WRITER_PREFIX), (32, 384, 384));
+    // The bit fits existing Header padding, so the stack owner does not grow.
+    assert_eq!(core::mem::size_of::<Header>(), 328);
 }

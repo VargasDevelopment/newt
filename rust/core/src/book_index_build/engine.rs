@@ -1,5 +1,5 @@
 //! Formation and joins of the six typed streams.
-use super::{*, records::{Record, Item, Reference, Joined, First, Spine},
+use super::{*, records::{Record, Item, StyleItem, Reference, Joined, First, Spine},
     runs::{self, Cursor, CURSORS, Io, Stream, Region, Pool, View, Output, sort, reduce, poll, io}};
 
 pub(super) struct Engine<'a> {
@@ -83,6 +83,7 @@ impl<'a> Engine<'a> {
         self.join_items(work, &mut choices, &mut positions, &mut *state.cursors, progress)?;
         header.spine = positions.total();
         if header.spine == 0 { return Err(Error::Book(Status::NotEpub)); }
+        if header.stylesheets { self.rekey_styles(work, &mut *state.cursors, progress)?; }
         self.header_pass(work, header, choices, &positions, &mut *state.cursors, progress)
     }
     /// Resolves the NCX and cover ids to their earliest manifest items on the way.
@@ -128,19 +129,48 @@ impl<'a> Engine<'a> {
         self.streams[3] = out.finish(&mut view, work, &mut self.io)?;
         Ok(())
     }
+    /// The id join is finished; reuse its item stream for the href join.
+    fn rekey_styles<W: WorkFile + ?Sized>(&mut self, work: &mut W,
+        cursors: &mut [Cursor; CURSORS], progress: &mut dyn FnMut(Progress) -> bool,
+    ) -> Result<(), Error> {
+        if let Some(region) = self.streams[1].memory {
+            sort::<StyleItem>(&mut self.buffer[region.start..][..region.bytes], true);
+            return Ok(());
+        }
+        let fan = (self.buffer.len() - Item::BYTES) / self.min_read;
+        reduce::<Item, W>(&mut self.streams[1], (fan / 2).max(1), self.buffer,
+            &mut Pool::new(&mut *cursors, 0, self.min_read), work, &mut self.io, progress)?;
+        let mut pool = Pool::new(cursors, 0, self.min_read);
+        let mut input = pool.attach::<Item, W>(work, &mut self.io, self.streams[1])?;
+        let mut output = Output::<StyleItem>::new(pool.bytes(), self.buffer.len() - pool.bytes(), false, false);
+        let mut view = View { prefix: &[], tail: self.buffer };
+        while let Some(item) = pool.next::<Item, W>(&mut input, &mut view, work, &mut self.io)? {
+            output.push(StyleItem(item), &mut view, work, &mut self.io)?;
+            poll(progress, Phase::Join, self.io.stats.read, 0)?;
+        }
+        self.streams[1] = output.finish(&mut view, work, &mut self.io)?;
+        Ok(())
+    }
     fn header_pass<W: WorkFile + ?Sized>(&mut self, work: &mut W, header: &mut Header, choices: Choices,
         positions: &Positions<'_>, cursors: &mut [Cursor; CURSORS],
         progress: &mut dyn FnMut(Progress) -> bool) -> Result<(), Error> {
         let f_bytes = self.min_read;
         let max_slots = (self.buffer.len() - f_bytes - 2 * Spine::BYTES) / self.min_read;
-        reduce::<Member, W>(&mut self.streams[0], max_slots - 1, self.buffer, &mut Pool::new(&mut *cursors, 0, self.min_read), work, &mut self.io, progress)?;
+        reduce::<Member, W>(&mut self.streams[0], if header.stylesheets { (max_slots / 3).max(1) } else { max_slots - 1 }, self.buffer, &mut Pool::new(&mut *cursors, 0, self.min_read), work, &mut self.io, progress)?;
         let m_slots = if self.disk { self.streams[0].slots() } else { 0 };
-        let available = self.buffer.len() - m_slots * self.min_read - f_bytes;
+        if header.stylesheets {
+            reduce::<StyleItem, W>(&mut self.streams[1], (max_slots / 3).max(1), self.buffer,
+                &mut Pool::new(&mut *cursors, 0, self.min_read), work, &mut self.io, progress)?;
+        }
+        let style_stream = if header.stylesheets { self.streams[1] } else { Stream::default() };
+        let style_slots = if self.disk { style_stream.slots() } else { 0 };
+        let available = self.buffer.len() - (m_slots + style_slots) * self.min_read - f_bytes;
         let reserve = (self.buffer.len() / 4).min(available - self.min_read);
         let j_slots = (available - reserve) / self.min_read;
         reduce::<Joined, W>(&mut self.streams[3], j_slots, self.buffer, &mut Pool::new(&mut *cursors, 0, self.min_read), work, &mut self.io, progress)?;
         let mut pool = Pool::new(&mut *cursors, 0, self.min_read);
         let mut members = pool.attach::<Member, W>(work, &mut self.io, self.streams[0])?;
+        let mut styles = pool.attach::<StyleItem, W>(work, &mut self.io, style_stream)?;
         let mut joins = pool.attach::<Joined, W>(work, &mut self.io, self.streams[3])?;
         let start = self.io.end;
         // Resident F and J2 reuse the I and J1 regions; spilled ones follow the cursors.
@@ -152,6 +182,7 @@ impl<'a> Engine<'a> {
         let mut first = Output::<First>::new(f_region.start, f_region.bytes, !self.disk, true);
         let mut spine = Output::<Spine>::new(j_region.start, j_region.bytes, !self.disk, false);
         let mut view = View { prefix: &[], tail: self.buffer };
+        let mut style = pool.next::<StyleItem, W>(&mut styles, &mut view, work, &mut self.io)?;
         let mut joined = pool.next::<Joined, W>(&mut joins, &mut view, work, &mut self.io)?;
         let (mut rank, mut previous, mut valid) = (0, None, true);
         // One step per member and per joined reference, so the bar rises evenly.
@@ -163,6 +194,14 @@ impl<'a> Engine<'a> {
                 if choices.nav.is_some() { header.nav = rank; } else { header.ncx = rank; }
             }
             if choices.cover.is_some_and(|c| c.hash == member.hash) { header.cover = rank; }
+            let (mut css, mut contradictory) = (false, false);
+            while let Some(item) = style.filter(|item| item.0.href <= member.hash) {
+                if item.0.href == member.hash {
+                    css |= item.0.flags & CSS != 0;
+                    contradictory |= item.0.flags & CSS == 0;
+                }
+                style = pool.next::<StyleItem, W>(&mut styles, &mut view, work, &mut self.io)?;
+            }
             let mut first_position = NONE;
             let mut contents_valid = true;
             while let Some(j) = joined.filter(|j| j.href <= member.hash) {
@@ -182,7 +221,14 @@ impl<'a> Engine<'a> {
                 joined = pool.next::<Joined, W>(&mut joins, &mut view, work, &mut self.io)?;
                 done += 1; poll(progress, Phase::Rank, done, total)?;
             }
-            if contents_valid && first_position != NONE { first.push(First { rank, position: first_position }, &mut view, work, &mut self.io)?; }
+            let position = if contents_valid { first_position } else { NONE };
+            let stylesheet = css && !contradictory;
+            if position != NONE || stylesheet {
+                // Raw spine positions occupy 15 bits. Keep the classification
+                // beside the position without growing the eight-byte F record.
+                let packed = position.min(0xffff) | (u32::from(stylesheet) << 16);
+                first.push(First { rank, position: packed }, &mut view, work, &mut self.io)?;
+            }
             rank += 1;
             done += 1; poll(progress, Phase::Rank, done, total)?;
         }
@@ -218,7 +264,8 @@ impl<'a> Engine<'a> {
         while let Some(mut member) = pool.next::<Member, W>(&mut members, &mut view, store, &mut self.io)? {
             if f.is_some_and(|f| f.rank < rank) { return Err(io()); }
             if let Some(next) = f.filter(|f| f.rank == rank) {
-                member.contents_spine = next.position;
+                member.contents_spine = if next.position & 0xffff == 0xffff { NONE } else { next.position & 0xffff };
+                if next.position & (1 << 16) != 0 { member.flags |= crate::book_index::STYLESHEET; }
                 f = pool.next::<First, W>(&mut first, &mut view, store, &mut self.io)?;
             }
             writer = writer.member(store, member).map_err(Error::Write)?;
@@ -244,9 +291,9 @@ impl<'a> Engine<'a> {
 pub(super) const JOIN_STACK_BYTES: usize = {
     use core::mem::size_of;
     size_of::<Engine<'static>>() + 2 * size_of::<Header>() + size_of::<Pool<'static>>()
-        + 2 * size_of::<runs::Group>() + size_of::<Output<Spine>>() + size_of::<Output<First>>()
+        + 3 * size_of::<runs::Group>() + size_of::<Output<Spine>>() + size_of::<Output<First>>()
         + size_of::<View<'static>>() + size_of::<crate::book_index::Writer<'static>>()
         // Writer::begin encodes the header in a local before copying it out.
         + crate::book_index::HEADER_BYTES as usize
-        + size_of::<(Option<Member>, Option<Joined>, Option<First>, Option<Choice>, Option<Choice>, u64, u32, u32, bool)>()
+        + size_of::<(Option<StyleItem>, Option<Member>, Option<Joined>, Option<First>, Option<Choice>, Option<Choice>, u64, u32, u32, bool)>()
 };

@@ -8,11 +8,11 @@ use newt_reader_navigation::{metadata::Metadata, Navigation};
 pub fn agreement(source: &mut impl BookSource, name: &str) -> usize {
     let mut peak = 0;
     for (bytes, read, run, variant) in [(32768, 512, 32768, "normal"), (512, 32, 128, "spill"), (448, 32, 64, "tiny")] {
-        peak = peak.max(agreement_variant(source, &format!("{name}/{variant}"), bytes, read, run).0);
+        peak = peak.max(agreement_variant(source, &format!("{name}/{variant}"), bytes, read, run, false).0);
     }
     peak
 }
-fn agreement_variant(source: &mut impl BookSource, name: &str, buffer_bytes: usize, min_read: usize, run_bytes: usize) -> (usize, bool) {
+fn agreement_variant(source: &mut impl BookSource, name: &str, buffer_bytes: usize, min_read: usize, run_bytes: usize, check_styles: bool) -> (usize, bool) {
     let mut host = HostScratch::new();
     host.with_resources(|catalog, parse, resources| {
         assert_eq!(admission::inspect(&mut admission::ScheduledSource::new(source, None, None),
@@ -60,7 +60,7 @@ fn agreement_variant(source: &mut impl BookSource, name: &str, buffer_bytes: usi
         let bytes = |value: Option<newt_core::zip_window::arena::CStringRef>| value.and_then(|v| parts.arena.c_string(v));
         let member_for = |item: &ManifestItem| bytes(item.href).and_then(|p| view.find(p)).map(|(_, e)| e);
         let same_member = |member: Option<index::Member>, entry: Option<Entry>| {
-            assert_eq!(member.map(|m| (m.local_offset, m.compressed, m.uncompressed, m.method, m.flags)),
+            assert_eq!(member.map(|m| (m.local_offset, m.compressed, m.uncompressed, m.method, m.zip_flags())),
                 entry.map(|e| (e.local_header_offset, e.compressed_size, e.uncompressed_size, e.method, e.flags)), "{name}: member");
         };
         let read_member = |store: &mut BuildStore, n| if n == NONE { None } else { Some(reader.member(store, n).unwrap()) };
@@ -83,6 +83,16 @@ fn agreement_variant(source: &mut impl BookSource, name: &str, buffer_bytes: usi
             let entry = parts.entries.iter().find(|e| e.local_header_offset == m.local_offset).unwrap();
             let expected = newt_reader_navigation::readable_spine(&metadata, view.name(entry).unwrap());
             assert_eq!(m.contents_spine, expected, "{name}: contents spine {i}");
+            let href = view.name(entry).unwrap();
+            let mut css = false;
+            let mut contradictory = false;
+            for item in &parts.manifest[..parts.result.manifest_count] {
+                if bytes(item.href) == Some(href) {
+                    if bytes(item.media_type) == Some(b"text/css") { css = true; }
+                    else { contradictory = true; }
+                }
+            }
+            assert_eq!(m.stylesheet(), css && !contradictory, "{}: stylesheet {i} ({name})", name.split('/').next().unwrap());
         }
         let chosen = parts.result.nav_index.or(parts.result.ncx_index)
             .and_then(|i| member_for(&parts.manifest[i]));
@@ -94,6 +104,57 @@ fn agreement_variant(source: &mut impl BookSource, name: &str, buffer_bytes: usi
         copy_display_title(&mut title, bytes(parts.result.metadata.title));
         assert_eq!(h.title, title, "{name}: title");
         assert_eq!(h.language, BookLanguage::from_opf(bytes(parts.result.metadata.language)), "{name}: language");
+        assert_eq!(h.stylesheets, parts.manifest[..parts.result.manifest_count].iter()
+            .any(|item| bytes(item.media_type) == Some(b"text/css")), "{name}: declares stylesheet");
+        if check_styles {
+            let style_book = styles::Book { manifest: &parts.manifest[..parts.result.manifest_count],
+                arena: parts.arena, catalog: Some(view) };
+            let chapter = view.find(b"OEBPS/c.xhtml").unwrap().1;
+            let chapter = view.check(parts.workflow.source, &chapter).unwrap();
+            let store = std::cell::RefCell::new(&mut store);
+            let lookup = |source: &mut dyn BookSource, path: &[u8]| {
+                let hit = reader.find(&mut **store.borrow_mut(), index::name_hash(path)).map_err(|_| Status::IoError)?;
+                let Some((_, member)) = hit.filter(|(_, member)| member.stylesheet()) else {
+                    return Ok(styles::Member::unresolved(styles::Link::Unsupported));
+                };
+                let entry = view.find(path).unwrap().1;
+                assert_eq!(member.local_offset, entry.local_header_offset);
+                view.check(source, &entry).map(|checked| styles::Member::from_checked(&checked))
+            };
+            let mut snapshots = Vec::new();
+            for indexed in [false, true] {
+                let mut text = [0; styles::EMBEDDED];
+                let mut sources = Sources { links: Default::default(), start: [0; 8], length: [0; 8],
+                    issues: 0, used: 0, events: 0, external_mask: 0, text: &mut text };
+                let mut path_bytes = [0; 8192];
+                let mut paths = Arena::new(&mut path_bytes);
+                let mut directory = [0; 512];
+                let scratch = styles::ResolveScratch { directory: &mut directory, paths: &mut paths,
+                    decoder: newt_phased_reader::decoder(&mut parts.workflow.decoder),
+                    xml: newt_core::xml_session::Resources { buffer: parts.workflow.buffer.as_deref_mut(),
+                        filter: parts.workflow.filter.as_deref_mut() } };
+                let status = if indexed {
+                    styles::resolve_indexed(&lookup, parts.workflow.source, &chapter, Some(b"OEBPS/c.xhtml"),
+                        parts.workflow.backend, scratch, None, &mut sources, None)
+                } else {
+                    styles::resolve(&style_book, parts.workflow.source, &chapter, Some(b"OEBPS/c.xhtml"),
+                        parts.workflow.backend, scratch, None, &mut sources, None)
+                };
+                assert_eq!(status, Status::Ok, "{name}: resolve styles");
+                let mut rules = [CssRule::default(); styles::MAX_RULES];
+                let mut slot = Slot { rules: &mut rules, count: 0, hash: styles::ID, spine: 0,
+                    issues: 0, state: StyleState::Empty };
+                let mut build = styles::BuildScratch { text: &mut [0; styles::RULE_BYTES],
+                    marks: &mut [0; styles::RULE_BYTES / 4], batch: &mut [0; styles::RULE_BYTES],
+                    sdk: &mut [CssRule::default(); styles::SDK_BATCH],
+                    pending: &mut [CssRule::default(); styles::MAX_RULES], chunk: &mut [0; 256] };
+                assert_eq!(styles::build(parts.workflow.source, &sources, Some(&mut build),
+                    newt_phased_reader::decoder(&mut parts.workflow.decoder), None, &mut slot, 0, None), Status::Ok);
+                assert!(slot.count >= 2, "{name}: external styles applied");
+                snapshots.push((slot.rules[..slot.count].to_vec(), slot.hash, slot.state, slot.issues));
+            }
+            assert_eq!(snapshots[0], snapshots[1], "{name}: applied styles unchanged");
+        }
         println!("INDEX {name} buffer={} statistics={:?}", buffer_bytes, report.statistics);
         (builder::STACK_BYTES + builder::JOIN_STATE_BYTES + buffer_bytes, callback_spilled)
     })
@@ -220,7 +281,25 @@ fn contents_requires_one_supported_text_spine_item() {
 
 }
 
+fn stylesheet_declarations_agree() {
+    let chapter = item("chapter", "c.xhtml", "");
+    let opf = package("", &(chapter.clone() + "<item id='css' href='valid.css' media-type='text/css'/><item id='odd' href='odd' media-type='text/css'/>"), "<itemref idref='chapter'/>");
+    let mut styled = book(&opf, &[("OEBPS/c.xhtml", b"<html><head><link rel='stylesheet' href='valid.css'/><link rel='stylesheet' href='odd'/></head><body><p>Generated text</p></body></html>"),
+        ("OEBPS/valid.css", b"p { font-weight: bold; }"), ("OEBPS/odd", b"em { font-style: italic; }")]);
+    agreement_variant(&mut styled, "stylesheet-application", 32768, 512, 32768, true);
+    for (name, styles) in [
+        ("no-stylesheet", ""),
+        ("stylesheet-metadata", "<item id='a' href='a.css' media-type='text/css'/><item id='b' href='odd' media-type='text/css'/><item id='c' href='fake.css' media-type='text/html'/><item id='d' href='a.css' media-type='image/png'/><item id='e' href='missing' media-type='text/css'/><item id='f' href='valid.css' media-type='text/css'/>"),
+    ] {
+        let opf = package("", &(chapter.clone() + styles), "<itemref idref='chapter'/>");
+        agreement(&mut book(&opf, &[("OEBPS/c.xhtml", b"<html/>"), ("OEBPS/a.css", b"p{font-weight:bold}"),
+            ("OEBPS/odd", b"p{font-style:italic}"), ("OEBPS/fake.css", b"p{display:none}"),
+            ("OEBPS/valid.css", b"p{font-weight:bold}")]), name);
+    }
+}
+
 pub fn small_cases() {
+    stylesheet_declarations_agree();
     contents_requires_one_supported_text_spine_item();
     normalized_hrefs_and_progress_agree();
     first_match_dangling_and_repeated_idrefs_agree();
@@ -268,7 +347,7 @@ fn tiny_items_and_internal_entities_spill_in_package_callback() {
         expanded, package("", "&items;", "<itemref idref=\"\"/>"));
     for (label, opf) in [("tiny-items", body), ("entity-items", entity)] {
         let mut source = book(&opf, &extra);
-        let (_, callback_spilled) = agreement_variant(&mut source, label, 32768, 512, 32768);
+        let (_, callback_spilled) = agreement_variant(&mut source, label, 32768, 512, 32768, false);
         assert!(callback_spilled, "{label}: work opened during OPF callback");
     }
 }
