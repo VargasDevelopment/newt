@@ -35,10 +35,8 @@ impl<'a, S: Native> ChapterCacheStorage<'a, S> {
     #[inline(never)]
     pub fn invalidate_index(&mut self, digest: &[u8;32]) -> bool {
         if !self.access().release_for_admission() { return false; }
-        let mut name=[0;69];
-        newt_core::book_index::name(digest,&mut name);
-        let Ok(name)=core::str::from_utf8(&name) else { return false; };
-        self.file.route.remove_record(self.file.native,"Index",name,false)
+        let name=newt_core::book_index::FileName::new(digest,newt_core::book_index::FileKind::Index);
+        self.file.route.remove_record(self.file.native,"Index",name.as_str(),false)
     }
     /// A foreground loan, without producer policy. Dropping it owes nothing.
     pub fn access(&mut self) -> ChapterCacheAccess<'_, 'a, S> {
@@ -267,13 +265,21 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
     }
 
     fn same(&self, name: &[u8]) -> bool {
-        self.file.suffix().as_bytes() == c_str(name)
+        core::str::from_utf8(c_str(name)).is_ok_and(|name|self.file.same_name(name))
     }
     /// FilePort::pageName, widened: the final suffix when it names a
     /// block-envelope file (a page or a book index).
     fn envelope_name(&self) -> Option<&[u8]> {
         let suffix = self.file.suffix().as_bytes();
         envelope_kind(suffix).is_some().then_some(suffix)
+    }
+    fn envelope_route(&mut self,out:&mut envelope::Route,canonical:bool)->bool {
+        if self.envelope_name().and_then(newt_core::book_index::FileName::parse).is_some() {
+            // The short filename cannot supply identity. Use the full digest
+            // in the payload header; checked query callers independently bind
+            // their expected digest before trusting any index records.
+            self.file.read(newt_core::book_index::DIGEST_AT,out)
+        } else {envelope::route(self.envelope_name(),out,canonical)}
     }
     fn page_query_size(&mut self, name: &[u8]) -> i64 {
         if self.state.read_active && self.same(name) {
@@ -394,7 +400,7 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
         self.state.lookup = Lookup::Invalid;
         let mut route = [0; 32];
         let extent = self.file.bytes();
-        if extent < MANIFEST_BYTES || !envelope::route(self.envelope_name(), &mut route, true) {
+        if extent < MANIFEST_BYTES || !self.envelope_route(&mut route,true) {
             return false;
         }
         let mut manifest = [0; MANIFEST_BYTES as usize];
@@ -429,7 +435,7 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
         let Some(mut scratch) = Self::scratch() else {
             return false;
         };
-        if !envelope::route(self.envelope_name(), &mut route, false) {
+        if !self.envelope_route(&mut route,false) {
             return false;
         }
         let (mut whole, mut directory) = (u32::MAX, u32::MAX);

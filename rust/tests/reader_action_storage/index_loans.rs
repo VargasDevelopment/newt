@@ -156,10 +156,10 @@ pub(crate) fn physical_handoffs(home:&mut app_image::Home<'_>,bytes:&[u8],digest
             let route=route.lend(&crate::Never,crate::now);
             let mut state=newt_native_storage::chapter_cache::ChapterCacheState::new();
             let mut pages=reader_pages::ReaderPages(newt_native_storage::chapter_cache::ChapterCacheStorage::lend(&mut state,&mut native,&route).unwrap());
-            let mut name=[0;69];book_index::name(digest,&mut name);
+            let name=*book_index::FileName::new(digest,book_index::FileKind::Index).as_bytes();
             let found=pages.file_size(&name)>=0;
             if found {
-                let index=pages.query(&name,true,&mut[0;8256],&mut||true,|store|
+                let index=pages.query_index(&name,digest,true,&mut[0;8256],&mut||true,|store|
                     book_index::Reader::open(store,&book_index::Identity {digest:*digest,policy:newt_core::admission::POLICY_VERSION})).unwrap().0;
                 assert!(index.is_some(),"cold index must be complete and valid");
             }
@@ -191,7 +191,7 @@ pub(crate) fn failed_verification_revokes_index(runtime:&mut Runtime,home:&mut a
         assert_eq!(scope.card.0.borrow().model.steps,steps,"revoked failures do not rescan the directory on idle");
         let route=session.route.lend(&crate::Never,crate::now);
         let mut pages=reader_pages::ReaderPages(newt_native_storage::chapter_cache::ChapterCacheStorage::lend(&mut session.pages,&mut native,&route).unwrap());
-        let mut name=[0;69];newt_core::book_index::name(digest,&mut name);
+        let name=*newt_core::book_index::FileName::new(digest,newt_core::book_index::FileKind::Index).as_bytes();
         assert!(pages.file_size(&name)<0,"failed verification must remove the derived index");
     }).unwrap();
 }

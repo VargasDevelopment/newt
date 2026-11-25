@@ -103,11 +103,10 @@ fn attempt<B: ParserBackend + ?Sized, C: CachePresence>(source: &mut dyn Releasa
 #[inline(never)]
 fn probe(source: &mut dyn BookSource, identity: &Identity, lender: &mut impl BuildLoan,
     store: &mut impl ReadScope, hook: Yield<'_>) -> Result<(bool, bool), Status> {
-    let mut name = [0; 69];
-    book_index::name(&identity.digest, &mut name);
+    let name=*book_index::FileName::new(&identity.digest,book_index::FileKind::Index).as_bytes();
     let existed = store.file_size(&name) >= 0;
     let hit = lender.with_parse(|scratch| {
-        store.query(&name, true, scratch, &mut || source.read_at(0, &mut []) == 0, |verified| {
+        store.query_index(&name,&identity.digest, true, scratch, &mut || source.read_at(0, &mut []) == 0, |verified| {
             book_index::Reader::open(verified, identity).map(|index| {
                 (index.header().members, index.header().spine)
             })

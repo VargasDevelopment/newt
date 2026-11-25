@@ -819,6 +819,11 @@ impl<'a> newt_core::page_cache::IndexAllocation<'a> for IndexParts<'a> {
 /// before attach, then after query cleanup before the checked exit, including
 /// failures; the read callback has no raw source capability.
 pub trait ReadScope: newt_core::page_cache::CacheStorage {
+    fn query_index<R>(&mut self,name:&[u8],_digest:&[u8;32],opening:bool,scratch:&mut[u8],
+        source_live:&mut dyn FnMut()->bool,read:impl FnOnce(&mut dyn newt_core::page_cache::CacheStorage)->R)
+        ->Result<(R,bool),Status> {
+        self.query(name,opening,scratch,source_live,read)
+    }
     fn query<R>(
         &mut self,
         name: &[u8],

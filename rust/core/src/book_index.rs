@@ -43,6 +43,8 @@ impl NameHash {
 /// Bump when the payload layout or meaning changes; older indexes rebuild.
 pub const SCHEMA: u32 = 1;
 pub const HEADER_BYTES: u32 = 384;
+/// Full digest position in the fixed payload header (also the envelope route).
+pub const DIGEST_AT:u32=12;
 /// The display title as the reader keeps it: at most 255 bytes, cut on a
 /// UTF-8 boundary, NUL-terminated (`copy_display_title`).
 pub const TITLE_BYTES: usize = 256;
@@ -118,8 +120,8 @@ pub const fn payload_bytes(members: u32, spine: u32) -> Option<u32> {
     Some(HEADER_BYTES + members * MEMBER_BYTES + spine * SPINE_BYTES)
 }
 
-/// `<64 hex digest>.fibx`: the envelope route is the source digest, so block
-/// checks also refuse another book's index under this name.
+/// Legacy bench name, retained for migration fixtures. Product readers and
+/// writers use FileName; identity comes from the full digest, never this name.
 pub fn name(digest: &Digest, out: &mut [u8; 69]) {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     for (i, byte) in digest.iter().enumerate() {
@@ -295,8 +297,7 @@ impl<'b> Writer<'b> {
         if buffer.len() < bytes.len() || Header::decode(&bytes, &header.identity, payload) != Some(header) {
             return Err(WriteError::Invalid);
         }
-        let mut file = [0; 69];
-        name(&header.identity.digest, &mut file);
+        let file=*FileName::new(&header.identity.digest,FileKind::Index).as_bytes();
         if !s.begin_write(&file) {
             return Err(WriteError::Storage);
         }
@@ -367,14 +368,13 @@ pub struct Unreadable;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Reader {
     header: Header,
-    name: [u8; 69],
+    name: [u8; 12],
 }
 
 impl Reader {
     /// None for a missing, damaged, stale or foreign index: rebuild it.
     pub fn open<S: CacheStorage + ?Sized>(s: &mut S, identity: &Identity) -> Option<Self> {
-        let mut file = [0; 69];
-        name(&identity.digest, &mut file);
+        let file=*FileName::new(&identity.digest,FileKind::Index).as_bytes();
         let payload = u32::try_from(s.file_size(&file)).ok()?;
         let mut bytes = [0; HEADER_BYTES as usize];
         read_exact(s, &file, 0, &mut bytes)?;

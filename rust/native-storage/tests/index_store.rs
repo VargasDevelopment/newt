@@ -30,9 +30,14 @@ impl Authority for Never {
 fn now() -> u32 { 0 }
 
 fn leaf(digest: &[u8; 32]) -> String {
-    let mut name = [0; 69];
-    book_index::name(digest, &mut name);
-    format!("{KEY}-{}", std::str::from_utf8(&name).unwrap())
+    book_index::FileName::new(digest,book_index::FileKind::Index).as_str().to_owned()
+}
+
+fn backup(name:&str)->String {
+    book_index::FileName::parse(name.as_bytes()).unwrap().with_kind(book_index::FileKind::Backup).as_str().to_owned()
+}
+fn pair(name:&str)->Vec<String> {
+    let mut names=vec![name.to_owned(),backup(name)];names.sort();names
 }
 
 /// One cold owner per call, closed afterwards like the reader's.
@@ -90,11 +95,10 @@ fn write(store: &mut ChapterCacheStorage<'_, Card>, identity: Identity) -> core:
 fn read<R>(store: &mut ChapterCacheStorage<'_, Card>, identity: &Identity,
     work: impl FnOnce(&mut dyn CacheStorage, &Reader) -> R,
 ) -> Option<R> {
-    let mut name = [0; 69];
-    book_index::name(&identity.digest, &mut name);
+    let name=*book_index::FileName::new(&identity.digest,book_index::FileKind::Index).as_bytes();
     let (mut directory, mut window) = ([0; 4160], [0; 4096]);
     let mut access = store.access();
-    let mut verified = VerifiedStore::new(Some(&name), &mut directory, &mut window);
+    let mut verified = VerifiedStore::for_index(Some(&name),&identity.digest, &mut directory, &mut window);
     if !access.begin_page_read(false, Some(&mut verified.query)) {
         return None;
     }
@@ -238,19 +242,19 @@ fn a_rebuilt_index_and_its_backup_stay_evictable() {
     with_store(&mut card, |store| write(store, BOOK)).unwrap();
     with_store(&mut card, |store| write(store, Identity { policy: 2, ..BOOK })).unwrap();
     let book = leaf(&BOOK.digest);
-    assert_eq!(card.indexes(), [book.clone(), format!("{book}.bak")]);
+    assert_eq!(card.indexes(), pair(&book));
 
     // The open book also has a pair; with a newer orphan, the folder is
     // crowded. The oldest unpinned files go first, backups included.
     let pinned = leaf(&[1; 32]);
     card.seed(&pinned, 6 * MIB, 5);
-    card.seed(&format!("{pinned}.bak"), 6 * MIB, 1);
+    card.seed(&backup(&pinned), 6 * MIB, 1);
     card.seed(&leaf(&[2; 32]), 2 * MIB, 3);
     let grant = with_store(&mut card, |store| {
         store.index_census(&Never, None, None, Some(pinned.as_bytes()))
     });
     assert_eq!(grant.outcome, MissingProbe::Ready);
-    assert_eq!(card.indexes(), [pinned.clone(), format!("{pinned}.bak")]);
+    assert_eq!(card.indexes(), pair(&pinned));
 }
 
 use newt_core as core_api;
@@ -364,8 +368,7 @@ fn published_build_requires_the_verified_read_scope() {
     with_store(&mut card, |cache| {
         let mut work = IndexWorkState::new();
         let mut store = IndexBuildStore::lend(cache, &mut work, &BOOK.digest).unwrap();
-        let mut name = [0; 69];
-        book_index::name(&BOOK.digest, &mut name);
+        let name=*book_index::FileName::new(&BOOK.digest,book_index::FileKind::Index).as_bytes();
         assert_eq!(CacheStorage::read_at(&mut store, &name, 0, &mut [0; 384]), -1);
         assert!(Reader::open(&mut store, &BOOK).is_none());
         assert!(store.release_pages());
@@ -409,4 +412,66 @@ fn index_publication_uses_the_fat_path_timestamp() {
     card.close(fd).unwrap();
     assert_eq!(with_store(&mut card, |store| read(store, &BOOK, complete)), Some(true));
     assert_eq!(card.open, 0);
+}
+
+#[test]
+fn short_name_collision_refuses_the_other_digest_and_rebuilds() {
+    let mut card=Card::new();let mut other=BOOK;other.digest[31]^=1;
+    assert_eq!(leaf(&BOOK.digest),leaf(&other.digest));
+    with_store(&mut card,|store|write(store,BOOK)).unwrap();
+    assert_eq!(with_store(&mut card,|store|read(store,&other,complete)),None);
+    with_store(&mut card,|store|write(store,other)).unwrap();
+    assert_eq!(with_store(&mut card,|store|read(store,&other,complete)),Some(true));
+    assert_eq!(with_store(&mut card,|store|read(store,&BOOK,complete)),None);
+    with_store(&mut card,|store|write(store,BOOK)).unwrap();
+    assert_eq!(with_store(&mut card,|store|read(store,&BOOK,complete)),Some(true));
+    assert!(card.indexes().iter().all(|name|book_index::FileName::parse(name.as_bytes()).is_some()));
+}
+#[test]
+fn legacy_long_names_are_ignored_and_swept_one_victim_bank_at_a_time() {
+    let mut card=Card::new();
+    with_store(&mut card,|store|write(store,BOOK)).unwrap();
+    let good=card.model.files.remove(&format!("{ROOT}/Index/{}",leaf(&BOOK.digest))).unwrap();
+    let mut old=[0;69];book_index::name(&BOOK.digest,&mut old);
+    let legacy=format!("{KEY}-{}",core::str::from_utf8(&old).unwrap());
+    card.model.files.insert(format!("{ROOT}/Index/{legacy}"),good);
+    assert_eq!(with_store(&mut card,|store|read(store,&BOOK,complete)),None,"legacy names never supply an index hit");
+    for i in 0..11 {card.seed(&format!("{KEY}-{i:064x}.fibx"),100,1);}
+    let grant=with_store(&mut card,|store|store.index_census(&Never,None,None,None));
+    assert_eq!(card.indexes().len(),4,"one bank of eight legacy victims per build");
+    assert_eq!(grant.entries,20,"the census still counts all twelve entries");
+    with_store(&mut card,|store|store.index_census(&Never,None,None,None));
+    assert!(card.indexes().is_empty());
+}
+#[test]
+fn cap_thirty_two_keeps_the_full_census_and_evicts_oldest_first() {
+    use newt_core::cache_names::namespace::{INDEX_ENTRY_CAP,INDEX_ENTRY_GRANT};
+    assert_eq!(INDEX_ENTRY_CAP,32);
+    let mut card=Card::new();
+    for i in 0..40u8 {card.seed(&leaf(&[i;32]),100,i64::from(i));}
+    let grant=with_store(&mut card,|store|store.index_census(&Never,None,None,None));
+    assert_eq!(grant.outcome,MissingProbe::Ready);
+    assert_eq!(card.indexes().len(),usize::from(INDEX_ENTRY_GRANT)-1);
+    assert_eq!(grant.entries,1);
+    for i in 0..40u8 {assert_eq!(card.indexes().contains(&leaf(&[i;32])),i>=17);}
+}
+#[test]
+fn stale_short_work_and_temp_slots_cannot_block_a_build() {
+    use book_index::{FileName,FileKind};
+    let mut card=build_card();
+    for kind in [FileKind::Work,FileKind::Temporary] {
+        card.seed(FileName::new(&BOOK.digest,kind).as_str(),100,1);
+    }
+    // Deliberately omit the census: each deterministic slot handles its own
+    // interrupted predecessor before any exclusive create.
+    with_store(&mut card,|cache| {
+        let mut work=IndexWorkState::new();let mut buffer=[0;448];
+        let mut backing=build_support::JoinBacking::new();let mut join=backing.state();
+        let mut store=IndexBuildStore::lend(cache,&mut work,&BOOK.digest).unwrap();
+        assert!(!store.spilled());
+        let prepared=build_support::prepare(&mut store,&mut buffer,64,8,8,8,&mut join).unwrap();
+        assert!(prepared.publish(&mut store,&mut join,&mut|_|true,&mut||true).unwrap().work_removed);
+    });
+    assert_eq!(card.indexes(),[leaf(&BOOK.digest)]);
+    assert_eq!(with_store(&mut card,|store|read(store,&BOOK,built_index_complete)),Some(true));
 }

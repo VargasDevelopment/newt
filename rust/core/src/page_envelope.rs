@@ -43,8 +43,8 @@ pub fn payload_for_extent(extent: u32) -> u32 {
     if blocks(payload) == count { payload } else { 0 }
 }
 
-/// Pages (`.fibp`) and book indexes (`.fibx`) share this envelope; the route
-/// is the name's 64 hex digits.
+/// Page and legacy bench names carry a full hex route. Product index queries
+/// use Query::for_index with the verified digest; an 8.3 name cannot supply it.
 pub fn route(name: Option<&[u8]>, out: &mut Route, canonical: bool) -> bool {
     let Some(name) = name.map(c_string) else {
         return false;

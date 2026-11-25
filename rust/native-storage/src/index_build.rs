@@ -20,13 +20,8 @@ pub struct IndexBuildStore<'op, 'a, N: Native> {
 impl<'op, 'a, N: Native> IndexBuildStore<'op, 'a, N> {
     pub fn lend(cache: &'op mut ChapterCacheStorage<'a, N>, work: &'op mut IndexWorkState, digest: &[u8; 32]) -> Option<Self> {
         if work.path_bytes != 0 { return Some(Self { cache, work }); }
-        use core::fmt::Write;
-        let mut suffix = [0; 69];
-        newt_core::book_index::name(digest, &mut suffix);
-        let suffix = core::str::from_utf8(&suffix).ok()?;
-        let mut name = cache.file.route.name("Index", suffix, false)?;
-        let nonce = cache.file.native.next_nonce();
-        write!(name, ".{nonce:08x}.tmp").ok()?;
+        let suffix=newt_core::book_index::FileName::new(digest,newt_core::book_index::FileKind::Work);
+        let name=cache.file.route.name("Index",suffix.as_str(),false)?;
         let mut path = [0; 256];
         path[..name.len()].copy_from_slice(name.as_bytes());
         let (parent, _) = name.rsplit_once('/')?;
@@ -44,6 +39,9 @@ impl<'op, 'a, N: Native> IndexBuildStore<'op, 'a, N> {
             }
             Err(_) => return None,
         }
+        // A previous interrupted attempt owns no live writer. Its deterministic
+        // work slot must not block this build; the FD still opens lazily.
+        if !matches!(cache.file.native.unlink(&name),Ok(())|Err(Error::Missing)) {return None;}
         work.path = path;
         work.path_bytes = name.len();
         Some(Self { cache, work })

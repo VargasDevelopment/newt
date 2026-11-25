@@ -33,7 +33,7 @@ impl CacheStorage for Card {
     fn remove(&mut self, _: &[u8]) -> bool { self.file.clear(); true }
     fn file_size(&mut self, _: &[u8]) -> i64 { if self.file.is_empty() { -1 } else { self.file.len() as i64 } }
     fn read_at(&mut self, name: &[u8], at: u32, out: &mut [u8]) -> i32 {
-        if name.ends_with(b".fibx") && !self.verified { return -1; }
+        if newt_core::cache_names::namespace::envelope_kind(name)==Some(newt_core::cache_names::namespace::Kind::Index) && !self.verified { return -1; }
         let Some(bytes) = self.file.get(at as usize..at as usize+out.len()) else { return -1; };
         out.copy_from_slice(bytes); out.len() as i32
     }

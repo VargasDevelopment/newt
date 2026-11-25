@@ -138,7 +138,13 @@ impl<'a, 'folder> Census<'a, 'folder> {
             if !self.result(self.met==self.victims) { return false; }
             self.victims=0;return true;
         };
-        let parsed=PageName::parse(Some(name));
+        let obsolete_index=self.request.policy.kind==NameKind::Index
+            && newt_core::book_index::FileName::parse(name).is_none();
+        // Only bench cards had long index names. They are never read; sweep
+        // nonmatching names in this dedicated folder, at most one victim bank
+        // per build, while still scanning every entry for the census.
+        let parsed=if obsolete_index {PageName {kind:NameKind::Index,form:Form::Temporary,canonical_bytes:name.len()}}
+            else {PageName::parse(Some(name))};
         if parsed.kind==NameKind::Unknown { return false; }
         if self.pass==Pass::Names {
             if let Some(index)=self.pending(name) { return self.remove(native,&entry,index); }
@@ -148,7 +154,7 @@ impl<'a, 'folder> Census<'a, 'folder> {
         let good=entry.regular && names::add(&mut self.total,entry.bytes);
         if !self.result(good) { return false; }
         self.count=self.count.wrapping_add(1);
-        self.consider(&entry,parsed);
+        if !obsolete_index || self.deleted<VICTIMS as u32 {self.consider(&entry,parsed);}
         true
     }
     fn sizes_done(&mut self)->bool {
@@ -160,7 +166,7 @@ impl<'a, 'folder> Census<'a, 'folder> {
             if rank!=self.victim[0].rank { break; }
             let crowded=count.wrapping_add(u32::from(need))>u32::from(policy.entry_grant)
                 || total>policy.quota || u64::from(policy.required_units)*u64::from(names::PAGE_CREDIT_UNIT)>policy.quota-total;
-            if (rank!=Rank::Temporary && !crowded) || (rank==Rank::Page && count>policy.entry_cap) { break; }
+            if (rank!=Rank::Temporary && !crowded) || (rank==Rank::Page && count>policy.entry_cap && policy.kind!=NameKind::Index) { break; }
             count=count.wrapping_sub(1);total=total.wrapping_sub(self.victim[keep].bytes);keep+=1;
         }
         self.victims=keep;true
@@ -185,13 +191,16 @@ impl<'a, 'folder> Census<'a, 'folder> {
         let Some(name)=entry.name else { return; };
         let keep_backups=self.request.policy.keep_backups;
         let canonical=&name[..parsed.canonical_bytes];
+        let pinned=if self.request.policy.kind==NameKind::Index {
+            self.request.pinned.is_some_and(|p|p.get(..8)==name.get(..8))
+        } else {self.request.pinned==Some(canonical)};
         let page=parsed.kind==self.request.policy.kind;
         let rank=if page && parsed.form==Form::Temporary { Rank::Temporary }
             else if !page { Rank::Legacy }
             else if parsed.form==Form::Canonical || (parsed.form==Form::Backup && !keep_backups) { Rank::Page }
             else { Rank::None };
         if rank==Rank::None || (parsed.form==Form::Canonical && keep_backups && self.backups.may_contain(canonical))
-            || (rank==Rank::Page && self.request.pinned==Some(canonical))
+            || (rank==Rank::Page && pinned)
             || (rank==Rank::Page && self.request.need.is_some_and(|n|n.keep.may_contain(&name[65..parsed.canonical_bytes]))) { return; }
         let candidate=Victim{name:name_hash(name),bytes:entry.bytes,time:entry.time,rank};
         let mut at=self.victims;

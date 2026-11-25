@@ -46,7 +46,12 @@ impl Native for Card {
         self.open(path.to_str().map_err(|_| Error::Other)?, mode)
     }
     fn open(&mut self, path: &str, mode: Open) -> Result<i32> {
-        if matches!(mode, Open::CreateExclusive) { self.creates += 1; }
+        if matches!(mode, Open::CreateExclusive) {
+            self.creates += 1;
+            if let Some(name)=path.strip_prefix(&format!("{ROOT}/Index/")) {
+                assert!(newt_core::book_index::FileName::parse(name.as_bytes()).is_some(),"new index file must be one 8.3 entry: {name}");
+            }
+        }
         let fd = self.live(|m| m.open(path, mode))?;
         self.open += 1;
         self.most_open = self.most_open.max(self.open);
@@ -77,7 +82,12 @@ impl Native for Card {
     }
     fn mkdir(&mut self, path: &str) -> Result<()> { self.live(|m| m.mkdir(path)) }
     fn unlink(&mut self, path: &str) -> Result<()> { self.live(|m| m.unlink(path)) }
-    fn rename(&mut self, from: &str, to: &str) -> Result<()> { self.live(|m| m.rename(from, to)) }
+    fn rename(&mut self, from: &str, to: &str) -> Result<()> {
+        if let Some(name)=to.strip_prefix(&format!("{ROOT}/Index/")) {
+            assert!(newt_core::book_index::FileName::parse(name.as_bytes()).is_some(),"renamed index file must be one 8.3 entry: {name}");
+        }
+        self.live(|m| m.rename(from, to))
+    }
     fn next_nonce(&mut self) -> u32 { self.model.next_nonce() }
 }
 impl Directory for Card {
