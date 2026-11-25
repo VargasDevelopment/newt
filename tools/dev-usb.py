@@ -20,7 +20,7 @@ from dev_usb_put import card_target, plan, put_files
 
 RECORD = re.compile(rb'!N1 ([0-9]+) ([0-9]+) ([0-9]+) (.*) \*([0-9a-f]{8})\n\Z')
 MAX_AUDIT_RECORDS = 2048  # Covers both directions of 32 PRESSes and two full captures.
-RESYNC_QUIET_SECONDS = 4.1  # PUT's 3 s receive bound plus Bridge's 1 s partial-line bound.
+RESYNC_QUIET_SECONDS = 4.1  # PUT's 3 s receive bound, 1 s statistics output, and cleanup margin.
 FAILURE_TAIL_SECONDS = 1.1  # Includes the firmware's bounded best-effort PUT_STATS output.
 CAPS = ('press,status,frame', 'press,status,frame,diag', 'press,status,frame,diag2',
         'press,status,frame,diag2,put')
@@ -447,6 +447,7 @@ def run_session(client, args):
                 client.drain_responses(FAILURE_TAIL_SECONDS)
             except (ValueError, OSError, KeyboardInterrupt) as tail:
                 report['failure_tail_error'] = str(tail) or 'Interrupted by operator'
+                if isinstance(tail, KeyboardInterrupt): report['interrupted'] = True
     finally:
         try:
             client.close()

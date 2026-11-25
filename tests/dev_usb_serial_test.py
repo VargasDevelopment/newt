@@ -393,17 +393,25 @@ def dirty_session_recovery():
         def __init__(self):
             super().__init__('DIAG available=0')
             self.partial = True
+            self.quiet_observed = False
+        def read_data(self, remaining):
+            if not self.pending: self.quiet_observed = True
+            return super().read_data(remaining)
         def write_data(self, data, remaining):
             if data == b'\n':
-                self.partial = False
+                if self.quiet_observed: self.partial = False
                 self.writes.append(data)
+                payload = b'!N1 12345 0 0 ERROR syntax'
+                self.pending += payload + f' *{zlib.crc32(payload):08x}\n'.encode()
                 return
             if self.partial:
                 self.writes.append(data)
                 payload = b'!N1 12345 0 0 ERROR syntax'
                 self.pending += payload + f' *{zlib.crc32(payload):08x}\n'.encode()
                 return
+            pending, self.pending = self.pending, b''
             super().write_data(data, remaining)
+            self.pending = pending + self.pending
     with patch.object(module, 'RESYNC_QUIET_SECONDS', 0.002):
         peer = DirtyPeer()
         assert peer.establish_session('diagnostic-fixture').startswith('HELLO ')
@@ -422,6 +430,16 @@ def dirty_session_recovery():
         started = time.monotonic()
         rejects(lambda: broken.establish_session('diagnostic-fixture'), 'timed out')
         assert time.monotonic() - started < 1, 'resync remains bounded under persistent dirty input'
+        # Without a quiet drain the delimiter is still payload to the old lease.
+        with patch.object(module.ProtocolClient, 'drain_responses', lambda self, seconds: None):
+            rejects(lambda: DirtyPeer().establish_session('diagnostic-fixture'), 'timed out')
+        # Real bridges answer the delimiter. Only recovery may skip that old error.
+        original = module.ProtocolClient.hello
+        def strict_hello(self, build, *, recovering=False):
+            return original(self, build, recovering=False)
+        with patch.object(module.ProtocolClient, 'hello', strict_hello):
+            rejects(lambda: DirtyPeer().establish_session('diagnostic-fixture'), 'fresh handshake')
+
 
 
 def main():

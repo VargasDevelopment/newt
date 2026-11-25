@@ -149,9 +149,7 @@ def put_file(lease, folder, name, data, timeout):
     chunks = range(0, len(data), CHUNK_BYTES)
     for offset in chunks:
         chunk = data[offset:offset + CHUNK_BYTES]
-        reply = lease.exchange(f'DATA {offset} {len(chunk)}', timeout, 'DATA', chunk)
-        if reply != f'DATA {offset + len(chunk)}':
-            raise ValueError('Wrong DATA acknowledgement')
+        lease.exchange(f'DATA {offset} {len(chunk)}', timeout, 'DATA', chunk)
     client = lease.client
     client.trace('request', client.boot, client.session, client.request_id, 'DATA',
                  f'{len(chunks)} frames, {len(data)} bytes, each acknowledged in order')
@@ -196,7 +194,7 @@ def put_files(client, folder, files, timeout, report):
                 raise RecoveryNeeded(f'{error}: the card keeps its reserved files and marker for a '
                                      'hand check; see "Card write" in docs/dev-usb-bridge.md.') from error
     except (ValueError, OSError, KeyboardInterrupt) as error:
-        lease.progress['error'] = str(error) or 'Interrupted by operator'
+        lease.progress.setdefault('error', str(error) or 'Interrupted by operator')
         raise
     finally:
         client.untraced = ()

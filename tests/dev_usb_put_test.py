@@ -161,6 +161,9 @@ def an_unknown_commit_is_never_retried():
         assert len(files) == 1 and files[0]['result'] == 'unknown'
         assert files[0]['host_write_completed'] is written
         assert peer.writes.count('DONE') == 1 and peer.writes.count('PUT') == 1, 'no retry, no next file'
+        cause = files[0]['protocol_progress'].get('error', '')
+        if broken.get('silent') == 'DONE': assert 'timed out' in cause, cause
+        if broken.get('short') == 'DONE': assert 'Incomplete serial command write' in cause, cause
     peer = LeasePeer(answers={'DONE': 'ERROR sha256-mismatch'})
     report = session(peer, FILES[1:])
     assert 'sha256-mismatch' in report['error'] and report['put']['files'][0]['result'] == 'unchanged'
@@ -400,6 +403,12 @@ def a_failure_keeps_its_late_statistics_without_writing_again():
     with patch.object(Peer, 'drain_responses', lambda self, seconds: None):
         broken = session(Peer(answers={'DATA': 'ERROR abandoned reason=timeout'}), FILES[1:])
         assert not broken['firmware_rows'], 'tail control must lose the delayed row'
+    class InterruptedTail(Peer):
+        def drain_responses(self, seconds): raise KeyboardInterrupt()
+    interrupted = session(InterruptedTail(answers={'DATA': 'ERROR abandoned reason=timeout'}), FILES[1:])
+    assert interrupted['interrupted'] and interrupted['connection']['closed']
+    assert interrupted['failure_tail_error'] == 'Interrupted by operator'
+
 
 
 def main():

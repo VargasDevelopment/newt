@@ -301,8 +301,8 @@ and output deadlines remain unchanged.
 
 Before any action, a dirty or timed-out initial handshake triggers one bounded
 resynchronization: remain silent for 4.1 seconds while draining old replies
-(the three-second PUT receive bound plus the ordinary parser's one-second
-partial-line bound), delimit any remaining partial line, then prove two fresh
+(the three-second PUT receive bound plus its one-second statistics output
+and cleanup margin), delimit any remaining partial line, then prove two fresh
 HELLO sessions and a random-ID STATUS. Old responses can be discarded only
 during that handshake recovery. Build checks and action identity checks stay
 strict. Recovery never replays FILE, DATA, DONE or a press; persistent dirty
