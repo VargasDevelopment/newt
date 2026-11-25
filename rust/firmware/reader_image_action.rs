@@ -6,6 +6,8 @@ use newt_core::{app::{Action, Screen}, frame::Frame};
 use newt_reader_ui::{ReaderPanel, ReaderUiIntent, ReaderUiNotice};
 
 impl Runtime {
+    /// Keep reader-action locals out of the shared work dispatch frame.
+    #[inline(never)]
     pub(super) fn reader_action_image(&mut self, home: &mut Home<'_>, ui: &mut Application<'_>,
         logical: &mut Frame, events: &mut Events<'_, '_>, action: Action,
     ) -> bool {
@@ -41,7 +43,11 @@ impl Runtime {
                     self.finish_pending_mark_image(home, ui, logical, events, &mut exit);
                     self.observe_operation(&exit);
                     self.update_home_image(home, events.action);
-                    if before != self.book().map(|book| book.reader.info()) {
+                    let after = self.book().map(|book| book.reader.info());
+                    if before.map(|p| (p.spine, p.page)) != after.map(|p| (p.spine, p.page)) {
+                        self.reflow_anchor = None;
+                    }
+                    if before != after {
                         self.reading_refresh.page_changed();
                     }
                     (exit.intent, exit.action_at)
@@ -58,6 +64,7 @@ impl Runtime {
                 self.save_reader_settings_image(home, ui, logical, events, at);
             }
             Some(ReaderUiIntent::Home) => {
+                self.reflow_anchor = None;
                 events.action.boundary(crate::reader_action::ActionStage::MarkClose as u8);
                 let _exit = events.action.scope(crate::reader_action::ActionStage::READER_EXIT);
                 self.defer_exit_metadata();

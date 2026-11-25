@@ -6,6 +6,8 @@ use newt_core::{frame::Frame, zip_container::Status};
 use newt_reader_ui::{ReaderPanel, ReaderUiNotice, SlowWork};
 
 impl Runtime {
+    /// Keep reflow settings locals out of ordinary reader actions.
+    #[inline(never)]
     pub(super) fn save_reader_settings_image(&mut self, home: &mut Home<'_>,
         ui: &mut Application<'_>, logical: &mut Frame, events: &mut Events<'_, '_>, at: u32,
     ) {
@@ -36,12 +38,13 @@ impl Runtime {
         self.saves.set_reader_preference_unavailable(false);
         let session_checkpoint = self.has_progress();
         if session_checkpoint {
-            let saved = self.checkpoint_settings_image(home, ui, logical, events, BookStep::ReflowCheckpoint);
+            let saved = self.checkpoint_reflow_image(home, ui, logical, events, proposed, at);
             self.saves.set_checkpoint_saved(saved);
             // armCheckpoint uses the acknowledgement only after a complete
             // save; otherwise the still-live candidate owns retry geometry.
             if let Some(reading) = self.reading() {
-                let candidate = *reading.tracker.snapshot(at);
+                let mut candidate = *reading.tracker.snapshot(at);
+                candidate.locator = self.reflow_anchor_for(candidate.book, candidate.locator);
                 let attempted = self.checkpoint.attempted_sequence_for(&candidate);
                 self.recovery = Some(PendingRecovery::for_reflow(
                     candidate, self.saved, proposed, saved, attempted));
@@ -57,23 +60,64 @@ impl Runtime {
         self.open_selected_image(home, ui, logical, events, session_checkpoint);
     }
 
+    fn checkpoint_reflow_image(&mut self, home: &mut Home<'_>, ui: &mut Application<'_>,
+        logical: &mut Frame, events: &mut Events<'_, '_>, proposed: newt_reader_ui::ViewSettings, at: u32,
+    ) -> bool {
+        #[cfg(feature = "embedded-sample")]
+        if self.memory.has_sample() {
+            let anchor = self.reading().map(|reading| {
+                let snapshot = reading.tracker.snapshot(at);
+                (snapshot.book, snapshot.locator)
+            }).map(|(book, locator)| self.reflow_anchor_for(book, locator));
+            return self.save_sample_at(home, millis(), anchor);
+        }
+        if !self.prepare_settings_checkpoint_image(home, ui, logical, events) {
+            return false;
+        }
+        let Some((book, locator)) = self.reading().map(|reading| {
+            let snapshot = reading.tracker.snapshot(at);
+            (snapshot.book, snapshot.locator)
+        }) else {
+            return false;
+        };
+        let anchor = self.reflow_anchor_for(book, locator);
+        self.run_settings_checkpoint_image(home, ui, logical, events,
+            BookStep::ReflowCheckpoint { anchor, settings: proposed })
+            && self.checkpoint.result().progress == reader_book::checkpoint::Outcome::Verified
+    }
+
     fn checkpoint_settings_image(&mut self, home: &mut Home<'_>, ui: &mut Application<'_>,
         logical: &mut Frame, events: &mut Events<'_, '_>, step: BookStep,
     ) -> bool {
         #[cfg(feature = "embedded-sample")]
         if self.memory.has_sample() { return self.save_sample_image(home, millis()); }
+        if !self.prepare_settings_checkpoint_image(home, ui, logical, events) {
+            return false;
+        }
+        self.run_settings_checkpoint_image(home, ui, logical, events, step)
+            && self.checkpoint.result().progress == reader_book::checkpoint::Outcome::Verified
+            && self.checkpoint.result().destination != reader_book::checkpoint::Outcome::Unconfirmed
+    }
+
+    fn prepare_settings_checkpoint_image(&mut self, home: &mut Home<'_>, ui: &mut Application<'_>,
+        logical: &mut Frame, events: &mut Events<'_, '_>,
+    ) -> bool {
         // saveReaderProgress finishes actual deferred verification before
         // lending Pages/State. A failed barrier cannot acknowledge a checkpoint.
         if !self.finish_verification_image(home, ui, logical, events, false) {
             self.refuse_checkpoint_image(millis(), false);
             return false;
         }
+        true
+    }
+
+    fn run_settings_checkpoint_image(&mut self, home: &mut Home<'_>, ui: &mut Application<'_>,
+        logical: &mut Frame, events: &mut Events<'_, '_>, step: BookStep,
+    ) -> bool {
         match self.operate_image(home, ui, logical, events, None, Some(step), false, None, None) {
-            Ok(exit) => self.observe_operation(&exit),
-            Err(error) => { self.open_failed(error); return false; },
+            Ok(exit) => { self.observe_operation(&exit); true }
+            Err(error) => { self.open_failed(error); false }
         }
-        self.checkpoint.result().progress == reader_book::checkpoint::Outcome::Verified
-            && self.checkpoint.result().destination != reader_book::checkpoint::Outcome::Unconfirmed
     }
 
     fn close_for_reflow_image(&mut self, home: &mut Home<'_>) -> Result<(), newt_c3_board::Error> {

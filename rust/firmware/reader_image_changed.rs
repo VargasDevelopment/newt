@@ -76,6 +76,7 @@ impl Runtime {
         // Changed bytes revoke the old RAM window even if reimport fails. The
         // old durable checkpoint remains protected by the existing store.
         self.recovery = None;
+        self.reflow_anchor = None;
         self.saved = Progress::default();
         self.saves.set_checkpoint_saved(false);
         if let Some(memory) = self.memory.external_mut() {

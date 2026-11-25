@@ -161,9 +161,13 @@ pub enum BookStep {
     Action(Action),
     Idle { checkpoint: bool, admitted: bool },
     Save,
-    /// Settings reflow checkpoints the live position without publishing a new
-    /// reading destination; reopening happens after this loan ends.
-    ReflowCheckpoint,
+    /// Settings reflow checkpoints the anchor locator and marks the reading
+    /// destination as an anchor for the proposed settings; reopening runs
+    /// after this loan ends.
+    ReflowCheckpoint {
+        anchor: newt_core::progress::Locator,
+        settings: ViewSettings,
+    },
     /// Mark as finished / not finished after verification and any owed
     /// selection/progress commit have settled.
     MarkFinished(newt_core::reading_stats::StatsMark),
@@ -566,7 +570,7 @@ impl<N: nvs::Native> MountedCheckpoint<'_, N> {
                         source_verified, false, session_present, false, false, &|| false);
                 }
                 self.destination(io, card, resources.pages, digest, resources.settings,
-                    true, source_verified, request);
+                    true, false, source_verified, request);
             }
             PendingRecovery::complete_checkpoint(&mut resources.recovery, self.checkpoint,
                 candidate, resources.settings, digest);
@@ -772,6 +776,7 @@ impl<N: nvs::Native> MountedCheckpoint<'_, N> {
         digest: &Digest,
         settings: ViewSettings,
         reading: bool,
+        anchor: bool,
         source_verified: bool, request: &impl StatsRequest,
     ) {
         let _action = StatsActionScope::new(request, crate::reader_action::ActionStage::DESTINATION);
@@ -781,7 +786,7 @@ impl<N: nvs::Native> MountedCheckpoint<'_, N> {
         let nvs = NvsBlobBackend::new(&mut *self.nvs);
         let mut store = ReadingStateRouter::new(nvs, &mut *self.facts, &mut medium, &mut native);
         self.checkpoint
-            .publish_destination(&mut store, digest, settings, reading, source_verified);
+            .publish_destination(&mut store, digest, settings, reading, anchor, source_verified);
     }
 }
 

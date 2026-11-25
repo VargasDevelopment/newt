@@ -142,7 +142,7 @@ where
                     });
                     continue;
                 }
-                BookStep::Idle { .. } | BookStep::Save | BookStep::ReflowCheckpoint => {
+                BookStep::Idle { .. } | BookStep::Save | BookStep::ReflowCheckpoint { .. } => {
                     let idle = matches!(step, BookStep::Idle { .. });
                     let requested = matches!(step, BookStep::Idle { checkpoint: true, .. });
                     let entered = matches!(step, BookStep::Idle { admitted: true, .. });
@@ -178,8 +178,15 @@ where
                             continue;
                         }
                         action_at = now();
-                        let candidate = *owner.tracker.snapshot(action_at);
-                        let commit_reading = !matches!(step, BookStep::ReflowCheckpoint);
+                        let mut candidate = *owner.tracker.snapshot(action_at);
+                        let reflow = match step {
+                            BookStep::ReflowCheckpoint { anchor, settings } => Some((anchor, settings)),
+                            _ => None,
+                        };
+                        if let Some((anchor, _)) = reflow {
+                            candidate.locator = anchor;
+                        }
+                        let commit_reading = reflow.is_none();
                         checkpoint.save_admitted_core(
                             io,
                             card,
@@ -201,10 +208,12 @@ where
                                     revision.with_producer_source(|source| source.is_some()),
                                     false, false, &|| false);
                             }
-                            if commit_reading {
-                                checkpoint.destination(io, card, resources.pages, &opened_digest,
-                                    resources.settings, true, revision.source_verified(), request);
-                            }
+                            let (destination_settings, anchor) = match reflow {
+                                Some((_, settings)) => (settings, true),
+                                None => (resources.settings, false),
+                            };
+                            checkpoint.destination(io, card, resources.pages, &opened_digest,
+                                destination_settings, true, anchor, revision.source_verified(), request);
                         }
                         PendingRecovery::complete_checkpoint(&mut resources.recovery, checkpoint.checkpoint,
                             candidate, resources.settings, &opened_digest);
