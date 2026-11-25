@@ -59,7 +59,7 @@ fn members() -> Vec<Member> {
         compressed: 50,
         uncompressed: 100,
         method: 8,
-        first_spine: if i < 3 { i } else { NONE },
+        contents_spine: if i < 3 { i } else { NONE },
         ..Member::default()
     }).collect()
 }
@@ -293,7 +293,7 @@ fn built_index_complete(store: &mut dyn CacheStorage, reader: &Reader) -> bool {
     (0..8).all(|i| {
         let Some(s) = reader.spine(store, i) else { return false; };
         let Some(m) = reader.member(store, s.member) else { return false; };
-        s.before == u64::from(i) * 10 && m.local_offset == i * 64 && m.first_spine == i
+        s.before == u64::from(i) * 10 && m.local_offset == i * 64 && m.contents_spine == i
     })
 }
 fn build_card() -> Card {

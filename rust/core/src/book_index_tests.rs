@@ -51,7 +51,7 @@ fn header_round_trip_and_every_refusal() {
     // Magic, schema, an unknown language, padding, a title byte past its
     // NUL, a title that is not UTF-8, and the header's last byte.
     let end = 80 + h.title().len();
-    let mutations: [(usize, u8); 7] = [(0, b'X'), (4, 2), (72, 4), (73, 1), (end + 1, b'x'), (80, 0xff), (383, 1)];
+    let mutations: [(usize, u8); 7] = [(0, b'X'), (4, (SCHEMA + 1) as u8), (72, 4), (73, 1), (end + 1, b'x'), (80, 0xff), (383, 1)];
     for (at, value) in mutations {
         let mut bad = bytes;
         bad[at] = value;
@@ -73,6 +73,14 @@ fn header_round_trip_and_every_refusal() {
 }
 
 #[test]
+fn schema_one_is_stale_even_with_matching_identity_and_counts() {
+    let h = header(3, 2);
+    let mut old = encoded(&h);
+    old[4..8].copy_from_slice(&1u32.to_le_bytes());
+    assert_eq!(Header::decode(&old, &BOOK, 512), None);
+}
+
+#[test]
 fn member_and_spine_round_trip_and_bounds() {
     let h = header(3, 2);
     let member = Member {
@@ -82,15 +90,15 @@ fn member_and_spine_round_trip_and_bounds() {
         uncompressed: 4 * 1024 * 1024,
         method: 8,
         flags: 0x0808,
-        first_spine: 1,
+        contents_spine: 1,
     };
     let mut m = [0; MEMBER_BYTES as usize];
     member.encode(&mut m);
     assert_eq!(Member::decode(&m, &h), Some(member));
-    let unread = Member { first_spine: NONE, ..member };
+    let unread = Member { contents_spine: NONE, ..member };
     unread.encode(&mut m);
     assert_eq!(Member::decode(&m, &h), Some(unread));
-    Member { first_spine: 2, ..member }.encode(&mut m);
+    Member { contents_spine: 2, ..member }.encode(&mut m);
     assert_eq!(Member::decode(&m, &h), None);
     member.encode(&mut m);
     m[31] = 1;
@@ -175,7 +183,7 @@ fn members(hashes: &[u64]) -> impl Iterator<Item = Member> + '_ {
     hashes.iter().enumerate().map(|(i, &hash)| Member {
         hash,
         local_offset: 100 * i as u32,
-        first_spine: if i < 2 { i as u32 } else { NONE },
+        contents_spine: if i < 2 { i as u32 } else { NONE },
         ..Member::default()
     })
 }

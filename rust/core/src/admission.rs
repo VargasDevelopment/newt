@@ -257,7 +257,7 @@ pub fn inspect_with_visitor<S: BookSource + ?Sized>(
         }
         let status = visit(crate::book_index::Member {
             hash: hash.finish(), local_offset: le32(&h, 42), compressed,
-            uncompressed, method, flags, first_spine: crate::book_index::NONE,
+            uncompressed, method, flags, contents_spine: crate::book_index::NONE,
         });
         if status != Status::Ok { return status; }
         at += record;

@@ -56,7 +56,7 @@ pub fn prepare_watched<'a>(work: &mut impl WorkFile, buffer: &'a mut [u8], run_b
     let mut builder = Builder::new(buffer, min_read, run_bytes)?;
     for i in 0..members {
         let status = builder.visit(work, Member { hash: book_index::name_hash(format!("c{i}").as_bytes()),
-            local_offset: i * 64, compressed: 10, uncompressed: 10, method: 0, flags: 0, first_spine: book_index::NONE }, &mut *progress);
+            local_offset: i * 64, compressed: 10, uncompressed: 10, method: 0, flags: 0, contents_spine: book_index::NONE }, &mut *progress);
         if status != Status::Ok { return Err(Error::Book(status)); }
     }
     let (mut source, mut backend, mut input) = (Source, Backend { manifests, spine }, [0; 2048]);

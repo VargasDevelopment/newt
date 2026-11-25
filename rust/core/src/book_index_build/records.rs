@@ -17,7 +17,7 @@ impl Record for Member {
     fn decode(b: &[u8]) -> Self {
         Self { hash: get64(b, 0), local_offset: get32(b, 8), compressed: get32(b, 12),
             uncompressed: get32(b, 16), method: get16(b, 20),
-            flags: get16(b, 22), first_spine: crate::book_index::NONE }
+            flags: get16(b, 22), contents_spine: crate::book_index::NONE }
     }
     fn encode(self, b: &mut [u8]) {
         b[..8].copy_from_slice(&self.hash.to_le_bytes()); b[8..12].copy_from_slice(&self.local_offset.to_le_bytes());

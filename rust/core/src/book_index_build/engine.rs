@@ -164,10 +164,17 @@ impl<'a> Engine<'a> {
             }
             if choices.cover.is_some_and(|c| c.hash == member.hash) { header.cover = rank; }
             let mut first_position = NONE;
+            let mut contents_valid = true;
             while let Some(j) = joined.filter(|j| j.href <= member.hash) {
                 let position = positions.rank(j.position)?;
                 let found = j.href == member.hash;
-                if found { first_position = first_position.min(position); }
+                if found {
+                    // Contents cannot choose between repeats, non-text items or
+                    // members the reader cannot decode, just like readable_spine.
+                    contents_valid &= first_position == NONE && j.text
+                        && matches!(member.method, 0 | 8) && member.uncompressed <= 4 * 1024 * 1024;
+                    first_position = position;
+                }
                 let weight = if j.text && found { member.uncompressed } else { 0 };
                 if j.text && (!found || !matches!(member.method, 0 | 8) || member.uncompressed > 4 * 1024 * 1024) { valid = false; }
                 header.spine_bytes += u64::from(weight);
@@ -175,7 +182,7 @@ impl<'a> Engine<'a> {
                 joined = pool.next::<Joined, W>(&mut joins, &mut view, work, &mut self.io)?;
                 done += 1; poll(progress, Phase::Rank, done, total)?;
             }
-            if first_position != NONE { first.push(First { rank, position: first_position }, &mut view, work, &mut self.io)?; }
+            if contents_valid && first_position != NONE { first.push(First { rank, position: first_position }, &mut view, work, &mut self.io)?; }
             rank += 1;
             done += 1; poll(progress, Phase::Rank, done, total)?;
         }
@@ -211,7 +218,7 @@ impl<'a> Engine<'a> {
         while let Some(mut member) = pool.next::<Member, W>(&mut members, &mut view, store, &mut self.io)? {
             if f.is_some_and(|f| f.rank < rank) { return Err(io()); }
             if let Some(next) = f.filter(|f| f.rank == rank) {
-                member.first_spine = next.position;
+                member.contents_spine = next.position;
                 f = pool.next::<First, W>(&mut first, &mut view, store, &mut self.io)?;
             }
             writer = writer.member(store, member).map_err(Error::Write)?;

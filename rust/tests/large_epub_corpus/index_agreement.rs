@@ -80,11 +80,9 @@ fn agreement_variant(source: &mut impl BookSource, name: &str, buffer_bytes: usi
         }
         for i in 0..h.members {
             let m = reader.member(&mut store, i).unwrap();
-            let expected = (0..parts.result.spine_count).find(|&s| {
-                member_for(&parts.manifest[usize::from(parts.spine[s])])
-                    .is_some_and(|e| e.local_header_offset == m.local_offset)
-            }).map_or(NONE, |s| s as u32);
-            assert_eq!(m.first_spine, expected, "{name}: first spine {i}");
+            let entry = parts.entries.iter().find(|e| e.local_header_offset == m.local_offset).unwrap();
+            let expected = newt_reader_navigation::readable_spine(&metadata, view.name(entry).unwrap());
+            assert_eq!(m.contents_spine, expected, "{name}: contents spine {i}");
         }
         let chosen = parts.result.nav_index.or(parts.result.ncx_index)
             .and_then(|i| member_for(&parts.manifest[i]));
@@ -214,7 +212,16 @@ fn distinct_32_bit_collision_names_agree() {
     agreement(&mut book(&opf, &[(a, b"a"), (b, b"bbb")]), "collision");
 }
 
+fn contents_requires_one_supported_text_spine_item() {
+    let manifest = item("a", "a.xhtml", "")
+        + "<item id='binary' href='b.bin' media-type='application/octet-stream'/>";
+    let opf = package("", &manifest, "<itemref idref='a'/><itemref idref='binary'/>");
+    agreement(&mut book(&opf, &[("OEBPS/a.xhtml", b"a"), ("OEBPS/b.bin", b"b")]), "non-text-spine");
+
+}
+
 pub fn small_cases() {
+    contents_requires_one_supported_text_spine_item();
     normalized_hrefs_and_progress_agree();
     first_match_dangling_and_repeated_idrefs_agree();
     spine_before_manifest_agrees();

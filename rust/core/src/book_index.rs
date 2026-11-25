@@ -41,7 +41,7 @@ impl NameHash {
 }
 
 /// Bump when the payload layout or meaning changes; older indexes rebuild.
-pub const SCHEMA: u32 = 1;
+pub const SCHEMA: u32 = 2;
 pub const HEADER_BYTES: u32 = 384;
 /// Full digest position in the fixed payload header (also the envelope route).
 pub const DIGEST_AT:u32=12;
@@ -99,8 +99,8 @@ pub struct Member {
     pub uncompressed: u32,
     pub method: u16,
     pub flags: u16,
-    /// First spine item reading this member, or NONE.
-    pub first_spine: u32,
+    /// Unique readable text spine item for Contents, or NONE.
+    pub contents_spine: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -226,7 +226,7 @@ impl Member {
         out[16..20].copy_from_slice(&self.uncompressed.to_le_bytes());
         out[20..22].copy_from_slice(&self.method.to_le_bytes());
         out[22..24].copy_from_slice(&self.flags.to_le_bytes());
-        out[24..28].copy_from_slice(&self.first_spine.to_le_bytes());
+        out[24..28].copy_from_slice(&self.contents_spine.to_le_bytes());
     }
     pub fn decode(input: &[u8; MEMBER_BYTES as usize], header: &Header) -> Option<Self> {
         let member = Self {
@@ -236,9 +236,9 @@ impl Member {
             uncompressed: get32(input, 16),
             method: get16(input, 20),
             flags: get16(input, 22),
-            first_spine: get32(input, 24),
+            contents_spine: get32(input, 24),
         };
-        (optional(member.first_spine, header.spine) && input[28..].iter().all(|&b| b == 0))
+        (optional(member.contents_spine, header.spine) && input[28..].iter().all(|&b| b == 0))
             .then_some(member)
     }
 }

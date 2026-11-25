@@ -118,7 +118,7 @@ fn index_limits_io_model() {
         assert_eq!(s.before, u64::from(i) * 10);
         let m = reader.member(&mut store, s.member).unwrap();
         assert_eq!(m.local_offset, i * 64);
-        assert_eq!(m.first_spine, i);
+        assert_eq!(m.contents_spine, i);
     }
     let bound = storage_bound(MAX_MEMBERS, u32::MAX).unwrap();
     let payload = store.published.len() as u64;
@@ -143,4 +143,28 @@ fn normal_book_never_opens_a_work_file() {
     assert_eq!((report.statistics.written, report.statistics.read, report.statistics.read_calls), (0, 0, 0));
     assert_eq!(report.header.spine, 100);
     std::println!("STATE stack={STACK_BYTES} join_state={JOIN_STATE_BYTES}");
+}
+
+#[test]
+fn unsupported_member_has_no_contents_spine() {
+    for method in [1, 99] {
+        let mut store = Store::new(Fault::None);
+        let mut buffer = [0; 32768];
+        let mut engine = Engine::new(&mut buffer, 512, 32768).unwrap();
+        engine.member(&mut store, Member { hash: 7, method, uncompressed: 10,
+            contents_spine: NONE, ..Member::default() }).unwrap();
+        engine.item(&mut store, records::Item { id: 3, href: 7, sequence: 0, flags: TEXT }).unwrap();
+        engine.reference(&mut store, records::Reference { id: 3, position: 0 }).unwrap();
+        let mut header = Header { identity: support::IDENTITY, members: 1, spine: 0,
+            spine_bytes: 0, nav: NONE, ncx: NONE, cover: NONE,
+            language: BookLanguage::Default, title: [0; 256] };
+        copy_display_title(&mut header.title, None);
+        let mut backing = support::JoinBacking::new();
+        let mut state = backing.state();
+        engine.join(&mut store, &mut header, Choices { toc: None, cover_id: None,
+            nav: None, ncx: None, cover: None }, &mut state, &mut |_| true).unwrap();
+        engine.publish(&mut store, header, &mut state, &mut |_| true, &mut || true).unwrap();
+        let reader = crate::book_index::Reader::open(&mut store, &support::IDENTITY).unwrap();
+        assert_eq!(reader.member(&mut store, 0).unwrap().contents_spine, NONE);
+    }
 }
