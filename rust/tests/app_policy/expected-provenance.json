@@ -4,12 +4,13 @@
   "cases": 25075,
   "original_cases_preserved": 25074,
   "changed_existing_outputs": 2254,
-  "fixture_sha256": "c9f8d18553cb687b3bf38edef63dc8e103f26785cd213867d441223d4c78445e",
+  "fixture_sha256": "408456938d1285b4eba7567ffcdb3698b0d13e99a2fcd3a8a55f80455c9c61eb",
   "source_sha256": {
     "include/newt/app.h": "f4e187a681cf8050921cadfa41060c6040515b80b8a46a5be02793480d015d3a",
     "src/app.cpp": "69f650bef3f222dd3b54b3fb16ae8220b678f6026aec41829451277373410db6",
     "include/newt/stats_graphs.h": "c3517e15c97a13c54778edd2221d1a1c28538506e9bbcb659048118f50cb92e6"
   },
   "capture_driver_sha256": "6baef72831d83f58dcc38b58c5122de828c866a109473b7246bc8e82d2754194",
-  "input_adapter": "AP1 selected/page parse as u32 and assign to alpha.16 uint8_t fields; original 25,074 inputs retained"
+  "input_adapter": "AP1 selected/page parse as u32 and assign to alpha.16 uint8_t fields; original 25,074 inputs retained",
+  "newt_owned_deltas": "14 SleepScreen row-3 / HolidayOutfits cases (#128): 13 Next presses from focus 2 to row 3 (Holiday outfits) and 1 Activate press from focus 3 opening DevicePage::HolidayOutfits (page 9)."
 }

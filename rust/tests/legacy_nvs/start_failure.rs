@@ -106,7 +106,7 @@ fn diagnostics(panel: &[u8]) -> Box<Frame> {
     info.panel = Some(panel);
     let mut logical = Box::new([0; FRAME_BYTES]);
     render_device_ui(&state, &info, &SystemBar::default(), Some(&mut logical), Default::default(),
-        None, None, FIRMWARE_BUILD, Default::default(), Default::default());
+        None, None, FIRMWARE_BUILD, Default::default(), Default::default(), Default::default());
     let mut native = Box::new([0; FRAME_BYTES]);
     frame::to_native_frame(&logical, &mut native, Orientation::Portrait);
     native

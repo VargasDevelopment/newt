@@ -23,6 +23,7 @@ pub fn paint_device(
         build,
         choices,
         Default::default(),
+        Default::default(),
     );
 }
 #[inline(never)]

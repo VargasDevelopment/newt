@@ -156,22 +156,29 @@ def main() -> None:
             "the CrossInk line draws on the dated and undated page")
     pbm, png = export_preview(binary, "device-settings-stats-row", "device", actions="next,next,next,next")
     png_roundtrip(pbm.read_bytes(), png.read_bytes())
-    # Sleep screen (#202): its three rows Off, then Last 7 days switched on.
+    # Sleep screen (#202, #128): three toggle rows plus Holiday outfits submenu.
     for name, actions in (("device-sleep-screen", "next,next,activate"),
-                          ("device-sleep-screen-week-on", "next,next,activate,next,activate")):
+                          ("device-sleep-screen-week-on", "next,next,activate,next,activate"),
+                          ("device-holiday-outfits", "next,next,activate,next,next,next,activate")):
         pbm, png = export_preview(binary, name, "device", actions=actions)
         png_roundtrip(pbm.read_bytes(), png.read_bytes())
     require((ROOT / "artifacts/device-sleep-screen.pbm").read_bytes() !=
             (ROOT / "artifacts/device-sleep-screen-week-on.pbm").read_bytes(), "Select switches Last 7 days on")
-    # The sleeping newt's Thanksgiving outfit (#117) only on the fourth Thursday of November.
+    # The sleeping newt's Thanksgiving outfit (#117, opt-in #128): off by default,
+    # and once enabled, shown only on the fourth Thursday of November.
+    pbm, png = export_preview(binary, "sleeping-thanksgiving-default", "sleeping", clock="12:00", date="2026-11-26")
+    png_roundtrip(pbm.read_bytes(), png.read_bytes())
+    enable_thanksgiving = "next,next,activate,next,next,next,activate,next,activate,sleep"
     sleep_days = {"sleeping-thanksgiving-eve": "2026-11-25", "sleeping-thanksgiving": "2026-11-26",
                   "sleeping-thanksgiving-after": "2026-11-27"}
     for name, date in sleep_days.items():
-        pbm, png = export_preview(binary, name, "sleeping", clock="12:00", date=date)
+        pbm, png = export_preview(binary, name, "device", actions=enable_thanksgiving, clock="12:00", date=date)
         png_roundtrip(pbm.read_bytes(), png.read_bytes())
     sleep = {name: (ROOT / f"artifacts/{name}.pbm").read_bytes() for name in sleep_days}
+    require((ROOT / "artifacts/sleeping-thanksgiving-default.pbm").read_bytes() == sleep["sleeping-thanksgiving-eve"],
+            "holiday outfits stay off by default on Thanksgiving")
     require(sleep["sleeping-thanksgiving-eve"] == sleep["sleeping-thanksgiving-after"]
-            != sleep["sleeping-thanksgiving"], "the newt dresses for Thanksgiving on that day only")
+            != sleep["sleeping-thanksgiving"], "the newt dresses for Thanksgiving on that day only once enabled")
     # About under Diagnostics, with the preview build's own identity (fixed
     # when it compiles); its What's new row and page show the committed notes.
     about = "next,next,next,activate,activate"

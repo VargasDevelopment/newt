@@ -23,7 +23,7 @@ use newt_core::clock_format::ClockFormat;
 use newt_core::durable::{Backend, Commit};
 use newt_core::time_zone::TimeZone;
 use newt_core::update_online::TestBuilds;
-use newt_device_ui::SleepScreenChoices;
+use newt_device_ui::{HolidayOutfits, SleepScreenChoices};
 use newt_device_ui::home_clock::{ClockReader, HomeClockSource};
 use newt_native_io::{OsNative, UiIo};
 use newt_native_storage::reading_state::{
@@ -125,6 +125,7 @@ pub enum HomeChoice {
     Format(ClockFormat),
     SleepScreen(SleepScreenChoices),
     TestBuilds(TestBuilds),
+    HolidayOutfits(HolidayOutfits),
 }
 impl HomeChoice {
     fn commit<B: Backend, C>(self, clock: &mut HomeClockSource<C>, store: &mut B) -> Commit {
@@ -133,6 +134,7 @@ impl HomeChoice {
             Self::Format(format) => clock.commit_clock_format(store, format),
             Self::SleepScreen(choices) => clock.commit_sleep_screen(store, choices),
             Self::TestBuilds(choice) => clock.commit_test_builds(store, choice),
+            Self::HolidayOutfits(choices) => clock.commit_holiday_outfits(store, choices),
         }
     }
 }

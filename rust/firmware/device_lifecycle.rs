@@ -25,6 +25,7 @@ pub fn dispatch<'sdk,L:Write,N:nvs::Native,P:CardPort>(
     if zone(home,app,action) {return true;}
     if format(home,app,action) {return true;}
     if sleep(home,app,action) {return true;}
+    if holiday_outfits(home,app,action) {return true;}
     if test_builds(home,app,action) {return true;}
     if platform.firmware_switch(home,app,action) {return true;}
     platform.update_entry(home,app,action)
@@ -52,10 +53,16 @@ fn format<L:Write,N:nvs::Native,P:CardPort>(home:&mut HomeRuntime<'_,L,N,P>,app:
     app.settings_notice=if home.commit(HomeChoice::Format(next))==Commit::Saved {SettingsNotice::FormatSaved}else{SettingsNotice::FormatSaveFailed};true
 }
 fn sleep<L:Write,N:nvs::Native,P:CardPort>(home:&mut HomeRuntime<'_,L,N,P>,app:&mut AppState,action:Action)->bool {
-    if app.screen!=Screen::Device || app::device_page(app)!=DevicePage::SleepScreen || action!=Action::Activate {return false;}
+    if app.screen!=Screen::Device || app::device_page(app)!=DevicePage::SleepScreen || action!=Action::Activate || app.list_focus>=3 {return false;}
     let mut next=home.clock.sleep_screen();
     match app.list_focus {0=>next.progress=!next.progress,1=>next.week=!next.week,_=>next.habit=!next.habit}
     app.settings_notice=if home.commit(HomeChoice::SleepScreen(next))==Commit::Saved {SettingsNotice::None}else{match app.list_focus {0=>SettingsNotice::SleepProgressSaveFailed,1=>SettingsNotice::SleepWeekSaveFailed,_=>SettingsNotice::SleepHabitSaveFailed}};true
+}
+fn holiday_outfits<L:Write,N:nvs::Native,P:CardPort>(home:&mut HomeRuntime<'_,L,N,P>,app:&mut AppState,action:Action)->bool {
+    if app.screen!=Screen::Device || app::device_page(app)!=DevicePage::HolidayOutfits || action!=Action::Activate {return false;}
+    let mut next=home.clock.holiday_outfits();
+    match app.list_focus {0=>next.halloween=!next.halloween,1=>next.thanksgiving=!next.thanksgiving,_=>next.christmas=!next.christmas}
+    app.settings_notice=if home.commit(HomeChoice::HolidayOutfits(next))==Commit::Saved {SettingsNotice::None}else{match app.list_focus {0=>SettingsNotice::HolidayHalloweenSaveFailed,1=>SettingsNotice::HolidayThanksgivingSaveFailed,_=>SettingsNotice::HolidayChristmasSaveFailed}};true
 }
 fn test_builds<L:Write,N:nvs::Native,P:CardPort>(home:&mut HomeRuntime<'_,L,N,P>,app:&mut AppState,action:Action)->bool {
     if app.screen!=Screen::Device || app::device_page(app)!=DevicePage::Developer || action!=Action::Activate {return false;}

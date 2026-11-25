@@ -38,7 +38,7 @@ pub fn facing(action: Action, front: bool, screen: Screen, shown: crate::prefere
 pub enum Screen { #[default] Home, Reading, Device, Sleeping, EpubReading, TinyApp, Library, QuickStart }
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DevicePage { Settings, Diagnostics, About, FirstNewt, ReadingStats, FirmwareSwitch, WhatsNew, SleepScreen, Developer }
+pub enum DevicePage { Settings, Diagnostics, About, FirstNewt, ReadingStats, FirmwareSwitch, WhatsNew, SleepScreen, Developer, HolidayOutfits }
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AboutView { #[default] Closed, Version, WhatsNewRow, WhatsNew, Updated }
@@ -47,7 +47,7 @@ pub enum AboutView { #[default] Closed, Version, WhatsNewRow, WhatsNew, Updated 
 pub enum SettingsRow { #[default] TimeZone, TimeFormat, SleepScreen, Diagnostics, ReadingStats, FirmwareSwitch, Update, Wifi, About, QuickStart }
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SettingsNotice { #[default] None, Saved, SaveFailed, FormatSaved, FormatSaveFailed, UpdateNotStarted, WifiNotStarted, SleepProgressSaveFailed, SleepWeekSaveFailed, SleepHabitSaveFailed, QuickStartSaveFailed, TestBuildsSaveFailed }
+pub enum SettingsNotice { #[default] None, Saved, SaveFailed, FormatSaved, FormatSaveFailed, UpdateNotStarted, WifiNotStarted, SleepProgressSaveFailed, SleepWeekSaveFailed, SleepHabitSaveFailed, QuickStartSaveFailed, TestBuildsSaveFailed, HolidayHalloweenSaveFailed, HolidayThanksgivingSaveFailed, HolidayChristmasSaveFailed }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AppState {
@@ -62,6 +62,7 @@ pub struct AppState {
     /// saved: the hidden Developer page needs the sequence on every visit.
     pub unlock_presses: u8,
     pub developer: bool,
+    pub holiday_outfits: bool,
     pub row_open: bool,
     pub settings_row: SettingsRow,
     pub zone_list_open: bool,
@@ -87,6 +88,7 @@ fn close_device(state: &mut AppState) {
     state.first_newt = false;
     state.unlock_presses = 0;
     state.developer = false;
+    state.holiday_outfits = false;
     state.row_open = false;
     state.zone_list_open = false;
     state.about = AboutView::Closed;
@@ -104,7 +106,7 @@ pub fn device_page(state: &AppState) -> DevicePage {
     else { match state.settings_row {
         SettingsRow::ReadingStats => DevicePage::ReadingStats,
         SettingsRow::FirmwareSwitch => DevicePage::FirmwareSwitch,
-        SettingsRow::SleepScreen => DevicePage::SleepScreen,
+        SettingsRow::SleepScreen => if state.holiday_outfits { DevicePage::HolidayOutfits } else { DevicePage::SleepScreen },
         _ => DevicePage::Diagnostics,
     }}
 }
@@ -166,6 +168,19 @@ fn first_newt(state: &mut AppState, action: Action) -> bool {
 fn sleep_screen(state: &mut AppState, action: Action) -> bool {
     match action {
         Action::Previous if state.list_focus > 0 => state.list_focus -= 1,
+        Action::Next if u32::from(state.list_focus) + 1 < 4 => state.list_focus += 1,
+        Action::Activate if state.list_focus == 3 => {
+            state.holiday_outfits = true;
+            state.list_focus = 0;
+            state.settings_notice = SettingsNotice::None;
+        }
+        _ => return false,
+    }
+    true
+}
+fn holiday_outfits(state: &mut AppState, action: Action) -> bool {
+    match action {
+        Action::Previous if state.list_focus > 0 => state.list_focus -= 1,
         Action::Next if u32::from(state.list_focus) + 1 < 3 => state.list_focus += 1,
         _ => return false,
     }
@@ -219,6 +234,11 @@ pub fn dispatch(state: &mut AppState, action: Action) -> bool {
             match page {
                 DevicePage::FirstNewt => state.first_newt = false,
                 DevicePage::Developer => state.developer = false,
+                DevicePage::HolidayOutfits => {
+                    state.holiday_outfits = false;
+                    state.list_focus = 3;
+                    state.settings_notice = SettingsNotice::None;
+                }
                 DevicePage::WhatsNew => state.about = AboutView::WhatsNewRow,
                 DevicePage::About => state.about = AboutView::Closed,
                 _ => state.row_open = false,
@@ -232,6 +252,7 @@ pub fn dispatch(state: &mut AppState, action: Action) -> bool {
         if page == DevicePage::About { return about(state, action); }
         if page == DevicePage::FirstNewt { return first_newt(state, action); }
         if page == DevicePage::SleepScreen { return sleep_screen(state, action); }
+        if page == DevicePage::HolidayOutfits { return holiday_outfits(state, action); }
         if page == DevicePage::ReadingStats { return step_stats_graph(&mut state.list_focus, action); }
         if action == Action::Activate && page == DevicePage::Diagnostics {
             state.about = AboutView::Version;
@@ -312,5 +333,36 @@ mod facing_tests {
                 book, "{screen:?}");
             assert_eq!(front_turned == ALL && side_turned == ALL, !book, "{screen:?}");
         }
+    }
+
+    #[test]
+    fn holiday_outfits_submenu_follows_sleep_screen_row_and_keeps_state_size() {
+        use super::{AppState, DevicePage, SettingsNotice, SettingsRow, device_page, dispatch};
+        assert_eq!(size_of::<AppState>(), 24);
+        let mut state = AppState {
+            screen: Screen::Device,
+            row_open: true,
+            settings_row: SettingsRow::SleepScreen,
+            list_focus: 2,
+            ..AppState::default()
+        };
+        assert!(dispatch(&mut state, Action::Next));
+        assert_eq!((device_page(&state), state.list_focus), (DevicePage::SleepScreen, 3));
+        assert!(!dispatch(&mut state, Action::Next));
+        assert!(dispatch(&mut state, Action::Activate));
+        assert_eq!((device_page(&state), state.list_focus), (DevicePage::HolidayOutfits, 0));
+        assert!(dispatch(&mut state, Action::Next));
+        assert!(dispatch(&mut state, Action::Next));
+        assert_eq!(state.list_focus, 2);
+        assert!(!dispatch(&mut state, Action::Next));
+        state.settings_notice = SettingsNotice::HolidayChristmasSaveFailed;
+        assert!(dispatch(&mut state, Action::Back));
+        assert_eq!(
+            (device_page(&state), state.list_focus, state.settings_notice),
+            (DevicePage::SleepScreen, 3, SettingsNotice::None)
+        );
+        assert!(dispatch(&mut state, Action::Activate));
+        assert!(dispatch(&mut state, Action::Sleep));
+        assert!(!state.holiday_outfits);
     }
 }
