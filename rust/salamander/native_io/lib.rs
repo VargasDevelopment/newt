@@ -165,6 +165,9 @@ fn open_mode(mode: Open) -> u32 {
     }
 }
 impl Native for OsNative<'_> {
+    fn open_cstr(&mut self, path: &CStr, mode: Open) -> Result<i32> {
+        OsNative::open_cstr(self, path, mode)
+    }
     fn open(&mut self, path: &str, mode: Open) -> Result<i32> {
         Path::with(path, |path| self.open_cstr(path.as_c_str()?, mode))
     }

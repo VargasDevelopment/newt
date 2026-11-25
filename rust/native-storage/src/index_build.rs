@@ -29,6 +29,8 @@ impl<'op, 'a, N: Native> IndexBuildStore<'op, 'a, N> {
         write!(name, ".{nonce:08x}.tmp").ok()?;
         let mut path = [0; 256];
         path[..name.len()].copy_from_slice(name.as_bytes());
+        let (parent, _) = name.rsplit_once('/')?;
+        if !matches!(cache.file.native.mkdir(parent), Ok(()) | Err(Error::Exists)) { return None; }
         work.path = path;
         work.path_bytes = name.len();
         Some(Self { cache, work })
@@ -43,10 +45,8 @@ impl<'op, 'a, N: Native> IndexBuildStore<'op, 'a, N> {
     /// The live work descriptor, creating the file on first use.
     fn open(&mut self) -> Option<i32> {
         if self.work.fd.is_some() { return self.work.fd; }
-        let text = core::str::from_utf8(&self.work.path[..self.work.path_bytes]).ok()?;
-        let (parent, _) = text.rsplit_once('/')?;
-        if !matches!(self.cache.file.native.mkdir(parent), Ok(()) | Err(Error::Exists)) { return None; }
-        self.work.fd = self.cache.file.native.open(text, Open::CreateExclusive).ok();
+        let path = core::ffi::CStr::from_bytes_with_nul(&self.work.path[..=self.work.path_bytes]).ok()?;
+        self.work.fd = self.cache.file.native.open_cstr(path, Open::CreateExclusive).ok();
         self.work.fd
     }
 }

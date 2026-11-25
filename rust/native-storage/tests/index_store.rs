@@ -30,6 +30,7 @@ struct Card {
     open: u32,
     most_open: u32,
     creates: u32,
+    cstr_opens: u32,
     writes: u32,
     armed: bool,
     off: bool,
@@ -55,6 +56,10 @@ impl Card {
     }
 }
 impl Native for Card {
+    fn open_cstr(&mut self, path: &core::ffi::CStr, mode: Open) -> Result<i32> {
+        self.cstr_opens += 1;
+        self.open(path.to_str().map_err(|_| Error::Other)?, mode)
+    }
     fn open(&mut self, path: &str, mode: Open) -> Result<i32> {
         if matches!(mode, Open::CreateExclusive) { self.creates += 1; }
         let fd = self.live(|m| m.open(path, mode))?;
@@ -360,12 +365,14 @@ fn spilling_build(card: &mut Card) -> core::result::Result<(), newt_core::book_i
     with_store(card, |store| store.index_census(&Never, None, None, None));
     let source = card.open("/sd/source", Open::SourceReadOnly).map_err(|_| BuildError::Write(WriteError::Storage))?;
     let prepared = with_store(card, |store| {
-        let mut store = IndexBuildStore::lend(store, &mut work, &BOOK.digest).unwrap();
+        let mut store = IndexBuildStore::lend(store, &mut work, &BOOK.digest)
+            .ok_or(BuildError::Write(WriteError::Storage))?;
         build_support::prepare(&mut store, &mut buffer, 64, 8, 8, 8, &mut state)
     });
     let closed = card.close(source).is_ok();
     with_store(card, |store| {
-        let mut store = IndexBuildStore::lend(store, &mut work, &BOOK.digest).unwrap();
+        let mut store = IndexBuildStore::lend(store, &mut work, &BOOK.digest)
+            .ok_or(BuildError::Write(WriteError::Storage))?;
         if !closed {
             newt_core::book_index_build::WorkFile::remove_work(&mut store);
             return Err(BuildError::Write(WriteError::Storage));
@@ -461,4 +468,27 @@ fn published_build_requires_the_verified_read_scope() {
         assert!(store.release_pages());
     });
     assert_eq!(with_store(&mut card, |s| read(s, &BOOK, built_index_complete)), Some(true));
+}
+
+#[test]
+fn work_lend_creates_parent_and_spill_borrows_terminated_path() {
+    use newt_core::book_index_build::WorkFile;
+    let mut card = Card::new();
+    let mut work = IndexWorkState::new();
+    with_store(&mut card, |cache| {
+        let mut store = IndexBuildStore::lend(cache, &mut work, &BOOK.digest).unwrap();
+        assert!(!store.spilled());
+        assert!(store.remove_work());
+    });
+    assert!(card.model.dirs.contains(&format!("{ROOT}/Index")));
+    assert_eq!((card.creates, card.cstr_opens), (0, 0));
+    with_store(&mut card, |cache| {
+        let mut store = IndexBuildStore::lend(cache, &mut work, &BOOK.digest).unwrap();
+        assert!(store.append(b"record"));
+        assert!(store.spilled());
+        assert!(store.append(b"next"));
+        assert!(store.remove_work());
+    });
+    assert_eq!((card.creates, card.cstr_opens), (1, 1));
+    assert!(card.indexes().is_empty());
 }
