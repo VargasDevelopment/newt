@@ -11,7 +11,18 @@ impl<S: crate::page_entries::PageEntries> ChapterCacheStorage<'_, S> {
             && port.state.suffix_bytes == 69
             && port.state.path[..port.state.final_bytes].ends_with(".fibp"))
             .then(|| port.state.path[..port.state.final_bytes].rsplit('/').next()).flatten();
-        port.route.census(&mut *port.native, cancel, clock, wait,
+        port.route.census(&mut *port.native, &crate::page_entry_census::PAGES, cancel, clock, wait,
             pinned.map(str::as_bytes), need)
+    }
+    /// Book indexes: their own folder and quota. `pinned` is the open book's
+    /// index name, which is never evicted. Callers treat any outcome as
+    /// advisory: a failed eviction must not fail the open.
+    pub fn index_census(
+        &mut self, cancel: &dyn Authority, clock: Option<fn() -> u32>,
+        wait: Option<fn()>, pinned: Option<&[u8]>,
+    ) -> crate::page_entry_census::Grant {
+        let port = &mut self.file;
+        port.route.census(&mut *port.native, &crate::page_entry_census::INDEXES, cancel, clock, wait,
+            pinned, None)
     }
 }

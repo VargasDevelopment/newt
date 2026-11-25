@@ -116,6 +116,21 @@ pub const PAGE_SEGMENT_BATCH: u8 = 4;
 /// Book indexes have their own LRU quota, outside Pages: losing one costs a
 /// rebuild, so orphans of deleted books age out under pressure.
 pub const INDEX_QUOTA: u64 = 16 * 1024 * 1024;
+/// Provisional: set from the Virtual X3 census timing over 256 files.
+pub const INDEX_ENTRY_CAP: u32 = 256;
+pub const INDEX_ENTRY_RESERVE: u32 = 8;
+pub const INDEX_ENTRY_GRANT: u8 = (INDEX_ENTRY_CAP - INDEX_ENTRY_RESERVE) as u8;
+/// Free credit for one largest index envelope, rounded up like pages.
+pub const INDEX_CANDIDATE: u32 = {
+    let Some(payload) = crate::book_index::payload_bytes(
+        crate::book_index::MAX_MEMBERS,
+        crate::book_index::MAX_SPINE,
+    ) else {
+        panic!("largest index layout")
+    };
+    payload + 4 * crate::page_envelope::blocks(payload) + crate::page_envelope::MANIFEST_BYTES
+};
+pub const INDEX_REQUIRED_UNITS: u8 = (INDEX_CANDIDATE / PAGE_CREDIT_UNIT + 1) as u8;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PageNameSet {
     words: [u32; 8],

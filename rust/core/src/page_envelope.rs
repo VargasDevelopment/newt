@@ -28,7 +28,7 @@ pub fn crc(mut value: u32, input: &[u8]) -> u32 {
     value
 }
 
-pub fn blocks(bytes: u32) -> u32 {
+pub const fn blocks(bytes: u32) -> u32 {
     bytes.wrapping_add(BLOCK_BYTES - 1) / BLOCK_BYTES
 }
 

@@ -3,7 +3,7 @@
 //! Pages/ holds block-envelope pages; every other record is footered in Meta/.
 use super::{Authority, FilePort, MissingProbe, Native, Operation, ProducerPolicy, Route, FilePortState, LoanError, CloseOutcome};
 use newt_sdk_heap::Bytes;
-use newt_core::cache_names::namespace::{PAGE_CREDIT_UNIT, PAGE_ENTRY_GRANT, cache_folder, hex};
+use newt_core::cache_names::namespace::{PAGE_CREDIT_UNIT, PAGE_ENTRY_GRANT, cache_folder, envelope_kind, hex};
 use newt_core::page_cache::CacheStorage;
 use newt_core::page_envelope::{self as envelope, BLOCK_BYTES, MANIFEST_BYTES, MAX_EXTENT, Query};
 
@@ -92,7 +92,7 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
         let lease = self.file.generation();
         if self.state.read_active
             && valid_name(name).is_some()
-            && self.file.page_read()
+            && self.file.envelope_read()
             && self.same(name)
         {
             return self.file.allowed() && self.file.released_cleanly(lease);
@@ -117,7 +117,7 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
         if self.state.read_active && self.same(name) {
             self.file.begin_immutable_read();
             let found = self.file_size(name) >= 0
-                && (!self.file.page_read() || self.page_hint(true, Some(cancel)));
+                && (!self.file.envelope_read() || self.page_hint(true, Some(cancel)));
             let fresh = self.file.finish_immutable_read();
             if cancel.cancelled() {
                 return MissingProbe::Stopped;
@@ -184,7 +184,7 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
         } else {
             -1
         };
-        if size < 0 || !self.file.page_read() {
+        if size < 0 || !self.file.envelope_read() {
             query.finish();
             self.finish_cache_read();
             return false;
@@ -225,7 +225,7 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
     }
     /// Keeps exactly a validated page descriptor; metadata opens displace it.
     pub fn close_metadata(&mut self) {
-        if !self.state.read_active || !self.file.page_read() {
+        if !self.state.read_active || !self.file.envelope_read() {
             self.close();
         }
     }
@@ -260,10 +260,11 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
     fn same(&self, name: &[u8]) -> bool {
         self.file.suffix().as_bytes() == c_str(name)
     }
-    /// FilePort::pageName: the final suffix, when it is a 69-byte `.fibp` name.
-    fn page_name(&self) -> Option<&[u8]> {
-        let suffix = self.file.suffix();
-        (suffix.len() == 69 && suffix.ends_with(".fibp")).then_some(suffix.as_bytes())
+    /// FilePort::pageName, widened: the final suffix when it names a
+    /// block-envelope file (a page or a book index).
+    fn envelope_name(&self) -> Option<&[u8]> {
+        let suffix = self.file.suffix().as_bytes();
+        envelope_kind(suffix).is_some().then_some(suffix)
     }
     fn page_query_size(&mut self, name: &[u8]) -> i64 {
         if self.state.read_active && self.same(name) {
@@ -300,7 +301,7 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
         // their directory and consumed blocks under the same time/attempt scope.
         let bytes = self.file.bytes();
         if !self.file.port.route.cache_read_live()
-            || (self.page_name().is_none()
+            || (self.envelope_name().is_none()
                 && !self.file.port.route.cache_read_size(bytes.saturating_sub(FOOTER_BYTES))) {
             return self.file.settle(false);
         }
@@ -322,7 +323,7 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
     }
     fn validate_payload(&mut self) -> bool {
         self.state.lookup = Lookup::Invalid;
-        if self.page_name().is_some() {
+        if self.envelope_name().is_some() {
             return self.page_hint(false, None);
         }
         if self.file.bytes() < FOOTER_BYTES {
@@ -384,7 +385,7 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
         self.state.lookup = Lookup::Invalid;
         let mut route = [0; 32];
         let extent = self.file.bytes();
-        if extent < MANIFEST_BYTES || !envelope::route(self.page_name(), &mut route, true) {
+        if extent < MANIFEST_BYTES || !envelope::route(self.envelope_name(), &mut route, true) {
             return false;
         }
         let mut manifest = [0; MANIFEST_BYTES as usize];
@@ -419,7 +420,7 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
         let Some(mut scratch) = Self::scratch() else {
             return false;
         };
-        if !envelope::route(self.page_name(), &mut route, false) {
+        if !envelope::route(self.envelope_name(), &mut route, false) {
             return false;
         }
         let (mut whole, mut directory) = (u32::MAX, u32::MAX);
@@ -562,7 +563,7 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
     /// damaged Meta/ file stays a miss and an older value never shadows it.
     fn legacy_name(&mut self, name: &str) -> bool {
         self.state.legacy =
-            self.page_name().is_none() && self.file.absent() && self.file.name(name, false, None);
+            self.envelope_name().is_none() && self.file.absent() && self.file.name(name, false, None);
         self.state.legacy
     }
     /// Copies a validated legacy record into Meta/ when its read ends outside
@@ -646,7 +647,7 @@ impl<S: Native> CacheStorage for ChapterCacheAccess<'_, '_, S> {
             return -1;
         }
         let named = self.file.name(text, false, cache_folder(Some(name)));
-        let maximum = if self.page_name().is_some() {
+        let maximum = if self.envelope_name().is_some() {
             MAX_EXTENT
         } else {
             MAX_BYTES + FOOTER_BYTES
@@ -685,7 +686,7 @@ impl<S: Native> CacheStorage for ChapterCacheAccess<'_, '_, S> {
         }
         // file_size sets the payload this bound reads.
         if self.file_size(name) < 0
-            || self.file.page_read()
+            || self.file.envelope_read()
             || offset > self.state.payload
             || dst.len() > (self.state.payload - offset) as usize
         {
@@ -775,7 +776,7 @@ impl<S: Native> CacheStorage for ChapterCacheAccess<'_, '_, S> {
             return false;
         }
         let lease = self.file.generation();
-        let committed = if self.page_name().is_some() {
+        let committed = if self.envelope_name().is_some() {
             self.finalize_page() && self.file.commit(MAX_EXTENT, false)
         } else {
             let mut footer = [0; FOOTER_BYTES as usize];
@@ -810,7 +811,7 @@ impl<S: Native> envelope::RawRead for ChapterCacheAccess<'_, '_, S> {
         query.active
             && self.file.immutable_read()
             && self.file.generation() == query.generation
-            && self.file.page_read()
+            && self.file.envelope_read()
             && self.same(query.name.unwrap_or_default())
             && self.file.port.route.cache_read_live()
             && self.file.read(offset, out)

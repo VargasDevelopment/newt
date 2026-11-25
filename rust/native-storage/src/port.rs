@@ -221,21 +221,22 @@ impl<S: Native> Operation<'_, '_, S> {
     pub fn suffix(&self) -> &str {
         &self.port.state.path[self.port.state.final_bytes - self.port.state.suffix_bytes..self.port.state.final_bytes]
     }
-    // Exact native pageRead discriminator; namespace membership is separately
+    // Native pageRead discriminator, widened to every block-envelope file
+    // (pages and book indexes); page namespace membership is separately
     // checked by the existing canonical helper in belongs_to_page_namespace.
-    fn page_read(&self) -> bool {
+    fn envelope_read(&self) -> bool {
         self.port.state.fd.is_some()
             && !self.port.state.writing
-            && self.suffix().len() == 69
-            && self.suffix().ends_with(".fibp")
+            && newt_core::cache_names::namespace::envelope_kind(self.suffix().as_bytes()).is_some()
     }
     pub fn belongs_to_page_namespace(&self) -> bool {
         use newt_core::cache_names::namespace::{Kind as NameKind, PageName};
         PageName::parse(self.canonical().rsplit('/').next().map(str::as_bytes)).kind
             == NameKind::Page
     }
+    /// The displayed page only; an open book index is pinned by its own census.
     pub fn pinned_page(&self) -> Option<&str> {
-        self.page_read()
+        (self.envelope_read() && self.suffix().ends_with(".fibp"))
             .then(|| self.port.state.path[..self.port.state.final_bytes].rsplit('/').next())
             .flatten()
     }
@@ -470,7 +471,7 @@ impl<S: Native> Operation<'_, '_, S> {
     }
     fn finish_path_check(&mut self) -> bool {
         let fresh = self.read_freshness(self.port.state.generation);
-        if fresh == Freshness::PathFailed && self.page_read() && self.allowed() {
+        if fresh == Freshness::PathFailed && self.envelope_read() && self.allowed() {
             self.release();
         }
         fresh == Freshness::Fresh
@@ -531,7 +532,7 @@ impl<S: Native> Operation<'_, '_, S> {
     pub fn defer_page_path_check(&mut self) -> bool {
         if self.port.state.immutable_depth == 0
             || self.port.state.defer_depth == 0
-            || !self.page_read()
+            || !self.envelope_read()
             || self.port.state.failed
             || self.port.state.deferred_failed
             || !self.allowed()

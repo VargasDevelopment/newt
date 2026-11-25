@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 use crate::cache_names::Digest;
+use crate::page_cache::CacheStorage;
 use crate::page_envelope::MAX_PAYLOAD;
 use crate::zip_record_rules::EPUB_MAX_EXPANDED_BYTES;
 
@@ -191,6 +192,167 @@ impl SpineItem {
             && input[12..].iter().all(|&b| b == 0))
             .then_some(item)
     }
+}
+
+/// Why a write stopped. Only `Storage` is a card fault: `Collision` refuses
+/// the book, and `Invalid` is a builder bug the writer will not publish.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WriteError {
+    Storage,
+    /// Two members share a name hash: a duplicate ZIP name or a 64-bit collision.
+    Collision,
+    /// A record out of order, outside its bounds, or beyond the header counts.
+    Invalid,
+}
+
+/// Streams one index in payload order (header, members by ascending hash,
+/// spine) and publishes it at `finish`. Every record passes the reader's own
+/// decode first, so a published index never fails it. A failed writer is
+/// consumed; the store releases its temporary on the next write or close,
+/// and the census sweeps any leftover.
+pub struct Writer<'b> {
+    header: Header,
+    buffer: &'b mut [u8],
+    used: usize,
+    members: u32,
+    spine: u32,
+    last_hash: u64,
+    last_before: u64,
+}
+
+impl<'b> Writer<'b> {
+    /// `buffer` batches records into fewer card writes; it must hold a header.
+    pub fn begin<S: CacheStorage + ?Sized>(
+        s: &mut S,
+        header: Header,
+        buffer: &'b mut [u8],
+    ) -> Result<Self, WriteError> {
+        let mut bytes = [0; HEADER_BYTES as usize];
+        header.encode(&mut bytes);
+        let payload = header.payload_bytes().ok_or(WriteError::Invalid)?;
+        if buffer.len() < bytes.len() || Header::decode(&bytes, &header.identity, payload) != Some(header) {
+            return Err(WriteError::Invalid);
+        }
+        let mut file = [0; 69];
+        name(&header.identity.digest, &mut file);
+        if !s.begin_write(&file) {
+            return Err(WriteError::Storage);
+        }
+        buffer[..bytes.len()].copy_from_slice(&bytes);
+        Ok(Self { header, buffer, used: bytes.len(), members: 0, spine: 0, last_hash: 0, last_before: 0 })
+    }
+    pub fn member<S: CacheStorage + ?Sized>(mut self, s: &mut S, member: Member) -> Result<Self, WriteError> {
+        let mut bytes = [0; MEMBER_BYTES as usize];
+        member.encode(&mut bytes);
+        if self.members == self.header.members || Member::decode(&bytes, &self.header) != Some(member) {
+            return Err(WriteError::Invalid);
+        }
+        if self.members > 0 && member.hash <= self.last_hash {
+            return Err(if member.hash == self.last_hash { WriteError::Collision } else { WriteError::Invalid });
+        }
+        self.last_hash = member.hash;
+        self.members += 1;
+        self.put(s, &bytes)
+    }
+    /// Spine items follow every member; `before` never decreases.
+    pub fn spine<S: CacheStorage + ?Sized>(mut self, s: &mut S, item: SpineItem) -> Result<Self, WriteError> {
+        let mut bytes = [0; SPINE_BYTES as usize];
+        item.encode(&mut bytes);
+        if self.members != self.header.members
+            || self.spine == self.header.spine
+            || item.before < self.last_before
+            || SpineItem::decode(&bytes, &self.header) != Some(item)
+        {
+            return Err(WriteError::Invalid);
+        }
+        self.last_before = item.before;
+        self.spine += 1;
+        self.put(s, &bytes)
+    }
+    /// `receipt_live` is the store's final destination check before publication.
+    pub fn finish<S: CacheStorage + ?Sized>(
+        mut self,
+        s: &mut S,
+        receipt_live: &mut dyn FnMut() -> bool,
+    ) -> Result<(), WriteError> {
+        if self.members != self.header.members || self.spine != self.header.spine {
+            return Err(WriteError::Invalid);
+        }
+        self.flush(s)?;
+        if s.end_write_checked(receipt_live) { Ok(()) } else { Err(WriteError::Storage) }
+    }
+    fn put<S: CacheStorage + ?Sized>(mut self, s: &mut S, bytes: &[u8]) -> Result<Self, WriteError> {
+        if self.buffer.len() - self.used < bytes.len() {
+            self.flush(s)?;
+        }
+        self.buffer[self.used..self.used + bytes.len()].copy_from_slice(bytes);
+        self.used += bytes.len();
+        Ok(self)
+    }
+    fn flush<S: CacheStorage + ?Sized>(&mut self, s: &mut S) -> Result<(), WriteError> {
+        let written = self.used == 0 || s.write(&self.buffer[..self.used]);
+        self.used = 0;
+        if written { Ok(()) } else { Err(WriteError::Storage) }
+    }
+}
+
+/// The store could not return a record the header promised; on a verified
+/// envelope that means a card fault or damage, so the caller rebuilds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Unreadable;
+
+/// A checked header; records are read on demand through the same store.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Reader {
+    header: Header,
+    name: [u8; 69],
+}
+
+impl Reader {
+    /// None for a missing, damaged, stale or foreign index: rebuild it.
+    pub fn open<S: CacheStorage + ?Sized>(s: &mut S, identity: &Identity) -> Option<Self> {
+        let mut file = [0; 69];
+        name(&identity.digest, &mut file);
+        let payload = u32::try_from(s.file_size(&file)).ok()?;
+        let mut bytes = [0; HEADER_BYTES as usize];
+        read_exact(s, &file, 0, &mut bytes)?;
+        let header = Header::decode(&bytes, identity, payload)?;
+        Some(Self { header, name: file })
+    }
+    pub fn header(&self) -> &Header {
+        &self.header
+    }
+    /// None when unreadable or past the header's member count.
+    pub fn member<S: CacheStorage + ?Sized>(&self, s: &mut S, index: u32) -> Option<Member> {
+        let mut bytes = [0; MEMBER_BYTES as usize];
+        read_exact(s, &self.name, self.header.member_offset(index)?, &mut bytes)?;
+        Member::decode(&bytes, &self.header)
+    }
+    /// None when unreadable or past the header's spine count.
+    pub fn spine<S: CacheStorage + ?Sized>(&self, s: &mut S, index: u32) -> Option<SpineItem> {
+        let mut bytes = [0; SPINE_BYTES as usize];
+        read_exact(s, &self.name, self.header.spine_offset(index)?, &mut bytes)?;
+        SpineItem::decode(&bytes, &self.header)
+    }
+    /// Binary search by name hash. A hit only matches the hash; the caller
+    /// still compares the member's local name before trusting it.
+    pub fn find<S: CacheStorage + ?Sized>(&self, s: &mut S, hash: u64) -> Result<Option<(u32, Member)>, Unreadable> {
+        let (mut low, mut high) = (0, self.header.members);
+        while low < high {
+            let middle = low + (high - low) / 2;
+            let member = self.member(s, middle).ok_or(Unreadable)?;
+            match member.hash.cmp(&hash) {
+                core::cmp::Ordering::Less => low = middle + 1,
+                core::cmp::Ordering::Greater => high = middle,
+                core::cmp::Ordering::Equal => return Ok(Some((middle, member))),
+            }
+        }
+        Ok(None)
+    }
+}
+
+fn read_exact<S: CacheStorage + ?Sized>(s: &mut S, file: &[u8], offset: u32, out: &mut [u8]) -> Option<()> {
+    (s.read_at(file, offset, out) == out.len() as i32).then_some(())
 }
 
 #[cfg(test)]

@@ -6,7 +6,32 @@ use crate::{Authority, Error, Kind, MissingProbe, Native};
 use crate::page_entries::{PageEntries, PageEntry as Entry};
 use newt_core::{cache_names::namespace::{self as names, Form, Kind as NameKind, PageCacheNeed, PageName, PageNameSet}, reader_scheduler::YieldCadence};
 
+/// One LRU-quota folder of block-envelope cache files. Other known cache
+/// names found there rank as legacy and go first.
+#[derive(Clone, Copy, Debug)]
+pub struct Policy {
+    pub folder: &'static str,
+    pub kind: NameKind,
+    pub quota: u64,
+    /// Hard file cap; `entry_grant` leaves a reserve below it.
+    pub entry_cap: u32,
+    pub entry_grant: u8,
+    /// Free credit units a writer needs for one largest file.
+    pub required_units: u8,
+}
+pub const PAGES: Policy = Policy {
+    folder: "/Pages", kind: NameKind::Page, quota: names::PAGE_QUOTA,
+    entry_cap: names::PAGE_ENTRY_CAP, entry_grant: names::PAGE_ENTRY_GRANT,
+    required_units: names::PAGE_REQUIRED_UNITS,
+};
+pub const INDEXES: Policy = Policy {
+    folder: "/Index", kind: NameKind::Index, quota: names::INDEX_QUOTA,
+    entry_cap: names::INDEX_ENTRY_CAP, entry_grant: names::INDEX_ENTRY_GRANT,
+    required_units: names::INDEX_REQUIRED_UNITS,
+};
+
 pub struct Request<'a> {
+    pub policy: &'a Policy,
     pub root: Option<&'a str>,
     pub cancel: &'a dyn Authority,
     pub clock: Option<fn() -> u32>,
@@ -18,6 +43,7 @@ pub struct Request<'a> {
 pub struct Grant { pub units: u8, pub entries: u8, pub outcome: MissingProbe }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+/// `Page` is a canonical file of the policy's own kind (a page or an index).
 enum Rank { #[default] None, Page, Legacy, Temporary }
 #[derive(Clone, Copy, Default)]
 struct Victim { name: u64, bytes: u64, time: i64, rank: Rank }
@@ -60,12 +86,13 @@ impl<'a, 'folder> Census<'a, 'folder> {
         loop {
             if !self.scan(native) { return 0; }
             if self.victims != 0 { continue; }
-            let free = if self.total <= names::PAGE_QUOTA { names::PAGE_QUOTA-self.total } else { 0 };
+            let policy = self.request.policy;
+            let free = policy.quota.saturating_sub(self.total);
             let units = free/u64::from(names::PAGE_CREDIT_UNIT);
-            self.entries = if self.count < u32::from(names::PAGE_ENTRY_GRANT) {
-                names::PAGE_ENTRY_GRANT-self.count as u8
+            self.entries = if self.count < u32::from(policy.entry_grant) {
+                policy.entry_grant-self.count as u8
             } else { 0 };
-            if units < u64::from(names::PAGE_REQUIRED_UNITS) { self.entries = 0; }
+            if units < u64::from(policy.required_units) { self.entries = 0; }
             return if self.entries != 0 { units.min(127) as u8 } else { 0 };
         }
     }
@@ -122,12 +149,13 @@ impl<'a, 'folder> Census<'a, 'folder> {
     fn sizes_done(&mut self)->bool {
         let (mut count,mut total,mut keep)=(self.count,self.total,0);
         let need=self.request.need.map_or(1,|n|n.files);
+        let policy=self.request.policy;
         while keep<self.victims {
             let rank=self.victim[keep].rank;
             if rank!=self.victim[0].rank { break; }
-            let crowded=count.wrapping_add(u32::from(need))>u32::from(names::PAGE_ENTRY_GRANT)
-                || total>names::PAGE_QUOTA || u64::from(names::PAGE_REQUIRED_UNITS)*u64::from(names::PAGE_CREDIT_UNIT)>names::PAGE_QUOTA-total;
-            if (rank!=Rank::Temporary && !crowded) || (rank==Rank::Page && count>names::PAGE_ENTRY_CAP) { break; }
+            let crowded=count.wrapping_add(u32::from(need))>u32::from(policy.entry_grant)
+                || total>policy.quota || u64::from(policy.required_units)*u64::from(names::PAGE_CREDIT_UNIT)>policy.quota-total;
+            if (rank!=Rank::Temporary && !crowded) || (rank==Rank::Page && count>policy.entry_cap) { break; }
             count=count.wrapping_sub(1);total=total.wrapping_sub(self.victim[keep].bytes);keep+=1;
         }
         self.victims=keep;true
@@ -140,7 +168,7 @@ impl<'a, 'folder> Census<'a, 'folder> {
         let Some(name)=entry.name else { return self.result(false); };
         let victim=self.victim[index];
         let good=entry.regular && entry.bytes==victim.bytes && entry.time==victim.time
-            && self.make_path(name).is_some() && self.deleted<names::PAGE_ENTRY_CAP;
+            && self.make_path(name).is_some() && self.deleted<self.request.policy.entry_cap;
         if !self.result(good) || !self.poll() { return false; }
         let Some(path)=self.make_path(name) else { return self.result(false); };
         let removed=native.unlink(path).is_ok();
@@ -150,7 +178,7 @@ impl<'a, 'folder> Census<'a, 'folder> {
     }
     fn consider(&mut self,entry:&Entry<'_>,parsed:PageName) {
         let Some(name)=entry.name else { return; };
-        let page=parsed.kind==NameKind::Page;
+        let page=parsed.kind==self.request.policy.kind;
         let rank=if page && parsed.form==Form::Temporary { Rank::Temporary }
             else if !page { Rank::Legacy }
             else if parsed.form==Form::Canonical { Rank::Page } else { Rank::None };
@@ -178,15 +206,16 @@ fn before(a:&Victim,b:&Victim)->bool {
 pub fn entry_census<N: PageEntries>(native:&mut N,request:Request<'_>)->Grant {
     // The same frozen 192-byte folder backing, outside the mutably visited state.
     let mut folder=[0;192];
-    let length=request.root.and_then(|root| root.len().checked_add(6));
+    let leaf=request.policy.folder.as_bytes();
+    let length=request.root.and_then(|root| root.len().checked_add(leaf.len()));
     let folder=if let (Some(root),Some(bytes))=(request.root,length.filter(|&n| n<folder.len())) {
         folder[..root.len()].copy_from_slice(root.as_bytes());
-        folder[root.len()..bytes].copy_from_slice(b"/Pages");
+        folder[root.len()..bytes].copy_from_slice(leaf);
         core::ffi::CStr::from_bytes_with_nul(&folder[..=bytes]).ok()
     } else { None };
     let mut census=Census::new(request,folder);
     let units=census.grant(native);
-    let outcome=if units>=names::PAGE_REQUIRED_UNITS { MissingProbe::Ready }
+    let outcome=if units>=census.request.policy.required_units { MissingProbe::Ready }
         else if census.outcome==MissingProbe::Stopped { MissingProbe::Stopped } else { MissingProbe::Denied };
     Grant{units,entries:if units!=0 { census.entries } else {0},outcome}
 }

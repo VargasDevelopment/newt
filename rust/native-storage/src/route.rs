@@ -146,13 +146,15 @@ impl Route<'_> {
 }
 
 impl Route<'_> {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn census(&self, native: &mut impl crate::page_entries::PageEntries,
+        policy: &crate::page_entry_census::Policy,
         cancel: &dyn Authority, clock: Option<fn() -> u32>, wait: Option<fn()>,
         pinned: Option<&[u8]>, need: Option<&newt_core::cache_names::namespace::PageCacheNeed>,
     ) -> crate::page_entry_census::Grant {
         crate::page_entry_census::entry_census(native,
             crate::page_entry_census::Request {
-                root: Some(&self.state.root), cancel, clock, wait, pinned, need,
+                policy, root: Some(&self.state.root), cancel, clock, wait, pinned, need,
             })
     }
 }
