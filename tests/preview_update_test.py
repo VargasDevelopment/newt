@@ -151,8 +151,76 @@ def test_builds_unconfirmed(binary):
         return 'an unconfirmed switch changed the choice in the same boot'
 
 
+def official_return(binary):
+    """Check survives a cold restart; the older offer still needs confirmation."""
+    with tempfile.TemporaryDirectory() as scratch:
+        directory = Path(scratch)
+        world(directory, binary, update='official-return')
+        _, log = rust_preview.run(binary, directory, CHECK)
+        folder = directory / 'card/Newt/Update'
+        receipt = folder / 'official.return'
+        if check_result(log) != READY or not receipt.is_file() or len(receipt.read_bytes()) != 84:
+            return 'Check did not confirm the return sidecar'
+        before = {name: (directory / 'partitions' / name).read_bytes() for name in ('app1.bin', 'otadata.bin')}
+        opening = [*settings_row(UPDATE_ROW), CONFIRM]
+        listed = rust_preview.run(binary, directory, opening)[0][-1]
+        question, log = rust_preview.run(binary, directory, [*opening, CONFIRM])
+        if question[-1] == listed or 'Newt restarting into the new Newt' in log:
+            return 'the cold return did not stop at the older-version confirmation'
+        rust_preview.run(binary, directory, [*opening, CONFIRM, BACK])
+        if any((directory / 'partitions' / name).read_bytes() != data for name, data in before.items()):
+            return 'opening or backing out changed flash'
+        _, log = rust_preview.run(binary, directory, [*opening, CONFIRM, CONFIRM])
+        payload = update_fixtures.newt_image('0.5.0')
+        if 'Newt restarting into the new Newt' not in log or receipt.exists():
+            return 'the confirmed return did not finish and consume its sidecar'
+        if (directory / 'partitions/app1.bin').read_bytes()[:len(payload)] != payload:
+            return 'the return wrote a different image'
+
+
+def official_return_refusals(binary):
+    """Missing, corrupt, foreign-source and replaced-target receipts cannot erase."""
+    for failure in ('missing', 'corrupt', 'source', 'target', 'unconfirmed'):
+        with tempfile.TemporaryDirectory() as scratch:
+            directory = Path(scratch)
+            world(directory, binary, update='official-return')
+            if failure == 'unconfirmed':
+                with (directory / 'fixture.conf').open('a') as conf:
+                    conf.write('store.drop=card-sync:/newt-sd/Newt/Update/official.return.tmp\n')
+            _, checked = rust_preview.run(binary, directory, CHECK)
+            folder = directory / 'card/Newt/Update'
+            receipt = folder / 'official.return'
+            if failure == 'missing': receipt.unlink()
+            if failure == 'corrupt': receipt.write_bytes(bytes(84))
+            if failure == 'source':
+                path = directory / 'partitions/app0.bin'
+                path.write_bytes(path.read_bytes().replace(b'0123456789ab', b'abcdef012345'))
+            if failure == 'target':
+                payload = update_fixtures.newt_image('0.5.0+changed')
+                (folder / 'newt.bin').write_bytes(payload)
+                (folder / 'newt.manifest').write_bytes(update_fixtures.manifest('0.5.0+changed', payload))
+            before = {name: (directory / 'partitions' / name).read_bytes() for name in ('app1.bin', 'otadata.bin')}
+            _, log = rust_preview.run(binary, directory, [*settings_row(UPDATE_ROW), CONFIRM, CONFIRM, CONFIRM])
+            if failure == 'unconfirmed' and check_result(checked) == READY:
+                return 'an unconfirmed sidecar was offered as Ready'
+            if 'Newt restarting into the new Newt' in log or receipt.exists():
+                return f'{failure} receipt still granted a return'
+            if any((directory / 'partitions' / name).read_bytes() != data for name, data in before.items()):
+                return f'{failure} receipt changed flash'
+
+
 # (case, generated firmware file, exact text, replacement)
 CASES = [
+    (official_return, 'update_mode.rs',
+     '.map(update::ReturnOffer::Offered).unwrap_or_default();',
+     '.map(|_| update::ReturnOffer::None).unwrap_or_default();'),
+    (official_return, 'update_mode.rs',
+     'let mut intent = update::dispatch_update(view, action.0, action.1, &Wipe);',
+     'let mut intent = update::dispatch_update(view, action.0, action.1, &Wipe); '
+     'if view.page == update::UpdatePage::Confirm { '
+     'intent = update::dispatch_update(view, action.0, action.1, &Wipe); }'),
+    (official_return_refusals, 'update_download/official_return.rs',
+     'self.0.sync_raw(fd).ok()', 'Some(())'),
     (check_after_save, 'update_mode.rs',
      'if changed.is_ok() { intent = update::check_after_save(view); }', ''),
     (resumes_quick_start, 'home_startup.rs', 'if !resume.show { return false; }', 'return false;'),
@@ -196,7 +264,8 @@ def main():
         print(f'PASS: {len(flows)} update, Wi-Fi, switch and test-build flows run the firmware (controls not in this tier)')
         return
     for case, name, old, new in CASES:
-        control = rust_preview.build(edits=[(name, old, new)])
+        control = rust_preview.control([(name, old, new)],
+                                       optimize=case not in (official_return, official_return_refusals))
         assert case(control) is not None, f'{case.__name__}: passes with {name} changed'
     print(f'PASS: {len(flows)} update, Wi-Fi, switch and test-build flows run the firmware; each of {len(CASES)} controls fails')
 

@@ -81,3 +81,5 @@ impl ConfirmedReturn {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod online_tests;

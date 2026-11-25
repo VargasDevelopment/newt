@@ -19,6 +19,7 @@ use newt_core::update_card::{
 };
 use newt_core::update_manifest::MAX_BYTES;
 use newt_core::update_online::Hash;
+mod official_return;
 
 /// #168's card-install cases, each by the shared vector that holds it.
 const CARD_CASES: [(&str, &str); 8] = [
@@ -312,6 +313,7 @@ struct Flash {
     ota: Otadata,
     /// The byte count the last progress report named.
     total: u32,
+    erases: usize,
 }
 
 impl Ports for Flash {
@@ -334,6 +336,7 @@ impl Ports for Flash {
         true
     }
     fn erase_slot(&mut self, slot: i32, at: u32, count: u32) -> bool {
+        self.erases += 1;
         self.slots[slot as usize][at as usize..(at + count) as usize].fill(0xff);
         true
     }
@@ -361,7 +364,7 @@ fn card_install_writes_only_the_image() {
     assert!(source.open(&offer), "the card file opens");
     let running = OtaRecord { seq: 1, label: [255; 20], state: STATE_VALID, crc: ota_seq_crc(1) };
     let old = vec![0x5a; 2 * SECTOR_BYTES];
-    let mut flash = Flash { slots: [old.clone(), old], ota: Otadata([running, ERASED_RECORD]), total: 0 };
+    let mut flash = Flash { slots: [old.clone(), old], ota: Otadata([running, ERASED_RECORD]), total: 0, erases: 0 };
     let (mut first, mut buffer) = ([0; SECTOR_BYTES], [0; SECTOR_BYTES]);
     let issue = SlotInstaller::new(&mut flash, &mut source, &mut Sha256::default(), &mut first, &mut buffer)
         .install(&offer.manifest, None, InstallConsent { confirmed: true, reinstall: false, ..InstallConsent::default() });
