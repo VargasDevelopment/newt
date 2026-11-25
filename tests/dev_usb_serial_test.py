@@ -3,6 +3,7 @@ import errno
 import importlib.util
 from pathlib import Path
 import subprocess
+import struct
 import sys
 import time
 import zlib
@@ -192,6 +193,49 @@ class DiagnosticPeer(module.ProtocolClient):
         if not result:
             time.sleep(min(0.005, remaining))
         return result
+
+
+
+def wake_request_validation():
+    class WakePeer(DiagnosticPeer):
+        def __init__(self, response, stale=False):
+            super().__init__('DIAG available=0')
+            self.response, self.wake_stale = response, stale
+        def write_data(self, data, remaining):
+            if data.decode().split()[-1] != 'WAKE':
+                return super().write_data(data, remaining)
+            self.writes.append(data)
+            identifier = int(data.decode().split()[3]) - int(self.wake_stale)
+            payload = f'!N1 {self.peer_boot} {self.peer_session} {identifier} {self.response}'.encode()
+            self.pending = payload + f' *{zlib.crc32(payload):08x}\n'.encode()
+        def close(self):
+            self.connection['closed'] = True
+
+    words = [0] * 24
+    words[13:16] = [5, 10, 20]
+    words[16:] = [1, 0xe001, 0x101, 1, 0, 160, 0x10401, 2]
+    available = 'WAKE version=1 available=1 data=' + struct.pack('<24I', *words).hex()
+    args = SimpleNamespace(mode='live', expect_build='diagnostic-fixture',
+                           press=[], diagnostics=True, wake_timing=True, output=None)
+    for response, stale, error in ((available, False, None),
+            ('WAKE version=1 available=0', False, None),
+            ('ERROR command', False, 'ERROR command'),
+            (available, True, 'Stale or unrelated')):
+        peer = WakePeer(response, stale=stale)
+        report = module.run_session(peer, args)
+        assert report['connection']['closed']
+        assert sum(write.endswith(b' WAKE\n') for write in peer.writes) == 1
+        assert not any(b'PRESS ' in write or b' FRAME' in write for write in peer.writes)
+        if error:
+            assert error in report['error'] and 'wake_timing' not in report, report
+        else:
+            assert 'error' not in report, report
+            assert report['wake_timing']['available'] is (response == available)
+            if response == available:
+                assert report['wake_timing']['page_kind'] == 'picture'
+        writes = len(peer.writes)
+        rejects(lambda: peer.request('WAKE extra'), 'Unsupported bounded command')
+        assert len(peer.writes) == writes
 
 
 def diagnostic_validation():
@@ -447,6 +491,7 @@ def main():
     telemetry_validation()
     firmware_row_validation()
     diagnostic_validation()
+    wake_request_validation()
     diagnostic_v2_validation()
     command_bound_validation()
     freshness_validation()

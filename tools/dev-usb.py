@@ -251,7 +251,7 @@ class ProtocolClient:
         return body
 
     def request(self, command, capture_deadline=None):
-        if command not in ('STATUS', 'FRAME', 'DIAG', 'PANEL') and not re.fullmatch(
+        if command not in ('STATUS', 'FRAME', 'DIAG', 'PANEL', 'WAKE') and not re.fullmatch(
                 r'PRESS (previous|next|activate|back|sleep|purge-cache)|CHUNK [0-9]+ [0-9]+', command):
             raise ValueError('Unsupported bounded command')
         self.request_id += 1
