@@ -1,13 +1,13 @@
 [
   {
-    "file": "core/src/admission.rs",
+    "file": "core/src/member_check.rs",
     "mutation": "skip local header rule",
-    "witness": "local_mismatch_precedes_encryption: Unsupported becomes Encrypted"
+    "witness": "member_header_is_checked_when_it_opens: Damaged becomes Ok"
   },
   {
-    "file": "core/src/admission.rs",
+    "file": "core/src/member_check.rs",
     "mutation": "omit local/central name comparison",
-    "witness": "every_member_name_must_match: Unsupported becomes Ok"
+    "witness": "member_name_is_checked_when_it_opens: Damaged becomes Ok"
   },
   {
     "file": "core/src/admission.rs",
@@ -22,7 +22,7 @@
   {
     "file": "core/src/canonical.rs",
     "mutation": "remove duplicate loop",
-    "witness": "duplicate-before-required emits MemberBegin instead of rejecting before payload"
+    "witness": "duplicate-before-required: Unsupported becomes Ok after MemberBegin"
   },
   {
     "file": "core/src/canonical.rs",

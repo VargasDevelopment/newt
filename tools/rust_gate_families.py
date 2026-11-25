@@ -30,7 +30,8 @@ FULL_POSITIVE_SOURCES = {
     'ft_font': ('rust/core/src/ft_font.rs', 'rust/core/src/ft_font_tests.rs'),
     'inflate': ('rust/core/src/inflate.rs', 'rust/core/src/inflate'),
     'epub_admission': ('rust/core/src/admission.rs', 'rust/core/src/admission_work.rs',
-                       'rust/core/src/canonical.rs', 'rust/core/src/canonical_semantic.rs'),
+                       'rust/core/src/canonical.rs', 'rust/core/src/canonical_semantic.rs',
+                       'rust/core/src/member_check.rs'),
     'reader_atlas': ('rust/reader-atlas',),
 }
 SHARED_INPUTS = ('rust/check.py', 'rust/expected.py', 'tools/rust_gate_families.py', 'rust/toolchain.json',

@@ -1,6 +1,6 @@
 """Independent byte cases extending the sealed candidate vectors."""
 import struct
-STATUS = dict(zip(('Ok','IoError','NotZip','NotEpub','Encrypted','Truncated','Unsupported','OutOfMemory','ParseError','NotFound','Stale','MetadataTooLarge','PathTooLong'), range(13)))
+STATUS = dict(zip(('Ok','IoError','NotZip','NotEpub','Encrypted','Truncated','Unsupported','OutOfMemory','ParseError','NotFound','Stale','MetadataTooLarge','PathTooLong','Damaged'), range(14)))
 
 def cases(v):
     result = []
@@ -19,28 +19,34 @@ def cases(v):
         add('chapter-deflate-'+name,v.archive([('c',payload,8,declared,0)]),0,op='C',finish=finished,payload=b'')
     add('chapter-deflate-payload',v.archive([('c',b'\x73\x04\x00',8,1,0)]),0,op='C',finish=1,payload=b'A')
     add('chapter-binary-payload',v.archive([('c',b'\x00\xffx\r\n',0,5,0)]),0,op='C',finish=1,payload=b'\x00\xffx\r\n')
+    # Admission reads only the central directory (#60), so central flags decide.
     data = bytearray(v.archive([('x',b'',0,0,1)]))
     struct.pack_into('<H',data,6,0)
-    add('local_mismatch_precedes_encryption',bytes(data),6)
+    add('central_flags_decide_admission',bytes(data),4)
+    # Local headers are checked when each member opens: a damaged container name
+    # or method refuses the book as Damaged once admission opens the container.
     data = bytearray(base); data[30] = ord('X')
-    add('every_member_name_must_match',bytes(data),6)
-    add('catalog-name-oom',base,11,cat_bytes=0,domain='typed names versus C++ catalog struct allocation; distinct phase diagnostics')
+    add('member_name_is_checked_when_it_opens',bytes(data),13)
+    data = bytearray(base); struct.pack_into('<H',data,8,8)
+    add('member_header_is_checked_when_it_opens',bytes(data),13)
+    add('catalog-name-oom',base,11,cat_bytes=0,domain='typed name arena exhaustion; Rust reports MetadataTooLarge')
     for n in (1,64,2047):
-        add('low-parse-'+str(n),base,0,parse_bytes=n,domain='Rust caller typed XML/decoder buffers; C++ byte XML scratch OOM, expect C++ OutOfMemory')
+        add('low-parse-'+str(n),base,0,parse_bytes=n,domain='Rust caller typed XML/decoder buffers; no byte XML scratch cap')
+    # no-decoder: the duplicate-name check borrows the idle inflate dictionary,
+    # so it stops before the first member.
     for typed in ('no-entries','no-manifest','no-spine','no-chunk','no-xml','no-filter','fail-backend','no-decoder'):
         data = base
         if typed=='no-decoder': data=v.archive([('META-INF/container.xml',b'\x03\x00',8,1,0)]+v.BASE[1:])
-        add('typed-'+typed,data,0 if typed=='no-filter' else 11 if typed in ('no-entries','no-manifest','no-spine') else 7,typed=typed,domain='Independent typed Rust resource case, no C++ equivalence',member_begins=[] if typed=='no-entries' else [0,1] if typed in ('no-manifest','no-spine') else [0,1,3] if typed=='no-filter' else [0])
+        add('typed-'+typed,data,0 if typed=='no-filter' else 11 if typed in ('no-entries','no-manifest','no-spine') else 7,typed=typed,domain='Independent typed Rust resource case',member_begins=[] if typed in ('no-entries','no-decoder') else [0,1] if typed in ('no-manifest','no-spine') else [0,1,3] if typed=='no-filter' else [0])
     return result
 
 def wire(case):
     return 'EA1 {} {} {} {} {} {} {} {}\n'.format(case.get('op','A'),case['data'].hex() or '-',case.get('cat_bytes',524288),case.get('parse_bytes',524288),case.get('max_read',32768),case.get('fail_call',-1),case.get('member',0),case.get('read_cap',2048))
 
-def check(case, rows, cpp=False):
+def check(case, rows):
     def need(ok, why):
         if not ok: raise RuntimeError(case['id']+': '+why)
-    expected = 7 if cpp and case['id']=='catalog-name-oom' else case['status']
-    if cpp and case['id'].startswith(('low-parse-','no-byte-scratch')): expected=7
+    expected = case['status']
     need(int(rows[-3][1]) == expected,'independent status '+str(expected))
     if case.get('op','A')=='A': need(rows[-2][1] == rows[-2][4] == '0','unconditional arena reset')
     if 'metadata' in case: need(next(r[1:] for r in rows if r[0]=='M')==case['metadata'],'metadata')
@@ -48,9 +54,6 @@ def check(case, rows, cpp=False):
     if 'payload' in case: need(b''.join(bytes.fromhex(r[3]) for r in rows if r[0]=='C' and r[3]!='-')==case['payload'],'independent chapter payload')
     begins=[int(r[3]) for r in rows if r[:2]==['E','7']]
     if 'member_begins' in case: need(begins==case['member_begins'],'required member order')
-    if cpp and case['id'].startswith(('low-parse-','no-byte-scratch')):
-        need(begins==[0], 'C++ low byte cap must fail first required expansion before XML')
-        need(any(r[:2]==['E','10'] and r[6]=='7' for r in rows),'C++ MemberEnd OOM')
     if case['id']=='valid-nav-not-parsed':
         need(begins==[0,1,3],'required ordering')
-        need([int(r[6]) for r in rows if r[:2]==['E','6']]==[0,1,2,3],'comparison counts')
+        need([int(r[6]) for r in rows if r[:2]==['E','6']]==[10],'comparison counts')  # one heapsort pair for four entries
