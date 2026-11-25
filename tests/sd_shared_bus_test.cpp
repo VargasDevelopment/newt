@@ -71,5 +71,7 @@ int main() {
           std::array<const char*, 3>{"/card/Other", "/card/Other/Deep", "/card/Other/Deep/Update"});
   folders("/card", "/fixture/Newt/Update",
           std::array<const char*, 3>{"/fixture", "/fixture/Newt", "/fixture/Newt/Update"});
+  folders(newt::firmware::kSdMountPoint, "/tmp/U",
+          std::array<const char*, 2>{"/tmp", "/tmp/U"});
   std::puts("PASS: canonical and overridden folder paths follow mount success; POSIX errors preserve its result");
 }
