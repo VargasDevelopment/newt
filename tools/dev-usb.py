@@ -400,13 +400,17 @@ class SerialClient(ProtocolClient):
 
 
 def approved_serial():
+    approved = (ROOT / '.toolchain/platformio/penv').resolve()
+    message = (f'Run with the project interpreter: {ROOT / ".toolchain/platformio/penv/bin/python"}'
+               ' -B tools/dev-usb.py ... (approved pyserial 3.5)')
+    if Path(sys.prefix).resolve() != approved:
+        raise ValueError(message)
     try:
         import serial
     except ImportError as error:
-        raise ValueError('Use .toolchain/platformio/penv/bin/python; pyserial 3.5 is already approved and installed') from error
-    approved = (ROOT / '.toolchain/platformio/penv').resolve()
+        raise ValueError(message) from error
     if serial.__version__ != '3.5' or not Path(serial.__file__).resolve().is_relative_to(approved):
-        raise ValueError('Live mode requires the existing approved project-local pyserial 3.5')
+        raise ValueError(message)
     return serial
 
 
@@ -502,8 +506,9 @@ def main():
             parser.error(str(error))
     if 'sleep' in args.press and (args.press[-1] != 'sleep' or args.press.count('sleep') != 1 or args.output or args.diagnostics or args.listen):
         parser.error('Live sleep must be the final request, with no subsequent capture; wake is physical only')
+    serial = approved_serial()  # Refuse the interpreter before any lease or USB inspection.
     with lease_port(args.port):
-        client = SerialClient(approved_serial(), args.port, args.timeout)
+        client = SerialClient(serial, args.port, args.timeout)
         report = run_session(client, args)
     print(json.dumps(report, sort_keys=True))
     if 'error' in report:

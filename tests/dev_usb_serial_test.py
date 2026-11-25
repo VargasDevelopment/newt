@@ -26,6 +26,41 @@ def rejects(callback, text):
         raise AssertionError('Expected bounded protocol failure')
 
 
+
+def interpreter_validation():
+    approved = (ROOT / '.toolchain/platformio/penv').resolve()
+    serial = SimpleNamespace(__version__='3.5', __file__=str(approved/'lib/serial/__init__.py'))
+    with patch.dict(sys.modules, {'serial': serial}), patch.object(module.sys, 'prefix', str(approved)):
+        assert module.approved_serial() is serial
+        serial.__version__ = '0.0'
+        rejects(module.approved_serial, str(ROOT/'.toolchain/platformio/penv/bin/python'))
+        serial.__version__ = '3.5'
+    argv = ['dev-usb.py', 'live', '--port', '/dev/mock-only', '--expect-build', 'fixture']
+    with patch.dict(sys.modules, {'serial': serial}), \
+         patch.object(module.sys, 'prefix', str(ROOT/'.build/unapproved-python')), \
+         patch.object(module.sys, 'argv', argv), \
+         patch.object(module, 'lease_port', side_effect=AssertionError('USB boundary reached')) as lease, \
+         patch.object(module, 'SerialClient', side_effect=AssertionError('Serial opened')) as driver:
+        rejects(module.main, str(ROOT/'.toolchain/platformio/penv/bin/python'))
+        lease.assert_not_called()
+        driver.assert_not_called()
+
+
+
+def interpreter_control():
+    original = module.approved_serial
+    def accepts_another_interpreter():
+        with patch.object(module.sys, 'prefix', str((ROOT/'.toolchain/platformio/penv').resolve())):
+            return original()
+    with patch.object(module, 'approved_serial', accepts_another_interpreter):
+        try:
+            interpreter_validation()
+        except AssertionError as error:
+            assert str(error) == 'USB boundary reached', str(error)
+        else:
+            raise AssertionError('Interpreter control survived')
+
+
 def serial_open_validation(platform='linux', post_error=None, linux_driver=True):
     device = SimpleNamespace(lines={'dtr': False, 'rts': False}, resets=0, opens=0)
     instances = []
@@ -451,6 +486,8 @@ def main():
     command_bound_validation()
     freshness_validation()
     dirty_session_recovery()
+    interpreter_validation()
+    interpreter_control()
     serial_open_validation()
     for number in (errno.ENOTTY, errno.EINVAL, errno.EIO):
         serial_open_validation(post_error=number)
