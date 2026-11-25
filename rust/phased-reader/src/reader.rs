@@ -10,6 +10,7 @@ use crate::{
     zip_window::{arena::Arena, source::BookSource},
 };
 use newt_core::{
+    member_check::Checked,
     chapter_layout::{
         engine::Engine,
         session::{ChapterSession, LayoutHandler},
@@ -38,7 +39,8 @@ pub struct PageInfo {
 }
 /// Initialize directly in caller storage; no owned arena or selection allocation.
 pub struct Selection {
-    pub entry: Entry,
+    /// Checked when the chapter was selected; the producer and cache reuse it.
+    pub entry: Checked,
     href: [u8; 512],
     title: [u8; 256],
     pub language: BookLanguage,
@@ -71,7 +73,7 @@ impl Selection {
         self.navigation.clone_from(&other.navigation);
     }
     fn clear(&mut self) {
-        self.entry = Entry::default();
+        self.entry = Checked::default();
         self.href.fill(0);
         self.title.fill(0);
         self.spines = 0;
@@ -829,7 +831,8 @@ fn bind_menu_book<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
         .map(|(_, e)| (e, book.navigation_is_epub3()));
     let package = *book.package();
     let entry_count = book.catalog().len();
-    let canonical::BookParts { mut workflow, arena, entries, manifest, spine, .. } = book.into_parts();
+    let canonical::BookParts { mut workflow, arena, entries, manifest, spine, directory_offset, .. } =
+        book.into_parts();
     let mark = arena.mark();
     let bytes = workflow.source.size();
     let mut guarded = NavigationSource { source: &mut *workflow.source, bytes, failed: false };
@@ -841,7 +844,14 @@ fn bind_menu_book<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     };
     let optional = if let Some((entry, epub3)) = declaration {
         let href = entry.name.and_then(|n| arena.c_string(n)).map(crate::xml_input::c_bytes);
-        if href.is_some_and(|h| crate::xml_input::dir_name(h, directory)) {
+        // A damaged TOC member degrades like an unparsable one.
+        let checked = canonical::CatalogView::new(&entries[..entry_count], arena, directory_offset)
+            .check(&mut guarded, &entry);
+        if let Err(status) = checked {
+            Err(status)
+        } else if let (Ok(entry), true) =
+            (checked, href.is_some_and(|h| crate::xml_input::dir_name(h, directory)))
+        {
             let mut nav = Workflow {
                 policy: workflow.policy, source: &mut guarded, backend: &mut *workflow.backend,
                 decoder: resources::decoder(&mut workflow.decoder), buffer: workflow.buffer.as_deref_mut(),

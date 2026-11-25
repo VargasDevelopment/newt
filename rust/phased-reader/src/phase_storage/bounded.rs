@@ -91,7 +91,9 @@ impl MetadataState {
                 Ok(values)
             });
             if status != Status::Ok { return status; }
-            catalog.into_parts()
+            let directory_offset = catalog.directory_offset();
+            let (source, arena, entries) = catalog.into_parts();
+            (source, arena, entries, directory_offset)
         };
         let mut scratch = Parts(&mut *parse);
         let buffer = match scratch.fixed::<2048>() { Ok(buffer) => buffer, Err(error) => return error };

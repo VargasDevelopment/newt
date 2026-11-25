@@ -95,7 +95,7 @@ impl<B: ParserBackend + ?Sized> session::Reader for OperationReader<'_, '_, '_, 
         source: &mut dyn BookSource,
         spine: u32,
         plain: bool,
-    ) -> Result<Entry, Status> {
+    ) -> Result<newt_core::member_check::Checked, Status> {
         self.staged = None;
         if self.reader.pending.is_some() {
             return Err(Status::Unsupported);

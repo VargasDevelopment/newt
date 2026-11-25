@@ -49,11 +49,13 @@ pub fn load_toc<'a, 'storage, S: BookSource + ?Sized, B: ParserBackend + ?Sized>
     parts: BookParts<'a, 'storage, S, B>,
     allocate: impl FnOnce(&mut Arena<'storage>, usize) -> Result<&'a mut [TocEntry], Status>,
 ) -> Result<MetadataParts<'a, 'storage>, Status> {
-    let BookParts { mut workflow, arena, entries, manifest, spine, result, .. } = parts;
+    let BookParts { mut workflow, arena, entries, manifest, spine, result, directory_offset, .. } = parts;
     let selected = result.nav_index.or(result.ncx_index)
         .and_then(|index| manifest.get(index)).and_then(|item| item.href)
         .and_then(|href| arena.c_string(href))
-        .and_then(|href| CatalogView::new(entries, arena).find(href));
+        .map(|href| CatalogView::new(entries, arena, directory_offset).member(workflow.source, href))
+        .filter(|found| *found != Err(Status::NotFound))
+        .transpose()?;
     let toc = if let Some((_, entry)) = selected {
         let index = result.nav_index.or(result.ncx_index).ok_or(Status::NotEpub)?;
         let href = manifest[index].href.and_then(|href| arena.c_string(href)).ok_or(Status::NotEpub)?;

@@ -22,7 +22,11 @@ impl Checked {
     pub const fn raw(size: u32) -> Self {
         Self(Entry::raw(size))
     }
-    pub fn entry(&self) -> &Entry {
+}
+/// Read-only: a `Checked` reads as its entry, but only [`check`] makes one.
+impl core::ops::Deref for Checked {
+    type Target = Entry;
+    fn deref(&self) -> &Entry {
         &self.0
     }
 }
@@ -34,17 +38,17 @@ impl Default for Checked {
 
 const NAME_CHUNK: usize = 64;
 
-/// Check `entry`'s local header against its central record. `name` is the
-/// central name without its terminator; `directory_offset` is where the
-/// central directory starts, so member data must end at or before it.
-/// Statuses match what whole-book admission returned for the same faults,
-/// except header disagreement, which is `Damaged`.
+/// Check `entry`'s local header against its central record and return it with
+/// the offset of its data. `name` is the central name without its terminator;
+/// `directory_offset` is where the central directory starts, so member data
+/// must end at or before it. Statuses match what whole-book admission returned
+/// for the same faults, except header disagreement, which is `Damaged`.
 pub fn check<S: BookSource + ?Sized>(
     source: &mut S,
     entry: &Entry,
     name: &[u8],
     directory_offset: u32,
-) -> Result<Checked, Status> {
+) -> Result<(Checked, u64), Status> {
     let Ok(name_bytes) = u16::try_from(name.len()) else {
         return Err(Status::Unsupported);
     };
@@ -96,7 +100,7 @@ pub fn check<S: BookSource + ?Sized>(
             return Err(Status::Damaged);
         }
     }
-    Ok(Checked(Entry { name: None, ..*entry }))
+    Ok((Checked(Entry { name: None, ..*entry }), data))
 }
 
 fn read_fully<S: BookSource + ?Sized>(source: &mut S, mut at: u64, mut out: &mut [u8]) -> bool {

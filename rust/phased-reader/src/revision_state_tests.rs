@@ -2,7 +2,8 @@
 // Source/Store/Hash/Admission bodies. They do not implement native SHA or I/O.
 use super::*;
 use super::super::session::{Build, Cache, Reader, Session};
-use crate::zip_container::{Entry, Status};
+use crate::zip_container::Status;
+use newt_core::member_check::Checked;
 use core::cell::Cell;
 
 #[derive(Default)]
@@ -79,7 +80,7 @@ impl Reader for Admission {
         self.admitted += 1; self.result
     }
     fn spine_count(&self) -> u32 { 0 }
-    fn stage(&mut self, _: &mut dyn BookSource, _: u32, _: bool) -> Result<Entry, Status> {
+    fn stage(&mut self, _: &mut dyn BookSource, _: u32, _: bool) -> Result<Checked, Status> {
         Err(Status::Unsupported)
     }
     fn commit(&mut self, _: u32) { panic!("prepared-open must not select/cache-build"); }

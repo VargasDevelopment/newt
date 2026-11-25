@@ -2,6 +2,7 @@
 //! Borrowed collaborators never retain the source passed to one operation.
 use super::{Digest, ImportedRevision, live};
 use crate::zip_container::{Entry, Status};
+use newt_core::member_check::Checked;
 use crate::zip_window::source::BookSource;
 use newt_core::{admission::WorkEvent, reader_action_profile::ActionStage,
     reader_work_profile::ReaderOpenRoute};
@@ -20,7 +21,7 @@ pub trait Reader {
         source: &mut dyn BookSource,
         spine: u32,
         plain: bool,
-    ) -> Result<Entry, Status>;
+    ) -> Result<Checked, Status>;
     fn commit(&mut self, spine: u32);
     /// An owning adapter composes selection AND verification inside its real
     /// parse loan. None keeps the original legacy acquire/finish policy intact.
