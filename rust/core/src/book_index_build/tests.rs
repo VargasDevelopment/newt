@@ -86,6 +86,23 @@ fn cancellation_during_merges_removes_work() {
     assert!(store.removed && store.work.is_empty() && store.published.is_empty());
 }
 #[test]
+fn progress_never_falls_within_a_phase() {
+    let mut store = Store::new(Fault::None);
+    let mut buffer = [0; 448];
+    let mut join = support::JoinBacking::new();
+    let mut state = join.state();
+    let mut seen: Vec<Progress> = Vec::new();
+    let prepared = support::prepare_watched(&mut store, &mut buffer, 64, 120, 120, 120, &mut state,
+        &mut |p| { seen.push(p); true }).unwrap();
+    prepared.publish(&mut store, &mut state, &mut |p| { seen.push(p); true }, &mut || true).unwrap();
+    for phase in [Phase::Central, Phase::Package, Phase::Join, Phase::Merge, Phase::Rank, Phase::Publish] {
+        let steps: Vec<_> = seen.iter().filter(|p| p.phase == phase).collect();
+        assert!(!steps.is_empty(), "{phase:?} never reported");
+        assert!(steps.windows(2).all(|w| w[0].done <= w[1].done), "{phase:?} fell back");
+        assert!(steps.iter().all(|p| p.total == 0 || p.done <= p.total), "{phase:?} passed its total");
+    }
+}
+#[test]
 fn index_limits_io_model() {
     for manifests in [MAX_SPINE, MAX_MEMBERS] {
     let mut store = Store::new(Fault::None);

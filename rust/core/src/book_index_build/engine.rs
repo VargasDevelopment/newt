@@ -154,6 +154,8 @@ impl<'a> Engine<'a> {
         let mut view = View { prefix: &[], tail: self.buffer };
         let mut joined = pool.next::<Joined, W>(&mut joins, &mut view, work, &mut self.io)?;
         let (mut rank, mut previous, mut valid) = (0, None, true);
+        // One step per member and per joined reference, so the bar rises evenly.
+        let (mut done, total) = (0, u64::from(header.members) + u64::from(header.spine));
         while let Some(member) = pool.next::<Member, W>(&mut members, &mut view, work, &mut self.io)? {
             if previous == Some(member.hash) { return Err(Error::Book(Status::Unsupported)); }
             previous = Some(member.hash);
@@ -171,17 +173,17 @@ impl<'a> Engine<'a> {
                 header.spine_bytes += u64::from(weight);
                 spine.push(Spine { position, member: if found { rank } else { NONE }, weight }, &mut view, work, &mut self.io)?;
                 joined = pool.next::<Joined, W>(&mut joins, &mut view, work, &mut self.io)?;
-                poll(progress, Phase::Join, u64::from(rank), u64::from(header.members))?;
+                done += 1; poll(progress, Phase::Rank, done, total)?;
             }
             if first_position != NONE { first.push(First { rank, position: first_position }, &mut view, work, &mut self.io)?; }
             rank += 1;
-            poll(progress, Phase::Join, u64::from(rank), u64::from(header.members))?;
+            done += 1; poll(progress, Phase::Rank, done, total)?;
         }
         while let Some(j) = joined {
             if j.text { valid = false; }
             spine.push(Spine { position: positions.rank(j.position)?, member: NONE, weight: 0 }, &mut view, work, &mut self.io)?;
             joined = pool.next::<Joined, W>(&mut joins, &mut view, work, &mut self.io)?;
-            poll(progress, Phase::Join, u64::from(rank), u64::from(header.members))?;
+            done += 1; poll(progress, Phase::Rank, done, total)?;
         }
         self.streams[4] = first.finish(&mut view, work, &mut self.io)?;
         self.streams[5] = spine.finish(&mut view, work, &mut self.io)?;

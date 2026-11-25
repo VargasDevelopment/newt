@@ -30,7 +30,9 @@ pub trait WorkFile {
     fn sync_work(&mut self) -> bool;
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Phase { Central, Package, Join, Merge, Publish }
+/// Join pairs manifest items with spine references; Rank walks members in name order.
+pub enum Phase { Central, Package, Join, Merge, Rank, Publish }
+/// `done` never falls within one phase; Merge counts work-file bytes across the whole build.
 /// `total == 0` means that the pass is streaming and its total is unknown.
 #[derive(Clone, Copy, Debug)]
 pub struct Progress { pub phase: Phase, pub done: u64, pub total: u64 }
@@ -277,12 +279,15 @@ impl<W: WorkFile + ?Sized> Handler for Package<'_, '_, W> {
         if !(self.progress)(Progress { phase: Phase::Package, done: self.progressed, total: 0 }) {
             self.fail(Status::Stale);
         }
-    }
+    }    /// A cancel or a failed spill ends the OPF read at once instead of at its last byte.
+    fn stop_parse(&self) -> bool { self.error != Status::Ok }
 }
 
 
 impl Prepared<'_> {
     /// Call only after closing the source. The store owns work and index FDs together.
+    /// After an error the unfinished index temp stays with the store; closing the
+    /// cache owner (or its next begin_write) removes it, as for any failed cache write.
     /// Once the index is published, a failed work-file removal is reported, not
     /// fatal: like a failed eviction, the census sweeps the file later.
     pub fn publish<W: WorkFile + CacheStorage + ?Sized>(mut self, store: &mut W, state: &mut JoinState<'_>,

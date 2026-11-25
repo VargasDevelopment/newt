@@ -51,7 +51,6 @@ impl Io {
         self.append(work, &b)?;
         list.last = Some(at);
         list.runs += 1;
-        list.records += run.count;
         self.stats.runs += 1;
         Ok(())
     }
@@ -65,7 +64,7 @@ impl Io {
 #[derive(Clone, Copy, Default)]
 pub(super) struct Region { pub start: usize, pub bytes: usize }
 #[derive(Clone, Copy, Default)]
-pub(super) struct List { pub last: Option<u32>, pub runs: u32, pub records: u32 }
+pub(super) struct List { pub last: Option<u32>, pub runs: u32 }
 #[derive(Clone, Copy, Default)]
 pub(super) struct Stream { pub memory: Option<Region>, pub list: List, pub forward: Option<(u32, u32)> }
 impl Stream {
@@ -261,17 +260,17 @@ pub(super) fn reduce<T: Record, W: WorkFile + ?Sized>(stream: &mut Stream, wante
         let mut output = List::default();
         while stream.list.runs >= 2 && stream.list.runs as usize + output.runs as usize > wanted {
         let count = fan.min(stream.list.runs as usize).min(stream.list.runs as usize + output.runs as usize - wanted + 1);
-        let mut batch = List { last: stream.list.last, runs: count as u32, records: 0 };
+        let batch = List { last: stream.list.last, runs: count as u32 };
+        let mut records = 0;
         let mut scan = batch.last;
         for _ in 0..count {
             let (run, previous, kind) = io_state.header(work, scan.ok_or_else(io)?)?;
             if kind != T::KIND { return Err(io()); }
-            batch.records += run.count;
+            records += run.count;
             scan = (previous != NONE).then_some(previous);
         }
         stream.list.last = scan;
         stream.list.runs -= count as u32;
-        stream.list.records -= batch.records;
         pool.clear();
         let mut group = pool.attach::<T, W>(work, io_state, Stream { list: batch, ..Stream::default() })?;
         let start = io_state.end;
@@ -288,7 +287,7 @@ pub(super) fn reduce<T: Record, W: WorkFile + ?Sized>(stream: &mut Stream, wante
             }
         }
         if used != 0 { let b = view.slice(out_start, used); checked = crc(checked, b); io_state.append(work, b)?; }
-        io_state.link(work, &mut output, Run { start, count: batch.records, checked }, T::KIND)?;
+        io_state.link(work, &mut output, Run { start, count: records, checked }, T::KIND)?;
         poll(progress, Phase::Merge, io_state.stats.read + io_state.stats.written, 0)?;
         }
         // Link descriptors only; new outputs cannot be merged again in this

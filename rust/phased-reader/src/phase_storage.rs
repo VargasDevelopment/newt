@@ -349,8 +349,9 @@ pub struct Phase<'a> {
 impl Phase<'_> {
     /// The index builder's join and publish state, carved from the parse bank
     /// after the OPF pass. It borrows the whole Phase, and every inflate and
-    /// XML resource is carved through `&mut self` too, so none can coexist
-    /// with it:
+    /// XML resource is carved through `&mut self` too (the crate-private
+    /// `stream`), so none can coexist with it. A doctest cannot name `stream`,
+    /// so this proof shows the shared rule with a second `&mut self` loan:
     ///
     /// ```compile_fail,E0499
     /// fn overlap(phase: &mut newt_phased_reader::phase_storage::Phase<'_>) {
