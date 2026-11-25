@@ -388,6 +388,42 @@ def freshness_validation():
         rejects(lambda: module.decode_record(framed(boot, session, identifier, status)), 'identity')
 
 
+def dirty_session_recovery():
+    class DirtyPeer(DiagnosticPeer):
+        def __init__(self):
+            super().__init__('DIAG available=0')
+            self.partial = True
+        def write_data(self, data, remaining):
+            if data == b'\n':
+                self.partial = False
+                self.writes.append(data)
+                return
+            if self.partial:
+                self.writes.append(data)
+                payload = b'!N1 12345 0 0 ERROR syntax'
+                self.pending += payload + f' *{zlib.crc32(payload):08x}\n'.encode()
+                return
+            super().write_data(data, remaining)
+    with patch.object(module, 'RESYNC_QUIET_SECONDS', 0.002):
+        peer = DirtyPeer()
+        assert peer.establish_session('diagnostic-fixture').startswith('HELLO ')
+        assert peer.writes.count(b'\n') == 1
+        assert peer.writes[-3:-1] == [b'N1 HELLO\n'] * 2
+        assert b' STATUS\n' in peer.writes[-1]
+        assert not any(b'PUT' in write or b'DATA' in write or b'DONE' in write for write in peer.writes)
+        assert any(row['kind'] == 'RESYNC' for row in peer.audit)
+        # Breaking the boundary leaves HELLO appended to the old partial input.
+        class NoBoundary(DirtyPeer):
+            def write_data(self, data, remaining):
+                if data == b'\n':
+                    return
+                super().write_data(data, remaining)
+        broken = NoBoundary()
+        started = time.monotonic()
+        rejects(lambda: broken.establish_session('diagnostic-fixture'), 'timed out')
+        assert time.monotonic() - started < 1, 'resync remains bounded under persistent dirty input'
+
+
 def main():
     from dev_usb_telemetry_test import firmware_row_validation, telemetry_validation
     telemetry_validation()
@@ -396,6 +432,7 @@ def main():
     diagnostic_v2_validation()
     command_bound_validation()
     freshness_validation()
+    dirty_session_recovery()
     serial_open_validation()
     for number in (errno.ENOTTY, errno.EINVAL, errno.EIO):
         serial_open_validation(post_error=number)

@@ -272,3 +272,36 @@ Home clock zone and format use SD records. The retired `newt_home` namespace
 and `/Newt/State/newt-home.nrs`, if present, are ignored and left intact. They
 are Newt historical data, never a foreign-storage error or an erase target.
 There is no Home write at startup.
+
+### PUT failure diagnostics and session recovery
+
+Each file receipt keeps a bounded `protocol_progress`: the last sent request,
+last acknowledged DATA offset and ID, elapsed/write time, cumulative DATA
+frames/time, and the last valid response or transport error. It never stores
+DATA payloads or an unbounded per-frame log. A successful write is still proved
+only by the matching DONE response.
+
+A granted DEV lease emits a number-only `PUT_STATS` row on exit, best effort
+with a one-second output bound. Counters exist only on the active lease's
+stack, with no idle heap. It reports the current request ID, block offset,
+received/expected bytes, total bytes read, empty polls, pause count/time, DATA
+receive time, card-write phase time, ACK enqueue time and commit phase time.
+Times are milliseconds; phases include their ordinary code overhead, not just
+USB or SD hardware time. ACK enqueue is not host receipt. No hardware overflow
+bit is observed: incomplete reception or malformed framing narrows a failure
+but does not by itself prove a hardware RX overflow.
+
+Exit reason codes are 0 done, 1 HELLO, 2 physical input, 3 disconnected,
+4 receive timeout, 5 invalid/overflowed line, 6 syntax, 7 session, 8 stale ID,
+9 reported refusal, 10 output failure, 255 no recorded reason. The first reason
+is retained even if its best-effort reply fails. The lease's existing receive
+and output deadlines remain unchanged.
+
+Before any action, a dirty or timed-out initial handshake triggers one bounded
+resynchronization: remain silent for 4.1 seconds while draining old replies
+(the three-second PUT receive bound plus the ordinary parser's one-second
+partial-line bound), delimit any remaining partial line, then prove two fresh
+HELLO sessions and a random-ID STATUS. Old responses can be discarded only
+during that handshake recovery. Build checks and action identity checks stay
+strict. Recovery never replays FILE, DATA, DONE or a press; persistent dirty
+input fails closed before actions. Unknown commits still require inspection.

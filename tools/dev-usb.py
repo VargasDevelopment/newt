@@ -20,6 +20,7 @@ from dev_usb_put import card_target, plan, put_files
 
 RECORD = re.compile(rb'!N1 ([0-9]+) ([0-9]+) ([0-9]+) (.*) \*([0-9a-f]{8})\n\Z')
 MAX_AUDIT_RECORDS = 2048  # Covers both directions of 32 PRESSes and two full captures.
+RESYNC_QUIET_SECONDS = 4.1  # PUT's 3 s receive bound plus Bridge's 1 s partial-line bound.
 CAPS = ('press,status,frame', 'press,status,frame,diag', 'press,status,frame,diag2',
         'press,status,frame,diag2,put')
 
@@ -34,7 +35,7 @@ def decode_record(line):
         return None
     match = RECORD.fullmatch(line)
     if len(line) > 512 or not match or zlib.crc32(line[:line.rfind(b' *')]) != int(match[5], 16):
-        raise ValueError('Damaged protocol record; restart the session')
+        raise ProtocolDirty('Damaged protocol record; restart the session')
     numbers = tuple(int(match[n]) for n in (1, 2, 3))
     if any(number > 0xffffffff or str(number).encode() != match[n]
            for n, number in enumerate(numbers, 1)):
@@ -107,6 +108,10 @@ class ProtocolRejected(ValueError):
 
 class ProtocolTimeout(ValueError):
     """No complete protocol record arrived before the deadline."""
+
+
+class ProtocolDirty(ValueError):
+    """An unfinished prior exchange needs a bounded, read-only resynchronization."""
 
 
 class ProtocolClient:
@@ -183,15 +188,42 @@ class ProtocolClient:
             self.trace('request', *map(int, tokens[1:4]), tokens[4], text.split(' ', 4)[4])
         self.write_data(data, remaining)
 
-    def hello(self, expected_build=None):
+    def establish_session(self, expected_build):
+        try:
+            return self.hello(expected_build)
+        except (ProtocolDirty, ProtocolTimeout) as error:
+            self.trace('recovery', None, None, 0, 'RESYNC', str(error))
+        # Never replay an action or FILE/DATA/DONE. Let an interrupted payload
+        # lease expire, drain its replies, then delimit an ordinary partial line.
+        deadline = time.monotonic() + RESYNC_QUIET_SECONDS
+        while time.monotonic() < deadline:
+            try:
+                self.record(deadline)
+            except ProtocolDirty:
+                continue
+            except ProtocolTimeout:
+                break
+        self.buffer.clear()
+        self.write_data(b'\n', self.timeout)
+        return self.hello(expected_build, recovering=True)
+
+    def hello(self, expected_build=None, *, recovering=False):
         self.capabilities = frozenset()
         previous = None
         for _ in range(2):
             deadline = time.monotonic() + self.timeout
             self.send('N1 HELLO', deadline)
-            boot, session, identifier, body = self.record(deadline)
-            if identifier != 0 or session == 0 or not body.startswith('HELLO '):
-                raise ValueError('Expected a fresh handshake')
+            while True:
+                try:
+                    boot, session, identifier, body = self.record(deadline)
+                except ProtocolDirty:
+                    if recovering and time.monotonic() < deadline:
+                        continue
+                    raise
+                if identifier == 0 and session != 0 and body.startswith('HELLO '):
+                    break
+                if not recovering or time.monotonic() >= deadline:
+                    raise ProtocolDirty('Expected a fresh handshake')
             fields = decode_fields(body, {'caps', 'wake', 'build'})
             if fields.get('caps') not in CAPS or fields.get('wake') != 'physical-only':
                 raise ValueError('Unsupported bridge capabilities')
@@ -376,7 +408,7 @@ def run_session(client, args):
     # Receipts keep 'simulation' (always False) for their readers.
     report = {'simulation': False, 'actions': []}
     try:
-        report['hello'] = client.hello(args.expect_build)
+        report['hello'] = client.establish_session(args.expect_build)
         if args.mode == 'put':
             report['put'] = {'folder': args.folder, 'files': []}
             put_files(client, args.folder, args.files, args.timeout, report['put'])

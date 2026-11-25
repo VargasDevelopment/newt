@@ -214,6 +214,7 @@ pub struct FakeWire {
     connected: bool,
     pub clock: u32,
     pub sent: Vec<u8>,
+    pub observations: Vec<newt_core::dev_put::Observation>,
     /// Bytes accepted per write call, so replies go out in pieces.
     pub write_limit: usize,
     /// The host stops reading: every write accepts nothing.
@@ -227,7 +228,7 @@ pub struct FakeWire {
 impl FakeWire {
     pub fn new(script: Vec<Event>) -> Self {
         Self { script: script.into(), pending: VecDeque::new(), connected: true, clock: 1_000, sent: Vec::new(),
-            write_limit: usize::MAX, stalled: false, pressed: Rc::default(), late: Rc::default() }
+            observations: Vec::new(), write_limit: usize::MAX, stalled: false, pressed: Rc::default(), late: Rc::default() }
     }
     fn front(&mut self, wanted: fn(&Event) -> bool) -> bool {
         if !self.pending.is_empty() || !self.script.front().is_some_and(wanted) { return false; }
@@ -286,6 +287,7 @@ impl Wire for FakeWire {
         self.pressed.take() || self.front(|event| matches!(event, Event::Press))
     }
     fn pause(&mut self) { self.clock += 1; }
+    fn observe(&mut self, event: newt_core::dev_put::Observation) { self.observations.push(event); }
 }
 
 #[derive(Default)]

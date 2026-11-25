@@ -76,6 +76,19 @@ pub trait Wire {
     fn physical_input(&mut self) -> bool;
     /// Lets other tasks run while no byte is waiting.
     fn pause(&mut self);
+    /// Optional DEV observations; no payload or path leaves the lease.
+    fn observe(&mut self, _event: Observation) {}
+}
+
+/// Stable diagnostic codes. A failure is latched before its best-effort reply.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum ExitReason { Done, Hello, PhysicalInput, Disconnected, Timeout, Line, Syntax, Session, StaleId, Refused, TxStall }
+
+#[derive(Clone, Copy, Debug)]
+pub enum Observation {
+    Request(u32), Receiving { offset: u64, expected: u32 }, Writing,
+    Commit, Reply, Waiting, Exit(ExitReason),
 }
 
 /// Facts the card-write admission reads before any lease begins.

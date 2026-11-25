@@ -82,6 +82,7 @@ class Lease:
     def __init__(self, client):
         self.client = client
         self.written = False  # the last line's host write returned
+        self.progress = {}
 
     def exchange(self, body, seconds, kind, payload=b''):
         client = self.client
@@ -89,6 +90,11 @@ class Lease:
         if client.request_id > 0xffffffff:
             raise ValueError('Session request IDs exhausted; request a fresh handshake')
         identity = client.boot, client.session, client.request_id
+        started = time.monotonic()
+        self.progress['last_sent'] = {'kind': kind, 'id': client.request_id, 'monotonic': started}
+        if kind == 'DATA':
+            _, offset, length = body.split()
+            self.progress['last_sent'].update(offset=int(offset), length=int(length))
         data = f'N1 {client.boot} {client.session} {client.request_id} {body}\n'.encode('ascii')
         if len(data) + len(payload) > LINE_BYTES + 1:
             raise ValueError('Lease frame exceeds its bound')
@@ -97,15 +103,31 @@ class Lease:
             client.trace('request', *identity, kind, body)
         deadline = time.monotonic() + seconds
         self.written = False
-        client.write_data(data, seconds)
-        self.written = True
-        boot, session, identifier, reply = client.record(deadline)
+        try:
+            client.write_data(data, seconds)
+            self.written = True
+            self.progress['write_seconds'] = time.monotonic() - started
+            boot, session, identifier, reply = client.record(deadline)
+        except (ValueError, OSError, KeyboardInterrupt) as error:
+            self.progress.update(error=str(error), elapsed_seconds=time.monotonic() - started)
+            raise
+        self.progress.update(elapsed_seconds=time.monotonic() - started,
+                             last_response={'boot': boot, 'session': session, 'id': identifier, 'body': reply,
+                                            'monotonic': time.monotonic()})
         if (boot, session, identifier) != identity:
             raise ValueError('Stale or unrelated protocol response')
         if reply.startswith('ERROR '):
             raise Refused(reply)
         if reply.split(' ', 1)[0] != kind:
             raise ValueError('Wrong response kind')
+        if kind == 'DATA' and reply != f'DATA {int(offset) + int(length)}':
+            raise ValueError('Wrong DATA acknowledgement')
+        self.progress['last_ack'] = {'kind': kind, 'id': identifier, 'monotonic': time.monotonic()}
+        if kind == 'DATA':
+            self.progress['last_ack']['offset'] = int(offset) + int(length)
+            self.progress['last_data_ack'] = dict(self.progress['last_ack'])
+            self.progress['data_frames'] = self.progress.get('data_frames', 0) + 1
+            self.progress['data_seconds'] = self.progress.get('data_seconds', 0) + time.monotonic() - started
         return reply
 
 
@@ -158,6 +180,7 @@ def put_files(client, folder, files, timeout, report):
             entry = {'local': local, 'name': name, 'size': len(data),
                      'sha256': hashlib.sha256(data).hexdigest(), 'result': 'unchanged'}
             report['files'].append(entry)
+            lease.progress = entry.setdefault('protocol_progress', {})
             try:
                 entry.update(put_file(lease, folder, name, data, timeout), result='written')
             except CommitUnknown as error:
@@ -169,6 +192,9 @@ def put_files(client, folder, files, timeout, report):
                 entry['result'] = 'recovery-needed'
                 raise RecoveryNeeded(f'{error}: the card keeps its reserved files and marker for a '
                                      'hand check; see "Card write" in docs/dev-usb-bridge.md.') from error
+    except (ValueError, OSError, KeyboardInterrupt) as error:
+        lease.progress['error'] = str(error) or 'Interrupted by operator'
+        raise
     finally:
         client.untraced = ()
     total = sum(entry['size'] for entry in report['files'])

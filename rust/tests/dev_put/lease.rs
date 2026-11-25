@@ -279,6 +279,8 @@ fn a_raw_block_has_a_nonrenewing_deadline() {
     let outcome = lease(&mut card, &mut host);
     assert_eq!(outcome.end, End::Cancelled);
     assert_eq!(outcome.last(), "ERROR abandoned reason=timeout");
+    assert!(outcome.wire.observations.iter().any(|event| matches!(event,
+        dev_put::Observation::Exit(dev_put::ExitReason::Timeout))));
     unchanged(&card, Some(b"old"));
 }
 
@@ -413,4 +415,58 @@ fn a_stalled_reply_cancels() {
     assert_eq!(outcome.end, End::Cancelled);
     assert!(outcome.replies.is_empty());
     unchanged(&card, None);
+}
+
+#[path = "../../firmware/app_runtime/card_write_observation.rs"]
+mod observation;
+
+#[test]
+fn twenty_mib_is_committed_only_after_full_readback() {
+    let bytes = pattern(20 * 1024 * 1024);
+    let mut card = FakeCard::default();
+    let outcome = lease(&mut card, Host::new().put("dev", "runtime.bin", &bytes));
+    assert_eq!(outcome.last(), done(&bytes));
+    assert_eq!(card.file(TARGET), Some(bytes.as_slice()));
+    assert_eq!(card.count("write"), 5120 + 1, "DATA blocks plus the commit marker");
+    assert_eq!(outcome.wire.observations.iter().filter(|event| matches!(event, dev_put::Observation::Writing)).count(), 5120);
+    resolved(&card);
+}
+
+#[test]
+fn a_late_interrupted_large_transfer_keeps_the_old_file_and_next_lease_works() {
+    let bytes = pattern(12 * 1024 * 1024);
+    let mut card = FakeCard::default();
+    card.put_file(TARGET, b"old");
+    let mut host = Host::new();
+    host.line(&file_line("dev", "runtime.bin", 20 * 1024 * 1024, &hex(&sha256(&bytes))))
+        .data(&bytes).line(&format!("DATA {} 4096", bytes.len()))
+        .then(Event::Bytes(vec![0x5a; 17])).then(Event::Wait(IDLE_MS));
+    let outcome = lease(&mut card, &mut host);
+    assert_eq!(outcome.end, End::Cancelled);
+    assert_eq!(outcome.last(), "ERROR abandoned reason=timeout");
+    assert!(outcome.wire.observations.iter().any(|event| matches!(event,
+        dev_put::Observation::Exit(dev_put::ExitReason::Timeout))));
+    unchanged(&card, Some(b"old"));
+    let next = lease(&mut card, Host::new().put("dev", "runtime.bin", b"fresh"));
+    assert_eq!(next.last(), done(b"fresh"));
+    assert_eq!(card.file(TARGET), Some(b"fresh".as_slice()));
+    resolved(&card);
+}
+
+#[test]
+fn lease_counters_separate_receive_write_ack_and_latch_the_first_exit() {
+    use dev_put::{ExitReason, Observation};
+    let mut counters = observation::Counters::default();
+    counters.observe(100, Observation::Request(123));
+    counters.observe(100, Observation::Receiving { offset: 12_132_352, expected: 4096 });
+    counters.read(7); counters.read(8); counters.read(-1); counters.paused(1);
+    counters.observe(110, Observation::Writing);
+    counters.observe(130, Observation::Reply);
+    counters.observe(133, Observation::Waiting);
+    counters.observe(140, Observation::Commit);
+    counters.observe(145, Observation::Exit(ExitReason::Timeout));
+    counters.observe(146, Observation::Exit(ExitReason::TxStall));
+    let mut row = String::new();
+    counters.row(150, &mut row).unwrap();
+    assert_eq!(row, "PUT_STATS reason=4 id=123 offset=12132352 received=2 expected=4096 bytes=2 empty=1 pauses=1 pause_ms=1 rx_ms=10 write_ms=20 ack_ms=3 commit_ms=5\n");
 }

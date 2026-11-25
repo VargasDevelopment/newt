@@ -114,6 +114,10 @@ def success():
     assert peer.card == {('Newt/Dev', name): data for _, name, data in FILES}
     assert [entry['result'] for entry in report['put']['files']] == ['written'] * 3
     assert report['put']['files'][1]['sha256'] == hashlib.sha256(FILES[1][2]).hexdigest()
+    progress = report['put']['files'][1]['protocol_progress']
+    assert progress['last_data_ack']['offset'] == len(FILES[1][2]) and progress['data_frames'] == 9
+    assert progress['last_ack']['kind'] == 'DONE' and progress['last_response']['body'].startswith('DONE ')
+    assert progress['data_seconds'] >= 0 and progress['write_seconds'] >= 0
     assert peer.writes.count('DATA') == 0 + 9 + 2 and peer.writes[-1] == 'STATUS'
     assert peer.longest <= 4352, 'each header and raw payload fit the frame bound'
     kinds = [record['kind'] for record in report['protocol']['records']]
@@ -142,6 +146,9 @@ def failures_before_done_leave_the_name_unchanged():
         assert time.monotonic() - started < 2, 'every wait has a deadline'
         assert report['put']['files'][-1]['result'] == 'unchanged'
         assert 'DONE' not in peer.writes and not peer.card
+        progress = report['put']['files'][-1]['protocol_progress']
+        assert progress['last_sent']['kind'] in ('DATA', 'FILE')
+        assert 'last_data_ack' not in progress, 'a failed first chunk is never acknowledged'
 
 
 def an_unknown_commit_is_never_retried():
@@ -365,7 +372,19 @@ int main(void) {
     print('PASS: FatFs pinned table regeneration, exhaustive BMP C parity, Unicode preflight; two controls fail')
 
 
+def lease_statistics_validation():
+    from dev_usb_firmware_rows import decode_firmware_row
+    row = (b'PUT_STATS reason=4 id=123 offset=12132352 received=17 expected=4096 bytes=12400000 '
+           b'empty=200 pauses=200 pause_ms=211 rx_ms=170 write_ms=9 ack_ms=2 commit_ms=0')
+    decoded = decode_firmware_row(row)
+    assert decoded['row'] == 'put_stats' and decoded['offset'] == 12132352
+    assert decoded['reason'] == 4 and decoded['received'] == 17 and decoded['pause_ms'] == 211
+    for bad in (row + b' name=anything', row.replace(b'id=123', b'id=-1'), row.replace(b'rx_ms=170', b'rx_ms=0170')):
+        assert decode_firmware_row(bad) is None
+
+
 def main():
+    lease_statistics_validation()
     success()
     refusals_before_any_write()
     failures_before_done_leave_the_name_unchanged()

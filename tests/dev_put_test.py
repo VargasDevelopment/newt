@@ -24,11 +24,18 @@ sys.path.insert(0, str(ROOT / 'tools'))
 from gate_tier import negative_controls
 
 BINARY = 'dev_put'
-TESTS = 38
+TESTS = 41
 # Recovery's one rule: a marker the next FILE finds refuses.
 MARKED = '        if self.recovery_file(MARKER, "marker")? { return Err(Refused::Recovery("commit", 0)); }\n'
 # (what breaks, its file under rust/core/src, its text there, the broken text, the test that must fail)
 CONTROLS = (
+    ('DATA write observation omitted', 'dev_put/lease.rs', '        self.wire.observe(Observation::Writing);\n', '',
+     'twenty_mib_is_committed_only_after_full_readback'),
+    ('timeout loses its typed cause', 'dev_put/lease.rs', '"timeout" => ExitReason::Timeout,', '"timeout" => ExitReason::Syntax,',
+     'a_late_interrupted_large_transfer_keeps_the_old_file_and_next_lease_works'),
+    ('first exit overwritten by reply failure', '../../firmware/app_runtime/card_write_observation.rs',
+     'self.reason.get_or_insert(reason);', 'self.reason = Some(reason);',
+     'lease_counters_separate_receive_write_ack_and_latch_the_first_exit'),
     ('the SHA-256 is not compared', 'dev_put/lease.rs', "        if digest != sha256 { return Err(Refused::DigestMismatch); }\n", "",
      'a_digest_mismatch_leaves_no_final_file'),
     ('a `..` name is allowed', 'dev_put/path.rs', "pub fn name_allowed(name: &[u8]) -> bool {\n",

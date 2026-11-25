@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //! The lease itself: its line protocol, the temp file and the checked rename.
-use super::{Card, End, Entry, Session, Wire, CHUNK_BYTES, IDLE_MS, LINE_BYTES,
+use super::{Card, End, Entry, ExitReason, Observation, Session, Wire, CHUNK_BYTES, IDLE_MS, LINE_BYTES,
     MEMORY_BYTES, ROOT, PATH_BYTES, TEMP, MARKER, STALL_MS, FRAME_BYTES, target_path};
 use crate::update_online::Hash;
 use crate::wire::crc32;
@@ -73,6 +73,7 @@ impl Lease<'_> {
             };
             let id = request.id;
             self.session.request = id;
+            self.wire.observe(Observation::Request(id));
             let step = match request.verb {
                 Verb::File => self.file(request.arguments),
                 Verb::Data => self.data(request.arguments),
@@ -80,13 +81,17 @@ impl Lease<'_> {
             };
             match step {
                 Ok(Step::Next) => {}
-                Ok(Step::Finished) => return End::Kept { last_id: id },
+                Ok(Step::Finished) => {
+                    self.wire.observe(Observation::Exit(ExitReason::Done));
+                    return End::Kept { last_id: id };
+                }
                 Err(Refused::Reply) => return End::Cancelled,
                 Err(Refused::Abandoned(reason)) => {
                     self.best_effort(reason);
                     return End::Cancelled;
                 }
                 Err(refused) => {
+                    self.wire.observe(Observation::Exit(ExitReason::Refused));
                     self.refuse(id, &refused);
                     return End::Kept { last_id: id };
                 }
@@ -137,7 +142,10 @@ impl Lease<'_> {
 
     fn parse(&mut self, length: usize) -> Result<Request, End> {
         let line = &self.line[..length];
-        if line == b"N1 HELLO" { return Err(End::Hello); }
+        if line == b"N1 HELLO" {
+            self.wire.observe(Observation::Exit(ExitReason::Hello));
+            return Err(End::Hello);
+        }
         let Some(request) = Request::parse(line) else {
             self.best_effort("syntax");
             return Err(End::Cancelled);
@@ -203,6 +211,7 @@ impl Lease<'_> {
         let fd = open.fd.ok_or(Refused::Order)?;
         // Length framing makes every byte, including LF, NUL and HELLO, data.
         // The whole header+block fits RX; cancellation never writes a prefix.
+        self.wire.observe(Observation::Receiving { offset: written, expected: decoded as u32 });
         let mut received = 0;
         let activity = self.wire.now();
         while received < decoded {
@@ -212,6 +221,7 @@ impl Lease<'_> {
             self.line[received] = byte as u8;
             received += 1;
         }
+        self.wire.observe(Observation::Writing);
         write_all(self.card, fd, &self.line[..decoded]).map_err(|code| Refused::Card("write", code))?;
         let written = written + decoded as u64;
         if let Some(open) = &mut self.open { open.written = written; }
@@ -222,6 +232,7 @@ impl Lease<'_> {
         let Some(open) = &mut self.open else { return Err(Refused::Order) };
         if open.written != open.size { return Err(Refused::Short); }
         let (size, sha256, target) = (open.size, open.sha256, open.target);
+        self.wire.observe(Observation::Commit);
         let fd = open.fd.take().ok_or(Refused::Order)?;
         let synced = self.card.sync(fd);
         let closed = self.card.close(fd);
@@ -321,6 +332,16 @@ impl Lease<'_> {
 
     /// The session is ending anyway; one attempt, answered with the last ID.
     fn best_effort(&mut self, reason: &str) {
+        let reason_code = match reason {
+            "physical-input" => ExitReason::PhysicalInput,
+            "disconnected" => ExitReason::Disconnected,
+            "timeout" => ExitReason::Timeout,
+            "line" => ExitReason::Line,
+            "session" => ExitReason::Session,
+            "stale-id" => ExitReason::StaleId,
+            _ => ExitReason::Syntax,
+        };
+        self.wire.observe(Observation::Exit(reason_code));
         let _ = self.send(self.session.request, format_args!("ERROR abandoned reason={reason}"));
     }
 
@@ -328,24 +349,39 @@ impl Lease<'_> {
     fn send(&mut self, id: u32, body: fmt::Arguments<'_>) -> bool {
         let Session { boot, session, .. } = self.session;
         let mut out = Cursor { bytes: self.reply, used: 0 };
-        if write!(out, "!N1 {boot} {session} {id} {body}").is_err() { return false; }
+        if write!(out, "!N1 {boot} {session} {id} {body}").is_err() {
+            self.wire.observe(Observation::Exit(ExitReason::TxStall));
+            return false;
+        }
         let checksum = crc32(&out.bytes[..out.used]);
-        if write!(out, " *{checksum:08x}\n").is_err() { return false; }
+        if write!(out, " *{checksum:08x}\n").is_err() {
+            self.wire.observe(Observation::Exit(ExitReason::TxStall));
+            return false;
+        }
+        self.wire.observe(Observation::Reply);
         let mut sent = 0;
         let mut progress = self.wire.now();
         while sent < out.used {
-            if !self.wire.connected() { return false; }
+            if !self.wire.connected() {
+                self.wire.observe(Observation::Exit(ExitReason::Disconnected));
+                return false;
+            }
             let put = self.wire.write(&out.bytes[sent..out.used]);
-            if put > out.used - sent { return false; }
+            if put > out.used - sent {
+                self.wire.observe(Observation::Exit(ExitReason::TxStall));
+                return false;
+            }
             if put != 0 {
                 sent += put;
                 progress = self.wire.now();
             } else if self.wire.now().wrapping_sub(progress) >= STALL_MS {
+                self.wire.observe(Observation::Exit(ExitReason::TxStall));
                 return false;
             } else {
                 self.wire.pause();
             }
         }
+        self.wire.observe(Observation::Waiting);
         true
     }
 }
