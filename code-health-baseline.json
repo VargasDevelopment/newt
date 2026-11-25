@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3978496,
+      "flash_bytes": 3980720,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "9d281f15caa7c5c25652e60fbcb3dd3c1af5674a",
-      "before": 3975136,
-      "after": 3978496,
-      "reason": "Released main a59fe9b1 measured 3,975,136 B (release clean record, CI 45520546225) -> 3,978,496 B, +3,360 B total for DEV PUT card paths, u64 sizes, raw DATA and scoped RX, plus bounded lease diagnostics and packet polling. The measured b5da3310 PUT candidate was 3,976,576 B; per-lease counters added 1,856 B, and the bounded 250 us packet polling / delimited, reconnect-tolerant exit report adds 64 B above the clean b5989b57 diagnostic image (3,978,432 B). Exact clean committed-tree measurement at 9d281f15: RAM 124,096 -> 124,096 B; RTC 300 -> 300 B; lent Wi-Fi 22,528 -> 22,528 B; selected frames remain 0/16/32/48/480 B and all three native RX leaves remain 16 B. No idle heap, new MMIO or timeout widening; the three-second receive and one-second output bounds remain. Original feature and diagnostic allocations approved by Lead; native source remains the Astra-reviewed source, and Opus reviewed the polling, framing, deadlines and final host delta clean. Counters remain for the next Lead-only bench diagnosis; no speed or long-transfer acceptance is claimed. Floors and selected ceilings remain unchanged.",
-      "reviewer": "Newt Lead (cross-family native review: Astra; counter/polling/exit and host re-review: Opus 5.5, 2026-11-25)"
+      "source_revision": "1d9dff5f1ddf5f2d1f4cae7196b93f530cecce9a",
+      "before": 3978496,
+      "after": 3980720,
+      "reason": "Rebased onto main 83903c92 (3,978,496 B): measured clean build at 1d9dff5f1ddf5f2d1f4cae7196b93f530cecce9a is 3,980,720 B (+2,224 B) for Progress::supersedes durability arbitration, attempted-sequence provenance across ProgressStore/ExternalProgressStore/ReaderCheckpoint/PendingRecovery and packed into SleepRecord::recovery bits 4..=31, RestoreExpectation boot restore struct, and late-reload durable reconciliation (#111). RAM 124,096 -> 124,096 B; RTC 300 -> 300 B (.rtc_noinit 208 -> 208 B); lent Wi-Fi 22,528 -> 22,528 B; selected stack frames remain 0/16/32/48/480 B (ceiling 656 B); all memory floors unchanged.",
+      "reviewer": "Astra round 2 (2026-11-25, cross-family review; clean apart from one accepted 28-bit attempted_delta saturation nit)"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
