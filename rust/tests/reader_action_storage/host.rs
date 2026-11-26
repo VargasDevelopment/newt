@@ -405,8 +405,8 @@ fn main() {
 }
 
 // #171: a first open whose index build spills reopens the source, which
-// restarts verification. The provisional import must still open Prepared;
-// a hint-admitted pending open keeps Selected.
+// restarts verification. The provisional import must still open Prepared.
+// A pending open that is not prepared (the hint path) keeps Selected.
 fn spill_reopened_first_open(runtime:&mut image::Runtime,home:&mut app_image::Home<'_>,ui:&mut app_image::Application<'_>,
     logical:&mut newt_core::frame::Frame,events:&mut app_image::Events<'_,'_>,filename:&str,digest:&[u8;32]) {
     use crate::reader_verification::Verification;
@@ -446,7 +446,9 @@ fn spill_reopened_first_open(runtime:&mut image::Runtime,home:&mut app_image::Ho
     image::execute_open(runtime,home,ui,logical,events,indexed);
     assert_eq!(image::drive::PREPARED.with(Cell::get),Some(true),
         "a spill-reopened first open must finish the prepared import");
-    // Hint path: verification pending over a selected revision, no prepare.
+    // Route check only: pending verification without the prepared flag, as
+    // after hint admission. The revision here is still provisional, because
+    // the host RunLoan never completes an import; only the route is checked.
     let session=runtime.session.as_mut().unwrap();let raw=runtime.source.as_mut().unwrap();
     assert!(session.verification.finish_with_update(&mut **raw,digest,&mut[0;4096],&mut||true,&mut|hash,bytes|
         newt_phased_reader::imported_revision::RevisionHasher::update(hash,bytes)));
@@ -457,8 +459,8 @@ fn spill_reopened_first_open(runtime:&mut image::Runtime,home:&mut app_image::Ho
     assert!(session.verification.begin(&**runtime.source.as_ref().unwrap(),reader_hash::MbedHasher::default));
     image::drive::PREPARED.with(|prepared| prepared.set(None));
     image::execute_open(runtime,home,ui,logical,events,indexed);
-    assert_eq!(image::drive::PREPARED.with(Cell::get),Some(false),"a hint-admitted pending open stays Selected");
-    println!("PASS spill-reopened first open: 600 spine items open Prepared; hint-admitted pending open stays Selected");
+    assert_eq!(image::drive::PREPARED.with(Cell::get),Some(false),"a pending open that is not prepared stays Selected");
+    println!("PASS spill-reopened first open: 600 spine items open Prepared; pending open without prepare stays Selected");
 }
 
 impl nvs::Inventory for Flash {
