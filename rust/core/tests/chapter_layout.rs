@@ -784,3 +784,105 @@ fn invalid_second_image_prevents_text_and_decoder_writes() {
     assert_eq!(decoder.calls, 0);
     assert_eq!(frame, [255]);
 }
+
+#[test]
+fn plain_justified_multi_span_hyphen_and_margin_match_right_edge() {
+    struct ScaledPlainFont;
+    impl Font for ScaledPlainFont {
+        fn covers(&mut self, _: u32) -> bool { true }
+        fn advance(&mut self, cp: u32, size: u16, flags: u8) -> i16 {
+            let base = if cp == 32 {
+                size / 2
+            } else if cp == 45 {
+                if flags & BOLD != 0 { size + 2 } else { size / 2 }
+            } else {
+                size
+            };
+            base as i16
+        }
+        fn line_height(&mut self, size: u16) -> i16 { size as i16 }
+        fn ascent(&mut self, size: u16) -> i16 { size as i16 }
+        fn kerning(&mut self, a: u32, b: u32, _: u16, _: u8) -> i16 {
+            if a == u32::from(b'A') && b == u32::from(b'V') { -2 } else { 0 }
+        }
+    }
+    struct SpaceShyBreak;
+    impl LineBreak for SpaceShyBreak {
+        fn breaks(&mut self, t: &[u8], _: Option<&core::ffi::CStr>, o: &mut [u8]) {
+            o.fill(2);
+            for (idx, &b) in t.iter().enumerate() {
+                if b == b' ' { o[idx] = 1; }
+            }
+            for (idx, w) in t.windows(2).enumerate() {
+                if w == [0xc2, 0xad] { o[idx + 1] = 1; }
+            }
+            if let Some(last) = o.last_mut() { *last = 0; }
+        }
+    }
+    let mut font = ScaledPlainFont;
+    let mut sink = Capture::default();
+    let mut backend = SplitBackend { font: &mut font, sink: &mut sink };
+    let mut text = [0; 256];
+    let mut breaks = [0; 256];
+    let mut levels = [0; 256];
+    let mut spans = [Span::default(); 32];
+    let mut lines = [Line::default(); 16];
+    let mut elements = [Element::default(); 16];
+    let mut runs = [Run::default(); 64];
+    let mut images = [Image::default(); 2];
+    let mut links = [Link::default(); 4];
+    let mut page = [0; 1024];
+    let mut style = [0; 128];
+    let mut pl = [ParLink::default(); 4];
+    let mut rules = vec![CssRule::default(); 64];
+    let mut builder = CssStylesheetBuilder::default();
+    builder.begin(&mut rules);
+    let storage = Storage {
+        text: &mut text, breaks: &mut breaks, levels: &mut levels, spans: &mut spans,
+        lines: &mut lines, elements: &mut elements, runs: &mut runs, images: &mut images,
+        links: &mut links, page: &mut page, style_text: &mut style, paragraph_links: &mut pl,
+    };
+    let (mut breaker, mut img) = (SpaceShyBreak, FixtureImages);
+    // Plain justified paragraph (no small-caps or text-transform):
+    // "x" (10) + space (5) + kerned "AV" (10+10-2=18) + margin(150%*50%=75% -> 7)
+    // + bold 150% (15 px) "cd-" (15+15+17=47) = 87 px.
+    // Width = 92 leaves 5 px justification slack on the single space gap:
+    // placing "AV" after the gap exposes any shared kerning regression via its x=20 start.
+    let params = Params {
+        width: 92, height: 80, left: 0, right: 0, top: 0, bottom: 0, base_size: 10,
+        ..Params::default()
+    };
+    let mut e = Engine::new(params, storage, &mut backend, &mut breaker, &mut img, None, builder).unwrap();
+    e.start(b"body", None, None, None, None, None);
+    e.start(b"p", None, Some(b"text-align:justify"), None, None, None);
+    e.text(b"x AV");
+    e.start(b"span", None, Some(b"font-weight:bold;font-size:150%;margin-left:50%"), None, None, None);
+    e.text("cd\u{00ad}efgh".as_bytes());
+    e.end(b"span");
+    e.end(b"p");
+    e.end(b"body");
+    assert!(e.finish());
+
+    let runs_out = &sink.pages[0].2;
+    let first_line: Vec<_> = runs_out.iter().filter(|r| r.2 == 10).collect();
+    assert_eq!(first_line.len(), 3, "expected three runs on justified line 1: {runs_out:?}");
+    assert_eq!((first_line[0].0.as_slice(), first_line[0].1, first_line[0].3, first_line[0].4), (b"x".as_slice(), 0, 10, 0));
+    assert_eq!((first_line[1].0.as_slice(), first_line[1].1, first_line[1].3, first_line[1].4), (b"AV".as_slice(), 20, 10, 0));
+    assert_eq!((first_line[2].0.as_slice(), first_line[2].1, first_line[2].3, first_line[2].4), (b"cd-".as_slice(), 45, 15, BOLD));
+    let mut mf = ScaledPlainFont;
+    let last_run = first_line[2];
+    let mut painted_w = 0i32;
+    let mut prev = 0u32;
+    for &b in &last_run.0 {
+        let cp = u32::from(b);
+        painted_w += i32::from(mf.advance(cp, last_run.3, last_run.4));
+        if prev != 0 {
+            painted_w += i32::from(mf.kerning(prev, cp, last_run.3, last_run.4));
+        }
+        prev = cp;
+    }
+    assert_eq!(i32::from(last_run.1) + painted_w, 92, "justified plain multi-span hyphenated line must hit exact right edge");
+    let second_line: Vec<_> = runs_out.iter().filter(|r| r.2 == 20).collect();
+    assert_eq!(second_line.len(), 1);
+    assert_eq!((second_line[0].0.as_slice(), second_line[0].1, second_line[0].3, second_line[0].4), (b"efgh".as_slice(), 0, 15, BOLD));
+}

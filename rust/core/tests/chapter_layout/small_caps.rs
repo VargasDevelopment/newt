@@ -955,9 +955,27 @@ fn dictionary_hyphenation_prices_ending_span_size_and_hyphen_kerning() {
 
     // Word starts in normal span ("xx") and transitions into a small-cap span ("abcc"):
     // candidate split at "xxa|bcc" ends inside the small-cap span with 'A' + '-' kerning.
-    let mut font = StrictCaseFont {
-        kern_ah: true,
-        ..StrictCaseFont::default()
+    struct TraceFont {
+        inner: StrictCaseFont,
+        advances: Vec<(u32, u16, u8)>,
+    }
+    impl Font for TraceFont {
+        fn covers(&mut self, cp: u32) -> bool { self.inner.covers(cp) }
+        fn advance(&mut self, cp: u32, size: u16, flags: u8) -> i16 {
+            self.advances.push((cp, size, flags));
+            self.inner.advance(cp, size, flags)
+        }
+        fn line_height(&mut self, size: u16) -> i16 { self.inner.line_height(size) }
+        fn ascent(&mut self, size: u16) -> i16 { self.inner.ascent(size) }
+        fn ligature(&mut self, a: u32, b: u32, flags: u8) -> u32 { self.inner.ligature(a, b, flags) }
+        fn kerning(&mut self, a: u32, b: u32, size: u16, flags: u8) -> i16 { self.inner.kerning(a, b, size, flags) }
+    }
+    let mut font = TraceFont {
+        inner: StrictCaseFont {
+            kern_ah: true,
+            ..StrictCaseFont::default()
+        },
+        advances: Vec::new(),
     };
     let mut sink = AnchorCapture::default();
     let width = 120i16; // content width = 88 px
@@ -1034,6 +1052,20 @@ fn dictionary_hyphenation_prices_ending_span_size_and_hyphen_kerning() {
     engine.end(b"p");
     engine.end(b"body");
     assert!(engine.finish());
+    drop(engine);
+    let sc_sz = case::small_cap_px(30);
+    assert!(
+        font.advances.windows(6).any(|w| w == [
+            (u32::from(b' '), 30, 0),
+            (u32::from(b'-'), 30, 0),
+            (u32::from(b'x'), 30, 0),
+            (u32::from(b'x'), 30, 0),
+            (u32::from(b'A'), sc_sz, 0),
+            (u32::from(b'-'), sc_sz, 0),
+        ]),
+        "styled dictionary hyphenation must preserve #172's word-start hyphen probe before candidate probes: {:?}",
+        font.advances
+    );
 
     let runs = &sink.inner.pages[0].2;
     let first_base = runs[0].2;
