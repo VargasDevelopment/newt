@@ -1316,7 +1316,8 @@ fn duty_due_while_read_held_completes(bytes: &[u8]) {
         let path = held_path.borrow().clone().expect("precondition: a duty came due while a sealed page read was held");
         assert_ne!(out.admission, Admission::Denied, "a duty due while a read is held must not end the fill");
         assert_eq!(read_in_duty.get(), Some(false), "the pause must close the held read before the duty");
-        assert_eq!(page_files(card).len(), 5, "the segment map is published after the duty");
+        assert!(card.0.borrow().model.files.contains_key(&map_path), "the segment map is published after the duty");
+        assert_eq!(page_files(card).len(), 5, "no other page file appears");
         assert_eq!(out.target, 1, "Done must advance visit target to prefetch spine 1");
 
         // Closing the held read is safe: no op used a closed descriptor, the
