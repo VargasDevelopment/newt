@@ -16,6 +16,7 @@ path (app_runtime/home_cover.rs) is copied in for its edit.
 the input fake, a software reset on each restart (exit 75), until the presses
 are used up and the loop is idle.
 """
+import atexit
 import json
 import os
 from pathlib import Path
@@ -23,6 +24,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import zlib
 
 sys.dont_write_bytecode = True
@@ -167,17 +169,57 @@ def _control_command(command, optimize):
         '-Cdebug-assertions=no', '-Coverflow-checks=no']
 
 
+# A control's folder: controls/<edits key>-<owner pid>-<random>.
+CONTROL_FOLDER = re.compile(r'[0-9a-f]{8}-([0-9]+)-[^/]+')
+_owned_controls: list[Path] = []
+
+
+def _owner_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # another user's process: alive
+        pass
+    return True
+
+
+def sweep_controls(controls: Path) -> None:
+    """Remove controls whose owner process is gone: a phase killed before its
+    exit cleanup leaks its folders. A live owner's folder is never removed; a
+    reused pid only delays removal until that process exits too. Anything
+    else, such as an older checkout's controls/<edits key>, is left alone."""
+    for entry in controls.iterdir():
+        owner = CONTROL_FOLDER.fullmatch(entry.name)
+        if owner and not _owner_alive(int(owner.group(1))):
+            shutil.rmtree(entry, ignore_errors=True)
+
+
+def _remove_owned_controls() -> None:
+    for folder in _owned_controls:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
 def control(edits, *, optimize: bool = True) -> Path:
     """Relink the last build over a private copy of its generated sources, so
     parallel controls never see each other's edits. Timing-independent suites
-    may skip root optimization; the positive preview stays optimized."""
+    may skip root optimization; the positive preview stays optimized.
+
+    Gate phases run at once and may ask for the same control, so each call
+    links into a folder of its own that no other call touches; this process
+    removes it on exit. Controls are never reused: a complete build-input
+    identity is hard to state, and a stale control could pass for a real one."""
     link = json.loads(LINK.read_text())
     command = _control_command(link['command'], optimize)
-    source = WORK / 'source'
     key = '%08x' % zlib.crc32(json.dumps((edits, optimize)).encode())
-    out = WORK / 'controls' / key
-    shutil.rmtree(out, ignore_errors=True)
-    out.mkdir(parents=True)
+    controls = WORK / 'controls'
+    controls.mkdir(parents=True, exist_ok=True)
+    sweep_controls(controls)
+    out = Path(tempfile.mkdtemp(prefix=f'{key}-{os.getpid()}-', dir=controls))
+    if not _owned_controls:
+        atexit.register(_remove_owned_controls)
+    _owned_controls.append(out)
+    source = WORK / 'source'
     copies = out / 'source'
     shutil.copytree(source, copies)
     rewire = lambda text: text.replace(json.dumps(str(source))[1:-1] + '/', json.dumps(str(copies))[1:-1] + '/')

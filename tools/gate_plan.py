@@ -47,7 +47,7 @@ QUICK = ("bench_flash_test.py --negative-controls", "bench_flash_layouts_test.py
          "ci_workflow_test.py", "public_ci_test.py", "docs_lane_test.py", "ci_persist_test.py", "gate_runner_test.py", "gate_tier_test.py", "gate_performance_test.py", "host_wide_jobs_test.py", "gate_stop_test.py", "procedure_closure_test.py",
          "code_health.py", "native_sleep_guard_test.py",
          "native_reader_stack_test.py", "native_rollback_hook_test.py", "native_timer_task_test.py", "native_flash_writers_test.py", "native_crash_output_test.py", "wifi_link_test.py", "next_boot_test.py", "heap_clear_test.py", "build_scope_test.py", "rust_app_build_test.py",
-         "freeink_patch_destination_test.py", "toolchain_share_test.py",
+         "freeink_patch_destination_test.py", "toolchain_share_test.py", "rust_preview_control_test.py --negative-controls",
          "native_output_test.py", "make-reader-fixture.py --check", "make-builtin-app.py --check", "newt_package_test.py", "newt_delivery_test.py",
          "library_preview_test.py", REVIEWED_UI_TEST, "system_ui_rule_test.py",
          *(name for _, name in UNIT_TESTS), "gate_previews.py")
@@ -186,6 +186,7 @@ def plan(profile: str, fresh_objects: bool, controls=None) -> list[Phase]:
     run(ROOT / "rust/check.py", "--target-probes", uses=shared_target)
     test("freeink_patch_destination_test.py")
     test("toolchain_share_test.py")
+    test("rust_preview_control_test.py", "--negative-controls")
     test("native_output_test.py")
     for tool in ("make-reader-fixture.py", "make-builtin-app.py"):
         run(ROOT / "tools" / tool, "--check", bytecode=True)
