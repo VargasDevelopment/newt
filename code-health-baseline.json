@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 4061552,
+      "flash_bytes": 4061792,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,10 +28,10 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "cd08bedd1a2431bbf3443c1c0543a5971de6ff1d",
+      "source_revision": "c75104d40048153b6bfc5238f693cda76e054627",
       "before": 4060720,
-      "after": 4061552,
-      "reason": "+832 B over the 4,060,720 B ceiling recorded at 03d259f1: #168 (NEWT-212, slice 1) teaches the page-cache reader the v4 segment format with an optional resume-point range. The reader decides the point's owning page once at open (PageCacheReader::point_owner, 202 B), ends that page at the point and makes any other page the range touches miss (page_extent, 124 B), parses the v4 footer (open_allocated 1,262 -> 1,416 B) and requires a v4 page record to fill its extent exactly (decode_page 1,592 -> 1,744 B); u32_at is no longer inlined (+140 B) and two callers grow by 12 B. An nm diff of the two clean ELFs gives +784 B of code; Flash Data grows 48 B. Control: a clean build of 75032428 (main without the change) measures 4,060,720 B. Clean regional DEV USB build with the pinned Python at cd08bedd: 4,061,552 B. RAM 124,096 -> 124,096 B (+0 B), RTC 300 -> 300 B (+0 B), lent Wi-Fi RAM 22,528 -> 22,528 B (+0 B), selected stacks unchanged (open_selected_profile 480 <= 656 B). Usable app space 7,016,448 B; headroom 2,955,728 B (42.13%) -> 2,954,896 B (42.11%). No memory floor or stack ceiling moves. Nothing writes a point yet, so no card or RAM use changes.",
+      "after": 4061792,
+      "reason": "+1,072 B over the 4,060,720 B ceiling recorded at 03d259f1: #168 (NEWT-212, slice 1) teaches the page-cache reader the v4 segment format with an optional resume-point range. The reader decides the point's owning page once at open (PageCacheReader::point_owner, 340 B), rejects a v4 page gap outside the page data or overlapping another gap, ends the owner at the point and makes any other page the range touches miss (page_extent, 216 B), parses the v4 footer (open_allocated 1,262 -> 1,416 B) and requires a v4 page record to fill its extent exactly (decode_page 1,592 -> 1,744 B); u32_at is no longer inlined (+140 B) and two callers grow by 12 B. An nm diff of the two clean ELFs gives +1,014 B of code; Flash Data grows 48 B. Control: a clean build of 75032428 (main without the change) measures 4,060,720 B. Clean regional DEV USB build with the pinned Python at c75104d4: 4,061,792 B. Static RAM 124,096 -> 124,096 B (+0 B), RTC 300 -> 300 B (+0 B), lent Wi-Fi RAM 22,528 -> 22,528 B (+0 B), selected stacks unchanged (open_selected_profile 480 <= 656 B). Unselected stack frames grow: PageCacheReader::open_allocated 144 -> 176 B, PhasedChapterCache::read_entry 496 -> 512 B and Resources::stored 464 -> 480 B (from each function's prologue); point_owner, page_extent and u32_at are leaves with no frame. Single frames do not establish the runtime stack peak; no stack ceiling or memory floor moves. Usable app space 7,016,448 B; headroom 2,955,728 B (42.13%) -> 2,954,656 B (42.11%). The writer still emits v3, so no card use changes.",
       "reviewer": "cross-family review (Astra xhigh) and Codex review of #192; Lead review pending"
     },
     "ram_bytes": {
