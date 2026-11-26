@@ -17,6 +17,13 @@ CALLER_SAVED = ["ra"] + [f"a{i}" for i in range(8)] + [f"t{i}" for i in range(7)
 MEMORY = re.compile(r"^(?:l[bhwd]u?|s[bhwd]|fl[wd]|fs[wd])$")
 # Instructions after which control never falls through.
 UNCONDITIONAL = re.compile(r"^(?:j|jr|ret|mret)$")
+TARGET = re.compile(r"\b([0-9a-f]+) <")
+# The C3's cache-mapped flash buses (data, instructions): no stack is there.
+FLASH_BUSES = ((0x3c000000, 0x3c800000), (0x42000000, 0x42800000))
+# An sp-derived value: sp plus small offsets, always a RAM address.
+STACK = "stack"
+# A register with more possible values than this counts as unknown.
+VALUES = 8
 
 
 class Image:
@@ -37,7 +44,7 @@ class Image:
         owner = Lookup([(entry["address"], entry["address"] + entry["size"], entry) for entry in inputs
                         if entry["size"] and entry["output"] in code])
         self.nodes = [{"kind": "code", "name": f["name"], "address": f["address"], "end": f["end"],
-                       "code": f["code"], "file": (owner.find(f["address"]) or {}).get("file", "?"),
+                       "code": f["code"], "entries": f["entries"], "file": (owner.find(f["address"]) or {}).get("file", "?"),
                        "section": self.section_of(f["address"])} for f in functions]
         self.nodes += [{"kind": "data", "name": entry["name"], "address": entry["address"],
                         "end": entry["address"] + entry["size"], "file": entry["file"], "section": entry["output"]}
@@ -126,6 +133,20 @@ def parse_functions(text: str) -> list:
         following = functions[index + 1]["address"] if index + 1 < len(functions) else None
         last = function["code"][-1][0] + 4 if function["code"] else function["address"]
         function["end"] = min(following, last) if following is not None and following > function["address"] else last
+        function["entries"] = set()
+    # Where other code transfers into a function past its start: registers
+    # arrive there unknown (stale_notes). An indirect target counts by its note.
+    owners = Lookup([(function["address"], function["end"], function) for function in functions])
+    for function in functions:
+        for _, mnemonic, operands, resolved in function["code"]:
+            target = TARGET.search(operands)
+            targets = [int(target[1], 16)] if target else []
+            if resolved is not None and mnemonic in ("jr", "jalr"):
+                targets.append(resolved)
+            for address in targets:
+                owner = owners.find(address)
+                if owner is not None and owner is not function and address != owner["address"]:
+                    owner["entries"].add(address)
     return functions
 
 
@@ -166,7 +187,7 @@ def file_name(path: str) -> str:
 def references(function, gp):
     """Every address one function's code refers to (see Limits)."""
     found, known = set(), {}
-    stale = stale_notes(function["code"])
+    stale = stale_notes(function)
     for address, mnemonic, operands, resolved in function["code"]:
         parts = [part.strip() for part in operands.split(",")] if operands else []
         if resolved is not None and address not in stale:
@@ -201,47 +222,82 @@ def references(function, gp):
     return found
 
 
-def stale_notes(code) -> set:
-    """Loads and stores whose objdump address note is stale. objdump follows a
-    lui/auipc into later uses of that register without seeing it rewritten
-    (`addi a3,sp,224` before a loop that reads 0(a3)). A note stands while a
-    lui/auipc of the base can reach the instruction along the function's own
-    branches; a function with a jump table (a bare `jr`) keeps every note."""
-    if any(mnemonic == "jr" and resolved is None for _, mnemonic, _, resolved in code):
+def stale_notes(function) -> set:
+    """Loads and stores whose objdump address note is proved stale. objdump
+    carries a lui/auipc value into later uses of that register without seeing
+    it rewritten (`addi a3,sp,224` before a loop that reads 0(a3)). A note is
+    dropped only when, on every path through the function's branches, its base
+    holds a definite value that cannot form that address: another constant, or
+    a stack address against a flash one. Registers are unknown, so keep every
+    note, at the function's start, wherever other code enters it, after a call
+    (caller-saved ones) and after any write not modelled here; a function with
+    an indirect jump keeps all its notes."""
+    code = function["code"]
+    if not code or any(mnemonic == "jr" for _, mnemonic, _, _ in code):
         return set()
     index = {address: i for i, (address, *_) in enumerate(code)}
     successors = []
     for i, (_, mnemonic, operands, _) in enumerate(code):
         following = [] if UNCONDITIONAL.match(mnemonic) or i + 1 == len(code) else [i + 1]
-        target = re.search(r"\b([0-9a-f]+) <", operands)
-        if target and re.match(r"^(?:b\w*|j)$", mnemonic) and int(target[1], 16) in index:
+        target = TARGET.search(operands)
+        if target and re.match(r"^(?:b\w*|j|jal)$", mnemonic) and int(target[1], 16) in index:
             following.append(index[int(target[1], 16)])
         successors.append(following)
-    # held[i]: registers that may hold a lui/auipc value when instruction i starts.
-    held, reached, pending = [set() for _ in code], {0}, [0] if code else []
+    # held[i]: each register's possible values as instruction i starts (None:
+    # not reached). A register left out is unknown.
+    held = [None] * len(code)
+    pending = [0] + [index[address] for address in function["entries"] if address in index]
+    for i in pending:
+        held[i] = {"sp": frozenset({STACK}), "zero": frozenset({0})}
     while pending:
         i = pending.pop()
-        _, mnemonic, operands, _ = code[i]
-        parts = [part.strip() for part in operands.split(",")] if operands else []
-        after = set(held[i])
-        if mnemonic in ("jal", "jalr"):
-            after.difference_update(CALLER_SAVED)
-        elif parts and not NO_DESTINATION.match(mnemonic):
-            if mnemonic in ("lui", "auipc"):
-                after.add(parts[0])
-            else:
-                after.discard(parts[0])
+        after = note_values(held[i], code[i])
         for j in successors[i]:
-            if j not in reached or not after <= held[j]:
-                held[j] |= after
-                reached.add(j)
+            joined = after if held[j] is None else {
+                register: held[j][register] | after[register] for register in held[j].keys() & after.keys()
+                if len(held[j][register] | after[register]) <= VALUES}
+            if joined != held[j]:
+                held[j] = joined
                 pending.append(j)
     stale = set()
-    for i, (address, mnemonic, operands, resolved) in enumerate(code):
-        base = re.search(r"\((\w+)\)", operands)
-        if resolved is not None and MEMORY.match(mnemonic) and base and i in reached and base[1] not in held[i]:
+    for state, (address, mnemonic, operands, resolved) in zip(held, code):
+        memory = re.search(r"(-?\d+)\((\w+)\)", operands)
+        if state is None or resolved is None or not MEMORY.match(mnemonic) or not memory or memory[2] not in state:
+            continue
+        wanted = (resolved - int(memory[1])) & 0xffffffff
+        flash = any(low <= resolved < high for low, high in FLASH_BUSES)
+        if all(flash if value == STACK else value != wanted for value in state[memory[2]]):
             stale.add(address)
     return stale
+
+
+def note_values(state, instruction):
+    """One instruction's effect on stale_notes' register values."""
+    address, mnemonic, operands, _ = instruction
+    parts = [part.strip() for part in operands.split(",")] if operands else []
+    after = dict(state)
+    if mnemonic in ("jal", "jalr"):
+        # A callee may keep or replace any caller-saved register.
+        for register in CALLER_SAVED:
+            after.pop(register, None)
+        return after
+    if not parts or NO_DESTINATION.match(mnemonic) or parts[0] == "zero":
+        return after
+    source = state.get(parts[1]) if len(parts) > 1 else None
+    value = None
+    if mnemonic in ("lui", "auipc") and len(parts) == 2:
+        value = {((int(parts[1], 0) << 12) + (address if mnemonic == "auipc" else 0)) & 0xffffffff}
+    elif mnemonic == "li" and len(parts) == 2:
+        value = {int(parts[1], 0) & 0xffffffff}
+    elif mnemonic == "mv" and len(parts) == 2 and source is not None:
+        value = source
+    elif mnemonic == "addi" and len(parts) == 3 and source is not None:
+        value = {item if item == STACK else (item + int(parts[2], 0)) & 0xffffffff for item in source}
+    if value is None or len(value) > VALUES:
+        after.pop(parts[0], None)
+    else:
+        after[parts[0]] = frozenset(value)
+    return after
 
 
 def indirect_calls(function) -> int:

@@ -28,10 +28,10 @@ moved to flash, the C3 stays cache-safe only while IRAM code never calls it. Fro
    larger context fails the build instead of splitting the large heap.
 
 Limits: a reference is what the linked code spells: a call or jump, an
-address objdump resolves (a load or store's note stands while a lui/auipc of
-its base may reach it along any path through the function's branches, not
-only within its own block, where another path's restore would hide a real
-reference: tools/wifi_link_image.py stale_notes), a lui/auipc pair within a
+address objdump resolves (a load or store's note is dropped only when every
+path through the function's branches proves its base holds something else; a
+register that is unknown, as at entry, after a call or an unmodelled write,
+keeps it: tools/wifi_link_image.py stale_notes), a lui/auipc pair within a
 function, a gp offset or an aligned data word (in Newt's own objects, one they relocate: tools/
 object_relocations.py). A pointer built by other arithmetic, or kept by ROM
 code, is not seen, and an indirect call's target is unknown; the receipt

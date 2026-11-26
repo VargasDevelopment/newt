@@ -442,41 +442,150 @@ class ObjectMetadata(unittest.TestCase):
 
 
 
-def referred(*listing):
-    """references() of one objdump -d listing, its instructions 4 bytes apart from 0x1000."""
-    function, = parse_functions("00001000 <f>:\n" + "\n".join(
-        f"{0x1000 + 4 * index:x}:\t00000013\t{line}" for index, line in enumerate(listing)))
-    return references(function, None)
+def referred(listing, name):
+    """references() of one function in a short objdump -d listing whose
+    instruction lines are written `address: instruction`."""
+    lines = []
+    for line in listing.strip().splitlines():
+        line = line.strip()
+        if not line.endswith(">:"):
+            address, instruction = line.split(": ", 1)
+            line = f"{address}:\t00000013\t" + instruction.replace(" ", "\t", 1)
+        lines.append(line)
+    functions = {function["name"]: function for function in parse_functions("\n".join(lines))}
+    return references(functions[name], None)
 
 
 class ObjdumpNotes(unittest.TestCase):
-    """objdump's `# address` note follows a lui/auipc into later uses of that
-    register without seeing it rewritten; only a note it can still hold counts."""
+    """objdump's `# address` note carries a lui/auipc into later uses of that
+    register without seeing it rewritten. A load or store's note is dropped
+    only when its base is proved to hold something else on every path."""
 
-    def test_load_through_a_rewritten_base_ignores_the_stale_note(self):
-        # The base is a stack address both on entry to the loop and around its back edge.
-        self.assertNotIn(0x3c230000, referred(
-            "lui\ta3,0x3c230", "addi\ta3,sp,224", "lbu\ta5,0(a3) # 3c230000 <vtable>",
-            "addi\ta3,a3,1", "bne\ta3,a6,1008 <f+0x8>", "ret"))
+    def test_stack_base_drops_a_flash_note(self):
+        # The base is a stack address on entry to the loop and around its back edge.
+        self.assertNotIn(0x3c230000, referred("""
+            00001000 <f>:
+            1000: lui a3,0x3c230
+            1004: addi a3,sp,224
+            1008: lbu a5,0(a3) # 3c230000 <vtable>
+            100c: addi a3,a3,1
+            1010: bne a3,a6,1008 <f+0x8>
+            1014: ret""", "f"))
+
+    def test_stack_base_keeps_a_ram_note(self):
+        # A stack can sit anywhere in RAM, so it cannot rule a RAM address out.
+        self.assertIn(0x3fc8f004, referred("""
+            00001000 <f>:
+            1000: lui a3,0x3fc8f
+            1004: addi a3,sp,224
+            1008: lbu a0,4(a3) # 3fc8f004 <data>
+            100c: ret""", "f"))
+
+    def test_other_constant_drops_the_note(self):
+        self.assertNotIn(0x3fc8f004, referred("""
+            00001000 <f>:
+            1000: lui a3,0x3fc8f
+            1004: li a3,0
+            1008: lbu a0,4(a3) # 3fc8f004 <data>
+            100c: ret""", "f"))
 
     def test_lui_then_load_still_refers(self):
-        self.assertIn(0x3c230000, referred("lui\ta3,0x3c230", "lbu\ta5,0(a3) # 3c230000 <vtable>", "ret"))
+        self.assertIn(0x3c230000, referred("""
+            00001000 <f>:
+            1000: lui a3,0x3c230
+            1004: lbu a5,0(a3) # 3c230000 <vtable>
+            1008: ret""", "f"))
+
+    def test_diamond_keeps_the_branch_path(self):
+        # One path rewrites s1, the branch keeps the lui value for the join.
+        self.assertIn(0x3fc8f004, referred("""
+            00001000 <f>:
+            1000: lui s1,0x3fc8f
+            1004: beqz a0,100c <f+0xc>
+            1008: li s1,0
+            100c: lw a0,4(s1) # 3fc8f004 <data>
+            1010: ret""", "f"))
 
     def test_note_reached_along_another_path_still_refers(self):
         # One path restores s1 and returns; the branch keeps the lui value for the load.
-        self.assertIn(0x3fca3b98, referred(
-            "lui\ts1,0x3fca4", "beqz\ta0,1010 <f+0x10>", "lw\ts1,4(sp)", "ret",
-            "lw\ta0,-1128(s1) # 3fca3b98 <semaphore>", "ret"))
+        self.assertIn(0x3fca3b98, referred("""
+            00001000 <f>:
+            1000: lui s1,0x3fca4
+            1004: beqz a0,1010 <f+0x10>
+            1008: lw s1,4(sp)
+            100c: ret
+            1010: lw a0,-1128(s1) # 3fca3b98 <semaphore>
+            1014: ret""", "f"))
 
-    def test_jump_table_function_keeps_every_note(self):
-        # A bare `jr` has successors the listing cannot name, so no note is judged stale.
-        self.assertIn(0x3c230000, referred(
-            "lui\ta3,0x3c230", "addi\ta3,sp,224", "lbu\ta5,0(a3) # 3c230000 <vtable>", "jr\ta5"))
+    def test_a_call_may_keep_caller_saved_registers(self):
+        self.assertIn(0x3fc8f004, referred("""
+            00001000 <call_keeps_base>:
+            1000: lui a3,0x3fc8f
+            1004: jal 1010 <preserving_leaf>
+            1008: lbu a0,4(a3) # 3fc8f004 <data>
+            100c: ret
+            00001010 <preserving_leaf>:
+            1010: ret""", "call_keeps_base"))
+
+    def test_annotated_indirect_jump_keeps_every_note(self):
+        # The jump's note is objdump's guess too, so it cannot name every way in.
+        self.assertIn(0x3fc8f004, referred("""
+            00001014 <annotated_jump>:
+            1014: lui a3,0x3fc8f
+            1018: beqz a0,1024 <annotated_jump+0x10>
+            101c: li a3,0
+            1020: j 102c <annotated_jump+0x18>
+            1024: auipc t1,0x0
+            1028: jr 8(t1) # 102c <annotated_jump+0x18>
+            102c: lbu a0,4(a3) # 3fc8f004 <data>
+            1030: ret""", "annotated_jump"))
+
+    def test_bare_indirect_jump_keeps_every_note(self):
+        self.assertIn(0x3c230000, referred("""
+            00001000 <f>:
+            1000: lui a3,0x3c230
+            1004: addi a3,sp,224
+            1008: lbu a5,0(a3) # 3c230000 <vtable>
+            100c: jr a5""", "f"))
+
+    def test_registers_arrive_unknown_at_a_label(self):
+        self.assertIn(0x3fc8f004, referred("""
+            00001034 <before_boundary>:
+            1034: lui a3,0x3fc8f
+            1038: j 103c <after_boundary>
+            0000103c <after_boundary>:
+            103c: lbu a0,4(a3) # 3fc8f004 <data>
+            1040: ret""", "after_boundary"))
+
+    def test_registers_arrive_unknown_where_other_code_jumps_in(self):
+        self.assertIn(0x3fc8f004, referred("""
+            00001000 <caller>:
+            1000: lui a3,0x3fc8f
+            1004: j 100c <callee+0x4>
+            00001008 <callee>:
+            1008: li a3,0
+            100c: lbu a0,4(a3) # 3fc8f004 <data>
+            1010: ret""", "callee"))
+
+    def test_a_copy_carries_the_value(self):
+        self.assertIn(0x3fc8f004, referred("""
+            00001044 <identity_write>:
+            1044: lui s1,0x3fc8f
+            1048: mv s1,s1
+            104c: beqz a0,1058 <identity_write+0x14>
+            1050: li s1,0
+            1054: ret
+            1058: lw a0,4(s1) # 3fc8f004 <data>
+            105c: ret""", "identity_write"))
 
     def test_call_note_still_refers(self):
         # A call's note stands even with no lui/auipc of its base in view.
-        self.assertIn(0x40384df2, referred(
-            "addi\tra,sp,8", "jalr\t804(ra) # 40384df2 <xQueueSemaphoreTake>", "ret"))
+        self.assertIn(0x40384df2, referred("""
+            00001000 <f>:
+            1000: addi ra,sp,8
+            1004: jalr 804(ra) # 40384df2 <xQueueSemaphoreTake>
+            1008: ret""", "f"))
+
 
 if __name__ == "__main__":
     unittest.main()
