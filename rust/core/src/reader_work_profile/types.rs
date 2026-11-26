@@ -35,6 +35,7 @@ pub enum ReaderOpenRoute {
     PrefetchRunning = 1 << 22,
     PrefetchComplete = 1 << 23,
     PrefetchStopped = 1 << 24,
+    ContentsPerRow = 1 << 25,
     TimingInvalid = 1 << 31,
 }
 

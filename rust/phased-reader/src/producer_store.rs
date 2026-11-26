@@ -152,3 +152,27 @@ pub(crate) fn with_source_store<'window, 'ctx, 'pause, C: ?Sized, S: CacheStorag
     source.with_checks(bytes, wrapped, |check| store.with_guarded(
         attempted.map(|flag| (check, flag)), operation))
 }
+
+impl<C: ?Sized, S: crate::phase_storage::ReadScope> crate::phase_storage::ReadScope
+    for ProducerStore<'_, '_, '_, '_, C, S>
+{
+    fn invalidate_index(&mut self, digest: &[u8; 32]) -> bool {
+        self.state.used == 0 && self.cancellation.checkpoint() && self.base.invalidate_index(digest)
+    }
+    #[inline(always)]
+    fn query<R>(&mut self, name: &[u8], opening: bool, scratch: &mut [u8],
+        live: &mut dyn FnMut() -> bool, read: impl FnOnce(&mut dyn CacheStorage) -> R,
+    ) -> Result<(R, bool), crate::zip_container::Status> {
+        if self.state.used != 0 { return Err(crate::zip_container::Status::Unsupported); }
+        let cancellation = self.cancellation;
+        self.base.query(name, opening, scratch, &mut || cancellation.checkpoint() && live(), read)
+    }
+    #[inline(always)]
+    fn query_index<R>(&mut self, name: &[u8], digest: &[u8; 32], opening: bool, scratch: &mut [u8],
+        live: &mut dyn FnMut() -> bool, read: impl FnOnce(&mut dyn CacheStorage) -> R,
+    ) -> Result<(R, bool), crate::zip_container::Status> {
+        if self.state.used != 0 { return Err(crate::zip_container::Status::Unsupported); }
+        let cancellation = self.cancellation;
+        self.base.query_index(name, digest, opening, scratch, &mut || cancellation.checkpoint() && live(), read)
+    }
+}

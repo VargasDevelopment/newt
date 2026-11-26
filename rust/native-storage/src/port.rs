@@ -153,6 +153,11 @@ impl<S: Native> Operation<'_, '_, S> {
         self.port.state.generation = self.port.state.generation.wrapping_add(1);
         let fd = self.port.state.fd.take();
         let temporary = self.port.state.owns.then(|| self.port.state.path);
+        if self.port.state.owns && newt_core::book_index::FileName::parse(self.suffix().as_bytes()).is_some() {
+            self.port.state.path.truncate(self.port.state.final_bytes-3);
+            // Cannot fail: it rewrites the three bytes just truncated.
+            let _ = self.port.state.path.write_str("IDX");
+        }
         self.port.state.token = 0;
         self.port.state.owns = false;
         self.port.state.writing = false;
@@ -193,13 +198,14 @@ impl<S: Native> Operation<'_, '_, S> {
             || self.port.state.owns
             || self.port.state.token != 0
             || !self.allowed()
+            || (directory.unwrap_or(self.port.directory)=="Index" && !newt_core::book_index::FileName::parse(suffix.as_bytes())
+                .is_some_and(|name|name.kind()==newt_core::book_index::FileKind::Index))
             || suffix.is_empty()
             || suffix.len() > 127
-            || suffix.contains("..")
+            || suffix.as_bytes().windows(2).any(|pair| pair == b"..")
             || suffix.ends_with(".bak")
-            || !suffix
-                .bytes()
-                .all(|b| b.is_ascii_digit() || b.is_ascii_lowercase() || b == b'-' || b == b'.')
+            || (!newt_core::book_index::FileName::parse(suffix.as_bytes()).is_some()
+                && !suffix.bytes().all(|b| b.is_ascii_digit() || b.is_ascii_lowercase() || b == b'-' || b == b'.'))
         {
             return false;
         }
@@ -216,6 +222,11 @@ impl<S: Native> Operation<'_, '_, S> {
         true
     }
     pub fn same_name(&self, name: &str) -> bool {
+        if self.port.state.owns {
+            if let Some(current)=newt_core::book_index::FileName::parse(self.suffix().as_bytes()) {
+                return current.with_kind(newt_core::book_index::FileKind::Index).as_str()==name;
+            }
+        }
         self.suffix() == name
     }
     pub fn suffix(&self) -> &str {
@@ -253,6 +264,8 @@ impl<S: Native> Operation<'_, '_, S> {
             self.port.state.invalid = true;
             return false;
         }
+        // FAT fstat has no directory-entry time. Freshness must use the
+        // path timestamp here, as it does in stable().
         let Ok(p) = self.io(|s| s.stat(path, false)) else {
             return self.settle(false);
         };
@@ -276,10 +289,7 @@ impl<S: Native> Operation<'_, '_, S> {
         let path = self.port.state.path;
         let mut opened = self.io(|s| s.open(&path, Open::ReadNonblock));
         if opened == Err(Error::Missing) && self.canonical().len() + 4 < 256 {
-            let mut backup = self.canonical();
-            if backup.write_str(".bak").is_err() {
-                return self.fail();
-            }
+            let Some(backup)=self.backup_name() else {return self.fail();};
             let mut names = Vec::new();
             if names.try_reserve_exact(1).is_err() {
                 return self.fail();
@@ -359,13 +369,21 @@ impl<S: Native> Operation<'_, '_, S> {
             return false;
         }
         for _ in 0..32 {
-            let nonce = self.port.native.next_nonce();
             self.port.state.path.truncate(self.port.state.final_bytes);
-            if write!(self.port.state.path, ".{nonce:08x}.tmp").is_err() {
+            let short=newt_core::book_index::FileName::parse(self.suffix().as_bytes());
+            let named=if short.is_some() {
+                self.port.state.path.truncate(self.port.state.path.len()-3);
+                self.port.state.path.write_str("TMP").is_ok()
+            } else {
+                let nonce=self.port.native.next_nonce();
+                write!(self.port.state.path,".{nonce:08x}.tmp").is_ok()
+            };
+            if !named {
                 self.port.state.path.truncate(self.port.state.final_bytes);
                 return false;
             }
             let path = self.port.state.path;
+            if short.is_some() && !matches!(self.io(|s|s.unlink(&path)),Ok(())|Err(Error::Missing)) {return false;}
             match self.io(|s| s.open(&path, Open::CreateExclusive)) {
                 Ok(fd) => {
                     self.port.state.fd = Some(fd);
@@ -694,6 +712,40 @@ impl<S: Native> Operation<'_, '_, S> {
         }
         self.stable(lease)
     }
+    /// Index publication owns this cursor until a read-back or a new writer.
+    /// Other stores keep their pinned 1 KiB polling and seek boundaries.
+    pub(crate) fn write_indexed(&mut self, mut offset: u32, mut input: &[u8], append: bool,
+        position: &mut Option<u32>,
+    ) -> bool {
+        let lease = self.port.state.generation;
+        if !self.port.state.writing || !self.stable(lease) { return false; }
+        let mut interrupted = 0;
+        while !input.is_empty() {
+            if !self.stable(lease) { return self.poison(); }
+            let Some(fd) = self.port.state.fd else { return self.poison(); };
+            if *position != Some(offset) && self.io(|native| native.seek(fd, offset)) != Ok(u64::from(offset)) {
+                *position = None;
+                return self.poison();
+            }
+            let want = input.len().min(4096);
+            self.port.state.synced = false;
+            let result = self.io(|native| native.write(fd, &input[..want]));
+            if result == Err(Error::Interrupted) {
+                *position = None;
+                interrupted += 1;
+                if interrupted < 4 { continue; }
+            }
+            if result.is_ok() { interrupted = 0; }
+            let Ok(got) = result else { *position = None; return self.poison(); };
+            if got == 0 || got > want || !self.allowed() { *position = None; return self.poison(); }
+            if append { self.port.state.bytes = self.port.state.bytes.wrapping_add(got as u32); }
+            offset = offset.wrapping_add(got as u32);
+            *position = Some(offset);
+            if !self.stable(lease) { return self.poison(); }
+            input = &input[got..];
+        }
+        self.stable(lease)
+    }
     pub fn sync(&mut self) -> bool {
         if !self.port.state.writing || !self.stable(self.port.state.generation) {
             return self.fail();
@@ -735,11 +787,9 @@ impl<S: Native> Operation<'_, '_, S> {
             return false;
         }
         {
-            let names = self.port.state.names.as_mut().expect("transaction names");
-            names[1] = names[0];
-            if names[1].write_str(".bak").is_err() {
-                return false;
-            }
+            let Some(backup)=self.backup_name() else {return false;};
+            let Some(names)=self.port.state.names.as_mut() else {return false;};
+            names[1]=backup;
         }
         if !matches!(
             self.named_io(|s, _, names| s.stat(&names[0], false)),

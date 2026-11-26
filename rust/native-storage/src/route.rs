@@ -58,7 +58,10 @@ impl Route<'_> {
         let Some(mut path) = self.name(directory, suffix, receipt) else { return false; };
         if path.len() + 4 >= 256 { return false; }
         let canonical = matches!(native.unlink(&path), Ok(()) | Err(crate::Error::Missing));
-        if path.write_str(".bak").is_err() { return false; }
+        if directory=="Index" {
+            path.truncate(path.len()-3);
+            if path.write_str("BAK").is_err() {return false;}
+        } else if path.write_str(".bak").is_err() { return false; }
         let backup = matches!(native.unlink(&path), Ok(()) | Err(crate::Error::Missing));
         canonical && backup && self.allowed()
     }
@@ -115,12 +118,15 @@ impl Route<'_> {
         ok
     }
     /// Compare the existing canonical name, not a second retained identity.
-    /// Directory overrides stay allowed; root/key and receipt separator must
-    /// belong to this exact route. Private state guarantees UTF-8 boundaries.
+    /// Directory overrides stay allowed. Index names share the content-addressed
+    /// folder and bind identity in their header; other records retain this
+    /// exact root/key and receipt separator. Private state keeps UTF-8 bounds.
     pub(crate) fn owns_name(&self, path: &str, suffix_bytes: usize) -> bool {
         if !self.state.valid || suffix_bytes == 0 { return false; }
         let Some(tail) = path.strip_prefix(&*self.state.root).and_then(|p| p.strip_prefix('/'))
             else { return false; };
+        if suffix_bytes==12 && tail.strip_prefix("Index/").and_then(|name|
+            newt_core::book_index::FileName::parse(name.as_bytes())).is_some() { return true; }
         let Some(key_end) = tail.len().checked_sub(suffix_bytes + 1) else { return false; };
         let Some(prefix) = tail.get(..key_end) else { return false; };
         let Some(directory) = prefix.strip_suffix(&*self.state.key) else { return false; };
@@ -131,6 +137,11 @@ impl Route<'_> {
             return None;
         }
         let mut path = Path::empty();
+        if directory=="Index" {
+            let name=newt_core::book_index::FileName::parse(suffix.as_bytes())?;
+            write!(path,"{}/Index/{}",&*self.state.root,name.as_str()).ok()?;
+            return Some(path);
+        }
         write!(
             path,
             "{}/{}/{}{}{}",

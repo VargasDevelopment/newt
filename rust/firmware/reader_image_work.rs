@@ -44,6 +44,7 @@ impl Runtime {
             }
             Work::OpenSample => {
                 if self.close_runtime(home).is_err() { crate::app_power::stop(); }
+                self.index_trim_owed = false;
                 self.selection.reset(&mut || {}, &mut || self.title.fill(0));
                 *self.selection.flags_mut() |= flag::SAMPLE_CHOSEN;
                 ui.catalog = None;
@@ -104,6 +105,7 @@ impl Runtime {
         let previous_ready = self.progress_ready;
         let previous_settings = self.settings;
         let previous_ui = self.reader_ui;
+        let previous_trim = self.index_trim_owed;
         let previous_recovery = self.recovery;
         // Only this attempt's reader issue may name why it failed.
         self.saves.set_reader(ReaderIssue::None);
@@ -117,7 +119,7 @@ impl Runtime {
             let selected = self.prepare_image(home, ui, logical, events, filename, None, profile).is_ok_and(|digest| {
                 self.selection.publish_candidate(filename, digest, &mut || {}, &mut || {})
             });
-            if selected { ui.catalog = None; }
+            if selected { ui.catalog = None; self.index_trim_owed = false; }
             let loaded = selected && self.with_store(home, |this, store| {
                 let loaded = this.load_progress(store, events.action);
                 matches!(loaded, Load::Loaded(()) | Load::Empty)
@@ -137,6 +139,7 @@ impl Runtime {
                 else { ReaderIssue::text_raw(self.saves.reader())
                     .map_or(b"This book could not be opened.", CStr::to_bytes) };
                 if self.close_runtime(home).is_err() { crate::app_power::stop(); }
+                self.index_trim_owed = false;
                 self.selection.reset(&mut || {}, &mut || {});
                 // select released the catalog before reader admission. A
                 // rejected transaction restores browsing through its real scan.
@@ -157,6 +160,7 @@ impl Runtime {
                 self.settings = previous_settings;
                 self.recovery = previous_recovery;
                 self.reader_ui = previous_ui;
+                self.index_trim_owed = previous_trim;
                 if let Some(memory) = self.memory.external_mut() {
                     memory.lend(|memory| {
                         let book = &mut *memory.runtime;

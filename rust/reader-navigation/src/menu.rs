@@ -102,11 +102,11 @@ impl Navigation {
             return false;
         }
         let mapping = &mut mapping[..book.toc_count()];
+        book.declared_spines(mapping);
         let mut first_mapped = NO_SPINE;
         let mut last_mapped = None;
         let mut unordered = false;
-        for (toc, mapped) in mapping.iter_mut().enumerate() {
-            *mapped = declared_spine(book, toc);
+        for mapped in mapping.iter() {
             if *mapped == NO_SPINE {
                 continue;
             }

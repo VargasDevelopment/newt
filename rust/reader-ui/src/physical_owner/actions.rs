@@ -1,8 +1,22 @@
 // SPDX-License-Identifier: MIT
 //! Public action entry points over the existing physical owner.
 use super::*;
+use crate::physical_source::SourceOperations;
 
 impl ExternalOwner {
+    /// Reopening requires the preceding index pass, including after settings changes.
+    ///
+    /// ```compile_fail
+    /// use newt_core::{progress::Progress, xml_session::ParserBackend};
+    /// use newt_phased_reader::{PhasedReader, CachePresence, phase_storage::ReadScope};
+    /// use newt_reader_ui::{ExternalOwner, PhysicalOwner, PhysicalSource, ReaderPanelLoan, RestorePolicy};
+    /// fn reopen<B: ParserBackend, L: ReaderPanelLoan, C: ReadScope + CachePresence, S: PhysicalSource>(
+    ///     owner: &mut ExternalOwner, reader: &mut PhasedReader<'_, '_>, source: &mut S,
+    ///     ports: &mut PhysicalOwner<'_, '_, '_, B, L, C>,
+    /// ) {
+    ///     owner.open_physical(reader, source, 0, Progress::default(), RestorePolicy::Validated, 0, ports);
+    /// }
+    /// ```
     pub fn open_physical<
         B: ParserBackend + ?Sized,
         L: ReaderPanelLoan,
@@ -10,6 +24,7 @@ impl ExternalOwner {
         S: PhysicalSource,
     >(
         &mut self,
+        indexed: &newt_phased_reader::index_build::Indexed,
         reader: &mut PhasedReader<'_, '_>,
         revision: &mut S,
         identity: u64,
@@ -18,6 +33,13 @@ impl ExternalOwner {
         now: u32,
         resources: &mut PhysicalOwner<'_, '_, '_, B, L, C>,
     ) -> bool {
+        let matches = revision.with_physical_source(|source| match source {
+            crate::physical_source::PhysicalSourceRef::Revision(source) => source.digest() == indexed.digest(),
+            crate::physical_source::PhysicalSourceRef::Reader(source) => source.digest() == *indexed.digest(),
+            crate::physical_source::PhysicalSourceRef::Strict(source) => source.digest() == *indexed.digest(),
+            crate::physical_source::PhysicalSourceRef::Pending(source) => source.digest() == *indexed.digest(),
+        });
+        if !matches { return false; }
         self.open_with(reader, revision, identity, saved, policy, now, resources)
     }
     pub fn turn_physical<

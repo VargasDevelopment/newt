@@ -45,7 +45,10 @@ fn open(panel: &mut newt_c3_board::ReaderPanel<'_, '_>, io: &UiIo, card: &mut ca
         let mut ports = newt_reader_ui::PhysicalOwner { storage: &mut storage, panel, backend: &mut parser,
             breaker: &mut breaker, cache: PhasedChapterCache { store: pages, hash: &mut Hash, settings },
             open: PhysicalOpen::Import, cache_only: false };
-        if owner.open_physical(&mut reader, &mut source, saved.book, saved, policy, now(), &mut ports) {
+        let indexed = newt_phased_reader::index_build::open(&mut source, &digest, ports.storage,
+            ports.panel, ports.backend, ports.cache.store, None,
+            newt_phased_reader::index_build::Verification::Verified).unwrap();
+        if owner.open_physical(&indexed, &mut reader, &mut source, saved.book, saved, policy, now(), &mut ports) {
             shown = Some(reader.info().char_start);
         }
         reader.close();

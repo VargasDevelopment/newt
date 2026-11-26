@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3997344,
+      "flash_bytes": 4040000,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "1b39423ffd1bb1d13590230b66c1a88dacc6c032",
-      "before": 3994144,
-      "after": 3997344,
-      "reason": "+3,200 B over the 3,994,144 B ceiling (main 4b344fbc / record 217ea968): adds Font::ink_extents in ReaderAtlas (forwarded through SplitBackend and SelectingSink) and per-emitted-glyph above/below baseline vertical extent accounting in core chapter_layout for #148 so oversized and shifted inline runs never overprint adjacent lines or clip at top/bottom margins, plus bumps page_envelope::VERSION 3 -> 4 to regenerate stale pages in place (.text 1,889,512 -> 1,892,366 B, +2,854 B; .rodata 1,986,524 -> 1,986,860 B, +336 B; +10 B padding). Clean regional DEV USB build of 1b39423f with the pinned Python: 3,994,144 -> 3,997,344 B. RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, selected stack frames 0/16/32/48/480 B (within 0/16/32/48/656 B ceilings; 330 frames).",
-      "reviewer": "Astra (gpt-6.2-astra, 2026-11-25; 4-round cross-family static review approved 5e079f7d / c386f368; rebased cleanly onto 4b344fbc as 1b39423f with zero code changes beyond PORTABLE_TESTS 517->519 base shift; no independent target build or hardware test)"
+      "source_revision": "84245ad549722ca9b777892ee5a1566c363827ba",
+      "before": 3997344,
+      "after": 4040000,
+      "reason": "+42,656 B over the 3,997,344 B ceiling (main 8291b1cf measures exactly 3,997,344 B): #60 (NEWT-166) B3 builds the durable book index on an EPUB's first open and reads every later open through it, so the reader no longer parses the OPF or catalog; the open keeps two slots free under the cap for a spilled build, the trim to 24 files runs in settled idle work once the page producer has no work and pins only the open .IDX, and the Contents map scans the index in bounded read scopes. Clean regional DEV USB builds with the pinned Python: main 8291b1cf 3,997,344 B; 84245ad5 4,040,000 B (.text 1,892,366 -> 1,932,430 B, +40,064 B; .rodata 1,986,860 -> 1,989,452 B, +2,592 B). Linked symbols by area at 81e76cf0 (4,038,208 B; tests excluded; nm against main 445edb17; areas sum to the +41.5 KB symbol delta, the rest is alignment): index builder reached from the open path (Parsed::join, runs:: merge pool and cursors, Package handler) +40.3 KB; open-path index pass and release/publish/reopen handoff +4.2 KB; 8.3 index names, census and route +1.6 KB; reading through the index +25.8 KB (indexed navigation/styles/storage +8.0 KB, reader book/pages +6.3 KB, index reader +3.9 KB, Contents mapping and menu +2.6 KB, other reader +5.0 KB); core::slice sort instantiations for index runs and Contents rows +4.3 KB; native/C +1.6 KB; removed OPF/catalog read path -36.2 KB (package parsers -11.1 KB, canonical -9.4 KB, old reader owner paths -7.8 KB, zip container -6.4 KB, admission -1.5 KB). Review fixes 81e76cf0 -> 9aa684c6: -2,320 B; rust-health fixes, whole-word cover header reads and main's notes -704 B. Since the last record's delta (+41,296 B over main 4cc11957 at 0ad67398): +800 B, mostly the deferred index trim (open-path and trim census policies, pinned-pair accounting, idle trim call site after the producer, and trim-owed state). Since 22fcaa10: +560 B, the Contents map split into bounded read scopes (the spilled-build reservation and the open-.IDX-only pin measured +0 B at 6b5d0a82). Considered: routing the index source through dyn BookSource removed a duplicate zip/package copy (~4 KB, done); one shared sort instantiation for both row kinds (est. 2-3 KB, not done); the single run-merge copy (~11 KB) stays deferred to #145 until flash headroom is a constraint. Usable app space 7,016,448 B; headroom 3,019,104 B (43.03%) -> 2,976,448 B (42.42%). RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, selected stack frames 0/16/32/48/480 B (within 0/16/32/48/656 B ceilings; 330 frames).",
+      "reviewer": "Newt Lead flash rulings (2026-11-25: break down by area, state headroom; 2026-11-26: exact numbers from clean builds of main 8291b1cf and the final head, RTC before/after); cross-family review of the B3 base done (Opus xhigh; findings fixed in 9aa684c6); step 4 cross-family review run by the Lead; cross-family review of the full diff at 40d093af (Astra xhigh; findings fixed in 6b5d0a82); Codex review finding fixed in 84245ad5"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",

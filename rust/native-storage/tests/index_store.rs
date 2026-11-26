@@ -8,109 +8,20 @@ pub use newt_native_storage::*;
 mod model;
 
 use chapter_cache::{ChapterCacheState, ChapterCacheStorage};
-use model::{Effect, Fault, Model, Op};
+use model::{Effect, Fault, Op};
 use newt_core::book_index::{self, Header, Identity, Member, Reader, SpineItem, WriteError, Writer, NONE, TITLE_BYTES};
 use newt_core::phased_metadata::BookLanguage;
 use newt_core::page_cache::CacheStorage;
 use newt_core::page_cache_access::VerifiedAccess;
 use newt_core::page_envelope::VerifiedStore;
-use std::collections::BTreeMap;
 
 const ROOT: &str = "/sd/Cache";
 const KEY: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const BOOK: Identity = Identity { digest: [0xa5; 32], policy: 1 };
 
-/// The FAT model plus what it lacks: file times for eviction order, a count
-/// of open files for the card's small descriptor budget, and a power cut that
-/// stops the card, so no cleanup runs between the cut and the next boot.
-#[derive(Default)]
-struct Card {
-    model: Model,
-    times: BTreeMap<String, i64>,
-    open: u32,
-    most_open: u32,
-    armed: bool,
-    off: bool,
-}
-impl Card {
-    fn live<T>(&mut self, op: impl FnOnce(&mut Model) -> Result<T>) -> Result<T> {
-        if self.off {
-            return Err(Error::Unavailable);
-        }
-        let result = op(&mut self.model);
-        self.off = self.armed && self.model.cut_after.is_none();
-        result
-    }
-    /// Cut power `steps` card operations from now.
-    fn cut_in(&mut self, steps: u32) {
-        self.model.cut_after = Some(self.model.steps + steps);
-        self.armed = true;
-    }
-    /// Boot again on what was durable at the cut.
-    fn boot(&mut self) {
-        (self.armed, self.off, self.open) = (false, false, 0);
-        self.model.power();
-    }
-}
-impl Native for Card {
-    fn open(&mut self, path: &str, mode: Open) -> Result<i32> {
-        let fd = self.live(|m| m.open(path, mode))?;
-        self.open += 1;
-        self.most_open = self.most_open.max(self.open);
-        Ok(fd)
-    }
-    fn close(&mut self, fd: i32) -> Result<()> {
-        self.live(|m| m.close(fd))?;
-        self.open -= 1;
-        Ok(())
-    }
-    fn read(&mut self, fd: i32, out: &mut [u8]) -> Result<usize> { self.live(|m| m.read(fd, out)) }
-    fn write(&mut self, fd: i32, input: &[u8]) -> Result<usize> { self.live(|m| m.write(fd, input)) }
-    fn seek(&mut self, fd: i32, offset: u32) -> Result<u64> { self.live(|m| m.seek(fd, offset)) }
-    fn truncate(&mut self, fd: i32, bytes: u32) -> Result<()> { self.live(|m| m.truncate(fd, bytes)) }
-    fn sync(&mut self, fd: i32) -> Result<()> { self.live(|m| m.sync(fd)) }
-    fn fstat(&mut self, fd: i32) -> Result<Stat> { self.live(|m| m.fstat(fd)) }
-    fn stat(&mut self, path: &str, no_follow: bool) -> Result<Stat> {
-        let mut stat = self.live(|m| m.stat(path, no_follow))?;
-        stat.seconds = self.times.get(path).copied().unwrap_or_default();
-        Ok(stat)
-    }
-    fn mkdir(&mut self, path: &str) -> Result<()> { self.live(|m| m.mkdir(path)) }
-    fn unlink(&mut self, path: &str) -> Result<()> { self.live(|m| m.unlink(path)) }
-    fn rename(&mut self, from: &str, to: &str) -> Result<()> { self.live(|m| m.rename(from, to)) }
-    fn next_nonce(&mut self) -> u32 { self.model.next_nonce() }
-}
-impl Directory for Card {
-    type Listing = u32;
-    fn open_dir(&mut self, path: &str) -> Result<u32> { self.live(|m| m.open_dir(path)) }
-    fn read_dir(&mut self, listing: &mut u32, name: &mut [u8]) -> Result<Option<usize>> {
-        self.live(|m| m.read_dir(listing, name))
-    }
-    fn close_dir(&mut self, listing: u32) -> Result<()> { self.live(|m| m.close_dir(listing)) }
-}
-impl page_entries::PageEntries for Card {
-    fn walk_entries(&mut self, folder: &core::ffi::CStr, sized: bool,
-        visit: &mut dyn FnMut(&mut Self, page_entries::PageEntry<'_>) -> bool,
-    ) -> bool { page_entries::walk_directory(self, folder, sized, visit) }
-}
-impl Card {
-    fn new() -> Self {
-        let mut card = Self::default();
-        card.model.dirs.extend(["/sd".into(), ROOT.into()]);
-        card
-    }
-    /// Files in Cache/Index, by leaf name.
-    fn indexes(&self) -> Vec<String> {
-        let folder = format!("{ROOT}/Index/");
-        self.model.files.keys().filter_map(|p| p.strip_prefix(&folder)).map(String::from).collect()
-    }
-    fn seed(&mut self, leaf: &str, bytes: usize, time: i64) {
-        let path = format!("{ROOT}/Index/{leaf}");
-        self.model.dirs.insert(format!("{ROOT}/Index"));
-        self.model.files.insert(path.clone(), model::File { durable: vec![0; bytes], readable: vec![0; bytes] });
-        self.times.insert(path, time);
-    }
-}
+#[path = "index_store/card.rs"]
+mod card;
+use card::Card;
 
 struct Never;
 impl Authority for Never {
@@ -119,9 +30,14 @@ impl Authority for Never {
 fn now() -> u32 { 0 }
 
 fn leaf(digest: &[u8; 32]) -> String {
-    let mut name = [0; 69];
-    book_index::name(digest, &mut name);
-    format!("{KEY}-{}", std::str::from_utf8(&name).unwrap())
+    book_index::FileName::new(digest,book_index::FileKind::Index).as_str().to_owned()
+}
+
+fn backup(name:&str)->String {
+    book_index::FileName::parse(name.as_bytes()).unwrap().with_kind(book_index::FileKind::Backup).as_str().to_owned()
+}
+fn pair(name:&str)->Vec<String> {
+    let mut names=vec![name.to_owned(),backup(name)];names.sort();names
 }
 
 /// One cold owner per call, closed afterwards like the reader's.
@@ -143,7 +59,7 @@ fn members() -> Vec<Member> {
         compressed: 50,
         uncompressed: 100,
         method: 8,
-        first_spine: if i < 3 { i } else { NONE },
+        contents_spine: if i < 3 { i } else { NONE },
         ..Member::default()
     }).collect()
 }
@@ -156,7 +72,7 @@ fn header(identity: Identity) -> Header {
     let mut title = [0; TITLE_BYTES];
     title[..6].copy_from_slice(b"A Book");
     Header {
-        identity, members: 200, spine: 3, spine_bytes: 300, nav: 3, ncx: NONE, cover: NONE,
+        stylesheets: false, navigation_declared: false, identity, members: 200, spine: 3, spine_bytes: 300, nav: 3, ncx: NONE, cover: NONE,
         language: BookLanguage::Default, title,
     }
 }
@@ -164,14 +80,17 @@ fn header(identity: Identity) -> Header {
 fn write(store: &mut ChapterCacheStorage<'_, Card>, identity: Identity) -> core::result::Result<(), WriteError> {
     let mut access = store.access();
     let mut buffer = [0; 4096];
-    let mut writer = Writer::begin(&mut access, header(identity), &mut buffer)?;
+    write_records(&mut access, identity, &mut buffer)
+}
+fn write_records<S: CacheStorage + ?Sized>(store: &mut S, identity: Identity, buffer: &mut [u8]) -> core::result::Result<(), WriteError> {
+    let mut writer = Writer::begin(store, header(identity), buffer)?;
     for member in members() {
-        writer = writer.member(&mut access, member)?;
+        writer = writer.member(store, member)?;
     }
     for item in SPINE {
-        writer = writer.spine(&mut access, item)?;
+        writer = writer.spine(store, item)?;
     }
-    writer.finish(&mut access, &mut || true)
+    writer.finish(store, &mut || true)
 }
 
 /// The reader's verified path: attach the envelope, then read records
@@ -179,11 +98,10 @@ fn write(store: &mut ChapterCacheStorage<'_, Card>, identity: Identity) -> core:
 fn read<R>(store: &mut ChapterCacheStorage<'_, Card>, identity: &Identity,
     work: impl FnOnce(&mut dyn CacheStorage, &Reader) -> R,
 ) -> Option<R> {
-    let mut name = [0; 69];
-    book_index::name(&identity.digest, &mut name);
+    let name=*book_index::FileName::new(&identity.digest,book_index::FileKind::Index).as_bytes();
     let (mut directory, mut window) = ([0; 4160], [0; 4096]);
     let mut access = store.access();
-    let mut verified = VerifiedStore::new(Some(&name), &mut directory, &mut window);
+    let mut verified = VerifiedStore::for_index(Some(&name),&identity.digest, &mut directory, &mut window);
     if !access.begin_page_read(false, Some(&mut verified.query)) {
         return None;
     }
@@ -323,23 +241,24 @@ fn the_census_evicts_the_oldest_unpinned_index_and_keeps_the_open_one() {
 fn a_rebuilt_index_and_its_backup_stay_evictable() {
     const MIB: usize = 1024 * 1024;
     let mut card = Card::new();
-    // A rebuild keeps the old copy as `.bak`, both written at time 0.
+    // A rebuild keeps the old copy as `.bak`, both written at time 1.
     with_store(&mut card, |store| write(store, BOOK)).unwrap();
     with_store(&mut card, |store| write(store, Identity { policy: 2, ..BOOK })).unwrap();
     let book = leaf(&BOOK.digest);
-    assert_eq!(card.indexes(), [book.clone(), format!("{book}.bak")]);
+    assert_eq!(card.indexes(), pair(&book));
 
     // The open book also has a pair; with a newer orphan, the folder is
-    // crowded. The oldest unpinned files go first, backups included.
+    // crowded. The oldest unpinned files go first, backups included: only the
+    // open `.IDX` is pinned, not its own `.BAK`.
     let pinned = leaf(&[1; 32]);
     card.seed(&pinned, 6 * MIB, 5);
-    card.seed(&format!("{pinned}.bak"), 6 * MIB, 1);
-    card.seed(&leaf(&[2; 32]), 2 * MIB, 3);
+    card.seed(&backup(&pinned), 6 * MIB, 0);
+    card.seed(&leaf(&[2; 32]), 8 * MIB, 3);
     let grant = with_store(&mut card, |store| {
         store.index_census(&Never, None, None, Some(pinned.as_bytes()))
     });
     assert_eq!(grant.outcome, MissingProbe::Ready);
-    assert_eq!(card.indexes(), [pinned.clone(), format!("{pinned}.bak")]);
+    assert_eq!(card.indexes(), [pinned]);
 }
 
 use newt_core as core_api;
@@ -353,16 +272,18 @@ fn spilling_build(card: &mut Card) -> core::result::Result<(), newt_core::book_i
     let mut buffer = [0; 448];
     let mut join = build_support::JoinBacking::new();
     let mut state = join.state();
-    // Sweep before creating a live work file, never between these two loans.
-    with_store(card, |store| store.index_census(&Never, None, None, None));
     let source = card.open("/sd/source", Open::SourceReadOnly).map_err(|_| BuildError::Write(WriteError::Storage))?;
     let prepared = with_store(card, |store| {
-        let mut store = IndexBuildStore::lend(store, &mut work, &BOOK.digest).unwrap();
+        let mut store = IndexBuildStore::lend(store, &mut work, &BOOK.digest)
+            .ok_or(BuildError::Write(WriteError::Storage))?;
+        // The open path's reservation, before the work file exists.
+        store.census(&|| false);
         build_support::prepare(&mut store, &mut buffer, 64, 8, 8, 8, &mut state)
     });
     let closed = card.close(source).is_ok();
     with_store(card, |store| {
-        let mut store = IndexBuildStore::lend(store, &mut work, &BOOK.digest).unwrap();
+        let mut store = IndexBuildStore::lend(store, &mut work, &BOOK.digest)
+            .ok_or(BuildError::Write(WriteError::Storage))?;
         if !closed {
             newt_core::book_index_build::WorkFile::remove_work(&mut store);
             return Err(BuildError::Write(WriteError::Storage));
@@ -376,7 +297,7 @@ fn built_index_complete(store: &mut dyn CacheStorage, reader: &Reader) -> bool {
     (0..8).all(|i| {
         let Some(s) = reader.spine(store, i) else { return false; };
         let Some(m) = reader.member(store, s.member) else { return false; };
-        s.before == u64::from(i) * 10 && m.local_offset == i * 64 && m.first_spine == i
+        s.before == u64::from(i) * 10 && m.local_offset == i * 64 && m.contents_spine == i
     })
 }
 fn build_card() -> Card {
@@ -414,3 +335,284 @@ fn spilling_build_cuts_every_card_step_and_uses_three_files() {
     let view_bytes = core::mem::size_of::<IndexBuildStore<'_, '_, Card>>();
     println!("SPILLING CARD cuts={steps} most_open={} work_state={work_bytes} view={view_bytes}", good.most_open);
 }
+
+/// A Contents scan reads members in order, one chunk per checked scope. The
+/// chunk must fit one scope's read allowance even at the largest index.
+#[test]
+fn one_read_scope_scans_a_contents_chunk_of_the_largest_index() {
+    use book_index::{MAX_MEMBERS, SCAN_SCOPE_MEMBERS};
+    let mut card = Card::new();
+    let mut title = [0; TITLE_BYTES]; title[0] = b'T';
+    let header = Header { stylesheets: false, navigation_declared: false, identity: BOOK, members: MAX_MEMBERS,
+        spine: 1, spine_bytes: 1, nav: NONE, ncx: NONE, cover: NONE, language: BookLanguage::Default, title };
+    with_store(&mut card, |store| {
+        let mut access = store.access();
+        let mut buffer = [0; 4096];
+        let mut writer = Writer::begin(&mut access, header, &mut buffer)?;
+        for i in 0..MAX_MEMBERS {
+            writer = writer.member(&mut access, Member { hash: u64::from(i) + 1, ..Member::default() })?;
+        }
+        writer = writer.spine(&mut access, SpineItem { member: 0, before: 0 })?;
+        writer.finish(&mut access, &mut || true)
+    }).unwrap();
+    let scan = |card: &mut Card, from: u32, count: u32| with_store(card, |store| read(store, &BOOK, |s, reader| {
+        (from..from + count).all(|i| reader.member(s, i).is_some_and(|m| m.hash == u64::from(i) + 1))
+    }));
+    for from in [0, MAX_MEMBERS - SCAN_SCOPE_MEMBERS] {
+        assert_eq!(scan(&mut card, from, SCAN_SCOPE_MEMBERS), Some(true), "chunk from {from}");
+    }
+    // The allowance is real: four chunks in one scope run out of reads.
+    assert_eq!(scan(&mut card, 0, 4 * SCAN_SCOPE_MEMBERS), Some(false));
+}
+
+#[test]
+fn a_spilled_build_at_a_full_folder_never_exceeds_the_cap() {
+    let mut card = build_card();
+    for i in 0..32u8 { card.seed(&leaf(&[i; 32]), 100, i64::from(i)); }
+    spilling_build(&mut card).unwrap();
+    // The `.WRK` and the index `.TMP` coexist, so the reservation needs two slots.
+    assert_eq!(card.most_indexes, 32);
+    assert_eq!(card.indexes().len(), 31);
+    assert_eq!(with_store(&mut card, |s| read(s, &BOOK, built_index_complete)), Some(true));
+}
+
+#[test]
+fn resident_publication_keeps_source_and_receipt_open_with_three_files() {
+    let mut card = build_card();
+    let source = card.open("/sd/source", Open::SourceReadOnly).unwrap();
+    let receipt = card.open("/sd/receipt", Open::SourceReadOnly).unwrap();
+    let mut work = IndexWorkState::new();
+    let mut buffer = [0; 32768];
+    let mut join = build_support::JoinBacking::new();
+    let mut state = join.state();
+    with_store(&mut card, |cache| {
+        let mut store = IndexBuildStore::lend(cache, &mut work, &BOOK.digest).unwrap();
+        let prepared = build_support::prepare(&mut store, &mut buffer, 32768, 8, 8, 8, &mut state).unwrap();
+        assert!(!store.spilled());
+        assert!(store.release_pages());
+        let report = prepared.publish(&mut store, &mut state, &mut |_| true, &mut || true).unwrap();
+        assert!(report.work_removed);
+    });
+    let writes = (card.creates, card.writes);
+    assert_eq!(writes.0, 1, "one native index temporary, no work file");
+    assert!(writes.1 > 0);
+    assert_eq!(with_store(&mut card, |s| read(s, &BOOK, built_index_complete)), Some(true));
+    assert_eq!(with_store(&mut card, |s| read(s, &BOOK, built_index_complete)), Some(true));
+    assert_eq!((card.creates, card.writes), writes, "repeat hits do not write");
+    assert_eq!((card.open, card.most_open), (2, 3));
+    card.close(source).unwrap();
+    card.close(receipt).unwrap();
+}
+
+
+#[test]
+fn published_build_requires_the_verified_read_scope() {
+    let mut card = build_card();
+    spilling_build(&mut card).unwrap();
+    with_store(&mut card, |cache| {
+        let mut work = IndexWorkState::new();
+        let mut store = IndexBuildStore::lend(cache, &mut work, &BOOK.digest).unwrap();
+        let name=*book_index::FileName::new(&BOOK.digest,book_index::FileKind::Index).as_bytes();
+        assert_eq!(CacheStorage::read_at(&mut store, &name, 0, &mut [0; 384]), -1);
+        assert!(Reader::open(&mut store, &BOOK).is_none());
+        assert!(store.release_pages());
+    });
+    assert_eq!(with_store(&mut card, |s| read(s, &BOOK, built_index_complete)), Some(true));
+}
+
+#[test]
+fn work_lend_creates_parent_and_spill_borrows_terminated_path() {
+    use newt_core::book_index_build::WorkFile;
+    let mut card = Card::default();
+    let mut work = IndexWorkState::new();
+    with_store(&mut card, |cache| {
+        let mut store = IndexBuildStore::lend(cache, &mut work, &BOOK.digest).unwrap();
+        assert!(!store.spilled());
+        assert!(store.remove_work());
+    });
+    assert!(card.model.dirs.contains(&format!("{ROOT}/Index")));
+    assert_eq!((card.creates, card.cstr_opens), (0, 0));
+    with_store(&mut card, |cache| {
+        let mut store = IndexBuildStore::lend(cache, &mut work, &BOOK.digest).unwrap();
+        assert!(store.append(b"record"));
+        assert!(store.spilled());
+        assert!(store.append(b"next"));
+        assert!(store.remove_work());
+    });
+    assert_eq!((card.creates, card.cstr_opens), (1, 1));
+    assert!(card.indexes().is_empty());
+}
+
+#[test]
+fn index_publication_uses_the_fat_path_timestamp() {
+    let mut card = Card::new();
+    with_store(&mut card, |store| write(store, BOOK)).unwrap();
+    let path = format!("{ROOT}/Index/{}", leaf(&BOOK.digest));
+    let fd = card.open(&path, Open::ReadNonblock).unwrap();
+    let descriptor = card.fstat(fd).unwrap();
+    let named = card.stat(&path, false).unwrap();
+    assert_eq!((descriptor.seconds, descriptor.nanos), (0, 0));
+    assert_ne!((named.seconds, named.nanos), (0, 0));
+    card.close(fd).unwrap();
+    assert_eq!(with_store(&mut card, |store| read(store, &BOOK, complete)), Some(true));
+    assert_eq!(card.open, 0);
+}
+
+#[test]
+fn short_name_collision_refuses_the_other_digest_and_rebuilds() {
+    let mut card=Card::new();let mut other=BOOK;other.digest[31]^=1;
+    assert_eq!(leaf(&BOOK.digest),leaf(&other.digest));
+    with_store(&mut card,|store|write(store,BOOK)).unwrap();
+    assert_eq!(with_store(&mut card,|store|read(store,&other,complete)),None);
+    with_store(&mut card,|store|write(store,other)).unwrap();
+    assert_eq!(with_store(&mut card,|store|read(store,&other,complete)),Some(true));
+    assert_eq!(with_store(&mut card,|store|read(store,&BOOK,complete)),None);
+    with_store(&mut card,|store|write(store,BOOK)).unwrap();
+    assert_eq!(with_store(&mut card,|store|read(store,&BOOK,complete)),Some(true));
+    assert!(card.indexes().iter().all(|name|book_index::FileName::parse(name.as_bytes()).is_some()));
+}
+#[test]
+fn legacy_long_names_are_ignored_and_swept_one_victim_bank_at_a_time() {
+    let mut card=Card::new();
+    with_store(&mut card,|store|write(store,BOOK)).unwrap();
+    let good=card.model.files.remove(&format!("{ROOT}/Index/{}",leaf(&BOOK.digest))).unwrap();
+    let mut old=[0;69];book_index::name(&BOOK.digest,&mut old);
+    let legacy=format!("{KEY}-{}",core::str::from_utf8(&old).unwrap());
+    card.model.files.insert(format!("{ROOT}/Index/{legacy}"),good);
+    assert_eq!(with_store(&mut card,|store|read(store,&BOOK,complete)),None,"legacy names never supply an index hit");
+    for i in 0..11 {card.seed(&format!("{KEY}-{i:064x}.fibx"),100,1);}
+    let grant=with_store(&mut card,|store|store.index_census(&Never,None,None,None));
+    assert_eq!(card.indexes().len(),4,"one bank of eight legacy victims per build");
+    assert_eq!(grant.entries,20,"the census still counts all twelve entries");
+    with_store(&mut card,|store|store.index_census(&Never,None,None,None));
+    assert!(card.indexes().is_empty());
+}
+#[test]
+fn cap_thirty_two_keeps_the_full_census_and_evicts_oldest_first() {
+    use newt_core::cache_names::namespace::{INDEX_ENTRY_CAP,INDEX_ENTRY_GRANT};
+    assert_eq!(INDEX_ENTRY_CAP,32);
+    let mut card=Card::new();
+    for i in 0..40u8 {card.seed(&leaf(&[i;32]),100,i64::from(i));}
+    let grant=with_store(&mut card,|store|store.index_census(&Never,None,None,None));
+    assert_eq!(grant.outcome,MissingProbe::Ready);
+    assert_eq!(card.indexes().len(),usize::from(INDEX_ENTRY_GRANT)-1);
+    assert_eq!(grant.entries,1);
+    for i in 0..40u8 {assert_eq!(card.indexes().contains(&leaf(&[i;32])),i>=17);}
+}
+#[test]
+fn stale_short_work_and_temp_slots_cannot_block_a_build() {
+    use book_index::{FileName,FileKind};
+    let mut card=build_card();
+    for kind in [FileKind::Work,FileKind::Temporary] {
+        card.seed(FileName::new(&BOOK.digest,kind).as_str(),100,1);
+    }
+    // Deliberately omit the census: each deterministic slot handles its own
+    // interrupted predecessor before any exclusive create.
+    with_store(&mut card,|cache| {
+        let mut work=IndexWorkState::new();let mut buffer=[0;448];
+        let mut backing=build_support::JoinBacking::new();let mut join=backing.state();
+        let mut store=IndexBuildStore::lend(cache,&mut work,&BOOK.digest).unwrap();
+        assert!(!store.spilled());
+        let prepared=build_support::prepare(&mut store,&mut buffer,64,8,8,8,&mut join).unwrap();
+        assert!(prepared.publish(&mut store,&mut join,&mut|_|true,&mut||true).unwrap().work_removed);
+    });
+    assert_eq!(card.indexes(),[leaf(&BOOK.digest)]);
+    assert_eq!(with_store(&mut card,|store|read(store,&BOOK,built_index_complete)),Some(true));
+}
+
+#[test]
+fn consumed_block_damage_can_revoke_both_index_copies_across_cold_boot() {
+    use newt_core::page_cache::ReadScope;
+    let mut card = Card::default();
+    for _ in 0..2 { with_store(&mut card, |store| write(store, BOOK)).unwrap(); }
+    let name = leaf(&BOOK.digest);
+    let path = format!("{ROOT}/Index/{name}");
+    let offset = book_index::HEADER_BYTES + 200 * book_index::MEMBER_BYTES;
+    card.model.files.get_mut(&path).unwrap().readable[offset as usize] ^= 1;
+    with_store(&mut card, |store| {
+        let mut access = store.access();
+        let (value, _) = access.query_index(name.as_bytes(), &BOOK.digest, false, &mut [0; 8256],
+            &mut || true, |verified| {
+                let index = Reader::open(verified, &BOOK).expect("header block is intact");
+                index.spine(verified, 0)
+            }).unwrap();
+        assert!(value.is_none());
+        assert!(ReadScope::invalidate_index(&mut access, &BOOK.digest));
+    });
+    card.boot();
+    assert!(!card.model.files.contains_key(&path));
+    assert!(!card.model.files.contains_key(&format!("{ROOT}/Index/{}", backup(&name))));
+    with_store(&mut card, |store| assert!(read(store, &BOOK, |_, _| ()).is_none()));
+}
+
+/// Drop only the reservation hint to measure allocation independently of batching.
+struct Unsized<'a, S: ?Sized>(&'a mut S);
+impl<S: CacheStorage + ?Sized> CacheStorage for Unsized<'_, S> {
+    fn remove(&mut self, name: &[u8]) -> bool { self.0.remove(name) }
+    fn file_size(&mut self, name: &[u8]) -> i64 { self.0.file_size(name) }
+    fn read_at(&mut self, name: &[u8], offset: u32, dst: &mut [u8]) -> i32 { self.0.read_at(name, offset, dst) }
+    fn begin_write(&mut self, name: &[u8]) -> bool { self.0.begin_write(name) }
+    fn write(&mut self, bytes: &[u8]) -> bool { self.0.write(bytes) }
+    fn end_write(&mut self) -> bool { self.0.end_write() }
+    fn end_write_checked(&mut self, live: &mut dyn FnMut() -> bool) -> bool { self.0.end_write_checked(live) }
+    fn read_back_at(&mut self, offset: u32, dst: &mut [u8]) -> i32 { self.0.read_back_at(offset, dst) }
+}
+
+#[test]
+fn publish_uses_larger_sequential_writes_without_changing_the_envelope() {
+    let mut snapshots = Vec::new();
+    let mut measurements = Vec::new();
+    for mode in 0..3 {
+        let mut card = Card::default();
+        with_store(&mut card, |cache| {
+            let mut work = chapter_cache::IndexWorkState::new();
+            let mut index = chapter_cache::IndexBuildStore::lend(cache, &mut work, &BOOK.digest).unwrap();
+            if mode == 2 { write_records(&mut index, BOOK, &mut [0; 4096]).unwrap(); }
+            else if mode == 1 { write_records(&mut Unsized(&mut index), BOOK, &mut [0; 4096]).unwrap(); }
+            else {
+                drop(index);
+                write_records(&mut cache.access(), BOOK, &mut [0; 4096]).unwrap();
+            }
+        });
+        let seeks = card.model.trace.iter().filter(|line| line.starts_with("seek ")).count();
+        let lookups = card.model.trace.iter().filter(|line| line.starts_with("stat ")).count();
+        measurements.push((card.writes, seeks, lookups, card.allocations));
+        snapshots.push(card.model.files[&format!("{ROOT}/Index/{}", leaf(&BOOK.digest))].durable.clone());
+    }
+    assert_eq!(snapshots[0], snapshots[1]);
+    assert_eq!(snapshots[1], snapshots[2]);
+    assert!(measurements[1].0 < measurements[0].0);
+    assert!(measurements[1].1 < measurements[0].1);
+    assert_eq!(measurements[1].2, measurements[0].2);
+    assert_eq!(measurements[2].3, 1, "one allocation reserves the entire envelope");
+    assert!(measurements[2].3 < measurements[1].3);
+    assert_eq!(measurements[2].0, measurements[1].0);
+    assert_eq!(measurements[2].1, measurements[1].1);
+    assert_eq!(measurements[2].2, measurements[1].2);
+    println!("INDEX IO legacy={:?} sequential={:?} reserved={:?} (writes,seeks,path_lookups,extent_growth_calls)", measurements[0], measurements[1], measurements[2]);
+}
+
+#[test]
+fn reserved_index_retries_short_io_and_refuses_failed_allocation() {
+    for (op, effect, copies, success) in [
+        (Op::Write, Effect::Short(37), 1, true),
+        (Op::Write, Effect::Errno("EINTR"), 1, true),
+        (Op::Write, Effect::Errno("EINTR"), 4, false),
+        (Op::Write, Effect::Short(0), 1, false),
+        (Op::Truncate, Effect::Errno("ENOSPC"), 1, false),
+    ] {
+        let mut card = Card::default();
+        card.model.faults.push(Fault::new(op, 1, copies, effect, 0));
+        let result = with_store(&mut card, |cache| {
+            let mut work = chapter_cache::IndexWorkState::new();
+            let mut index = chapter_cache::IndexBuildStore::lend(cache, &mut work, &BOOK.digest).unwrap();
+            write_records(&mut index, BOOK, &mut [0; 4096])
+        });
+        assert_eq!(result.is_ok(), success, "{op:?} {effect:?} x{copies}");
+        card.boot();
+        assert_eq!(with_store(&mut card, |store| read(store, &BOOK, complete)), success.then_some(true));
+    }
+}
+
+#[path = "index_store/trim.rs"]
+mod trim;

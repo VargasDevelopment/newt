@@ -60,6 +60,7 @@ pub(crate) fn stats_book_at(checkpoint: &ReaderCheckpoint, digest: &Digest,
 impl<N: nvs::Native> MountedCheckpoint<'_, N> {
     /// #285: finish the full-page repaint before State reads or overlays.
     /// The card view is a bounded read-only loan, never retained by the owner.
+    #[inline(never)]
     pub(super) fn paint<'io, P: CardPort>(
         &mut self,
         io: &'io UiIo,

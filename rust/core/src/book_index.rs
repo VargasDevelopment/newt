@@ -10,6 +10,10 @@ use crate::page_envelope::MAX_PAYLOAD;
 use crate::phased_metadata::BookLanguage;
 use crate::zip_record_rules::EPUB_MAX_EXPANDED_BYTES;
 
+#[path = "book_index_name.rs"]
+mod file_name;
+pub use file_name::{FileKind,FileName};
+
 /// Name hashing is fixed by `SCHEMA`: FNV-1a 64 followed by fmix64.
 /// Bytes after the first NUL do not participate.
 pub fn name_hash(name: &[u8]) -> u64 {
@@ -37,12 +41,21 @@ impl NameHash {
 }
 
 /// Bump when the payload layout or meaning changes; older indexes rebuild.
-pub const SCHEMA: u32 = 1;
+pub const SCHEMA: u32 = 2;
+/// ZIP bit 5 is refused by admission, so it is available in an index record.
+/// Strip it before comparing with a local ZIP header.
+pub const STYLESHEET: u16 = 1 << 5;
 pub const HEADER_BYTES: u32 = 384;
+/// Full digest position in the fixed payload header (also the envelope route).
+pub const DIGEST_AT:u32=12;
 /// The display title as the reader keeps it: at most 255 bytes, cut on a
 /// UTF-8 boundary, NUL-terminated (`copy_display_title`).
 pub const TITLE_BYTES: usize = 256;
 pub const MEMBER_BYTES: u32 = 32;
+/// Members one checked read scope may scan in order. A native scope allows 128
+/// reads of one 4 KiB window each; 8,192 members span about 65 windows, which
+/// leaves room for the scope's attach and header reads at any member count.
+pub const SCAN_SCOPE_MEMBERS: u32 = 8192;
 pub const SPINE_BYTES: u32 = 16;
 /// 65,535 is the classic ZIP count sentinel for ZIP64.
 pub const MAX_MEMBERS: u32 = 65_534;
@@ -81,6 +94,8 @@ pub struct Header {
     pub ncx: u32,
     pub cover: u32,
     pub language: BookLanguage,
+    pub stylesheets: bool,
+    pub navigation_declared: bool,
     pub title: [u8; TITLE_BYTES],
 }
 
@@ -93,8 +108,8 @@ pub struct Member {
     pub uncompressed: u32,
     pub method: u16,
     pub flags: u16,
-    /// First spine item reading this member, or NONE.
-    pub first_spine: u32,
+    /// Unique readable text spine item for Contents, or NONE.
+    pub contents_spine: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -114,8 +129,8 @@ pub const fn payload_bytes(members: u32, spine: u32) -> Option<u32> {
     Some(HEADER_BYTES + members * MEMBER_BYTES + spine * SPINE_BYTES)
 }
 
-/// `<64 hex digest>.fibx`: the envelope route is the source digest, so block
-/// checks also refuse another book's index under this name.
+/// Legacy bench name, retained for migration fixtures. Product readers and
+/// writers use FileName; identity comes from the full digest, never this name.
 pub fn name(digest: &Digest, out: &mut [u8; 69]) {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     for (i, byte) in digest.iter().enumerate() {
@@ -168,6 +183,7 @@ impl Header {
         out[64..68].copy_from_slice(&self.ncx.to_le_bytes());
         out[68..72].copy_from_slice(&self.cover.to_le_bytes());
         out[72] = language_code(self.language);
+        out[73] = u8::from(self.stylesheets) | (u8::from(self.navigation_declared) << 1);
         out[80..80 + TITLE_BYTES].copy_from_slice(&self.title);
     }
     /// The title bytes before its NUL.
@@ -177,41 +193,46 @@ impl Header {
     }
     /// None unless the header is this schema, built for `expected`, and its
     /// counts describe exactly `payload` bytes.
+    #[inline(always)]
     pub fn decode(input: &[u8; HEADER_BYTES as usize], expected: &Identity, payload: u32) -> Option<Self> {
-        let header = Self {
-            identity: Identity {
-                digest: input[12..44].try_into().ok()?,
-                policy: get32(input, 8),
-            },
-            members: get32(input, 44),
-            spine: get32(input, 48),
-            spine_bytes: get64(input, 52),
-            nav: get32(input, 60),
-            ncx: get32(input, 64),
-            cover: get32(input, 68),
-            language: BookLanguage::ALL.get(usize::from(input[72])).copied()?,
-            title: input[80..80 + TITLE_BYTES].try_into().ok()?,
-        };
-        // The title is a non-empty UTF-8 C string padded with zeros.
-        let title = header.title();
-        let title_valid = !title.is_empty() && title.len() < TITLE_BYTES
-            && core::str::from_utf8(title).is_ok()
-            && header.title[title.len()..].iter().all(|&b| b == 0);
+        let members = get32(input, 44);
+        let spine = get32(input, 48);
+        let spine_bytes = get64(input, 52);
+        let nav = get32(input, 60);
+        let ncx = get32(input, 64);
+        let cover = get32(input, 68);
+        let language = BookLanguage::ALL.get(usize::from(input[72])).copied()?;
+        // Validate the encoded title before copying it into the returned header.
+        let title = &input[80..80 + TITLE_BYTES];
+        let end = title.iter().position(|&b| b == 0).unwrap_or(TITLE_BYTES);
+        let title_valid = end != 0 && end < TITLE_BYTES
+            && core::str::from_utf8(&title[..end]).is_ok()
+            && title[end..].iter().all(|&b| b == 0);
         let valid = input[..4] == MAGIC
             && get32(input, 4) == SCHEMA
-            && header.identity == *expected
-            && header.payload_bytes() == Some(payload)
-            && header.spine_bytes <= EPUB_MAX_EXPANDED_BYTES
-            && [header.nav, header.ncx, header.cover].iter().all(|&m| optional(m, header.members))
-            && (header.nav == NONE || header.ncx == NONE)
+            && input[12..44] == expected.digest
+            && get32(input, 8) == expected.policy
+            && payload_bytes(members, spine) == Some(payload)
+            && spine_bytes <= EPUB_MAX_EXPANDED_BYTES
+            && [nav, ncx, cover].iter().all(|&m| optional(m, members))
+            && (nav == NONE || ncx == NONE)
             && title_valid
-            && input[73..80].iter().all(|&b| b == 0)
+            && input[73] & !3 == 0
+            && input[74..80].iter().all(|&b| b == 0)
             && input[80 + TITLE_BYTES..].iter().all(|&b| b == 0);
-        valid.then_some(header)
+        if !valid { return None; }
+        Some(Self {
+            identity: *expected, members, spine, spine_bytes, nav, ncx, cover, language,
+            stylesheets: input[73] & 1 != 0,
+            navigation_declared: input[73] & 2 != 0,
+            title: title.try_into().ok()?,
+        })
     }
 }
 
 impl Member {
+    pub fn stylesheet(&self) -> bool { self.flags & STYLESHEET != 0 }
+    pub fn zip_flags(&self) -> u16 { self.flags & !STYLESHEET }
     pub fn encode(&self, out: &mut [u8; MEMBER_BYTES as usize]) {
         out.fill(0);
         out[..8].copy_from_slice(&self.hash.to_le_bytes());
@@ -220,7 +241,7 @@ impl Member {
         out[16..20].copy_from_slice(&self.uncompressed.to_le_bytes());
         out[20..22].copy_from_slice(&self.method.to_le_bytes());
         out[22..24].copy_from_slice(&self.flags.to_le_bytes());
-        out[24..28].copy_from_slice(&self.first_spine.to_le_bytes());
+        out[24..28].copy_from_slice(&self.contents_spine.to_le_bytes());
     }
     pub fn decode(input: &[u8; MEMBER_BYTES as usize], header: &Header) -> Option<Self> {
         let member = Self {
@@ -230,9 +251,9 @@ impl Member {
             uncompressed: get32(input, 16),
             method: get16(input, 20),
             flags: get16(input, 22),
-            first_spine: get32(input, 24),
+            contents_spine: get32(input, 24),
         };
-        (optional(member.first_spine, header.spine) && input[28..].iter().all(|&b| b == 0))
+        (optional(member.contents_spine, header.spine) && input[28..].iter().all(|&b| b == 0))
             .then_some(member)
     }
 }
@@ -291,9 +312,8 @@ impl<'b> Writer<'b> {
         if buffer.len() < bytes.len() || Header::decode(&bytes, &header.identity, payload) != Some(header) {
             return Err(WriteError::Invalid);
         }
-        let mut file = [0; 69];
-        name(&header.identity.digest, &mut file);
-        if !s.begin_write(&file) {
+        let file=*FileName::new(&header.identity.digest,FileKind::Index).as_bytes();
+        if !s.begin_write_sized(&file, payload) {
             return Err(WriteError::Storage);
         }
         buffer[..bytes.len()].copy_from_slice(&bytes);
@@ -363,14 +383,14 @@ pub struct Unreadable;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Reader {
     header: Header,
-    name: [u8; 69],
+    name: [u8; 12],
 }
 
 impl Reader {
     /// None for a missing, damaged, stale or foreign index: rebuild it.
+    #[inline(never)]
     pub fn open<S: CacheStorage + ?Sized>(s: &mut S, identity: &Identity) -> Option<Self> {
-        let mut file = [0; 69];
-        name(&identity.digest, &mut file);
+        let file=*FileName::new(&identity.digest,FileKind::Index).as_bytes();
         let payload = u32::try_from(s.file_size(&file)).ok()?;
         let mut bytes = [0; HEADER_BYTES as usize];
         read_exact(s, &file, 0, &mut bytes)?;

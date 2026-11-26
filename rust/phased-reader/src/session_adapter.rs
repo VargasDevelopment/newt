@@ -322,6 +322,7 @@ fn identity_at_generation(
 /// Implement with actual exists, or an existing native scoped presence callback.
 /// A successful hint does not certify file contents or immutable source bytes.
 pub trait CachePresence {
+    fn with_index<R>(&mut self, digest: &[u8; 32], operation: impl FnOnce(&mut dyn crate::index_build::Store) -> R) -> Option<R>;
     fn present(&mut self, name: &[u8], opening: bool) -> bool;
 }
 
@@ -392,6 +393,7 @@ pub struct PresenceStore<'a, C, F> {
     pub exists: F,
 }
 impl<C, F: FnMut(&mut C, &[u8]) -> bool> CachePresence for PresenceStore<'_, C, F> {
+    fn with_index<R>(&mut self, _: &[u8; 32], _: impl FnOnce(&mut dyn crate::index_build::Store) -> R) -> Option<R> { None }
     fn present(&mut self, name: &[u8], _opening: bool) -> bool {
         (self.exists)(self.store, name)
     }

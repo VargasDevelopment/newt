@@ -14,7 +14,7 @@ pub(crate) struct Resources<'r, 'scope, 'sdk, 'route, 'bank, N: Native> {
     pub(crate) recovery: Option<PendingRecovery>,
 }
 
-impl<'scope, 'sdk, 'route, 'bank, N: Native> Resources<'_, 'scope, 'sdk, 'route, 'bank, N> {
+impl<'scope, 'sdk, 'route, 'bank, N: Native + newt_native_storage::page_entries::PageEntries> Resources<'_, 'scope, 'sdk, 'route, 'bank, N> {
     pub(super) fn owner(
         &mut self,
     ) -> PhysicalOwner<'_, 'bank, '_, Expat, ReaderPanel<'scope, 'sdk>, ReaderPages<'route, N>>
@@ -70,7 +70,15 @@ impl<'scope, 'sdk, 'route, 'bank, N: Native> Resources<'_, 'scope, 'sdk, 'route,
                 spine: saved.locator.spine,
             }
         };
+        // Fixture-only: the imported revision owns this source loan; BookSource
+        // cannot release its descriptor. Missing indexes that spill are refused;
+        // product opens use SelectedSource::with_index_source/open_releasing.
+        let indexed = newt_phased_reader::index_build::open(source, digest, self.storage,
+            self.panel, &mut self.parser, self.pages, reader.on_yield,
+            newt_phased_reader::index_build::Verification::Verified);
+        let Ok(indexed) = indexed else { return false; };
         owner.open_physical(
+            &indexed,
             reader,
             source,
             identity,

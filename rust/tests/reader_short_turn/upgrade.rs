@@ -114,6 +114,11 @@ fn resume_from(bytes: Vec<u8>, old_version: u32) {
         assert_eq!(with_state(&mut card, io, &digest, |state|
             state.save(&mut saved, None, None, false, None)), Commit::Saved);
         with_pages(&mut card, io, &route, |pages| {
+            // The initial open owns the index, so the later Pages-only
+            // upgrade starts from the same durable precondition as firmware.
+            newt_phased_reader::index_build::open(&mut source, &digest, &mut storage,
+                panel, &mut parser, pages, None,
+                newt_phased_reader::index_build::Verification::Verified).unwrap();
             let mut cache = PhasedChapterCache { store: pages, hash: &mut Hash, settings };
             assert_eq!(reader.open_phased(&mut source, &mut storage, panel, &mut parser), Status::Ok);
             let mut operation = OperationPhased::new(&mut reader, &mut storage, panel, &mut parser, &mut breaker);
@@ -142,18 +147,21 @@ fn resume_from(bytes: Vec<u8>, old_version: u32) {
             let mut ports = PhysicalOwner { storage: &mut storage, panel, backend: &mut parser, breaker: &mut breaker,
                 cache: PhasedChapterCache { store: pages, hash: &mut Hash, settings },
                 open: PhysicalOpen::Import, cache_only: false };
-            assert!(!owner.open_physical(&mut reader, &mut source, book, restored,
+            let indexed = newt_phased_reader::index_build::open(&mut source, &digest, ports.storage,
+                ports.panel, ports.backend, ports.cache.store, None,
+                newt_phased_reader::index_build::Verification::Verified).unwrap();
+            assert!(!owner.open_physical(&indexed, &mut reader, &mut source, book, restored,
                 RestorePolicy::ExactPage, now(), &mut ports));
             assert_eq!(owner.restore_failure, RestoreFailure::InvalidCheckpoint);
             let cold = reader_restore_policy::boot_restore_policy(
                 Some(reader_restore_policy::DurableCheckpoint::PageStart), None, settings);
             for policy in [RestorePolicy::Validated, cold] {
-                assert!(owner.open_physical(&mut reader, &mut source, book, restored, policy, now(), &mut ports));
+                assert!(owner.open_physical(&indexed, &mut reader, &mut source, book, restored, policy, now(), &mut ports));
                 assert_eq!(reader.page_plan().unwrap().text(), expected_text);
                 assert_eq!(reader.info().char_start, page.char_start);
             }
             let outside = Progress { locator: Locator { character: u32::MAX, ..restored.locator }, ..restored };
-            assert!(!owner.open_physical(&mut reader, &mut source, book, outside,
+            assert!(!owner.open_physical(&indexed, &mut reader, &mut source, book, outside,
                 cold, now(), &mut ports));
             assert_eq!(owner.restore_failure, RestoreFailure::InvalidCheckpoint);
         });

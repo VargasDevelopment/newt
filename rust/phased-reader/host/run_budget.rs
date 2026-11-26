@@ -22,6 +22,7 @@ pub fn run(path: &Path) -> std::io::Result<()> {
     let digest = [0; 32];
     let mut breaker = NativeBreak;
     let mut frame = [0; FRAME_BYTES];
+    assert!(store.prepare_index(&mut source, &[0; 32], &mut storage, &mut *native, &mut parser).is_ok());
     assert_eq!(reader.open_phased(&mut source, &mut storage, &mut *native, &mut parser), Status::Ok);
     assert_eq!(reader.capture_phased(&mut source, 0, 0, Target::Anchor, &mut storage,
         &mut *native, &mut parser, &mut breaker), Status::Ok);
@@ -84,6 +85,7 @@ fn sized(path: &Path, settings: ViewSettings) -> std::io::Result<()> {
     let mut store = Store::default();
     let mut breaker = NativeBreak;
     let mut frame = [0; FRAME_BYTES];
+    assert!(store.prepare_index(&mut source, &[0; 32], &mut storage, &mut *native, &mut parser).is_ok());
     assert_eq!(reader.open_phased(&mut source, &mut storage, &mut *native, &mut parser), Status::Ok);
     let mut cache = PhasedChapterCache { store: &mut store, hash: &mut Key, settings };
     {

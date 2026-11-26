@@ -52,13 +52,12 @@ impl<'op> StrictSource<'op> {
     pub fn new(source: &'op mut dyn BookSource, digest: &'op Digest) -> Self {
         Self { source, digest, verified: false, open_authorized: false }
     }
-    /// Consume the actual full-D result of this attempt, not a success flag.
-    /// The exclusive source loan continues through the first strict open.
-    pub fn from_verified_digest(source: &'op mut dyn BookSource, expected: &'op Digest,
-        actual: Digest) -> Option<Self> {
-        (actual == *expected).then_some(Self {
-            source, digest: expected, verified: true, open_authorized: true,
-        })
+    /// This descriptor was fully hashed against `expected` earlier in this open,
+    /// and any intervening reopen was fully re-hashed. Firmware establishes this
+    /// in prepare_image (reader_image_open.rs) and reader_index_reopen.rs.
+    /// A matching index/receipt digest alone does not meet this precondition.
+    pub fn from_hashed_descriptor(source: &'op mut dyn BookSource, expected: &'op Digest) -> Self {
+        Self { source, digest: expected, verified: true, open_authorized: true }
     }
     /// Relend only the actual selected FD which opened this reader. Selection
     /// owns full D; the tracker's book binds its existing successful owner.
@@ -156,6 +155,14 @@ impl<'source> ReaderSource<'source> {
     }
 }
 impl PendingReaderSource<'_, '_> {
+    /// The pass finished this same digest; preserve the pending operation route.
+    pub fn start_indexed(&mut self, indexed: &newt_phased_reader::index_build::Indexed) {
+        if indexed.verified_now() && *indexed.digest() == self.source.digest() {
+            self.verified = true;
+            self.pending = false;
+        }
+    }
+
     pub(crate) fn finish_verification(&mut self, scratch: &mut [u8],
         allowed: &dyn Fn() -> bool) -> bool {
         if !self.verified {

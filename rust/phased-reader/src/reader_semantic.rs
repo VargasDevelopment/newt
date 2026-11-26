@@ -1,9 +1,10 @@
 // MIT. Included inside reader.rs. Complete-table preparation only.
 impl PhasedReader<'_, '_> {
     #[allow(clippy::too_many_arguments)]
-    pub fn prepare_semantic_index<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
+    pub fn prepare_semantic_index<B: ParserBackend + ?Sized, C: crate::phase_storage::ReadScope>(
         &mut self,
-        source: &mut S,
+        source: &mut dyn BookSource,
+        store: &mut C,
         digest: &newt_core::book_semantic_index::Digest,
         index: &mut newt_core::book_semantic_index::Index,
         metadata: &mut Arena<'_>,
@@ -34,6 +35,7 @@ impl PhasedReader<'_, '_> {
             self.source_bytes,
             self.selection().spines,
             digest,
+            store,
             index,
             metadata,
             parse,

@@ -56,6 +56,7 @@ impl CacheStorage for PublicationStore<'_> {
     fn end_write(&mut self) -> bool { let ok = self.0.end_write(); ok && self.0.0.id != 28 }
 }
 impl CachePresence for PublicationStore<'_> {
+    fn with_index<R>(&mut self, _: &[u8; 32], _: impl FnOnce(&mut dyn crate::index_build::Store) -> R) -> Option<R> { None }
     fn present(&mut self, n: &[u8], opening: bool) -> bool { self.0.present(n, opening) }
 }
 fn publication(id: u32, b: &[u8]) -> (Output, u32) {

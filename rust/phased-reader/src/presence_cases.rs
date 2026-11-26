@@ -579,6 +579,7 @@ pub fn actual_reader_cases<B: ParserBackend + ?Sized>(
         name: [u8; 69],
     }
     impl CachePresence for Store {
+    fn with_index<R>(&mut self, _: &[u8; 32], _: impl FnOnce(&mut dyn crate::index_build::Store) -> R) -> Option<R> { None }
         fn present(&mut self, name: &[u8], opening: bool) -> bool {
             self.calls += 1;
             self.opening = opening;

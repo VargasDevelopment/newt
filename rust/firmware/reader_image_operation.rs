@@ -4,13 +4,12 @@ use super::*;
 use crate::{app_image::{Application, Events, Home}, home_startup::CardPort,
     reader_book::{self, BookExit, BookFailure, BookOpen, BookRequest, BookStep,
         ProducerCallbacks},
-    reader_duty::ReaderDuty,
-    reader_pages::ReaderPages, sd_revision::SdRevisionStorage};
+    reader_duty::ReaderDuty, reader_pages::ReaderPages, sd_revision::SdRevisionStorage};
 use core::cell::Cell;
 use newt_core::{admission::WorkEvent, app::Screen, frame::Frame, reader_work_profile::ReaderWorkProfile,
     selection_authority::flag, zip_container::Status};
-use newt_native_storage::{Authority, chapter_cache::{ChapterCacheStorage, ChapterCacheState}, RouteState};
-use newt_phased_reader::imported_revision::{RevisionPorts, RevisionHasher};
+use newt_native_storage::{Authority, RouteState, chapter_cache::{ChapterCacheStorage, ChapterCacheState}};
+use newt_phased_reader::imported_revision::{RevisionHasher, RevisionPorts};
 use newt_reader_ui::{DeviceInfo, PhysicalOpen, StrictSource};
 
 struct Cancel<'a, 'task>(&'a ReaderDuty<'a, 'task>, Option<&'a dyn Fn() -> bool>);
@@ -27,7 +26,8 @@ impl Runtime {
         paint_first: bool, profile: Option<&ReaderWorkProfile>,
         sleep_extras: Option<&newt_device_ui::SleepExtras>,
     ) -> Result<BookExit, BookFailure> {
-        let initialize = opening.is_some();
+        let indexed = opening.as_ref().map(|opening| &opening.indexed);
+        let initialize = indexed.is_some();
         let opened_at = opening.as_ref().map(|opening| opening.at);
         if matches!(step, Some(BookStep::Save | BookStep::ReflowCheckpoint { .. })) {
             self.selection.retire_checkpoint_metadata();
@@ -68,19 +68,26 @@ impl Runtime {
             && self.selection.selection_verified(&mut || true);
         let card_missing = self.selection.flags() & flag::CARD_MISSING != 0;
         let mut accepted = self.selection.flags() & flag::ACCEPTED_OPEN_OWED != 0;
-        let accepted_save = opening.is_some_and(|opening| opening.accepted_save)
+        let accepted_save = opening.as_ref().is_some_and(|opening| opening.accepted_save)
             && self.selection.flags() & flag::TITLE_DEFERRED == 0;
         let digest = *self.selection.digest();
         let book_identity = self.selection.book_id();
         let name = self.selection.identity().filename;
         let filename = newt_core::library_name::name_bytes(&name)
             .and_then(|name| core::str::from_utf8(name).ok()).ok_or(BookFailure::Source)?;
+        if !newt_core::library_catalog::listable(&name) { return Err(BookFailure::Source); }
+        // Short operations use the selected descriptor. Only the whole-book
+        // fixture opens a path; keep its backing out of the product frame.
+        #[cfg(feature = "checkpoint-fixture")]
         let mut path = [0; b"/newt-sd/Newt/Books".len() + 2 + newt_core::library_name::FILENAME_BYTES];
-        if !newt_library_current::library_book_path(Some(b"/newt-sd/Newt/Books\0"), Some(&name), Some(&mut path)) {
-            return Err(BookFailure::Source);
-        }
-        let path = core::ffi::CStr::from_bytes_until_nul(&path).ok()
-            .and_then(|path| path.to_str().ok()).ok_or(BookFailure::Source)?;
+        #[cfg(feature = "checkpoint-fixture")]
+        let path = {
+            if !newt_library_current::library_book_path(Some(b"/newt-sd/Newt/Books\0"), Some(&name), Some(&mut path)) {
+                return Err(BookFailure::Source);
+            }
+            core::ffi::CStr::from_bytes_until_nul(&path).ok()
+                .and_then(|path| path.to_str().ok()).ok_or(BookFailure::Source)?
+        };
         let saved = self.recovery.as_ref().map_or(self.saved, |pending| *pending.progress());
         let policy = self.restore_policy_image();
         let settings = self.recovery.as_ref().map_or(self.settings, |pending| pending.settings);
@@ -92,7 +99,7 @@ impl Runtime {
         let was_accepted = accepted;
         let title_deferred = self.selection.flags() & flag::TITLE_DEFERRED != 0;
         let Self { memory, reader_ui, source, session: context, checkpoint, statistics, recovery,
-            cadence, exit_metadata, selection, idle, saves, settings: current_settings, .. } = self;
+            cadence, exit_metadata, selection, idle, saves, index_trim_owed, settings: current_settings, .. } = self;
         let (Some(memory), Some(source)) = (memory.external_mut(), source.as_mut()) else {
                 return Err(BookFailure::Open(Status::OutOfMemory));
             };
@@ -153,10 +160,12 @@ impl Runtime {
             let mut source_native = scope.card.port(scope.io);
             let mut receipt_native = scope.card.port(scope.io);
             let mut pages_native = scope.card.port(scope.io);
-            let request = BookRequest { path, filename, open: BookOpen::Receipt(digest),
+            let request = BookRequest {
+                #[cfg(feature = "checkpoint-fixture")]
+                path, filename, open: BookOpen::Receipt(digest),
                 identity: book_identity, saved, policy, info: &info, cancel: &idle_cancel,
                 now: millis, sleep: scene.as_ref(), zone: scope.clock.zone() };
-            let run_turn = |prepared| super::drive::Turn { initialize, paint_first, accepted_save,
+            let run_turn = |prepared| super::drive::Turn { indexed, paint_first, accepted_save,
                 step, settings, open: if initialize && prepared { PhysicalOpen::Prepared }
                     else { PhysicalOpen::Selected { digest, spine: saved.locator.spine } } };
             let Some(context) = context.as_mut() else {
@@ -179,7 +188,9 @@ impl Runtime {
                             (unsafe { crate::reader_hash::hash_source(raw, &mut actual, &mut || yielded(), hash_observer) })
                                 && allowed() && actual == *expected
                         };
-                        let strict = if initialize { StrictSource::new(raw, &digest) }
+                        let strict = if indexed.is_some() {
+                            StrictSource::from_hashed_descriptor(raw, &digest)
+                        }
                             else { StrictSource::for_live_reader(raw, selection, &memory.runtime.owner,
                                 &mut memory.runtime.reader).ok_or(BookFailure::Source)? };
                         let allowed = || !cancel.cancelled();
@@ -189,7 +200,7 @@ impl Runtime {
                             .run(super::drive::Ports { io: scope.io, panel: &mut *scope.bus.panel,
                                 card: &mut *scope.card, preferences: &mut *scope.preferences,
                                 nvs: &mut *scope.nvs, facts: &mut *scope.facts }, &mut pages, &mut strict, &request, &callbacks, &mut pause,
-                                None, run_turn(false), &yielded, &observed, saves, title_deferred)
+                                None, run_turn(false), &yielded, &observed, saves, title_deferred, index_trim_owed)
                     }).map_err(|_| BookFailure::Source)?
                 };
                 let closed = state.close(&mut pages_native, &route);
@@ -216,7 +227,8 @@ impl Runtime {
             source.with_source_observed(&mut source_native, Some(&cancel), file_observer, |source| {
                 session::with_source_lent(state, RevisionPorts { source: Some(source), store: &mut receipt,
                     whole: &mut whole, block: Some(&mut block), scratch }, action_storage, |revision| {
-                    if verification.state() == crate::reader_verification::Verification::Pending {
+                    let verified_now = indexed.is_some_and(|indexed| indexed.verified_now());
+                    if verified_now || verification.state() == crate::reader_verification::Verification::Pending {
                         let mut finish = |raw: &mut dyn newt_core::zip_window::source::BookSource,
                             expected: &[u8; 32], scratch: &mut [u8], allowed: &dyn Fn() -> bool| {
                             verification.finish_with_update(raw, expected, scratch, &mut || allowed(),
@@ -224,12 +236,13 @@ impl Runtime {
                         };
                         let allowed = || !cancel.cancelled();
                         let mut pending = revision.with_verification_gate(saved.locator.spine, &mut finish, &allowed);
+                        if let Some(indexed) = indexed { pending.start_indexed(indexed); }
                         super::drive::RunLoan { memory, ui: reader_ui, checkpoint, statistics, recovery,
                             accepted: &mut accepted, metadata: exit_metadata, flags: None, settings: current_settings }
                             .run(super::drive::Ports { io: scope.io, panel: &mut *scope.bus.panel,
                                 card: &mut *scope.card, preferences: &mut *scope.preferences,
                                 nvs: &mut *scope.nvs, facts: &mut *scope.facts }, &mut pages, &mut pending, &request, &callbacks, &mut pause,
-                                None, run_turn(false), &yielded, &observed, saves, title_deferred)
+                                None, run_turn(false), &yielded, &observed, saves, title_deferred, index_trim_owed)
                     } else {
                         if verification.state() != crate::reader_verification::Verification::Verified {
                             return Err(BookFailure::Open(Status::Stale));
@@ -241,7 +254,7 @@ impl Runtime {
                                 .run(super::drive::Ports { io: scope.io, panel: &mut *scope.bus.panel,
                                 card: &mut *scope.card, preferences: &mut *scope.preferences,
                                 nvs: &mut *scope.nvs, facts: &mut *scope.facts }, &mut pages, revision, &request, &callbacks, &mut pause,
-                                    Some((ledger, view)), run_turn(prepared), &yielded, &observed, saves, title_deferred))
+                                    Some((ledger, view)), run_turn(prepared), &yielded, &observed, saves, title_deferred, index_trim_owed))
                             .ok_or(BookFailure::Revision)?
                     }
                 }).map_err(|_| BookFailure::Revision)?

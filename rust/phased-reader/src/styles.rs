@@ -87,6 +87,15 @@ pub struct Member {
 // Four sit in every style source record inside the shared bank.
 const _: () = assert!(core::mem::size_of::<Member>() == 16);
 impl Member {
+    pub fn from_checked(entry: &Checked) -> Self {
+        let link = if !matches!(entry.method, 0 | 8) { Link::Unsupported }
+            else if entry.method == 0 && entry.compressed_size != entry.uncompressed_size { Link::Damaged }
+            else if entry.uncompressed_size > EXTERNAL_BYTES { Link::WorkLimit }
+            else if !crate::admission::inflate_input_bounded(entry) { Link::ResourceLimit }
+            else { Link::Resolved };
+        Self { record: CheckedRecord::from(entry), link, checked: link == Link::Resolved }
+    }
+    pub fn unresolved(link: Link) -> Self { Self { link, ..Self::default() } }
     fn checked(&self) -> Option<Checked> {
         (self.link == Link::Resolved && self.checked).then(|| self.record.member())
     }
@@ -892,7 +901,7 @@ pub fn local_href(href: Option<&[u8]>) -> bool {
 }
 struct SourceScan<'a, 'b, 'c, 'd, 's> {
     out: &'a mut Sources<'b>,
-    book: &'a Book<'c, 's>,
+    book: Option<&'a Book<'c, 's>>,
     directory: Option<&'a [u8]>,
     arena: &'a mut Arena<'d>,
     status: Status,
@@ -902,6 +911,7 @@ struct SourceScan<'a, 'b, 'c, 'd, 's> {
     links: usize,
     /// Catalog index of each resolved link, checked after the scan.
     members: [u16; 4],
+    paths: [Option<newt_core::zip_window::arena::ByteRange>; 4],
     stop: bool,
 }
 impl SourceScan<'_, '_, '_, '_, '_> {
@@ -919,13 +929,20 @@ impl SourceScan<'_, '_, '_, '_, '_> {
             return out;
         }
         self.arena.release(mark);
-        let path = resolve_href(self.arena, Some(dir), Some(href), None);
-        if let Some(path) = path.and_then(|r| self.arena.view(r)) {
+        let resolved = resolve_href(self.arena, Some(dir), Some(href), None);
+        if let Some(path) = resolved.and_then(|r| self.arena.view(r)) {
             let path = c_bytes(path);
+            let Some(book) = self.book else {
+                // Retain the resolved path until the chapter stream releases
+                // the source. Index lookup and local-name comparison happen then.
+                self.paths[self.links] = resolved;
+                out.link = Link::Resolved;
+                return out;
+            };
             let (mut css, mut contradictory) = (false, false);
-            for item in self.book.manifest {
-                if item.href.and_then(|r| self.book.arena.c_string(r)) == Some(path) {
-                    if item.media_type.and_then(|r| self.book.arena.c_string(r))
+            for item in book.manifest {
+                if item.href.and_then(|r| book.arena.c_string(r)) == Some(path) {
+                    if item.media_type.and_then(|r| book.arena.c_string(r))
                         == Some(b"text/css")
                     {
                         css = true;
@@ -935,7 +952,7 @@ impl SourceScan<'_, '_, '_, '_, '_> {
                 }
             }
             if css && !contradictory {
-                if let Some((index, entry)) = self.book.catalog.and_then(|z| z.find(path)) {
+                if let Some((index, entry)) = book.catalog.and_then(|z| z.find(path)) {
                     if matches!(entry.method, 0 | 8) {
                         out.link = if entry.method == 0
                             && entry.compressed_size != entry.uncompressed_size
@@ -1075,8 +1092,41 @@ pub struct ResolveScratch<'a, 'storage> {
     pub decoder: Option<InflateScratch<'a>>,
     pub xml: Resources<'a>,
 }
+#[inline(always)]
 pub fn resolve<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     book: &Book<'_, '_>,
+    source: &mut S,
+    chapter: &Checked,
+    href: Option<&[u8]>,
+    backend: &mut B,
+    scratch: ResolveScratch<'_, '_>,
+    on_yield: newt_core::admission::Yield<'_>,
+    out: &mut Sources<'_>,
+    policy: Option<&dyn crate::xml_session::SourcePolicy>,
+) -> Status {
+    resolve_book(Some(book), None, source, chapter, href, backend, scratch, on_yield, out, policy)
+}
+
+pub type StyleLookup<'a> = dyn Fn(&mut dyn BookSource, &[u8]) -> Result<Member, Status> + 'a;
+
+#[inline(always)]
+pub fn resolve_indexed<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
+    lookup: &StyleLookup<'_>,
+    source: &mut S,
+    chapter: &Checked,
+    href: Option<&[u8]>,
+    backend: &mut B,
+    scratch: ResolveScratch<'_, '_>,
+    on_yield: newt_core::admission::Yield<'_>,
+    out: &mut Sources<'_>,
+    policy: Option<&dyn crate::xml_session::SourcePolicy>,
+) -> Status {
+    resolve_book(None, Some(lookup), source, chapter, href, backend, scratch, on_yield, out, policy)
+}
+
+fn resolve_book<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
+    book: Option<&Book<'_, '_>>,
+    lookup: Option<&StyleLookup<'_>>,
     source: &mut S,
     chapter: &Checked,
     href: Option<&[u8]>,
@@ -1110,6 +1160,7 @@ pub fn resolve<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
         head: 0,
         links: 0,
         members: [0; 4],
+        paths: [None; 4],
         stop: false,
     };
     let mut status = match crate::admission::ChapterSource::open(
@@ -1146,7 +1197,7 @@ pub fn resolve<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
     // The scan cannot read members while the chapter streams, so stylesheets
     // are checked here. A damaged one is skipped, as a missing one is; a read
     // failure fails the scan, as it did when the stylesheet was opened.
-    if let Some(catalog) = book.catalog {
+    if let Some(catalog) = book.and_then(|book| book.catalog) {
         let SourceScan { out, members, links, .. } = &mut handler;
         for (member, &index) in out.links[..*links].iter_mut().zip(members.iter()) {
             if member.link != Link::Resolved {
@@ -1159,6 +1210,16 @@ pub fn resolve<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
                     break;
                 }
                 None | Some(Err(_)) => *member = Member { link: Link::Damaged, ..Member::default() },
+            }
+        }
+    }
+    if let Some(lookup) = lookup {
+        for row in 0..handler.links {
+            let Some(path) = handler.paths[row].and_then(|path| handler.arena.view(path)) else { continue; };
+            match lookup(&mut tracked, c_bytes(path)) {
+                Ok(member) => handler.out.links[row] = member,
+                Err(error @ (Status::IoError | Status::Stale)) => { status = error; break; }
+                Err(_) => handler.out.links[row] = Member::unresolved(Link::Damaged),
             }
         }
     }

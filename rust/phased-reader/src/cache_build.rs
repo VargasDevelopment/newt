@@ -389,6 +389,30 @@ impl CacheBuild<'_> {
         backend: &mut B,
         breaker: &mut dyn newt_core::chapter_layout::types::LineBreak,
     ) -> BuildResult {
+        self.build_phased_selected(reader, source, spine, store, storage, lender, backend, breaker,
+            |reader, source, spine, phase, backend, _| reader.select_physical(source, spine, phase, backend, false))
+    }
+    pub fn build_indexed<B: ParserBackend + ?Sized, C: crate::phase_storage::ReadScope>(
+        &self, reader: &mut PhasedReader<'_, '_>, source: &mut dyn BookSource, digest: &[u8; 32],
+        spine: u32, store: &mut C, storage: &mut crate::phase_storage::Storage<'_>,
+        lender: &mut impl crate::phase_storage::BuildLoan, backend: &mut B,
+        breaker: &mut dyn newt_core::chapter_layout::types::LineBreak,
+    ) -> BuildResult {
+        self.build_phased_selected(reader, source, spine, store, storage, lender, backend, breaker,
+            |reader, source, spine, phase, backend, store| reader.select_indexed(source, store, digest, spine, phase, backend, false))
+    }
+    fn build_phased_selected<S: BookSource + ?Sized, B: ParserBackend + ?Sized, C: CacheStorage>(
+        &self,
+        reader: &mut PhasedReader<'_, '_>,
+        source: &mut S,
+        spine: u32,
+        store: &mut C,
+        storage: &mut crate::phase_storage::Storage<'_>,
+        lender: &mut impl crate::phase_storage::BuildLoan,
+        backend: &mut B,
+        breaker: &mut dyn newt_core::chapter_layout::types::LineBreak,
+        mut select: impl FnMut(&mut PhasedReader<'_, '_>, &mut S, u32, &mut crate::phase_storage::Phase<'_>, &mut B, &mut C) -> Result<bool, Status>,
+    ) -> BuildResult {
         if let Err(status) = Self::physical_ready(reader, spine) {
             return BuildResult::status(status);
         }
@@ -415,6 +439,16 @@ impl CacheBuild<'_> {
                     writer.guarded(source, |_, store, _| store.remove(self.name));
                     return BuildResult::status(Status::OutOfMemory);
                 }
+                // Index queries must finish before opening the provisional page
+                // writer: both use the same native descriptor owner.
+                if !again {
+                    let selected = storage.with_loan(lender, |phase| {
+                        let status = reader.validate(source);
+                        if status != Status::Ok { return Err(status); }
+                        select(reader, source, spine, phase, backend, writer.store)
+                    });
+                    if let Err(status) = selected { return BuildResult::status(status); }
+                }
                 if !writer.guarded(source, |w, store, m| w.begin(store, self.name, self.generation, m)) {
                     writer.guarded(source, |_, store, _| store.remove(self.name));
                     return BuildResult::status(Status::OutOfMemory);
@@ -423,9 +457,6 @@ impl CacheBuild<'_> {
                 let pass = storage.with_loan(lender, |phase| {
                     let status = reader.validate(source);
                     if status != Status::Ok { return Err(status); }
-                    if !again {
-                        reader.select_physical(source, spine, phase, backend, false)?;
-                    }
                     if !phase.ready(spine) { return Err(Status::OutOfMemory); }
                     let selected = &reader.selections[reader.active ^ 1];
                     let result = {
@@ -484,6 +515,8 @@ impl CacheBuild<'_> {
         result.unwrap_or_else(BuildResult::status)
     }
 }
+// Layout workspace is a sibling of index selection, not its stack ancestor.
+#[inline(never)]
 #[allow(clippy::too_many_arguments)]
 fn physical_cache_pass<S: BookSource + ?Sized, B: ParserBackend + ?Sized, C: CacheStorage>(
     source: &mut S,

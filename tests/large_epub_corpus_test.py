@@ -49,6 +49,23 @@ SYNC_SEVEN_CHUNKS = (
 )
 
 # (what breaks, file under rust/, exact text, broken text, failing case name)
+INDEX_STYLE_CONTROL = (
+    "the index drops stylesheet classification", "core/src/book_index_build/engine.rs",
+    "if next.position & (1 << 16) != 0 { member.flags |= crate::book_index::STYLESHEET; }",
+    "if false { member.flags |= crate::book_index::STYLESHEET; }", "stylesheet-application",
+)
+INDEX_STYLE_HEADER_CONTROL = (
+    "the index drops its any-stylesheet header bit", "core/src/book_index_build.rs",
+    "stylesheets: package.stylesheets", "stylesheets: false", "stylesheet-application",
+)
+INDEX_NAME_CONTROL = (
+    "an indexed hash hit skips its exact local-name comparison", "core/src/member_check_indexed.rs",
+    "|| expected.is_some_and(|expected|", "|| false && expected.is_some_and(|expected|", "indexed-local-name",
+)
+INDEX_TOC_CONTROL = (
+    "Contents ignores the TOC-declared header bit", "phased-reader/src/phase_navigation_indexed.rs",
+    "index.header().navigation_declared, status", "false, status", "toc-declared-missing",
+)
 CONTROLS = (
     ("the 1,024-entry cap is raised", ADMISSION, "d.entries > 1024", "d.entries > 2048", "zip-entries-over"),
     ("the 1 MiB central-directory cap is raised", ADMISSION, "d.size > 1024 * 1024", "d.size > 2 * 1024 * 1024", "central-dir-over"),
@@ -385,19 +402,19 @@ def verify_fresh_build_guard(support):
     print("PASS self-test: a control fails when its build reuses an earlier executable", flush=True)
 
 
-def run_control(run, workspace, target, support, manifest, verified, builds, name, source, good, bad, failing_case):
+def run_control(run, workspace, target, support, manifest, verified, builds, name, source, good, bad, failing_case, *, unit=False, test_filter=None):
     support.require(failing_case in verified, f'control "{name}": {failing_case} has no clean baseline')
     path = workspace / source
     text = path.read_text()
     support.require(text.count(good) == 1, f'control "{name}": anchor not in rust/{source} exactly once')
     path.write_text(text.replace(good, bad))
     try:
-        binary = test_binary(run, workspace, target)
+        binary = test_binary(run, workspace, target, unit=unit)
         builds.admit(binary, (source, good, bad))
         number = len(run.commands)
         run.env["NEWT_LARGE_EPUB_MANIFEST"] = str(manifest)
         try:
-            run.run([binary, "--nocapture"], workspace)
+            run.run([binary, *([test_filter] if test_filter else []), "--nocapture"], workspace)
         except RuntimeError:
             stdout = (run.output / f"{number:03d}.stdout").read_text()
             stderr = (run.output / f"{number:03d}.stderr").read_text()
@@ -477,6 +494,48 @@ def run_controls(binary, run, workspace, target, support, epubs_dir, output):
     verify_fresh_build_guard(support)
     builds = FreshBuilds()
     builds.admit(binary, None)
+    manifest = Path(run.env["NEWT_LARGE_EPUB_MANIFEST"])
+    baseline = run_clean_cases(binary, run, workspace, support, manifest)
+    support.require("INDEX stylesheet-application " in baseline, "stylesheet oracle baseline absent")
+    for control in (INDEX_STYLE_CONTROL, INDEX_STYLE_HEADER_CONTROL, INDEX_NAME_CONTROL, INDEX_TOC_CONTROL):
+        run_control(run, workspace, target, support, manifest, {control[-1]}, builds, *control)
+        binary = test_binary(run, workspace, target)
+        builds.admit(binary, None)
+    unit_binary = test_binary(run, workspace, target, unit=True)
+    recovery_test = "navigation_indexed::tests::consumed_index_damage_removes_the_header_hit_for_the_next_open"
+    recovery = run.run([unit_binary, recovery_test, "--nocapture"], workspace)
+    support.require("test result: ok. 1 passed; 0 failed" in recovery, "index recovery baseline absent")
+    builds.admit(unit_binary, None)
+    run_control(run, workspace, target, support, manifest, {"index-recovery"}, builds,
+                "a consumed index failure leaves a reusable header", "phased-reader/src/reader_indexed.rs",
+                "if damaged { store.invalidate_index(digest); }", "if false && damaged { store.invalidate_index(digest); }",
+                "index-recovery", unit=True, test_filter=recovery_test)
+    unit_binary = test_binary(run, workspace, target, unit=True)
+    margin_test = "navigation_indexed::tests::chapter_bind_batches_at_bound_and_refuses_oversized_toc_without_queries"
+    margin = run.run([unit_binary, margin_test, "--nocapture"], workspace)
+    support.require("test result: ok. 1 passed; 0 failed" in margin, "Contents margin baseline absent")
+    builds.admit(unit_binary, None)
+    run_control(run, workspace, target, support, manifest, {"contents-margin"}, builds,
+                "menu binding retains the finished sort loan", "phased-reader/src/phase_navigation_indexed.rs",
+                "Parts(&mut *parts.0).array::<index_mapping::HashRow>(toc.len())?",
+                "parts.array::<index_mapping::HashRow>(toc.len())?", "contents-margin", unit=True, test_filter=margin_test)
+    unit_binary = test_binary(run, workspace, target, unit=True)
+    opens = run.run([unit_binary, margin_test, "--nocapture"], workspace)
+    support.require("test result: ok. 1 passed; 0 failed" in opens, "index open-count baseline absent")
+    builds.admit(unit_binary, None)
+    oversized_guard = "if toc.len() > CONTENTS_BATCH_ROWS { return Err(Status::OutOfMemory); }"
+    for reopen, witness in [(False, "contents-scope-bound"), (True, "index-opens")]:
+        query = "query_book_index" if reopen else "query_index_store"
+        callback = "|index, store|" if reopen else "|store|"
+        per_row = ("if toc.len() > CONTENTS_BATCH_ROWS {\n"
+                   "        for _ in toc { crate::reader::" + query +
+                   "(source, store, digest, parse, " + callback +
+                   " { index.member(store, 0).ok_or(Status::IoError) })?; }\n"
+                   "        return Err(Status::OutOfMemory); }")
+        run_control(run, workspace, target, support, manifest, {witness}, builds,
+                    "oversized Contents queries once per row" + (" and reopens the header" if reopen else ""),
+                    "phased-reader/src/phase_navigation_indexed.rs", oversized_guard, per_row,
+                    witness, unit=True, test_filter=margin_test)
     cache_limit_cases(run, workspace, target, support, builds=builds)
     by_name, verified = {}, set()
     prepare_control_baselines(binary, run, workspace, epubs_dir, output, support, by_name, verified, CONTROLS)
@@ -537,7 +596,7 @@ def main(argv=None):
             binary = test_binary(run, workspace, target)
             if args.negative_controls:
                 run_controls(binary, run, workspace, target, support, epubs_dir, output)
-                print(f"PASS large-EPUB corpus controls ({len(CONTROLS) + len(CACHE_LIMIT_CONTROLS)} controls; "
+                print(f"PASS large-EPUB corpus controls ({len(CONTROLS) + len(CACHE_LIMIT_CONTROLS) + 8} controls; "
                       f"total {time.perf_counter() - started:.2f}s)", flush=True)
                 return
             exec_t0 = time.perf_counter()

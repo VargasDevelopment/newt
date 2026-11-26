@@ -108,6 +108,11 @@ impl<'a> ReaderSource<'a> {
         let fresh = self.revision.finish_immutable_read();
         (status, fresh)
     }
+    /// The index pass verifies and reads the held physical bytes independently
+    /// of the optional receipt's block checks. The source cannot escape its loan.
+    pub fn with_held_source<R>(&mut self, work: impl FnOnce(&mut dyn BookSource) -> R) -> Option<R> {
+        self.revision.with_held_source(work)
+    }
     pub fn reset(&mut self) {
         self.revision.retain_source_for_reopen(false);
         self.revision.reset();

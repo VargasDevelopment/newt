@@ -212,29 +212,30 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
         &mut self,
         reader: &mut PhasedReader<'_, '_>,
         source: &mut dyn BookSource,
+        digest: &Digest,
         request: PageRequest,
     ) -> PageWork {
         let mut publication = ActionScope::inactive();
         let status = match request {
             PageRequest::Open => {
-                return completed(reader.open_phased(
-                    source,
+                return completed(reader.open_indexed(
+                    source, self.cache.store, digest,
                     self.storage,
                     self.panel,
                     self.backend,
                 ));
             }
             PageRequest::Menu(focus) => {
-                return completed(reader.prepare_chapter_menu_phased(
-                    source,
+                return completed(reader.prepare_chapter_menu_indexed(
+                    source, self.cache.store, digest,
                     focus,
                     self.storage,
                     self.panel,
                     self.backend,
                 ));
             }
-            PageRequest::Chapter(spine, toc) => reader.capture_chapter_phased(
-                source,
+            PageRequest::Chapter(spine, toc) => reader.capture_chapter_indexed(
+                source, self.cache.store, digest,
                 spine,
                 toc,
                 self.storage,
@@ -250,8 +251,8 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
                 } else {
                     newt_phased_sink::Target::Page
                 };
-                reader.capture_phased(
-                    source,
+                reader.capture_indexed(
+                    source, self.cache.store, digest,
                     spine,
                     target,
                     mode,
@@ -309,7 +310,7 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
                 self.open_strict(reader, revision, mode, *digest)
             }
             ReaderSourceMode::Strict => revision
-                .with_held_source(|raw| self.execute_raw(reader, raw, request))
+                .with_held_source(|raw| self.execute_raw(reader, raw, digest, request))
                 .unwrap_or_else(|| PageWork::failed(Status::IoError)),
             ReaderSourceMode::Closed => unreachable!(),
         };
@@ -344,7 +345,7 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
         *mode = ReaderSourceMode::Strict;
         reader.trace_route(ReaderOpenRoute::StrictAdmission);
         revision
-            .with_held_source(|raw| self.execute_raw(reader, raw, PageRequest::Open))
+            .with_held_source(|raw| self.execute_raw(reader, raw, &expected, PageRequest::Open))
             .unwrap_or_else(|| PageWork::failed(Status::IoError))
     }
 }

@@ -7,6 +7,10 @@ pub trait CacheStorage {
     fn file_size(&mut self, name: &[u8]) -> i64;
     fn read_at(&mut self, name: &[u8], offset: u32, dst: &mut [u8]) -> i32;
     fn begin_write(&mut self, name: &[u8]) -> bool;
+    /// Exact payload size, when known before the first write. Stores may reserve it.
+    fn begin_write_sized(&mut self, name: &[u8], _payload: u32) -> bool {
+        self.begin_write(name)
+    }
     fn write(&mut self, bytes: &[u8]) -> bool;
     fn end_write(&mut self) -> bool;
     /// Native stores lend this check to the final destination-safety boundary.
@@ -17,4 +21,33 @@ pub trait CacheStorage {
     fn read_back_at(&mut self, _offset: u32, _dst: &mut [u8]) -> i32 {
         -1
     }
+}
+/// One checked cache read, as pinned ChapterPageCache readEntry/locate:
+/// beginRead(query), attach, the SDK read, query.finish, finishRead.
+/// `opening` is `!hasPage`; `scratch` is the parse loan beyond the
+/// index, where a native store places its verified query. `read` gets the
+/// store to read from; Ok's bool is the checked exit. A scope that could not
+/// begin or attach is Err(Stale). No default success implementation: the
+/// caller supplies real scope authority. Check source_live after admission
+/// before attach, then after query cleanup before the checked exit, including
+/// failures; the read callback has no raw source capability.
+pub trait ReadScope: CacheStorage {
+    /// A failed consumed index block must not leave a header-only cache hit.
+    fn invalidate_index(&mut self, digest: &[u8; 32]) -> bool {
+        let name = crate::book_index::FileName::new(digest, crate::book_index::FileKind::Index);
+        self.remove(name.as_bytes())
+    }
+    fn query_index<R>(&mut self,name:&[u8],_digest:&[u8;32],opening:bool,scratch:&mut[u8],
+        source_live:&mut dyn FnMut()->bool,read:impl FnOnce(&mut dyn CacheStorage)->R)
+        ->Result<(R,bool),Status> {
+        self.query(name,opening,scratch,source_live,read)
+    }
+    fn query<R>(
+        &mut self,
+        name: &[u8],
+        opening: bool,
+        scratch: &mut [u8],
+        source_live: &mut dyn FnMut() -> bool,
+        read: impl FnOnce(&mut dyn CacheStorage) -> R,
+    ) -> Result<(R, bool), Status>;
 }

@@ -79,11 +79,14 @@ impl Reader for Admission {
     fn strict_open(&mut self, _: &mut dyn BookSource) -> Status {
         self.admitted += 1; self.result
     }
-    fn spine_count(&self) -> u32 { 0 }
+    fn spine_count(&self) -> u32 { 1 }
     fn stage(&mut self, _: &mut dyn BookSource, _: u32, _: bool) -> Result<Checked, Status> {
         Err(Status::Unsupported)
     }
-    fn commit(&mut self, _: u32) { panic!("prepared-open must not select/cache-build"); }
+    fn commit(&mut self, _: u32) {}
+    fn stage_original_verified(&mut self, _: &mut ImportedRevision<'_>, _: u32, _: bool) -> Option<Result<(), Status>> {
+        Some(if self.result == Status::Ok { Ok(()) } else { Err(self.result) })
+    }
 }
 struct NoCache;
 impl Cache<Admission> for NoCache {

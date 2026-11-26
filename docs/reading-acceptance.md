@@ -221,6 +221,28 @@ does not reset that writer. A later cached turn reacquires Pages through the
 existing complete source/receipt/cache checks. No per-book exception or extra
 reader-open/page-turn hook is involved.
 
+A first-open index pass releases Pages before building. A resident build keeps
+its selected source open. If the work file spills, the pass releases that source
+only after parsing and joining, then publishes with receipt, work and index temp
+using at most three files. Work is closed before the same catalog path is reopened.
+DEV USB PUT remains refused by the active opening/reader state throughout this
+gap; it never uses the source descriptor's presence as permission to write.
+Reopen failure refuses the open (Position kept); the index is complete and valid
+or absent, and unfinished work/temp files are removed. A power cut may leave a
+complete index or none. Reopening marks the selection unconfirmed and restarts
+the existing session verifier; if no session fits, the reopened source is checked
+in full before the open continues. Failed verification revokes the derived index.
+The index trace reports source release and reopen times.
+
+Imported SD books select chapters, Contents, styles and semantic metadata from
+that index. Each chapter's local ZIP header and name are checked when it opens.
+The index joins manifest IDs and spine references with 64-bit hashes. The parser
+oracle retains its 32-bit FNV-1a join: distinct IDs with the same 32-bit hash can
+select the first manifest item there, while the index selects the intended item.
+Missing chapter files keep their Contents projection and return NotFound without
+a chapter notice. A declared but missing TOC keeps the existing Contents fallback
+message.
+
 Runtime acknowledged progress advances only after a verified checkpoint. A failed
 attempt retains newer live progress separately as pending recovery. Back and
 Sleep proceed even if storage cannot confirm the attempt; they never label it

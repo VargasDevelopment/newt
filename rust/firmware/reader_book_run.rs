@@ -19,10 +19,11 @@ pub(crate) fn drive<'io, 'm, 'p, 'scope, 'sdk, 'route, P: CardPort, F, N: nvs::N
     accepted_open: &mut bool, recovery: &mut Option<PendingRecovery>,
     book_identity: u64, saved: Progress, digest: Digest,
     producer: &ProducerCallbacks<'_>, producer_ledger: Option<&mut [u8; 256]>,
-    initialize: bool, paint_first: bool, route: Route, accepted_save: bool,
+    indexed: Option<&newt_phased_reader::index_build::Indexed>, paint_first: bool, route: Route, accepted_save: bool,
     visit_parts: Option<VisitParts<'_>>,
     _metadata: Option<&mut Option<newt_sdk_heap::Fixed<crate::reader_exit_metadata::ExitMetadata>>>,
     title_deferred: bool, mut saves: Option<&mut newt_core::save_notice::ReadingSaveNotice>,
+    index_trim_owed: &mut bool,
     mut next: F, pause: &mut ProducerPauseFn<'_, 'io, N, P>,
 ) -> Result<BookExit, BookFailure>
 where
@@ -32,6 +33,7 @@ where
 {
     #[cfg(feature = "checkpoint-fixture")]
     let mut metadata = _metadata;
+    let initialize = indexed.is_some();
     checkpoint.checkpoint.begin_operation();
     let (mut reader, mut owner, mut ui) = (reader, owner, ui);
     if initialize {
@@ -45,9 +47,9 @@ where
     let policy = request.policy;
     let opened_at = now();
     let mut action_at = opened_at;
-    let opened = if initialize {
+    let opened = if let Some(indexed) = indexed {
         let _action = StatsActionScope::new(request, crate::reader_action::ActionStage::OrdinaryFallback);
-        owner.open_physical(&mut reader, &mut *revision, book_identity, saved, policy,
+        owner.open_physical(indexed, &mut reader, &mut *revision, book_identity, saved, policy,
             opened_at, &mut resources.owner())
     } else { owner.state.opened() || owner.state.has_progress() };
     let result = if opened {
@@ -275,6 +277,10 @@ where
                                 owner.tracker.snapshot(now()), None,
                             );
                             if repaint || restored.is_err() { composed = Some(restored); }
+                        } else if quiet_from.is_none() && *index_trim_owed && !request.cancel.cancelled() {
+                            // Index housekeeping yields to page production: it runs only on
+                            // a pass where the producer did no work, so it never delays pages.
+                            *index_trim_owed = trim_index(resources.pages, request, producer.wait, &opened_digest);
                         }
                     }
                     continue;
@@ -407,4 +413,17 @@ where
     #[cfg(feature = "checkpoint-fixture")]
     if matches!(route, Route::WholeLoop) { owner.close(&mut reader); }
     result
+}
+
+/// Trims the index folder to its grant with the open index pinned; true while the
+/// trim is still owed. Only input-cancelled trims resume; a failed delete waits for
+/// the next built index, so a bad card can't retry on every idle pass.
+// Keep census scratch and the pinned name out of the shared drive frame.
+#[inline(never)]
+fn trim_index<N: newt_native_storage::Native + newt_native_storage::page_entries::PageEntries>(
+    pages: &mut crate::reader_pages::ReaderPages<'_, N>, request: &BookRequest<'_>, wait: Option<fn()>, digest: &Digest,
+) -> bool {
+    let pinned = newt_core::book_index::FileName::new(digest, newt_core::book_index::FileKind::Index);
+    pages.0.index_trim(request.cancel, request.now, wait, pinned.as_bytes()).outcome
+        == newt_native_storage::MissingProbe::Stopped
 }

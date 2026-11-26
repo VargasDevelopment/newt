@@ -35,10 +35,9 @@ impl<B: ParserBackend + ?Sized, L: BuildLoan> session::Reader
         self.reader.close();
         self.storage.discard_styles();
     }
-    fn strict_open(&mut self, source: &mut dyn BookSource) -> Status {
-        session::Reader::close(self);
-        self.reader
-            .open_phased(source, self.storage, self.lender, self.backend)
+    fn strict_open(&mut self, _source: &mut dyn BookSource) -> Status {
+        // Physical selection needs the cache-owned index capability.
+        Status::Unsupported
     }
     fn spine_count(&self) -> u32 {
         self.reader.selection().spines
@@ -52,14 +51,6 @@ impl<B: ParserBackend + ?Sized, L: BuildLoan> session::Reader
         // The legacy external-lease API cannot compose the SDK owner safely.
         // Session::stage_owned is the supported route for this adapter.
         Err(Status::Unsupported)
-    }
-    fn stage_original_verified(
-        &mut self,
-        revision: &mut ImportedRevision<'_>,
-        spine: u32,
-        plain: bool,
-    ) -> Option<Result<(), Status>> {
-        Some(self.stage_verified_physical(revision, spine, plain))
     }
     fn discard_owned_stage(&mut self) {
         self.staged = None;
@@ -89,6 +80,14 @@ pub struct PhasedChapterCache<'a, C> {
 impl<B: ParserBackend + ?Sized, L: BuildLoan, C: ReadScope + CachePresence>
     session::Cache<OperationPhased<'_, '_, '_, '_, B, L>> for PhasedChapterCache<'_, C>
 {
+    fn strict_open(&mut self, r: &mut OperationPhased<'_, '_, '_, '_, B, L>, source: &mut dyn BookSource,
+        digest: &Digest) -> Status {
+        r.reader.open_indexed(source, self.store, digest, r.storage, r.lender, r.backend)
+    }
+    fn stage_original_verified(&mut self, r: &mut OperationPhased<'_, '_, '_, '_, B, L>,
+        revision: &mut ImportedRevision<'_>, spine: u32, plain: bool) -> Option<Result<(), Status>> {
+        Some(r.stage_verified_indexed(revision, self.store, spine, plain))
+    }
     fn stored(
         &mut self,
         digest: &Digest,
@@ -106,6 +105,8 @@ impl<B: ParserBackend + ?Sized, L: BuildLoan, C: ReadScope + CachePresence>
             self.store.present(name, opening)
         })
     }
+    // Cache production ends before import stages the selected index entry.
+    #[inline(never)]
     fn build(
         &mut self,
         source: &mut dyn BookSource,
@@ -128,8 +129,8 @@ impl<B: ParserBackend + ?Sized, L: BuildLoan, C: ReadScope + CachePresence>
             Ok(v) => v,
             Err(e) => return session::Build::Failed(e),
         };
-        let result = CacheBuild { name: &name, generation }.build_phased(
-            r.reader, source, spine, self.store, r.storage, r.lender, r.backend, r.breaker,
+        let result = CacheBuild { name: &name, generation }.build_indexed(
+            r.reader, source, digest, spine, self.store, r.storage, r.lender, r.backend, r.breaker,
         );
         if result.verified_empty { session::Build::Empty }
         else if result.status == Status::Ok { session::Build::Ready }
@@ -268,8 +269,8 @@ impl<C: ReadScope + CachePresence> PhasedChapterCache<'_, C> {
         let _action = ActionScope::new(trace, ActionStage::OrdinaryFallback);
         admission::open_route(trace, ReaderOpenRoute::OrdinaryPage);
         r.staged = None;
-        let status = r.reader.capture_phased(
-            source,
+        let status = r.reader.capture_indexed(
+            source, self.store, digest,
             request.spine,
             request.target,
             if request.anchor {
@@ -414,6 +415,8 @@ impl<'trace, B: ParserBackend + ?Sized, L: BuildLoan, C: ReadScope + CachePresen
             newt_core::admission::WorkKind::OpenRoute, ReaderOpenRoute::CacheHit as i32)); }
         result
     }
+    // Page capture workspace must not burden opening or chapter/menu requests.
+    #[inline(never)]
     pub fn capture_page_owned_traced(&mut self, request: CacheRequest) -> CapturedPage<'trace> {
         let before = session::stamp(self.revision);
         let digest = *self.revision.digest();
@@ -431,12 +434,9 @@ impl<'trace, B: ParserBackend + ?Sized, L: BuildLoan, C: ReadScope + CachePresen
 }
 
 impl<B: ParserBackend + ?Sized, L: BuildLoan> OperationPhased<'_, '_, '_, '_, B, L> {
-    fn stage_verified_physical(
-        &mut self,
-        revision: &mut ImportedRevision<'_>,
-        spine: u32,
-        plain: bool,
-    ) -> Result<(), Status> {
+    fn stage_verified_indexed<C: ReadScope>(&mut self, revision: &mut ImportedRevision<'_>,
+        store: &mut C, spine: u32, plain: bool) -> Result<(), Status> {
+        let digest = *revision.digest();
         // Range verification needs the actual ImportedRevision capability, not
         // a downcast or a second source alias captured beside the same source.
         self.staged = None;
@@ -455,7 +455,7 @@ impl<B: ParserBackend + ?Sized, L: BuildLoan> OperationPhased<'_, '_, '_, '_, B,
         let r = &mut self.reader;
         let backend = &mut self.backend;
         let undeclared = self.storage.with_loan(self.lender, |phase| {
-            let undeclared = r.select_physical(revision, spine, phase, *backend, plain)?;
+            let undeclared = r.select_indexed(revision, store, &digest, spine, phase, *backend, plain)?;
             let entry = r.staged_selection().entry;
             admission::open_route(r.on_yield, ReaderOpenRoute::CanonicalSelected);
             {
@@ -480,7 +480,8 @@ impl<B: ParserBackend + ?Sized, L: BuildLoan, C: ReadScope + CachePresence>
     pub fn prepare_menu_owned(&mut self, focus: u32) -> Status {
         let before = session::stamp(self.revision);
         let r = &mut self.reader;
-        let status = r.reader.prepare_chapter_menu_phased(self.revision, focus,
+        let digest = *self.revision.digest();
+        let status = r.reader.prepare_chapter_menu_indexed(self.revision, self.cache.store, &digest, focus,
             r.storage, r.lender, r.backend);
         if before != session::stamp(self.revision) || (status == Status::Ok && !self.revision.good()) {
             let active = r.reader.active;
@@ -493,7 +494,8 @@ impl<B: ParserBackend + ?Sized, L: BuildLoan, C: ReadScope + CachePresence>
         if self.revision.provisional() { return Status::Unsupported; }
         let before = session::stamp(self.revision);
         let r = &mut self.reader;
-        let status = r.reader.capture_chapter_phased(self.revision, spine, toc,
+        let digest = *self.revision.digest();
+        let status = r.reader.capture_chapter_indexed(self.revision, self.cache.store, &digest, spine, toc,
             r.storage, r.lender, r.backend, r.breaker);
         if before != session::stamp(self.revision) || (status == Status::Ok && !self.revision.good()) {
             // Pure resolution failure preserves the previous plan. Only a

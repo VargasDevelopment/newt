@@ -73,7 +73,8 @@ pub enum StatsCondition {
 pub const CACHE_ROOT: &str = "/newt-sd/Newt/Cache";
 
 pub struct BookRequest<'a> {
-    /// The card path to open.
+    /// Only the whole-book fixture opens a path; short operations hold a source.
+    #[cfg(feature = "checkpoint-fixture")]
     pub path: &'a str,
     /// The catalog filename; its SHA-256 names the cache route (cacheRouteKey).
     pub filename: &'a str,
@@ -400,11 +401,18 @@ where
     let mut statistics = ReadingStatsRuntime::default();
     let mut accepted_open = false;
     let mut recovery = None;
+    // Fixture-only: the imported revision owns this source loan; BookSource
+    // cannot release its descriptor. Missing indexes that spill are refused;
+    // product opens use SelectedSource::with_index_source/open_releasing.
+    let indexed = newt_phased_reader::index_build::open(&mut revision, &digest, resources.storage,
+        resources.panel, &mut resources.parser, resources.pages, on_yield,
+        newt_phased_reader::index_build::Verification::Verified).map_err(BookFailure::Open)?;
+    let mut index_trim_owed = indexed.built();
     let result = run::drive(io, card, request, &mut runtime.reader, &mut runtime.owner,
         &mut runtime.ui, &mut revision, &mut resources,
         preferences, checkpoint, stats_sha256, &mut statistics, &mut accepted_open,
         &mut recovery, book_identity, saved, digest, &producer, Some(producer_ledger),
-        true, true, run::Route::WholeLoop, true, None, None, false, None, next, pause);
+        Some(&indexed), true, run::Route::WholeLoop, true, None, None, false, None, &mut index_trim_owed, next, pause);
     revision.reset();
     result
 }

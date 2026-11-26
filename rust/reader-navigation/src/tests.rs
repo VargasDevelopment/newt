@@ -386,3 +386,177 @@ fn builtin_identity_uses_depth_and_rejects_unresolved_or_tied_distinct_titles() 
     assert!(resolve_identity(&entries, 1, 0, &mut out));
     assert_eq!(c_bytes(&out), b"Section 2");
 }
+
+struct MappingIndex {
+    bytes: Vec<u8>,
+    reads: Vec<u32>,
+    fail: bool,
+}
+impl newt_core::page_cache::CacheStorage for MappingIndex {
+    fn remove(&mut self, _: &[u8]) -> bool { false }
+    fn file_size(&mut self, _: &[u8]) -> i64 { self.bytes.len() as i64 }
+    fn read_at(&mut self, _: &[u8], offset: u32, dst: &mut [u8]) -> i32 {
+        self.reads.push(offset);
+        if self.fail { return -1; }
+        let Some(bytes) = self.bytes.get(offset as usize..offset as usize + dst.len())
+            else { return -1; };
+        dst.copy_from_slice(bytes);
+        dst.len() as i32
+    }
+    fn begin_write(&mut self, _: &[u8]) -> bool { false }
+    fn write(&mut self, _: &[u8]) -> bool { false }
+    fn end_write(&mut self) -> bool { false }
+}
+fn mapping_index(book: &Book<'_>) -> (MappingIndex, newt_core::book_index::Reader) {
+    use newt_core::book_index::{self as idx, Header, Identity};
+    let identity = Identity { digest: [1; 32], policy: 1 };
+    let mut title = [0; idx::TITLE_BYTES];
+    title[..4].copy_from_slice(b"Test");
+    let header = Header { stylesheets: false, navigation_declared: false, identity, members: book.members.len() as u32,
+        spine: book.spine_count() as u32, spine_bytes: 0, nav: idx::NONE,
+        ncx: idx::NONE, cover: idx::NONE, language: Default::default(), title };
+    let mut bytes = vec![0; header.payload_bytes().unwrap() as usize];
+    header.encode((&mut bytes[..idx::HEADER_BYTES as usize]).try_into().unwrap());
+    let mut members: Vec<_> = book.members.iter().map(|(href, member)| idx::Member {
+        hash: idx::name_hash(href), contents_spine: readable_spine(book, href),
+        method: member.method, uncompressed: member.uncompressed, ..Default::default()
+    }).collect();
+    members.sort_unstable_by_key(|member| member.hash);
+    for (i, member) in members.iter().enumerate() {
+        let at = header.member_offset(i as u32).unwrap() as usize;
+        member.encode((&mut bytes[at..at + idx::MEMBER_BYTES as usize]).try_into().unwrap());
+    }
+    let mut storage = MappingIndex { bytes, reads: Vec::new(), fail: false };
+    let index = idx::Reader::open(&mut storage, &identity).unwrap();
+    storage.reads.clear();
+    (storage, index)
+}
+
+#[test]
+fn batch_contents_matches_oracle_and_reads_each_member_at_most_once() {
+    use crate::index_mapping::{self, HashRow, MappingRoute};
+    let mut book = fixture();
+    book.spines.push(Some(chapter(b"one"))); // Repeated spine is ambiguous.
+    book.spines.push(Some(Item { href: Some(b"front"), media: Some(b"image/png") }));
+    book.members[2].1.method = 99;
+    book.spines.push(Some(chapter(b"")));
+    book.members.push((b"", Member { method: 0, uncompressed: 10 }));
+    book.toc.extend([
+        declaration(b"Empty href", b"", b"", 0),
+        declaration(b"Missing", b"missing", b"", 0),
+        declaration(b"Unsupported", b"two", b"", 0),
+        declaration(b"Image", b"front", b"", 0),
+        declaration(b"", b"front", b"", 0),
+    ]);
+    let (mut storage, index) = mapping_index(&book);
+    let mut expected = vec![NO_SPINE; book.toc_count()];
+    book.declared_spines(&mut expected);
+    let mut actual = vec![0; book.toc_count()];
+    let mut scratch = vec![HashRow::default(); actual.len()];
+    assert_eq!(index_mapping::declared_spines(&book, &index, &mut |scan| scan(&mut storage),
+        &mut actual, &mut scratch), Ok(MappingRoute::Batch));
+    assert_eq!(actual, expected);
+    assert!(storage.reads.len() <= book.members.len());
+    assert!(storage.reads.windows(2).all(|pair| pair[1] == pair[0] + 32));
+}
+
+#[test]
+fn batch_contents_preserves_duplicate_declarations_and_nul_terminated_hrefs() {
+    use crate::index_mapping::{self, HashRow};
+    let mut book = fixture();
+    book.toc.push(declaration(b"Nul", b"one\0ignored", b"", 0));
+    let (mut storage, index) = mapping_index(&book);
+    let mut mapping = vec![0; book.toc_count()];
+    let mut scratch = vec![HashRow::default(); mapping.len()];
+    index_mapping::declared_spines(&book, &index, &mut |scan| scan(&mut storage), &mut mapping, &mut scratch).unwrap();
+    assert_eq!(mapping, vec![1; book.toc_count()]);
+}
+
+#[test]
+fn short_batch_scratch_uses_the_per_row_rule_without_index_reads() {
+    use crate::index_mapping::{self, HashRow, MappingRoute};
+    let book = fixture();
+    let (mut storage, index) = mapping_index(&book);
+    let mut expected = vec![0; book.toc_count()];
+    book.declared_spines(&mut expected);
+    let mut mapping = vec![0; book.toc_count()];
+    let mut scratch = vec![HashRow::default(); mapping.len() - 1];
+    storage.fail = true;
+    assert_eq!(index_mapping::declared_spines(&book, &index, &mut |scan| scan(&mut storage),
+        &mut mapping, &mut scratch), Ok(MappingRoute::PerRow));
+    assert_eq!(mapping, expected);
+    assert!(storage.reads.is_empty());
+    assert_eq!(core::mem::size_of::<HashRow>(), 12);
+}
+
+#[test]
+fn batch_contents_reports_storage_failure_and_short_mapping() {
+    use crate::index_mapping::{self, HashRow};
+    let book = fixture();
+    let (mut storage, index) = mapping_index(&book);
+    let mut mapping = vec![0; book.toc_count()];
+    let mut scratch = vec![HashRow::default(); mapping.len()];
+    assert!(index_mapping::declared_spines(&book, &index, &mut |scan| scan(&mut storage),
+        &mut [], &mut scratch).is_err());
+    storage.fail = true;
+    assert!(index_mapping::declared_spines(&book, &index, &mut |scan| scan(&mut storage),
+        &mut mapping, &mut scratch).is_err());
+    // A scope that returns without running the scan must not read as a complete map.
+    assert!(index_mapping::declared_spines(&book, &index, &mut |_| Ok(()),
+        &mut mapping, &mut scratch).is_err());
+}
+
+#[test]
+fn contents_menu_uses_the_batch_hook() {
+    struct BatchBook(Book<'static>);
+    impl BookView for BatchBook {
+        fn spine_count(&self) -> usize { self.0.spine_count() }
+        fn spine_item(&self, _: usize) -> Option<Item<'_>> { panic!("per-row lookup"); }
+        fn toc_count(&self) -> usize { self.0.toc_count() }
+        fn toc_entry(&self, row: usize) -> Option<Declaration<'_>> { self.0.toc_entry(row) }
+        fn member(&self, _: &[u8]) -> Option<Member> { panic!("per-row lookup"); }
+        fn declared_spines(&self, mapping: &mut [u32]) { mapping.fill(1); }
+    }
+    let book = BatchBook(fixture());
+    let mut navigation = Navigation::default();
+    let mut mapping = vec![NO_SPINE; book.toc_count()];
+    assert!(navigation.bind_menu(&book, Section::default(), 0, &mut mapping));
+    assert_eq!(mapping, vec![1; book.toc_count()]);
+    assert!(navigation.menu_info().authored);
+}
+
+#[test]
+fn indexed_view_matches_parser_navigation_with_batch_and_per_row_mapping() {
+    use crate::{index_mapping::{self, HashRow}, index_view::IndexedBook};
+    use newt_core::{package_parsers::TocEntry, zip_window::arena::Arena};
+    let oracle = fixture();
+    let (mut storage, index) = mapping_index(&oracle);
+    let mut bytes = [0; 512];
+    let mut arena = Arena::new(&mut bytes);
+    let toc: Vec<_> = oracle.toc.iter().map(|entry| TocEntry {
+        title: arena.copy_nul_ref(Some(entry.title)), href: arena.copy_nul_ref(Some(entry.href)),
+        fragment: arena.copy_nul_ref(Some(entry.fragment)), depth: entry.depth,
+    }).collect();
+    let lookup = |href: &[u8]| readable_spine(&oracle, href);
+    let mut book = IndexedBook { header: index.header(), arena: &arena, toc: &toc,
+        mapping: None, lookup: &lookup, progress: oracle.progress_inputs(1) };
+    let mut mapping = vec![0; toc.len()];
+    index_mapping::declared_spines(&book, &index, &mut |scan| scan(&mut storage), &mut mapping,
+        &mut vec![HashRow::default(); toc.len()]).unwrap();
+    let mut expected = Navigation::default();
+    for batch in [false, true] {
+        assert!(expected.bind(&oracle, 1));
+        book.mapping = batch.then_some(&mapping);
+        let mut actual = Navigation::default();
+        assert!(actual.bind(&book, 1));
+        assert_eq!(actual.progress_inputs(), expected.progress_inputs());
+        assert_eq!(actual.section(0), expected.section(0));
+        assert_eq!(actual.issues(), expected.issues());
+        let mut actual_mapping = vec![0; toc.len()];
+        let mut expected_mapping = vec![0; toc.len()];
+        assert_eq!(actual.bind_menu(&book, Section::default(), 0, &mut actual_mapping),
+            expected.bind_menu(&oracle, Section::default(), 0, &mut expected_mapping));
+        assert_eq!(actual.menu_info(), expected.menu_info());
+        for row in 0..actual.menu_info().count { assert_eq!(actual.menu_row(row), expected.menu_row(row)); }
+    }
+}

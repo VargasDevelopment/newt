@@ -17,7 +17,7 @@ impl Record for Member {
     fn decode(b: &[u8]) -> Self {
         Self { hash: get64(b, 0), local_offset: get32(b, 8), compressed: get32(b, 12),
             uncompressed: get32(b, 16), method: get16(b, 20),
-            flags: get16(b, 22), first_spine: crate::book_index::NONE }
+            flags: get16(b, 22), contents_spine: crate::book_index::NONE }
     }
     fn encode(self, b: &mut [u8]) {
         b[..8].copy_from_slice(&self.hash.to_le_bytes()); b[8..12].copy_from_slice(&self.local_offset.to_le_bytes());
@@ -37,6 +37,16 @@ impl Record for Item {
         b[16..20].copy_from_slice(&self.sequence.to_le_bytes()); b[20..24].copy_from_slice(&self.flags.to_le_bytes());
     }
     fn key(self) -> (u64, u32) { (self.id, self.sequence) }
+}
+/// Same 24-byte items, re-sorted by href after the idref join ends.
+#[derive(Clone, Copy)]
+pub(super) struct StyleItem(pub Item);
+impl Record for StyleItem {
+    const BYTES: usize = Item::BYTES;
+    const KIND: u32 = Item::KIND;
+    fn decode(b: &[u8]) -> Self { Self(Item::decode(b)) }
+    fn encode(self, b: &mut [u8]) { self.0.encode(b); }
+    fn key(self) -> (u64, u32) { (self.0.href, self.0.sequence) }
 }
 #[derive(Clone, Copy)]
 pub(super) struct Reference { pub id: u64, pub position: u32 }

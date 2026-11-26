@@ -8,6 +8,8 @@ use crate::zip_container::Status;
 
 #[path = "reader_work_profile/counters.rs"]
 mod counters;
+mod index;
+pub use index::IndexProfile;
 #[path = "reader_work_profile/rows.rs"]
 pub(crate) mod rows;
 #[path = "reader_work_profile/scalar.rs"]
@@ -144,6 +146,7 @@ impl ReaderWorkProfile {
 
     pub fn event(&self, event: &WorkEvent, us: u32, ms: u32) {
         match event.kind {
+            WorkKind::IndexStage | WorkKind::IndexResult | WorkKind::IndexIo | WorkKind::IndexCounts => {},
             WorkKind::ActionBoundary | WorkKind::OpenRoute | WorkKind::CacheMiss => {},
             WorkKind::Phase => self.phase(event.phase, ms),
             WorkKind::InspectBegin => self.begin_stage(0, Operation::Inspect, us),

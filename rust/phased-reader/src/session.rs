@@ -86,6 +86,14 @@ pub enum Build {
 }
 /// Cache owns no Reader reference; the owner passes disjoint loans at each call.
 pub trait Cache<R: Reader> {
+    /// Physical caches supply the index store alongside the reader's phase loan.
+    fn strict_open(&mut self, reader: &mut R, source: &mut dyn BookSource, _digest: &Digest) -> Status {
+        reader.strict_open(source)
+    }
+    fn stage_original_verified(&mut self, reader: &mut R, revision: &mut ImportedRevision<'_>,
+        spine: u32, plain: bool) -> Option<Result<(), Status>> {
+        reader.stage_original_verified(revision, spine, plain)
+    }
     fn build(
         &mut self,
         source: &mut dyn BookSource,
@@ -109,16 +117,19 @@ impl<'source, R: Reader, C: Cache<R> + ?Sized> Session<'_, 'source, R, C> {
         }
         self.finish_prepared_import()
     }
+    // Import can build a chapter; its workspace must not burden other owner requests.
+    #[inline(never)]
     pub fn finish_prepared_import(&mut self) -> Status {
         self.reader.close();
         if !self.revision.provisional() || !self.revision.good() {
             return Status::Unsupported;
         }
         route(self.reader, ReaderOpenRoute::StrictAdmission);
-        let mut status = self.reader.strict_open(self.revision);
+        let digest = *self.revision.digest();
+        let mut status = self.cache.strict_open(self.reader, self.revision, &digest);
         if status == Status::Ok {
-            status = Status::NotFound;
             let digest = *self.revision.digest();
+            status = Status::NotFound;
             for spine in 0..self.reader.spine_count() {
                 match self.cache.build(self.revision, &digest, spine, self.reader) {
                     Build::Empty => continue,
@@ -158,7 +169,8 @@ impl<'source, R: Reader, C: Cache<R> + ?Sized> Session<'_, 'source, R, C> {
             return Status::Unsupported;
         }
         route(self.reader, ReaderOpenRoute::StrictAdmission);
-        let mut status = self.reader.strict_open(self.revision);
+        let digest = *self.revision.digest();
+        let mut status = self.cache.strict_open(self.reader, self.revision, &digest);
         if status == Status::Ok {
             let sealed = self.revision.finish_import();
             route(self.reader, if sealed { ReaderOpenRoute::SealSucceeded } else { ReaderOpenRoute::SealFailed });
@@ -180,12 +192,13 @@ impl<'source, R: Reader, C: Cache<R> + ?Sized> Session<'_, 'source, R, C> {
         if !self.revision.provisional() || !self.revision.good() {
             return Status::Unsupported;
         }
+        let digest = *self.revision.digest();
         let status = {
             let Some(mut action) = self.revision.lend_action_storage(lent) else {
                 return Status::Unsupported;
             };
             route(self.reader, ReaderOpenRoute::StrictAdmission);
-            let mut status = self.reader.strict_open(&mut action);
+            let mut status = self.cache.strict_open(self.reader, &mut action, &digest);
             if status == Status::Ok {
                 let sealed = action.finish_import();
                 route(self.reader, if sealed { ReaderOpenRoute::SealSucceeded } else { ReaderOpenRoute::SealFailed });
@@ -241,6 +254,7 @@ impl<'source, R: Reader, C: Cache<R> + ?Sized> Session<'_, 'source, R, C> {
         let status = self.stage_owned(spine);
         if status == Status::Ok {
             self.reader.commit(spine);
+            if !self.held_source_live() { return self.reject(Status::Stale); }
         }
         if status != Status::Ok && before == stamp(self.revision) {
             return self.reject(status);
@@ -279,6 +293,7 @@ impl<'source, R: Reader, C: Cache<R> + ?Sized> Session<'_, 'source, R, C> {
         route(self.reader, if warm == Status::Ok { ReaderOpenRoute::WarmHit } else { ReaderOpenRoute::WarmMiss });
         if warm == Status::Ok {
             self.reader.commit(spine);
+            if !self.held_source_live() { return self.reject(Status::Stale); }
             return warm;
         }
         // bindWarm: a stage that reloaded or reset the revision left a
@@ -391,8 +406,8 @@ impl<'source, R: Reader, C: Cache<R> + ?Sized> Session<'_, 'source, R, C> {
             .cache
             .stored(self.revision.digest(), spine, self.reader);
         let Some(result) = self
-            .reader
-            .stage_original_verified(self.revision, spine, plain)
+            .cache
+            .stage_original_verified(self.reader, self.revision, spine, plain)
         else {
             return Status::Unsupported;
         };
@@ -411,8 +426,8 @@ impl<'source, R: Reader, C: Cache<R> + ?Sized> Session<'_, 'source, R, C> {
     fn select_original(&mut self, spine: u32, plain: bool) -> Status {
         let before = stamp(self.revision);
         if let Some(result) = self
-            .reader
-            .stage_original_verified(self.revision, spine, plain)
+            .cache
+            .stage_original_verified(self.reader, self.revision, spine, plain)
         {
             if !self.revision.good() || before != stamp(self.revision) {
                 self.reader.discard_owned_stage();

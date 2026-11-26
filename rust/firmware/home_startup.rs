@@ -36,7 +36,7 @@ use newt_native_storage::{Error, Native, Open, Result, Stat};
 /// Every view from one card must share its descriptor/nonce domain; the
 /// enclosing HomePort retains descriptor ownership until the router ends.
 pub trait CardPort {
-    type Port<'ui>: Native;
+    type Port<'ui>: Native + newt_native_storage::page_entries::PageEntries;
     fn port<'ui>(&mut self, io: &'ui UiIo) -> Self::Port<'ui>;
 }
 

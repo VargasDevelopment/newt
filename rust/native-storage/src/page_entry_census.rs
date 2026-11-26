@@ -6,9 +6,12 @@ use crate::{Authority, Error, Kind, MissingProbe, Native};
 use crate::page_entries::{PageEntries, PageEntry as Entry};
 use newt_core::{cache_names::namespace::{self as names, Form, Kind as NameKind, PageCacheNeed, PageName, PageNameSet}, reader_scheduler::YieldCadence};
 
-/// One quota folder of block-envelope cache files, evicted oldest-written
-/// first (FAT does not refresh times on reads). Other known cache names found
-/// there rank as legacy and go first.
+/// Idle index trimming sets the newly published index aside entirely.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PinnedAccounting { Count, Exclude }
+
+/// One quota folder, evicted oldest-written first (FAT does not refresh
+/// times on reads). Other known cache names rank as legacy and go first.
 #[derive(Clone, Copy, Debug)]
 pub struct Policy {
     pub folder: &'static str,
@@ -21,19 +24,26 @@ pub struct Policy {
     pub required_units: u8,
     /// Pages keep a `.bak` and its canonical file. An index `.bak` is just an
     /// older copy left by a rebuild, evicted by age like any index; only the
-    /// open book's pair is kept.
+    /// open book's `.IDX` is kept.
     pub keep_backups: bool,
+    pub pinned_accounting: PinnedAccounting,
 }
 pub const PAGES: Policy = Policy {
     folder: "/Pages", kind: NameKind::Page, quota: names::PAGE_QUOTA,
     entry_cap: names::PAGE_ENTRY_CAP, entry_grant: names::PAGE_ENTRY_GRANT,
-    required_units: names::PAGE_REQUIRED_UNITS, keep_backups: true,
+    required_units: names::PAGE_REQUIRED_UNITS, keep_backups: true, pinned_accounting: PinnedAccounting::Count,
 };
 pub const INDEXES: Policy = Policy {
     folder: "/Index", kind: NameKind::Index, quota: names::INDEX_QUOTA,
     entry_cap: names::INDEX_ENTRY_CAP, entry_grant: names::INDEX_ENTRY_GRANT,
-    required_units: names::INDEX_REQUIRED_UNITS, keep_backups: false,
+    required_units: names::INDEX_REQUIRED_UNITS, keep_backups: false, pinned_accounting: PinnedAccounting::Count,
 };
+
+/// The open path frees only what the hard cap needs. A spilled build holds its
+/// `.WRK` and the index `.TMP` at once, so it reserves two slots under the cap.
+pub const INDEX_WRITE: Policy = Policy { entry_grant: (names::INDEX_ENTRY_CAP - 1) as u8, ..INDEXES };
+/// Reproduce the pre-write kept set with the newly published index set aside.
+pub const INDEX_TRIM: Policy = Policy { pinned_accounting: PinnedAccounting::Exclude, ..INDEXES };
 
 pub struct Request<'a> {
     pub policy: &'a Policy,
@@ -138,17 +148,27 @@ impl<'a, 'folder> Census<'a, 'folder> {
             if !self.result(self.met==self.victims) { return false; }
             self.victims=0;return true;
         };
-        let parsed=PageName::parse(Some(name));
+        let obsolete_index=self.request.policy.kind==NameKind::Index
+            && newt_core::book_index::FileName::parse(name).is_none();
+        // Only bench cards had long index names. They are never read; sweep
+        // nonmatching names in this dedicated folder, at most one victim bank
+        // per build to bound migration work and cancellation latency. All names still
+        // count, so a large legacy folder can evict rebuildable current indexes.
+        let parsed=if obsolete_index {PageName {kind:NameKind::Index,form:Form::Temporary,canonical_bytes:name.len()}}
+            else {PageName::parse(Some(name))};
         if parsed.kind==NameKind::Unknown { return false; }
         if self.pass==Pass::Names {
             if let Some(index)=self.pending(name) { return self.remove(native,&entry,index); }
             if parsed.form==Form::Backup { self.backups.add(&name[..parsed.canonical_bytes]); }
             return true;
         }
+        if self.request.policy.pinned_accounting == PinnedAccounting::Exclude && self.pinned(name, parsed) {
+            return self.result(entry.regular);
+        }
         let good=entry.regular && names::add(&mut self.total,entry.bytes);
         if !self.result(good) { return false; }
         self.count=self.count.wrapping_add(1);
-        self.consider(&entry,parsed);
+        if !obsolete_index || self.deleted<VICTIMS as u32 {self.consider(&entry,parsed);}
         true
     }
     fn sizes_done(&mut self)->bool {
@@ -160,7 +180,7 @@ impl<'a, 'folder> Census<'a, 'folder> {
             if rank!=self.victim[0].rank { break; }
             let crowded=count.wrapping_add(u32::from(need))>u32::from(policy.entry_grant)
                 || total>policy.quota || u64::from(policy.required_units)*u64::from(names::PAGE_CREDIT_UNIT)>policy.quota-total;
-            if (rank!=Rank::Temporary && !crowded) || (rank==Rank::Page && count>policy.entry_cap) { break; }
+            if (rank!=Rank::Temporary && !crowded) || (rank==Rank::Page && count>policy.entry_cap && policy.kind!=NameKind::Index) { break; }
             count=count.wrapping_sub(1);total=total.wrapping_sub(self.victim[keep].bytes);keep+=1;
         }
         self.victims=keep;true
@@ -181,17 +201,25 @@ impl<'a, 'folder> Census<'a, 'folder> {
         self.victim[index].rank=Rank::None;self.met+=1;self.deleted=self.deleted.wrapping_add(1);
         self.poll()
     }
+    fn pinned(&self, name: &[u8], parsed: PageName) -> bool {
+        // Only the open `.IDX` is pinned. Its `.BAK` (a rebuild's old copy) and
+        // any orphan `.WRK`/`.TMP` share its 8.3 base, but count and age out.
+        if self.request.policy.kind==NameKind::Index {
+            parsed.form==Form::Canonical && self.request.pinned.is_some_and(|p|p.get(..8)==name.get(..8))
+        } else { self.request.pinned==Some(&name[..parsed.canonical_bytes]) }
+    }
     fn consider(&mut self,entry:&Entry<'_>,parsed:PageName) {
         let Some(name)=entry.name else { return; };
         let keep_backups=self.request.policy.keep_backups;
         let canonical=&name[..parsed.canonical_bytes];
+        let pinned=self.pinned(name, parsed);
         let page=parsed.kind==self.request.policy.kind;
         let rank=if page && parsed.form==Form::Temporary { Rank::Temporary }
             else if !page { Rank::Legacy }
             else if parsed.form==Form::Canonical || (parsed.form==Form::Backup && !keep_backups) { Rank::Page }
             else { Rank::None };
         if rank==Rank::None || (parsed.form==Form::Canonical && keep_backups && self.backups.may_contain(canonical))
-            || (rank==Rank::Page && self.request.pinned==Some(canonical))
+            || (rank==Rank::Page && pinned)
             || (rank==Rank::Page && self.request.need.is_some_and(|n|n.keep.may_contain(&name[65..parsed.canonical_bytes]))) { return; }
         let candidate=Victim{name:name_hash(name),bytes:entry.bytes,time:entry.time,rank};
         let mut at=self.victims;

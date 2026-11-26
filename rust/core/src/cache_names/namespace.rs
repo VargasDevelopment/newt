@@ -4,7 +4,7 @@ pub enum Kind {
     #[default]
     Unknown,
     Page,
-    /// A book index (`.fibx`): block envelope like a page, in its own folder.
+    /// A book index (`.IDX`): block envelope like a page, in its own folder.
     Index,
     Semantic,
     Progress,
@@ -33,6 +33,11 @@ impl PageName {
             return Self::default();
         };
         let text = cstr(text);
+        if let Some(name)=crate::book_index::FileName::parse(text) {
+            use crate::book_index::FileKind;
+            return Self {kind:Kind::Index,form:match name.kind() {
+                FileKind::Index=>Form::Canonical,FileKind::Backup=>Form::Backup,_=>Form::Temporary },canonical_bytes:12};
+        }
         let mut bytes = text.len();
         let mut result = Self::default();
         if text.ends_with(b".bak") {
@@ -86,8 +91,10 @@ pub fn add(total: &mut u64, bytes: u64) -> bool {
     *total = next;
     true
 }
-/// Block-envelope suffixes: 64 hex route bytes, then `.fibp` or `.fibx`.
+/// Page hex routes and typed 8.3 index names. Legacy `.fibx` is retained
+/// only for classification of bench files and format fixtures.
 pub fn envelope_kind(suffix: &[u8]) -> Option<Kind> {
+    if crate::book_index::FileName::parse(suffix).is_some() {return Some(Kind::Index);}
     if suffix.len() != 69 || !hex(&suffix[..64]) {
         return None;
     }
@@ -117,10 +124,12 @@ pub const PAGE_SEGMENT_BATCH: u8 = 4;
 /// first: losing one costs a rebuild, so orphans of deleted books age out
 /// under pressure.
 pub const INDEX_QUOTA: u64 = 16 * 1024 * 1024;
-/// Provisional until the bench times a census over 256 index files: above
-/// about 20 ms, the cap drops to fit. The census runs only before a new index
-/// is written, never on a repeat open.
-pub const INDEX_ENTRY_CAP: u32 = 256;
+/// Every FAT lookup scans the folder. Bound that per-file cost while keeping
+/// the full census; it runs before a new index, never on a repeat open.
+/// The grant (24) is the idle trim's target; an index-building open keeps the
+/// folder at 32 or fewer, a spilled build included, unless a delete fails.
+/// 32 also bounds deletions per census.
+pub const INDEX_ENTRY_CAP: u32 = 32;
 pub const INDEX_ENTRY_RESERVE: u32 = 8;
 pub const INDEX_ENTRY_GRANT: u8 = (INDEX_ENTRY_CAP - INDEX_ENTRY_RESERVE) as u8;
 /// Free credit for one largest index envelope, rounded up like pages.

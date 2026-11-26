@@ -5,13 +5,13 @@ use crate::{Error, Open};
 use newt_core::book_index_build::WorkFile;
 
 /// Caller-owned only for one build, relended to the same native card and book.
-/// Census before the first loan; close the source between parse and publication.
+/// Census before building; resident publication may keep the source open.
 /// End every attempt with WorkFile::remove_work, including admission failures.
 pub struct IndexWorkState {
-    path: [u8; 256], path_bytes: usize, fd: Option<i32>, bytes: u32,
+    path: [u8; 256], path_bytes: usize, fd: Option<i32>, bytes: u32, publish_position: Option<u32>,
 }
 impl IndexWorkState {
-    pub fn new() -> Self { Self { path: [0; 256], path_bytes: 0, fd: None, bytes: 0 } }
+    pub fn new() -> Self { Self { path: [0; 256], path_bytes: 0, fd: None, bytes: 0, publish_position: None } }
 }
 pub struct IndexBuildStore<'op, 'a, N: Native> {
     cache: &'op mut ChapterCacheStorage<'a, N>,
@@ -20,26 +20,44 @@ pub struct IndexBuildStore<'op, 'a, N: Native> {
 impl<'op, 'a, N: Native> IndexBuildStore<'op, 'a, N> {
     pub fn lend(cache: &'op mut ChapterCacheStorage<'a, N>, work: &'op mut IndexWorkState, digest: &[u8; 32]) -> Option<Self> {
         if work.path_bytes != 0 { return Some(Self { cache, work }); }
-        use core::fmt::Write;
-        let mut suffix = [0; 69];
-        newt_core::book_index::name(digest, &mut suffix);
-        let suffix = core::str::from_utf8(&suffix).ok()?;
-        let mut name = cache.file.route.name("Index", suffix, false)?;
-        let nonce = cache.file.native.next_nonce();
-        write!(name, ".{nonce:08x}.tmp").ok()?;
+        let suffix=newt_core::book_index::FileName::new(digest,newt_core::book_index::FileKind::Work);
+        let name=cache.file.route.name("Index",suffix.as_str(),false)?;
         let mut path = [0; 256];
         path[..name.len()].copy_from_slice(name.as_bytes());
+        let (parent, _) = name.rsplit_once('/')?;
+        match cache.file.native.mkdir(parent) {
+            Ok(()) | Err(Error::Exists) => {},
+            Err(Error::Missing) => {
+                // A fresh card may not have the cache root yet. Create its
+                // ancestors here too, before any parse callback can spill.
+                for end in (1..=parent.len()).filter(|&i| i == parent.len() || parent.as_bytes()[i] == b'/') {
+                    if !cache.file.route.allowed()
+                        || !matches!(cache.file.native.mkdir(&parent[..end]), Ok(()) | Err(Error::Exists)) {
+                        return None;
+                    }
+                }
+            }
+            Err(_) => return None,
+        }
+        // A previous interrupted attempt owns no live writer. Its deterministic
+        // work slot must not block this build; the FD still opens lazily.
+        if !matches!(cache.file.native.unlink(&name),Ok(())|Err(Error::Missing)) {return None;}
         work.path = path;
         work.path_bytes = name.len();
         Some(Self { cache, work })
     }
+    pub fn spilled(&self) -> bool { self.work.fd.is_some() }
+    pub fn release_pages(&mut self) -> bool { self.cache.access().release_for_admission() }
+    pub fn census(&mut self, cancelled: &dyn Fn() -> bool) where N: crate::page_entries::PageEntries {
+        struct Live<'a>(&'a dyn Fn() -> bool);
+        impl crate::Authority for Live<'_> { fn cancelled(&self) -> bool { (self.0)() } }
+        self.cache.index_write_census(&Live(cancelled));
+    }
     /// The live work descriptor, creating the file on first use.
     fn open(&mut self) -> Option<i32> {
         if self.work.fd.is_some() { return self.work.fd; }
-        let text = core::str::from_utf8(&self.work.path[..self.work.path_bytes]).ok()?;
-        let (parent, _) = text.rsplit_once('/')?;
-        if !matches!(self.cache.file.native.mkdir(parent), Ok(()) | Err(Error::Exists)) { return None; }
-        self.work.fd = self.cache.file.native.open(text, Open::CreateExclusive).ok();
+        let path = core::ffi::CStr::from_bytes_with_nul(&self.work.path[..=self.work.path_bytes]).ok()?;
+        self.work.fd = self.cache.file.native.open_cstr(path, Open::CreateExclusive).ok();
         self.work.fd
     }
 }
@@ -66,6 +84,7 @@ impl<N: Native> WorkFile for IndexBuildStore<'_, '_, N> {
     fn remove_work(&mut self) -> bool {
         let path_bytes = core::mem::take(&mut self.work.path_bytes);
         self.work.bytes = 0;
+        self.work.publish_position = None;
         let Some(fd) = self.work.fd.take() else { return true; };
         let closed = self.cache.file.native.close(fd).is_ok();
         let removed = core::str::from_utf8(&self.work.path[..path_bytes])
@@ -79,13 +98,23 @@ impl<N: Native> CacheStorage for IndexBuildStore<'_, '_, N> {
     fn read_at(&mut self, name: &[u8], offset: u32, output: &mut [u8]) -> i32 {
         self.cache.access().read_at(name, offset, output)
     }
-    fn begin_write(&mut self, name: &[u8]) -> bool { self.cache.access().begin_write(name) }
-    fn write(&mut self, bytes: &[u8]) -> bool { self.cache.access().write(bytes) }
+    fn begin_write(&mut self, name: &[u8]) -> bool {
+        self.work.publish_position = None;
+        self.cache.access().begin_write(name)
+    }
+    fn begin_write_sized(&mut self, name: &[u8], payload: u32) -> bool {
+        self.work.publish_position = None;
+        self.cache.access().begin_index_write(name, payload)
+    }
+    fn write(&mut self, bytes: &[u8]) -> bool {
+        self.cache.access().write_indexed(bytes, &mut self.work.publish_position)
+    }
     fn end_write(&mut self) -> bool { self.cache.access().end_write() }
     fn end_write_checked(&mut self, receipt_live: &mut dyn FnMut() -> bool) -> bool {
         self.cache.access().end_write_checked(receipt_live)
     }
     fn read_back_at(&mut self, offset: u32, output: &mut [u8]) -> i32 {
+        self.work.publish_position = None;
         self.cache.access().read_back_at(offset, output)
     }
 }

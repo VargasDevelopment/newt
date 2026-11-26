@@ -127,3 +127,16 @@ impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::Pro
         Ok(parsed)
     }
 }
+
+impl<C: ?Sized, S: crate::phase_storage::ReadScope, F: BookSource + newt_core::producer_policy::ProducerReceipt + ?Sized>
+    Producer<'_, '_, '_, C, S, F>
+{
+    pub fn select_next_indexed<B: ProducerBackend + ?Sized>(&mut self, reader: &mut PhasedReader<'_, '_>,
+        digest: &[u8; 32], spine: u32, backend: &mut B,
+    ) -> Status {
+        self.with_unbuffered(|phase, a| {
+            reader.select_indexed(a.source, a.store, digest, spine, phase, backend, false)?;
+            Ok(if phase.ready(spine) { Status::Ok } else { Status::OutOfMemory })
+        }).unwrap_or_else(|status| status)
+    }
+}

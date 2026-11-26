@@ -19,6 +19,7 @@ const TEXT: u32 = 1;
 const NAV: u32 = 2;
 const NCX: u32 = 4;
 const COVER: u32 = 8;
+const CSS: u32 = 16;
 
 /// Append and read share one descriptor. A successful read fills the whole slice.
 /// Removal must close the descriptor too. No operation publishes an index.
@@ -47,7 +48,9 @@ fn earlier(target: &mut Option<Choice>, candidate: Choice) {
     if target.is_none_or(|old| candidate.sequence < old.sequence) { *target = Some(candidate); }
 }
 
-/// Writer::begin borrows this prefix of the run buffer; publish saves it in JoinState.
+/// One block lent from dead scan storage after preparation.
+pub const PUBLISH_BUFFER_BYTES: usize = 4096;
+/// Writer::begin borrows this prefix in the unbuffered host oracle.
 pub const WRITER_PREFIX: usize = crate::book_index::HEADER_BYTES as usize;
 /// Exact bytes a JoinState borrows, before alignment padding.
 pub const JOIN_STATE_BYTES: usize = core::mem::size_of::<[u64; POSITION_WORDS]>()
@@ -73,7 +76,7 @@ const _: () = assert!(STACK_BYTES <= 2_304, "index builder stack state outgrew i
 pub struct JoinState<'p> {
     positions: &'p mut [u64; POSITION_WORDS],
     cursors: &'p mut [Cursor; CURSORS],
-    saved: &'p mut [u8; WRITER_PREFIX],
+    saved: &'p mut [u8],
 }
 impl<'p> JoinState<'p> {
     pub fn new(positions: &'p mut [u64; POSITION_WORDS], cursors: &'p mut [Cursor; CURSORS],
@@ -125,7 +128,7 @@ impl<'a> Builder<'a> {
             engine: &mut self.engine, work, progress, path: [0; 512], capture: TextCapture::default(),
             nav: None, ncx: None, image: None, dir,
             metadata_depth: 0, manifest_depth: 0, spine_depth: 0, field: 0,
-            title: [0; 256], title_set: false, language: BookLanguage::Default,
+            title: [0; 256], title_set: false, stylesheets: false, language: BookLanguage::Default,
             language_set: false, toc: None, cover: None, manifests: 0, idrefs: 0,
             raw_items: 0, raw_refs: 0, path_peak: 0, progressed: 0, error: Status::Ok,
         };
@@ -134,7 +137,7 @@ impl<'a> Builder<'a> {
         if package.error != Status::Ok { return Err(Error::Book(package.error)); }
         if package.raw_items == 0 || package.raw_refs == 0 { return Err(Error::Book(Status::NotEpub)); }
         if !package.title_set { copy_display_title(&mut package.title, None); }
-        let header = Header { identity, members: self.members, spine: 0, spine_bytes: 0,
+        let header = Header { stylesheets: package.stylesheets, navigation_declared: false, identity, members: self.members, spine: 0, spine_bytes: 0,
             nav: NONE, ncx: NONE, cover: NONE, title: package.title, language: package.language };
         let choices = Choices { toc: package.toc, cover_id: package.cover,
             nav: package.nav, ncx: package.ncx, cover: package.image };
@@ -166,6 +169,7 @@ struct Package<'a, 'b, W: WorkFile + ?Sized> {
     field: u8,
     title: [u8; 256],
     title_set: bool,
+    stylesheets: bool,
     language: BookLanguage,
     language_set: bool,
     toc: Option<u64>,
@@ -206,6 +210,7 @@ impl<W: WorkFile + ?Sized> Package<'_, '_, W> {
         let media = atts.local(b"media-type");
         let mut flags = 0;
         if matches!(media, Some(b"application/xhtml+xml" | b"text/html")) { flags |= TEXT; }
+        if media == Some(b"text/css") { flags |= CSS; self.stylesheets = true; }
         if media == Some(b"application/x-dtbncx+xml") { flags |= NCX; }
         if has_token(atts.local(b"properties"), b"nav") { flags |= NAV; }
         if has_token(atts.local(b"properties"), b"cover-image") { flags |= COVER; }
@@ -285,7 +290,18 @@ impl<W: WorkFile + ?Sized> Handler for Package<'_, '_, W> {
 
 
 impl Prepared<'_> {
-    /// Call only after closing the source. The store owns work and index FDs together.
+    /// The caller lends dead scan bytes after preparation; no join allocation
+    /// grows, and the run prefix stays intact while records are batched here.
+    #[inline(always)]
+    pub fn publish_buffered<W: WorkFile + CacheStorage + ?Sized>(self, store: &mut W,
+        state: &mut JoinState<'_>, buffer: &mut [u8; PUBLISH_BUFFER_BYTES], progress: &mut dyn FnMut(Progress) -> bool,
+        receipt_live: &mut dyn FnMut() -> bool,
+    ) -> Result<Report, Error> {
+        let mut lent = JoinState { positions: &mut *state.positions, cursors: &mut *state.cursors, saved: buffer };
+        self.publish(store, &mut lent, progress, receipt_live)
+    }
+    /// With the source open, publish only a resident build: the work file and
+    /// index temporary must not both be open alongside source and receipt.
     /// After an error the unfinished index temp stays with the store; closing the
     /// cache owner (or its next begin_write) removes it, as for any failed cache write.
     /// Once the index is published, a failed work-file removal is reported, not

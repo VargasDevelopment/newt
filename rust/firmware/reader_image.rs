@@ -43,6 +43,10 @@ mod home_stats;
 mod crossink_hash;
 #[path = "reader_image_producer.rs"]
 mod producer;
+#[path = "reader_image_index.rs"]
+mod index;
+#[path = "reader_image_sources.rs"]
+mod sources;
 #[path = "reader_image_operation.rs"]
 mod operation;
 #[path = "reader_image_idle_save.rs"]
@@ -51,6 +55,8 @@ mod idle_save;
 mod drive;
 #[path = "reader_image_hints.rs"]
 mod hints;
+#[path = "reader_index_invalidation.rs"]
+mod index_invalidation;
 #[path = "reader_image_verification.rs"]
 mod verification;
 #[path = "reader_image_changed.rs"]
@@ -69,6 +75,8 @@ mod picture;
 mod picture_native;
 #[path = "reader_image_picture_work.rs"]
 mod picture_work;
+#[path = "reader_standalone_open.rs"]
+mod standalone_open;
 #[path = "reader_image_open.rs"]
 mod open;
 #[path = "reader_image_work.rs"]
@@ -172,6 +180,7 @@ pub struct Runtime {
     standalone_status: newt_core::zip_container::Status,
     restore_failure: newt_reader_ui::RestoreFailure,
     progress_ready: bool,
+    index_trim_owed: bool,
     exit_metadata: Option<Fixed<crate::reader_exit_metadata::ExitMetadata>>,
     settings: newt_reader_ui::ViewSettings,
     last_progress: core::cell::Cell<u32>,
@@ -206,7 +215,7 @@ impl Runtime {
             saves: ReadingSaveNotice::default(), cadence: YieldCadence::new(), wake: WakeEvidence::default(),
             cover_generation: 0, reading_refresh: newt_core::refresh::ReadingRefresh::default(),
             standalone_status: newt_core::zip_container::Status::NotFound,
-            restore_failure: newt_reader_ui::RestoreFailure::None, progress_ready: false,
+            restore_failure: newt_reader_ui::RestoreFailure::None, progress_ready: false, index_trim_owed: false,
             exit_metadata: None, settings: newt_reader_ui::ViewSettings::default(),
             last_progress: core::cell::Cell::new(0),
             #[cfg(feature="dev-usb")]

@@ -6,7 +6,9 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[3]
 HERE = Path(__file__).resolve().parent
@@ -42,6 +44,14 @@ def main():
                CARGO_INCREMENTAL='0', CARGO_PROFILE_DEV_DEBUG='0')
     commands = []
     def run(command, succeeds=True):
+        if Path(command[0]).name in {'cargo', 'rustc', 'clang++'}:
+            subprocess.run(['free', '-g'], check=True)
+            subprocess.run(['df', '-h', '.'], cwd=ROOT, check=True)
+            available = int(next(line.split()[1] for line in Path('/proc/meminfo').read_text().splitlines()
+                                 if line.startswith('MemAvailable:')))
+            assert available >= 8 * 1024 * 1024, 'build requires 8 GiB available'
+            disk = os.statvfs(ROOT)
+            assert (disk.f_blocks - disk.f_bfree) / disk.f_blocks < .8, 'build requires disk below 80%'
         result = subprocess.run(list(map(str, command)), cwd=ROOT, env=env,
                                 capture_output=True, text=True)
         index = len(commands)
@@ -53,7 +63,7 @@ def main():
             raise RuntimeError(result.stderr[-6000:])
         return result
     run([cargo, 'build', '--lib', '-p', 'newt-c3-board', '-p', 'newt-device-ui',
-         '-p', 'newt-library-current', '--target', HOST, '--manifest-path', ROOT / 'rust/Cargo.toml',
+         '-p', 'newt-library-current', '--features', 'newt-phased-reader/dev-usb', '--target', HOST, '--manifest-path', ROOT / 'rust/Cargo.toml',
          '--offline', '--frozen', '--locked', '--jobs', '2', '--target-dir', target,
          '--message-format=json'])
     libraries = {}
@@ -79,7 +89,13 @@ def main():
     positive = out / 'host.rs'
     positive.write_text(paths(fixture, HERE))
     run([*command, positive, '-o', out / 'positive'])
-    result = run([out / 'positive'])
+    book = out / 'generated.epub'
+    with zipfile.ZipFile(book, 'w', compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr('META-INF/container.xml', '<container><rootfiles><rootfile full-path="package.opf"/></rootfiles></container>')
+        archive.writestr('package.opf', '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>')
+        archive.writestr('chapter.xhtml', '<html><body><p>' + 'generated ' * 1500 + '</p></body></html>')
+    result = run([out / 'positive', book, 'synthetic.epub'])
+    run([out / 'positive', book, ':Shelf:Nested:synthetic.epub'])
     assert result.stdout.startswith('PASS whole actual operate_image:')
     operation = ROOT / 'rust/firmware/reader_image_operation.rs'
     source = operation.read_text()
@@ -92,7 +108,7 @@ def main():
     control = out / 'compact-host.rs'
     control.write_text(paths(fixture, HERE, {operation: replacement}))
     run([*command, control, '-o', out / 'compact-control'])
-    rejected = run([out / 'compact-control'], succeeds=False)
+    rejected = run([out / 'compact-control', book, 'synthetic.epub'], succeeds=False)
     assert rejected.returncode == 101 and 'real operate_image must lend whole-block action scratch exactly once' in rejected.stderr, rejected.stderr
     always = source.replace('let action_storage = if initialize || paint_first',
                             'let action_storage = if true || initialize || paint_first', 1)
@@ -102,9 +118,84 @@ def main():
     control = out / 'idle-lending-host.rs'
     control.write_text(paths(fixture, HERE, {operation: replacement}))
     run([*command, control, '-o', out / 'idle-lending-control'])
-    rejected = run([out / 'idle-lending-control'], succeeds=False)
+    rejected = run([out / 'idle-lending-control', book, 'synthetic.epub'], succeeds=False)
     assert rejected.returncode == 101 and 'idle keeps compact scratch' in rejected.stderr, rejected.stderr
-    print('PASS actual operate_image action/idle frame loans; compiled compact and idle-lending controls rejected')
+    loans = ROOT / 'rust/firmware/reader_image_sources.rs'
+    drift = loans.read_text().replace('reader_book::CACHE_ROOT', '"/newt-sd/Newt/OtherCache"')
+    assert drift != loans.read_text()
+    replacement = out / 'wrong-route-sources.rs'
+    replacement.write_text(paths(drift, loans.parent))
+    control = out / 'wrong-route-host.rs'
+    control.write_text(paths(fixture, HERE, {loans: replacement}))
+    run([*command, control, '-o', out / 'wrong-route-control'])
+    rejected = run([out / 'wrong-route-control', book, 'synthetic.epub'], succeeds=False)
+    assert rejected.returncode == 101 and 'index and operate_image must lend the same cache route' in rejected.stderr, rejected.stderr
+    invalidation = ROOT / 'rust/firmware/reader_index_invalidation.rs'
+    keep = invalidation.read_text().replace('pages.invalidate_index(digest)', 'true')
+    assert keep != invalidation.read_text()
+    replacement = out / 'keep-index.rs'
+    replacement.write_text(paths(keep, invalidation.parent))
+    control = out / 'keep-index-host.rs'
+    control.write_text(paths(fixture, HERE, {invalidation: replacement}))
+    run([*command, control, '-o', out / 'keep-index-control'])
+    rejected = run([out / 'keep-index-control', book, 'synthetic.epub'], succeeds=False)
+    assert rejected.returncode == 101 and 'failed verification must remove the derived index' in rejected.stderr, rejected.stderr
+    reopen = ROOT / 'rust/firmware/reader_index_reopen.rs'
+    controls = [
+        ('skip-prepare-hash', ROOT / 'rust/firmware/reader_standalone_open.rs',
+         'let hashed = unsafe { reader_hash::hash_source(raw, &mut digest, &mut || yielded(), observer) };',
+         'digest=expected.unwrap_or_default(); let hashed=true;',
+         'strict prepare hash must reject changed bytes'),
+        ('skip-session-reopened-verification', reopen,
+         'Some(verification) => restart_verification(verification, raw)', 'Some(verification) => true',
+         'session reopen must restart verification'),
+        ('skip-reopened-verification', reopen,
+         'None => verify_standalone_reopen(raw, digest, yielded)', 'None => true',
+         'changed reopened bytes must fail verification'),
+        ('trust-orphan', reopen,
+         'pages.0.invalidate_index(digest);', '/* retain orphan */',
+         'failed or missing reopened source must revoke its index'),
+        ('stale-published-digest', ROOT / 'rust/phased-reader/src/index_build.rs',
+         'Identity { digest: *digest, policy:', 'Identity { digest: [0;32], policy:',
+         'publication must bind the bytes digest'),
+    ]
+    for name, source_file, before, after, witness in controls:
+        source_text = source_file.read_text()
+        assert before in source_text
+        if name == 'stale-published-digest':
+            assert source_text.count(before) == 1
+            mutant = out / 'mutant-rust'
+            shutil.copytree(ROOT / 'rust', mutant, ignore=shutil.ignore_patterns('target', '__pycache__'))
+            (mutant / source_file.relative_to(ROOT / 'rust')).write_text(source_text.replace(before, after, 1))
+            wire = run([cargo, 'build', '--lib', '-p', 'newt-c3-board', '-p', 'newt-device-ui',
+                        '-p', 'newt-library-current', '--features', 'newt-phased-reader/dev-usb',
+                        '--target', HOST, '--manifest-path', mutant / 'Cargo.toml',
+                        '--offline', '--frozen', '--locked', '--jobs', '2', '--target-dir', target,
+                        '--message-format=json'])
+            mutant_libraries = {}
+            for line in wire.stdout.splitlines():
+                item = json.loads(line)
+                if item.get('reason') == 'compiler-artifact':
+                    for file in item['filenames']:
+                        if file.endswith('.rlib'):
+                            mutant_libraries[item['target']['name']] = Path(file)
+            mutant_command = list(command)
+            for i, arg in enumerate(mutant_command):
+                if i and mutant_command[i - 1] == '--extern':
+                    package = arg.split('=', 1)[0]
+                    mutant_command[i] = package + '=' + str(mutant_libraries[package])
+            run([*mutant_command, positive, '-o', out / name])
+            rejected = run([out / name, book, 'synthetic.epub'], succeeds=False)
+        else:
+            replacement = out / (name + '.rs')
+            replacement.write_text(paths(source_text.replace(before, after, 1), source_file.parent))
+            control = out / (name + '-host.rs')
+            control.write_text(paths(fixture, HERE, {source_file: replacement}))
+            run([*command, control, '-o', out / name])
+            rejected = run([out / name, book, 'synthetic.epub'], succeeds=False)
+        assert rejected.returncode == 101 and witness in rejected.stderr, rejected.stderr
+    print('PASS changed reopened bytes, byte-digest publication and missing-source revocation; skip-verification, stale-digest and trusted-orphan controls rejected')
+    print('PASS actual operation/index loans, physical spill release/reopen, reopen refusal, power-cut cold reads and verification revocation; compact, idle-lending, route-drift and retained-index controls rejected')
     common = [cargo, 'test', '--offline', '--frozen', '--locked',
               '--manifest-path', ROOT / 'rust/Cargo.toml', '--target', HOST,
               '--target-dir', target, '--jobs', '2']

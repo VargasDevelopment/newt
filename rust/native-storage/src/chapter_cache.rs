@@ -31,6 +31,11 @@ impl<'a, S: Native> ChapterCacheStorage<'a, S> {
     ) -> core::result::Result<Self, LoanError> {
         Ok(Self { file: FilePort::lend(&mut owner.file, native, route, "Pages")?, state: &mut owner.state })
     }
+    /// A failed source verification revokes this digest's derived index too.
+    #[inline(never)]
+    pub fn invalidate_index(&mut self, digest: &[u8;32]) -> bool {
+        newt_core::page_cache::ReadScope::invalidate_index(&mut self.access(), digest)
+    }
     /// A foreground loan, without producer policy. Dropping it owes nothing.
     pub fn access(&mut self) -> ChapterCacheAccess<'_, 'a, S> {
         ChapterCacheAccess {
@@ -258,13 +263,21 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
     }
 
     fn same(&self, name: &[u8]) -> bool {
-        self.file.suffix().as_bytes() == c_str(name)
+        core::str::from_utf8(c_str(name)).is_ok_and(|name|self.file.same_name(name))
     }
     /// FilePort::pageName, widened: the final suffix when it names a
     /// block-envelope file (a page or a book index).
     fn envelope_name(&self) -> Option<&[u8]> {
         let suffix = self.file.suffix().as_bytes();
         envelope_kind(suffix).is_some().then_some(suffix)
+    }
+    fn envelope_route(&mut self,out:&mut envelope::Route,canonical:bool)->bool {
+        if self.envelope_name().and_then(newt_core::book_index::FileName::parse).is_some() {
+            // The short filename cannot supply identity. Use the full digest
+            // in the payload header; checked query callers independently bind
+            // their expected digest before trusting any index records.
+            self.file.read(newt_core::book_index::DIGEST_AT,out)
+        } else {envelope::route(self.envelope_name(),out,canonical)}
     }
     fn page_query_size(&mut self, name: &[u8]) -> i64 {
         if self.state.read_active && self.same(name) {
@@ -385,7 +398,7 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
         self.state.lookup = Lookup::Invalid;
         let mut route = [0; 32];
         let extent = self.file.bytes();
-        if extent < MANIFEST_BYTES || !envelope::route(self.envelope_name(), &mut route, true) {
+        if extent < MANIFEST_BYTES || !self.envelope_route(&mut route,true) {
             return false;
         }
         let mut manifest = [0; MANIFEST_BYTES as usize];
@@ -420,7 +433,7 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
         let Some(mut scratch) = Self::scratch() else {
             return false;
         };
-        if !envelope::route(self.envelope_name(), &mut route, false) {
+        if !self.envelope_route(&mut route,false) {
             return false;
         }
         let (mut whole, mut directory) = (u32::MAX, u32::MAX);
@@ -440,7 +453,7 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
             };
             let entry = checked.to_le_bytes();
             directory = envelope::crc(directory, &entry);
-            if !self.file.write(payload + 4 * block, &entry, true) {
+            if !self.file.write(payload + 4 * block, &entry, self.file.bytes() == payload + 4 * block) {
                 return false;
             }
             at += take;
@@ -456,11 +469,58 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
             directory ^ u32::MAX,
             whole ^ u32::MAX,
         );
-        if !self.file.write(payload + 4 * count, &manifest, true) || !self.file.sync() {
+        if !self.file.write(payload + 4 * count, &manifest, self.file.bytes() == payload + 4 * count) || !self.file.sync() {
             return false;
         }
         let verified = self.verify_page_payload(&route, payload, scratch.as_mut(), None);
         self.file.settle(verified)
+    }
+    fn begin_cache_write(&mut self, name: &[u8], extent: u32) -> bool {
+        self.forget_absent_name(name);
+        let lease = self.reset();
+        if self.file.generation() != lease {
+            return false;
+        }
+        let Some(text) = valid_name(name) else {
+            return false;
+        };
+        if !self.file.name(text, false, cache_folder(Some(name))) {
+            return false;
+        }
+        if self.file.producing() {
+            let page = text.len() == 69 && hex(&text.as_bytes()[..64]) && text.ends_with(".fibp");
+            // write() and finalize_page() spend the credit; one census entry
+            // per file, temporary included.
+            if !page || self.file.write_credit() == 0 || self.state.entries == 0 {
+                return false;
+            }
+            self.state.entries -= 1;
+        }
+        if !self.file.begin(extent, extent != 0) {
+            return false;
+        }
+        self.state.crc = u32::MAX;
+        true
+    }
+    /// Reserve payload and envelope together; physical size stays fixed while
+    /// logical payload grows, so publication never exposes an allocated tail.
+    fn begin_index_write(&mut self, name: &[u8], payload: u32) -> bool {
+        if payload == 0 || payload > MAX_BYTES || !newt_core::book_index::FileName::parse(name)
+            .is_some_and(|file| file.kind() == newt_core::book_index::FileKind::Index) {
+            return false;
+        }
+        self.begin_cache_write(name, payload + 4 * envelope::blocks(payload) + MANIFEST_BYTES)
+    }
+    /// The attempt owns the cursor; a cache read-back invalidates it.
+    fn write_indexed(&mut self, bytes: &[u8], position: &mut Option<u32>) -> bool {
+        let payload = self.state.payload;
+        if bytes.len() > MAX_BYTES.wrapping_sub(payload) as usize || !self.spend(bytes.len() as u64) {
+            return self.file.poison();
+        }
+        if !self.file.write_indexed(payload, bytes, self.file.bytes() == payload, position) { return false; }
+        self.state.crc = envelope::crc(self.state.crc, bytes);
+        self.state.payload += bytes.len() as u32;
+        true
     }
     /// Reads the complete wire. A damaged committed candidate is an optional
     /// miss, so production repairs it; finalization settles writer failure.
@@ -703,31 +763,7 @@ impl<S: Native> CacheStorage for ChapterCacheAccess<'_, '_, S> {
         -1
     }
     fn begin_write(&mut self, name: &[u8]) -> bool {
-        self.forget_absent_name(name);
-        let lease = self.reset();
-        if self.file.generation() != lease {
-            return false;
-        }
-        let Some(text) = valid_name(name) else {
-            return false;
-        };
-        if !self.file.name(text, false, cache_folder(Some(name))) {
-            return false;
-        }
-        if self.file.producing() {
-            let page = text.len() == 69 && hex(&text.as_bytes()[..64]) && text.ends_with(".fibp");
-            // write() and finalize_page() spend the credit; one census entry
-            // per file, temporary included.
-            if !page || self.file.write_credit() == 0 || self.state.entries == 0 {
-                return false;
-            }
-            self.state.entries -= 1;
-        }
-        if !self.file.begin(0, false) {
-            return false;
-        }
-        self.state.crc = u32::MAX;
-        true
+        self.begin_cache_write(name, 0)
     }
     fn write(&mut self, bytes: &[u8]) -> bool {
         let payload = self.state.payload;
@@ -735,7 +771,7 @@ impl<S: Native> CacheStorage for ChapterCacheAccess<'_, '_, S> {
         {
             return self.file.poison();
         }
-        if !self.file.write(payload, bytes, true) {
+        if !self.file.write(payload, bytes, self.file.bytes() == payload) {
             return false;
         }
         if self.file.producing() {
@@ -843,3 +879,6 @@ mod census;
 #[path = "index_build.rs"]
 mod index_build;
 pub use index_build::{IndexBuildStore, IndexWorkState};
+
+#[path = "chapter_cache_read_scope.rs"]
+mod read_scope;

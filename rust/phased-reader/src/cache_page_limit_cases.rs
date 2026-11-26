@@ -21,6 +21,7 @@ impl CacheStorage for Files {
     fn end_write(&mut self) -> bool { true }
 }
 impl CachePresence for Files {
+    fn with_index<R>(&mut self, _: &[u8; 32], _: impl FnOnce(&mut dyn crate::index_build::Store) -> R) -> Option<R> { None }
     fn present(&mut self, _: &[u8], _: bool) -> bool { panic!("unexpected presence probe") }
 }
 impl ReadScope for Files {

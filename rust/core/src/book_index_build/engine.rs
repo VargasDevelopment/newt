@@ -1,5 +1,5 @@
 //! Formation and joins of the six typed streams.
-use super::{*, records::{Record, Item, Reference, Joined, First, Spine},
+use super::{*, records::{Record, Item, StyleItem, Reference, Joined, First, Spine},
     runs::{self, Cursor, CURSORS, Io, Stream, Region, Pool, View, Output, sort, reduce, poll, io}};
 
 pub(super) struct Engine<'a> {
@@ -81,8 +81,10 @@ impl<'a> Engine<'a> {
         state.positions.fill(0);
         let mut positions = Positions(&mut *state.positions);
         self.join_items(work, &mut choices, &mut positions, &mut *state.cursors, progress)?;
+        header.navigation_declared = choices.nav.or(choices.ncx).is_some();
         header.spine = positions.total();
         if header.spine == 0 { return Err(Error::Book(Status::NotEpub)); }
+        if header.stylesheets { self.rekey_styles(work, &mut *state.cursors, progress)?; }
         self.header_pass(work, header, choices, &positions, &mut *state.cursors, progress)
     }
     /// Resolves the NCX and cover ids to their earliest manifest items on the way.
@@ -128,22 +130,52 @@ impl<'a> Engine<'a> {
         self.streams[3] = out.finish(&mut view, work, &mut self.io)?;
         Ok(())
     }
+    /// The id join is finished; reuse its item stream for the href join.
+    fn rekey_styles<W: WorkFile + ?Sized>(&mut self, work: &mut W,
+        cursors: &mut [Cursor; CURSORS], progress: &mut dyn FnMut(Progress) -> bool,
+    ) -> Result<(), Error> {
+        if let Some(region) = self.streams[1].memory {
+            sort::<StyleItem>(&mut self.buffer[region.start..][..region.bytes], true);
+            return Ok(());
+        }
+        let fan = (self.buffer.len() - Item::BYTES) / self.min_read;
+        reduce::<Item, W>(&mut self.streams[1], (fan / 2).max(1), self.buffer,
+            &mut Pool::new(&mut *cursors, 0, self.min_read), work, &mut self.io, progress)?;
+        let mut pool = Pool::new(cursors, 0, self.min_read);
+        let mut input = pool.attach::<Item, W>(work, &mut self.io, self.streams[1])?;
+        let mut output = Output::<StyleItem>::new(pool.bytes(), self.buffer.len() - pool.bytes(), false, false);
+        let mut view = View { prefix: &[], tail: self.buffer };
+        while let Some(item) = pool.next::<Item, W>(&mut input, &mut view, work, &mut self.io)? {
+            output.push(StyleItem(item), &mut view, work, &mut self.io)?;
+            poll(progress, Phase::Join, self.io.stats.read, 0)?;
+        }
+        self.streams[1] = output.finish(&mut view, work, &mut self.io)?;
+        Ok(())
+    }
     fn header_pass<W: WorkFile + ?Sized>(&mut self, work: &mut W, header: &mut Header, choices: Choices,
         positions: &Positions<'_>, cursors: &mut [Cursor; CURSORS],
         progress: &mut dyn FnMut(Progress) -> bool) -> Result<(), Error> {
         let f_bytes = self.min_read;
         let max_slots = (self.buffer.len() - f_bytes - 2 * Spine::BYTES) / self.min_read;
-        reduce::<Member, W>(&mut self.streams[0], max_slots - 1, self.buffer, &mut Pool::new(&mut *cursors, 0, self.min_read), work, &mut self.io, progress)?;
+        reduce::<Member, W>(&mut self.streams[0], if header.stylesheets { (max_slots / 3).max(1) } else { max_slots - 1 }, self.buffer, &mut Pool::new(&mut *cursors, 0, self.min_read), work, &mut self.io, progress)?;
         let m_slots = if self.disk { self.streams[0].slots() } else { 0 };
-        let available = self.buffer.len() - m_slots * self.min_read - f_bytes;
+        if header.stylesheets {
+            reduce::<StyleItem, W>(&mut self.streams[1], (max_slots / 3).max(1), self.buffer,
+                &mut Pool::new(&mut *cursors, 0, self.min_read), work, &mut self.io, progress)?;
+        }
+        let style_stream = if header.stylesheets { self.streams[1] } else { Stream::default() };
+        let style_slots = if self.disk { style_stream.slots() } else { 0 };
+        let available = self.buffer.len() - (m_slots + style_slots) * self.min_read - f_bytes;
         let reserve = (self.buffer.len() / 4).min(available - self.min_read);
         let j_slots = (available - reserve) / self.min_read;
         reduce::<Joined, W>(&mut self.streams[3], j_slots, self.buffer, &mut Pool::new(&mut *cursors, 0, self.min_read), work, &mut self.io, progress)?;
         let mut pool = Pool::new(&mut *cursors, 0, self.min_read);
         let mut members = pool.attach::<Member, W>(work, &mut self.io, self.streams[0])?;
+        let mut styles = pool.attach::<StyleItem, W>(work, &mut self.io, style_stream)?;
         let mut joins = pool.attach::<Joined, W>(work, &mut self.io, self.streams[3])?;
         let start = self.io.end;
-        // Resident F and J2 reuse the I and J1 regions; spilled ones follow the cursors.
+        // Each F push consumes at least one I item, so resident output never
+        // overwrites an unread item. F/J2 reuse I/J1; spilled output follows cursors.
         let (f_region, j_region) = match (self.streams[1].memory, self.streams[3].memory) {
             (Some(items), Some(joined)) => (items, joined),
             _ => (Region { start: pool.bytes(), bytes: f_bytes },
@@ -152,6 +184,7 @@ impl<'a> Engine<'a> {
         let mut first = Output::<First>::new(f_region.start, f_region.bytes, !self.disk, true);
         let mut spine = Output::<Spine>::new(j_region.start, j_region.bytes, !self.disk, false);
         let mut view = View { prefix: &[], tail: self.buffer };
+        let mut style = pool.next::<StyleItem, W>(&mut styles, &mut view, work, &mut self.io)?;
         let mut joined = pool.next::<Joined, W>(&mut joins, &mut view, work, &mut self.io)?;
         let (mut rank, mut previous, mut valid) = (0, None, true);
         // One step per member and per joined reference, so the bar rises evenly.
@@ -163,11 +196,26 @@ impl<'a> Engine<'a> {
                 if choices.nav.is_some() { header.nav = rank; } else { header.ncx = rank; }
             }
             if choices.cover.is_some_and(|c| c.hash == member.hash) { header.cover = rank; }
+            let (mut css, mut contradictory) = (false, false);
+            while let Some(item) = style.filter(|item| item.0.href <= member.hash) {
+                if item.0.href == member.hash {
+                    css |= item.0.flags & CSS != 0;
+                    contradictory |= item.0.flags & CSS == 0;
+                }
+                style = pool.next::<StyleItem, W>(&mut styles, &mut view, work, &mut self.io)?;
+            }
             let mut first_position = NONE;
+            let mut contents_valid = true;
             while let Some(j) = joined.filter(|j| j.href <= member.hash) {
                 let position = positions.rank(j.position)?;
                 let found = j.href == member.hash;
-                if found { first_position = first_position.min(position); }
+                if found {
+                    // Contents cannot choose between repeats, non-text items or
+                    // members the reader cannot decode, just like readable_spine.
+                    contents_valid &= first_position == NONE && j.text
+                        && matches!(member.method, 0 | 8) && member.uncompressed <= 4 * 1024 * 1024;
+                    first_position = position;
+                }
                 let weight = if j.text && found { member.uncompressed } else { 0 };
                 if j.text && (!found || !matches!(member.method, 0 | 8) || member.uncompressed > 4 * 1024 * 1024) { valid = false; }
                 header.spine_bytes += u64::from(weight);
@@ -175,7 +223,14 @@ impl<'a> Engine<'a> {
                 joined = pool.next::<Joined, W>(&mut joins, &mut view, work, &mut self.io)?;
                 done += 1; poll(progress, Phase::Rank, done, total)?;
             }
-            if first_position != NONE { first.push(First { rank, position: first_position }, &mut view, work, &mut self.io)?; }
+            let position = if contents_valid { first_position } else { NONE };
+            let stylesheet = css && !contradictory;
+            if position != NONE || stylesheet {
+                // Raw spine positions occupy 15 bits. Keep the classification
+                // beside the position without growing the eight-byte F record.
+                let packed = position.min(0xffff) | (u32::from(stylesheet) << 16);
+                first.push(First { rank, position: packed }, &mut view, work, &mut self.io)?;
+            }
             rank += 1;
             done += 1; poll(progress, Phase::Rank, done, total)?;
         }
@@ -194,15 +249,21 @@ impl<'a> Engine<'a> {
     pub fn publish<W: WorkFile + CacheStorage + ?Sized>(&mut self, store: &mut W, header: Header,
         state: &mut JoinState<'_>, progress: &mut dyn FnMut(Progress) -> bool, receipt_live: &mut dyn FnMut() -> bool) -> Result<(), Error> {
         use crate::book_index::{Writer, SpineItem};
-        let fan = (self.buffer.len() - 384) / self.min_read;
+        let reserve = if state.saved.len() > WRITER_PREFIX { 0 } else { WRITER_PREFIX };
+        let fan = (self.buffer.len() - reserve) / self.min_read;
         reduce::<Member, W>(&mut self.streams[0], fan - 1, self.buffer, &mut Pool::new(&mut *state.cursors, 0, self.min_read), store, &mut self.io, progress)?;
         reduce::<Spine, W>(&mut self.streams[5], fan, self.buffer, &mut Pool::new(&mut *state.cursors, 0, self.min_read), store, &mut self.io, progress)?;
         if self.disk && !store.sync_work() { return Err(io()); }
         let JoinState { cursors, saved, .. } = state;
-        saved.copy_from_slice(&self.buffer[..WRITER_PREFIX]);
-        let (write_buffer, tail) = self.buffer.split_at_mut(WRITER_PREFIX);
-        let mut view = View { prefix: &saved[..], tail };
-        let mut pool = Pool::new(cursors, WRITER_PREFIX, self.min_read);
+        let (write_buffer, prefix, tail): (&mut [u8], &[u8], &mut [u8]) = if reserve == 0 {
+            (&mut **saved, &[], &mut *self.buffer)
+        } else {
+            saved.copy_from_slice(&self.buffer[..WRITER_PREFIX]);
+            let (write_buffer, tail) = self.buffer.split_at_mut(WRITER_PREFIX);
+            (write_buffer, &saved[..], tail)
+        };
+        let mut view = View { prefix, tail };
+        let mut pool = Pool::new(cursors, reserve, self.min_read);
         let mut members = pool.attach::<Member, W>(store, &mut self.io, self.streams[0])?;
         let mut first = pool.attach::<First, W>(store, &mut self.io, self.streams[4])?;
         let mut f = pool.next::<First, W>(&mut first, &mut view, store, &mut self.io)?;
@@ -211,14 +272,15 @@ impl<'a> Engine<'a> {
         while let Some(mut member) = pool.next::<Member, W>(&mut members, &mut view, store, &mut self.io)? {
             if f.is_some_and(|f| f.rank < rank) { return Err(io()); }
             if let Some(next) = f.filter(|f| f.rank == rank) {
-                member.first_spine = next.position;
+                member.contents_spine = if next.position & 0xffff == 0xffff { NONE } else { next.position & 0xffff };
+                if next.position & (1 << 16) != 0 { member.flags |= crate::book_index::STYLESHEET; }
                 f = pool.next::<First, W>(&mut first, &mut view, store, &mut self.io)?;
             }
             writer = writer.member(store, member).map_err(Error::Write)?;
             rank += 1; poll(progress, Phase::Publish, u64::from(rank), u64::from(header.members + header.spine))?;
         }
         if f.is_some() || rank != header.members { return Err(io()); }
-        let mut pool = Pool::new(cursors, WRITER_PREFIX, self.min_read);
+        let mut pool = Pool::new(cursors, reserve, self.min_read);
         let mut spine = pool.attach::<Spine, W>(store, &mut self.io, self.streams[5])?;
         let mut before = 0;
         let mut count = 0;
@@ -237,9 +299,9 @@ impl<'a> Engine<'a> {
 pub(super) const JOIN_STACK_BYTES: usize = {
     use core::mem::size_of;
     size_of::<Engine<'static>>() + 2 * size_of::<Header>() + size_of::<Pool<'static>>()
-        + 2 * size_of::<runs::Group>() + size_of::<Output<Spine>>() + size_of::<Output<First>>()
+        + 3 * size_of::<runs::Group>() + size_of::<Output<Spine>>() + size_of::<Output<First>>()
         + size_of::<View<'static>>() + size_of::<crate::book_index::Writer<'static>>()
         // Writer::begin encodes the header in a local before copying it out.
         + crate::book_index::HEADER_BYTES as usize
-        + size_of::<(Option<Member>, Option<Joined>, Option<First>, Option<Choice>, Option<Choice>, u64, u32, u32, bool)>()
+        + size_of::<(Option<StyleItem>, Option<Member>, Option<Joined>, Option<First>, Option<Choice>, Option<Choice>, u64, u32, u32, bool)>()
 };

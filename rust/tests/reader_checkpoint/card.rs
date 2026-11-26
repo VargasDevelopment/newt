@@ -10,6 +10,8 @@ use std::{cell::RefCell, collections::BTreeMap, marker::PhantomData, rc::Rc};
 #[derive(Default)]
 pub struct CardState {
     pub model: Model,
+    pub enforce_reader_limit: bool,
+    pub most_open: usize,
     pub handles: BTreeMap<i32, String>,
     pub state_with_pages: bool,
     pub state_open_seen: bool,
@@ -100,6 +102,8 @@ impl Native for Port<'_> {
         }
         let fd = state.model.open(path, mode)?;
         state.handles.insert(fd, path.to_owned());
+        state.most_open=state.most_open.max(state.handles.len());
+        if state.enforce_reader_limit {assert!(state.handles.len()<=3,"index handoff exceeded three open files");}
         Ok(fd)
     }
     fn close(&mut self, fd: i32) -> Result<()> {

@@ -127,6 +127,7 @@ impl ReadScope for Store<'_> {
     }
 }
 impl CachePresence for Store<'_> {
+    fn with_index<R>(&mut self, _: &[u8; 32], _: impl FnOnce(&mut dyn crate::index_build::Store) -> R) -> Option<R> { None }
     fn present(&mut self, _: &[u8], _: bool) -> bool { !self.file.is_empty() }
 }
 struct Outcome {

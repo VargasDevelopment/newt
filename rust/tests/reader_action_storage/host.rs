@@ -60,8 +60,11 @@ mod app_image {
     impl Application<'_> {
         pub fn read_info_with_clock(&mut self, _: &newt_c3_board::MonotonicClock, _: reader_action::Trace) -> core::result::Result<(), ()> { panic!("no battery work in source-loan fixture") }
     }
+    pub static TURN_PENDING: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
     pub struct Queue;
-    impl Queue { pub fn pending(&self) -> bool { false } }
+    impl Queue {
+        pub fn pending(&self) -> bool { TURN_PENDING.load(core::sync::atomic::Ordering::Relaxed) }
+    }
     pub struct Events<'a, 'task> {
         pub control: &'a mut (), pub queue: &'a Queue, pub action: reader_action::Trace,
         pub task: PhantomData<&'task ()>,
@@ -92,8 +95,7 @@ mod reader_hash {
     }
     #[derive(Default)] pub struct MbedHasher(Vec<u8>);
     pub struct Loan<'a>(&'a mut MbedHasher);
-    impl MbedHasher { pub fn borrow_with_yield(&mut self, _: &dyn Fn()) -> Loan<'_> { Loan(self) } }
-    impl Loan<'_> { pub fn update(&mut self, input: &[u8]) -> bool { RevisionHasher::update(self, input) } }
+    impl MbedHasher { pub unsafe fn new(_: Option<&dyn Fn()>) -> Self { Self::default() } pub fn borrow_with_yield(&mut self, _: &dyn Fn()) -> Loan<'_> { Loan(self) } }
     impl RevisionHasher for MbedHasher {
         fn begin(&mut self) -> bool { self.0.clear(); true }
         fn update(&mut self, input: &[u8]) -> bool { self.0.extend_from_slice(input); true }
@@ -111,11 +113,19 @@ mod reader_hash {
     impl newt_phased_reader::hash_provider::CacheHash for PackageHasher {
         fn hash(&mut self, input: &[u8], out: &mut Digest) -> bool { package_hash(input, out) }
     }
-    pub unsafe fn hash_source(_: &mut dyn BookSource, _: &mut Digest, _: &mut dyn FnMut(), _: Option<&dyn SourceHashObserver>) -> bool { panic!("no strict-source fallback in source-loan fixture") }
+    pub unsafe fn hash_source(source: &mut dyn BookSource, digest: &mut Digest, _: &mut dyn FnMut(), _: Option<&dyn SourceHashObserver>) -> bool {
+        let mut bytes=vec![0;source.size() as usize];
+        let mut at=0;
+        while at<bytes.len() {
+            let n=source.read_at(at as u64,&mut bytes[at..]);
+            if n<=0 {return false;}
+            at+=n as usize;
+        }
+        package_hash(&bytes,digest)
+    }
 }
-mod reader_verification {
-    #[derive(Clone, Copy, PartialEq)] pub enum Verification { Pending, Verified }
-}
+#[path = "../../firmware/reader_verification.rs"] mod reader_verification;
+#[path = "../../firmware/reader_selected_source.rs"] mod physical_selected;
 mod selected {
     use super::*;
     pub trait FileObserver {}
@@ -128,7 +138,9 @@ mod selected {
             let n = bytes.len().min(out.len()); out[..n].copy_from_slice(&bytes[..n]); n as i32
         }
     }
+    impl newt_phased_reader::index_build::ReleasableSource for SelectedSource {}
     impl SelectedSource {
+        pub fn with_index_source<N,R>(&mut self,_:&mut N,_:&[u8],_:&mut[u8],_:Option<&dyn newt_native_storage::Authority>,_:Option<&dyn FileObserver>,work:impl FnOnce(&mut dyn newt_phased_reader::index_build::ReleasableSource)->R)->core::result::Result<R,()> {Ok(work(self))}
         pub fn bound(&self) -> bool { true }
         pub fn with_source_observed<N, R>(&mut self, _: &mut N, _: Option<&dyn newt_native_storage::Authority>, _: Option<&dyn FileObserver>, work: impl FnOnce(&mut dyn BookSource) -> R) -> core::result::Result<R, ()> { Ok(work(self)) }
     }
@@ -168,18 +180,7 @@ mod image {
         use super::*;
         #[path = "../../firmware/reader_image_source_loan.rs"] mod actual_loan;
         pub(crate) use actual_loan::{with_source, with_source_lent};
-        pub struct Flags;
-        impl Flags { pub fn prepared(&self) -> bool { false } pub fn set_prepared(&mut self, _: bool) {} }
-        pub struct Control { pub flags: Flags }
-        pub struct Verification { pub control: Control, pub ledger: [u8; 256], pub view: u16 }
-        impl Verification {
-            pub fn state(&self) -> crate::reader_verification::Verification { crate::reader_verification::Verification::Verified }
-            pub fn control(&mut self) -> &mut Control { &mut self.control }
-            pub fn producer_ready(&self) -> bool { true }
-            pub fn reset_producer_visit(&mut self) {}
-            pub fn with_producer_visit<R>(&mut self, work: impl FnOnce(&mut [u8;256], &mut u16) -> R) -> Option<R> { Some(work(&mut self.ledger, &mut self.view)) }
-            pub fn finish_with_update(&mut self, _: &mut dyn BookSource, _: &Digest, _: &mut [u8], _: &mut dyn FnMut() -> bool, _: &mut dyn FnMut(&mut reader_hash::MbedHasher, &[u8]) -> bool) -> bool { panic!("no pending verifier in source-loan fixture") }
-        }
+        pub type Verification = crate::reader_verification::ReaderVerification<reader_hash::MbedHasher>;
         pub struct Session {
             pub route: newt_native_storage::RouteState, pub receipt: sd_revision::SdRevisionState,
             pub pages: newt_native_storage::chapter_cache::ChapterCacheState,
@@ -187,7 +188,7 @@ mod image {
             pub source: Option<ReaderSourceState>, pub verification: Verification,
         }
     }
-    pub struct Memory { pub runtime: newt_c3_board::reader_memory::Runtime<'static,'static> }
+    pub struct Memory { pub runtime: newt_c3_board::reader_memory::Runtime<'static,'static>, pub probe: &'static [u8] }
     impl Memory {
         pub fn external_mut(&mut self) -> Option<&mut Self> { Some(self) }
         pub fn lend<R>(&mut self, work: impl FnOnce(&mut Self) -> R) -> R { work(self) }
@@ -216,17 +217,20 @@ mod image {
         pub source: Option<Box<selected::SelectedSource>>, pub session: Option<Box<session::Session>>,
         pub checkpoint: ReaderCheckpoint, pub statistics: ReadingStatsRuntime, pub recovery: Option<reader_book::PendingRecovery>,
         pub cadence: newt_core::reader_scheduler::YieldCadence, pub settings: ViewSettings,
-        pub exit_metadata: Option<Fixed<reader_exit_metadata::ExitMetadata>>, pub last_progress: Cell<u32>, pub saves: Saves, pub idle: Idle,
+        pub exit_metadata: Option<Fixed<reader_exit_metadata::ExitMetadata>>, pub last_progress: Cell<u32>, pub saves: Saves, pub idle: Idle, pub index_trim_owed: bool,
     }
     impl Runtime {
         pub fn book(&self) -> Option<&newt_c3_board::reader_memory::Runtime<'static,'static>> { Some(&self.memory.runtime) }
         pub fn restore_policy_image(&self) -> newt_reader_ui::RestorePolicy { newt_reader_ui::RestorePolicy::ExactPage }
         pub fn refuse_checkpoint_image(&mut self, _: u32, _: bool) { panic!("no requested save in source-loan fixture") }
     }
+    #[path = "../../firmware/reader_standalone_open.rs"] pub(crate) mod standalone_open;
+    #[path = "../../firmware/reader_index_reopen.rs"] pub(crate) mod index_reopen;
+    #[path = "../../firmware/reader_index_invalidation.rs"] pub(crate) mod index_invalidation;
     pub mod drive {
         use super::*;
-        pub struct Opening { pub accepted_save: bool, pub at: u32 }
-        #[derive(Clone, Copy)] pub struct Turn { pub initialize: bool, pub paint_first: bool, pub accepted_save: bool, pub step: Option<reader_book::BookStep>, pub settings: ViewSettings, pub open: newt_reader_ui::PhysicalOpen }
+        pub struct Opening { pub accepted_save: bool, pub at: u32, pub indexed: newt_phased_reader::index_build::Indexed }
+        #[derive(Clone, Copy)] pub struct Turn<'a> { pub indexed: Option<&'a newt_phased_reader::index_build::Indexed>, pub paint_first: bool, pub accepted_save: bool, pub step: Option<reader_book::BookStep>, pub settings: ViewSettings, pub open: newt_reader_ui::PhysicalOpen }
         pub struct Ports<'a,'io,'scope,'sdk> {
             pub io: &'io newt_native_io::UiIo, pub panel: &'a mut newt_c3_board::ReaderPanel<'scope,'sdk>,
             pub card: &'a mut card::Card, pub preferences: &'a mut home_startup::preferences::ReaderPreferences,
@@ -239,15 +243,28 @@ mod image {
             pub metadata: &'a mut Option<Fixed<reader_exit_metadata::ExitMetadata>>, pub flags: Option<&'a mut u16>, pub settings: &'a mut ViewSettings,
         }
         impl RunLoan<'_> {
-            pub fn run<'io>(self, _: Ports<'_,'io,'_,'_>, _: &mut reader_pages::ReaderPages<'_, impl Native>,
-                source: &mut impl newt_reader_ui::SourceOperations, _: &reader_book::BookRequest<'_>, _: &reader_book::ProducerCallbacks<'_>,
-                _: &mut reader_book::ProducerPauseFn<'_,'io,Flash,card::Card>, _: Option<(&mut [u8;256],&mut u16)>, _: Turn,
+            pub fn run<'io>(self, _: Ports<'_,'io,'_,'_>, pages: &mut reader_pages::ReaderPages<'_, impl Native>,
+                source: &mut impl newt_reader_ui::SourceOperations, request: &reader_book::BookRequest<'_>, _: &reader_book::ProducerCallbacks<'_>,
+                _: &mut reader_book::ProducerPauseFn<'_,'io,Flash,card::Card>, _: Option<(&mut [u8;256],&mut u16)>, turn: Turn<'_>,
                 _: &dyn Fn(), _: &dyn Fn(newt_core::admission::WorkEvent),
-                _: &mut Saves, _: bool,
+                _: &mut Saves, _: bool, _: &mut bool,
             ) -> core::result::Result<reader_book::BookExit,BookFailure> {
+                if matches!(turn.step, Some(reader_book::BookStep::Idle { .. })) {
+                    use core::sync::atomic::Ordering::Relaxed;
+                    assert!(!request.cancel.cancelled());
+                    // Inject a turn after idle admission, as while census is walking.
+                    app_image::TURN_PENDING.store(true, Relaxed);
+                    assert!(request.cancel.cancelled(), "a queued turn must cancel the idle trim authority");
+                    app_image::TURN_PENDING.store(false, Relaxed);
+                    assert!(!request.cancel.cancelled());
+                }
                 let mut first = [0;4096]; let mut second = [0;4096];
                 assert_eq!(source.read_at(0,&mut first),4096); assert_eq!(source.read_at(0,&mut second),4096);
                 assert_eq!(first,second);
+                let mut probe = [0;17];
+                assert_eq!(newt_core::page_cache::CacheStorage::read_at(pages,self.memory.probe,0,&mut probe),17,
+                    "index and operate_image must lend the same cache route");
+                assert_eq!(probe,first[..17],"index and operate_image must lend the same selected bytes");
                 // Typed stop after consumption; the actual guard must restore
                 // source state even when its consumer returns an error.
                 Err(BookFailure::Open(newt_core::zip_container::Status::Unsupported))
@@ -255,7 +272,13 @@ mod image {
         }
     }
     fn millis() -> u32 { u32::MAX }
+    #[path = "../../firmware/reader_image_sources.rs"] mod sources;
     #[path = "../../firmware/reader_image_operation.rs"] mod operation;
+    #[path = "../reader_action_storage/index_loans.rs"] pub(crate) mod index_loans;
+    pub fn execute_open(runtime: &mut Runtime, home: &mut app_image::Home<'_>, ui: &mut app_image::Application<'_>, logical: &mut newt_core::frame::Frame, events: &mut app_image::Events<'_,'_>, indexed: newt_phased_reader::index_build::Indexed) {
+        let opening=drive::Opening { accepted_save:false,at:0,indexed };
+        assert!(matches!(runtime.operate_image(home,ui,logical,events,Some(opening),None,false,None,None), Err(BookFailure::Open(newt_core::zip_container::Status::Unsupported))));
+    }
     pub fn execute(runtime: &mut Runtime, home: &mut app_image::Home<'_>, ui: &mut app_image::Application<'_>, logical: &mut newt_core::frame::Frame, events: &mut app_image::Events<'_,'_>, step: reader_book::BookStep) {
         assert!(matches!(runtime.operate_image(home,ui,logical,events,None,Some(step),false,None,None), Err(BookFailure::Open(newt_core::zip_container::Status::Unsupported))));
     }
@@ -274,12 +297,21 @@ fn main() {
     let card = card::Card::default();
     card.seed("/newt-sd/Newt/Cache/.keep", vec![]);
     let mut home = home_startup::HomeRuntime::restore_durable(board_clock::BoardBus { board, log: Log },Flash,card);
-    let bytes:Vec<u8> = (0..8192).map(|i| ((i*37+(i>>8))&255) as u8).collect();
+    let bytes = std::fs::read(std::env::args().nth(1).expect("generated EPUB")).unwrap();
     let reads = Rc::new(RefCell::new(Vec::new()));
     let mut source = Box::new(selected::SelectedSource { bytes, reads:reads.clone() });
     let mut digest = [0;32]; assert!(reader_hash::package_hash(&source.bytes,&mut digest));
-    let route = newt_native_storage::RouteState::new(reader_book::CACHE_ROOT,
-        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+    assert_eq!(image::standalone_open::verify(&mut *source,Some(digest),&|| {},&||true,None).unwrap(),digest);
+    source.bytes[100]^=1;
+    assert!(matches!(image::standalone_open::verify(&mut *source,Some(digest),&|| {},&||true,None),
+        Err(BookFailure::Open(newt_core::zip_container::Status::Stale))),
+        "strict prepare hash must reject changed bytes");
+    source.bytes[100]^=1;
+    image::index_loans::physical_handoffs(&mut home,&source.bytes,&digest);
+    let filename = std::env::args().nth(2).expect("catalog name");
+    let mut key = [0;64];
+    let key = reader_book::route_key(&filename,&mut reader_hash::PackageHasher::from_live_sdk(),&mut key).unwrap();
+    let route = newt_native_storage::RouteState::new(reader_book::CACHE_ROOT,key);
     let receipt = home.with_reader_io(|scope| {
         let mut native = scope.card.port(scope.io);
         sd_revision::SdRevisionState::new(&mut native,&route.lend(&Never,now))
@@ -287,7 +319,7 @@ fn main() {
     let mut session = Box::new(image::session::Session {
         route, receipt, pages:newt_native_storage::chapter_cache::ChapterCacheState::new(),
         whole:reader_hash::MbedHasher::default(), block:reader_hash::MbedHasher::default(), scratch:[0;256], source:None,
-        verification:image::session::Verification { control:image::session::Control { flags:image::session::Flags }, ledger:[0;256],view:0 },
+        verification:image::session::Verification::new(),
     });
     home.with_reader_io(|scope| {
         let mut native = scope.card.port(scope.io);
@@ -303,14 +335,14 @@ fn main() {
     let text=Box::leak(Box::new([0;newt_phased_sink::TEXT]));
     let plan=Box::leak(Box::new(newt_phased_sink::Plan::new(runs,text)));
     let mut selection = SelectionAuthority::new();
-    assert!(selection.publish_candidate(c"synthetic.epub",digest,&mut || {},&mut || {}));
+    assert!(selection.publish_candidate(&std::ffi::CString::new(filename).unwrap(),digest,&mut || {},&mut || {}));
     let mut runtime=image::Runtime {
-        memory:image::Memory { runtime:newt_c3_board::reader_memory::Runtime::new(selections,plan) },
+        memory:image::Memory { runtime:newt_c3_board::reader_memory::Runtime::new(selections,plan), probe:b"unwritten" },
         reader_ui:newt_reader_ui::ReaderUiState::default(), selection,
         saved:Progress::default(), title:Box::leak(Box::new([0;256])), home:Box::leak(Box::new(newt_device_ui::HomeData::default())),
         source:Some(source), session:Some(session), checkpoint:ReaderCheckpoint::new(reader_book::CheckpointRestore::Latest),
         statistics:ReadingStatsRuntime::default(), recovery:None, cadence:newt_core::reader_scheduler::YieldCadence::new(),
-        settings:ViewSettings::default(), exit_metadata:None, last_progress:Cell::new(u32::MAX), saves:image::Saves, idle:image::Idle,
+        settings:ViewSettings::default(), exit_metadata:None, last_progress:Cell::new(u32::MAX), saves:image::Saves, idle:image::Idle, index_trim_owed:false,
     };
     let mut ui=app_image::Application {
         info:newt_reader_ui::DeviceInfo::default(), app:newt_core::app::AppState::default(),
@@ -320,6 +352,10 @@ fn main() {
     let mut control=();let queue=app_image::Queue;
     let mut events=app_image::Events { control:&mut control,queue:&queue,action:reader_action::Trace,task:PhantomData };
     let mut logical=[0xa5;newt_core::frame::FRAME_BYTES];
+    image::index_loans::index(&mut runtime,&mut home,&mut logical);
+    assert!(runtime.session.as_ref().unwrap().source.is_some(),"index loans retain the operation's revision owner");
+    logical.fill(0xa5);
+    reads.borrow_mut().clear();
     image::execute(&mut runtime,&mut home,&mut ui,&mut logical,&mut events,reader_book::BookStep::Action(newt_core::app::Action::Next));
     assert_eq!(&*reads.borrow(),&[4096],"real operate_image must lend whole-block action scratch exactly once");
     let retained_at = newt_phased_reader::imported_revision::BLOCK_BYTES
@@ -342,6 +378,20 @@ fn main() {
         reader_book::BookStep::Idle { checkpoint:false, admitted:false });
     assert_eq!(reads.borrow().as_slice(),&[256;32],"idle keeps compact scratch");
     assert!(logical.iter().all(|b|*b==0x7d),"idle must preserve the published logical frame");
+    image::index_loans::failed_verification_revokes_index(&mut runtime,&mut home,&digest);
+    // Distinct probe names prevent a session record from hiding standalone
+    // route drift. Return the session's descriptor before withdrawing its owner.
+    let mut session=runtime.session.take().unwrap();
+    home.with_reader_io(|scope| {
+        let mut native=scope.card.port(scope.io);let route=session.route.lend(&Never,now);
+        assert!(session.pages.close(&mut native,&route).unwrap().clean);
+    }).unwrap();
+    drop(session);
+    let indexed=image::index_loans::index(&mut runtime,&mut home,&mut logical);
+    logical.fill(0xa5);
+    reads.borrow_mut().clear();
+    image::execute_open(&mut runtime,&mut home,&mut ui,&mut logical,&mut events,indexed);
+    assert_eq!(reads.borrow().as_slice(),&[4096,4096],"standalone operation uses the source seen by the index pass");
     println!("PASS whole actual operate_image: caller frame loan, whole-block retention and original-scratch withdrawal; RunLoan is a typed host consumer");
 }
 

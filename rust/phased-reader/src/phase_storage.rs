@@ -16,6 +16,8 @@ use newt_core::{
 };
 
 mod sleep_scratch;
+mod scratch_value;
+pub use scratch_value::{scratch_value, ScratchValue};
 pub mod bounded;
 pub mod bounded_chapters;
 
@@ -39,8 +41,9 @@ pub struct ParseResources<'a, B: ParserBackend + ?Sized> {
 }
 
 // This cursor is private to this file, used only to initialize the concrete
-// phase arrays below. Taking a prefix removes it permanently from the cursor;
-// no reset, raw-pointer escape, arbitrary destructor, or overlapping view API.
+// phase arrays below. Each prefix is disjoint while its typed loan is live;
+// a short reborrow may reuse its bytes after those views end. Dropless views use one/array;
+// scratch_value instead keeps the byte loan until its initialized T is dropped.
 struct Parts<'a>(&'a mut [u8]);
 impl<'a> Parts<'a> {
     fn bytes(&mut self, count: usize, alignment: usize) -> Result<&'a mut [u8], Status> {
@@ -430,7 +433,7 @@ impl Phase<'_> {
         )
     }
 
-    /// Actual counted admission/selection. The scratch lifetime ends at open,
+    /// Parser-oracle counted admission/selection. The scratch lifetime ends at open,
     /// before style paths reclaim those parse bytes.
     pub(crate) fn metadata_counted<
         S: crate::zip_window::source::BookSource + ?Sized,
@@ -806,25 +809,7 @@ impl<'a> newt_core::page_cache::IndexAllocation<'a> for IndexParts<'a> {
         self.0.array(count)
     }
 }
-/// One checked cache read, as pinned ChapterPageCache readEntry/locate:
-/// beginRead(query), attach, the SDK read, query.finish, finishRead.
-/// `opening` is `!hasPage`; `scratch` is the parse loan beyond the
-/// index, where a native store places its verified query. `read` gets the
-/// store to read from; Ok's bool is the checked exit. A scope that could not
-/// begin or attach is Err(Stale). No default success implementation: the
-/// caller supplies real scope authority. Check source_live after admission
-/// before attach, then after query cleanup before the checked exit, including
-/// failures; the read callback has no raw source capability.
-pub trait ReadScope: newt_core::page_cache::CacheStorage {
-    fn query<R>(
-        &mut self,
-        name: &[u8],
-        opening: bool,
-        scratch: &mut [u8],
-        source_live: &mut dyn FnMut() -> bool,
-        read: impl FnOnce(&mut dyn newt_core::page_cache::CacheStorage) -> R,
-    ) -> Result<(R, bool), Status>;
-}
+pub use newt_core::page_cache::ReadScope;
 
 /// Created only inside ReadScope::query; it cannot revalidate the raw source.
 pub(crate) struct ScopedRead<'a>(pub(crate) &'a mut dyn newt_core::page_cache::CacheStorage);
@@ -1006,3 +991,28 @@ pub(crate) fn with_writer_index<R>(
 
 #[path = "producer_cache_read.rs"]
 mod producer_cache_read;
+
+include!("phase_index.rs");
+
+/// After the nav inflater returns, mapping and verified reads share the parse
+/// bank. Keep 8 KiB spare for scalar/alignment changes, independently of TOC
+/// strings and entries in the shared bank.
+pub const CONTENTS_BATCH_ROWS: usize = 2000;
+const CONTENTS_QUERY_BYTES: usize = 4160 + 4096;
+const _: () = assert!(CONTENTS_BATCH_ROWS * (12 + 4) + CONTENTS_QUERY_BYTES + 8192 <= BANK_BYTES);
+
+#[path = "phase_navigation_indexed.rs"]
+mod navigation_indexed;
+#[path = "phase_styles_indexed.rs"]
+mod styles_indexed;
+impl Phase<'_> {
+    pub(crate) fn with_index_open<R>(&mut self,
+        operation: impl FnOnce(&mut [u8], &mut [u8; 4099]) -> Result<R, Status>,
+    ) -> Result<R, Status> {
+        *self.held = false;
+        let query = Parts(self.parse).bytes(CONTENTS_QUERY_BYTES, 16)?;
+        let (shared, _) = top::<Home>(self.shared)?;
+        let scan = Parts(shared).fixed::<4099>()?;
+        operation(query, scan)
+    }
+}

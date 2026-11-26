@@ -59,6 +59,11 @@ pub enum Open {
 /// Implementations cannot reenter the currently borrowed port; see CONTRACT.md.
 pub trait Native {
     fn open(&mut self, path: &str, mode: Open) -> Result<i32>;
+    /// Borrow a terminated path so native adapters can avoid a stack copy.
+    fn open_cstr(&mut self, path: &core::ffi::CStr, mode: Open) -> Result<i32> {
+        let path = path.to_str().map_err(|_| Error::Other)?;
+        self.open(path, mode)
+    }
     fn close(&mut self, fd: i32) -> Result<()>;
     fn read(&mut self, fd: i32, out: &mut [u8]) -> Result<usize>;
     fn write(&mut self, fd: i32, input: &[u8]) -> Result<usize>;

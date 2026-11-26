@@ -34,6 +34,7 @@ impl CacheStorage for Ports {
     }
 }
 impl CachePresence for Ports {
+    fn with_index<R>(&mut self, _: &[u8; 32], _: impl FnOnce(&mut dyn crate::index_build::Store) -> R) -> Option<R> { None }
     fn present(&mut self, _: &[u8], _: bool) -> bool {
         panic!("read_entry already selected the name")
     }

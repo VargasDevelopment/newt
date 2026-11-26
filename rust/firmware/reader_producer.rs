@@ -293,9 +293,9 @@ impl<'scope, 'sdk, 'route, 'bank, NativePort: Native + PageEntries>
                 let status = self.storage.with_producer(&mut *self.panel, &cancellation, access,
                     source, info.page_count, Some(&mut pause), |producer| {
                         producer.with_source_guard(bytes, |producer| Ok(if next {
-                            producer.produce_next(reader, target, &mut self.parser, &mut *self.breaker,
+                            producer.produce_next_indexed(reader, target, &mut self.parser, &mut *self.breaker,
                                 &mut route, Some(&mut prepared))
-                        } else { producer.produce_current(reader, &mut self.parser, &mut *self.breaker, &mut route) }))
+                        } else { producer.produce_current_indexed(reader, &mut self.parser, &mut *self.breaker, &mut route) }))
                     }).unwrap_or_else(|status| status);
                 cancellation.result(status == Status::Ok);
                 status

@@ -7,6 +7,8 @@ mod menu;
 mod identity;
 pub use identity::resolve_identity;
 pub mod metadata;
+pub mod index_mapping;
+pub mod index_view;
 pub mod probe;
 pub use menu::{MenuInfo, MenuRow};
 use newt_core::{utf8, zip_container::hash_path};
@@ -95,6 +97,19 @@ pub trait BookView {
     fn toc_count(&self) -> usize;
     fn toc_entry(&self, index: usize) -> Option<Declaration<'_>>;
     fn member(&self, href: &[u8]) -> Option<Member>;
+    /// Index-backed views can map all declarations in one member-table walk.
+    /// The default preserves the parser oracle's per-row rule.
+    fn declared_spine(&self, row: usize) -> u32 {
+        declared_spine_rule(self, row)
+    }
+    fn progress_inputs(&self, selected: u32) -> ProgressInputs {
+        progress_inputs(self, selected)
+    }
+    fn declared_spines(&self, mapping: &mut [u32]) {
+        for (row, mapped) in mapping.iter_mut().enumerate() {
+            *mapped = declared_spine(self, row);
+        }
+    }
     /// Field access avoids resolving unrelated arena strings on lookup paths.
     fn toc_title(&self, index: usize) -> Option<&[u8]> {
         self.toc_entry(index).map(|entry| entry.title)
@@ -246,14 +261,14 @@ fn title_prefix(text: &[u8]) -> usize {
     }
     complete
 }
-pub fn usable_entry(book: &impl BookView, toc: usize) -> bool {
+pub fn usable_entry(book: &(impl BookView + ?Sized), toc: usize) -> bool {
     toc < book.toc_count()
         && toc < usize::from(NO_TOC)
         && book
             .toc_title(toc)
             .is_some_and(|title| title_prefix(title) != 0)
 }
-pub fn readable_spine(book: &impl BookView, href: &[u8]) -> u32 {
+pub fn readable_spine(book: &(impl BookView + ?Sized), href: &[u8]) -> u32 {
     let href = Href::new(href);
     if href.as_bytes().is_empty() {
         return NO_SPINE;
@@ -276,7 +291,10 @@ pub fn readable_spine(book: &impl BookView, href: &[u8]) -> u32 {
     }
     found
 }
-pub fn declared_spine(book: &impl BookView, toc: usize) -> u32 {
+pub fn declared_spine(book: &(impl BookView + ?Sized), toc: usize) -> u32 {
+    book.declared_spine(toc)
+}
+fn declared_spine_rule(book: &(impl BookView + ?Sized), toc: usize) -> u32 {
     if !usable_entry(book, toc) {
         return NO_SPINE;
     }
@@ -286,6 +304,37 @@ pub fn declared_spine(book: &impl BookView, toc: usize) -> u32 {
     } else {
         NO_SPINE
     }
+}
+fn progress_inputs(book: &(impl BookView + ?Sized), selected: u32) -> ProgressInputs {
+    let mut p = ProgressInputs { index: selected, count: book.spine_count() as u32,
+        ..ProgressInputs::default() };
+    let mut valid = true;
+    for i in 0..book.spine_count() {
+        let item = book.spine_item(i);
+        if item.is_some_and(|it| !text_item(it)) {
+            continue;
+        }
+        let member = item
+            .filter(|it| text_item(*it))
+            .and_then(|it| book.member(it.href.expect("text href")));
+        let Some(member) =
+            member.filter(|e| matches!(e.method, 0 | 8) && e.uncompressed <= MAX_MEMBER)
+        else {
+            valid = false;
+            continue;
+        };
+        // Same uint64 accumulation domain; bind rejects >u32 spine counts.
+        let size = u64::from(member.uncompressed);
+        p.total += size;
+        if i < p.index as usize {
+            p.before += size;
+        }
+        if i == p.index as usize {
+            p.current = size;
+        }
+    }
+    p.valid = valid && p.total > 0 && p.total <= MAX_EXPANDED;
+    p
 }
 fn title_key(book: &impl BookView, selected: usize) -> u16 {
     let title = book.toc_title(selected).expect("usable declaration");
@@ -475,33 +524,7 @@ impl Navigation {
         true
     }
     fn bind_weights(&mut self, book: &impl BookView) {
-        let mut p = self.progress_inputs();
-        let mut valid = true;
-        for i in 0..book.spine_count() {
-            let item = book.spine_item(i);
-            if item.is_some_and(|it| !text_item(it)) {
-                continue;
-            }
-            let member = item
-                .filter(|it| text_item(*it))
-                .and_then(|it| book.member(it.href.expect("text href")));
-            let Some(member) =
-                member.filter(|e| matches!(e.method, 0 | 8) && e.uncompressed <= MAX_MEMBER)
-            else {
-                valid = false;
-                continue;
-            };
-            // Same uint64 accumulation domain; bind rejects >u32 spine counts.
-            let size = u64::from(member.uncompressed);
-            p.total += size;
-            if i < p.index as usize {
-                p.before += size;
-            }
-            if i == p.index as usize {
-                p.current = size;
-            }
-        }
-        p.valid = valid && p.total > 0 && p.total <= MAX_EXPANDED;
+        let mut p = book.progress_inputs(self.progress_inputs().index);
         if !p.valid {
             self.bind_issues |= INVALID_WEIGHTS;
             p.before = 0;

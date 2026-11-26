@@ -70,9 +70,6 @@ pub struct PreparedCovers<'a, N: Native> {
 fn path(bytes: &[u8]) -> Option<&str> {
     str::from_utf8(bytes.split(|&b| b == 0).next()?).ok()
 }
-fn little(bytes: &[u8]) -> u64 {
-    bytes.iter().enumerate().fold(0, |v, (i, b)| v | (u64::from(*b) << (8 * i)))
-}
 fn crc(mut value: u32, bytes: &[u8]) -> u32 {
     for &byte in bytes {
         value ^= u32::from(byte);
@@ -158,14 +155,17 @@ impl<'a, N: Native> PreparedCovers<'a, N> {
             }
         }
         let mut header = [0;28];
+        let field = |header: &[u8; 28], at: usize| {
+            <[u8; 8]>::try_from(&header[at..at + 8]).ok().map(u64::from_le_bytes)
+        };
         if self.native.read(self.fd, &mut header) != Ok(header.len()) || header[..8] != HEADER
-            || little(&header[8..16]) != u64::from(book.size)
-            || little(&header[16..24]) != (u64::from(book.mtime) << 1) {
+            || field(&header, 8) != Some(u64::from(book.size))
+            || field(&header, 16) != Some(u64::from(book.mtime) << 1) {
             self.last_fact = CoverFact::Pending;
             if remembered { book.fact = CoverFact::Pending; }
             return self.reject();
         }
-        self.expected = little(&header[24..28]) as u32;
+        self.expected = u32::from_le_bytes([header[24], header[25], header[26], header[27]]);
         if bare {
             let fact = match bare_record(self.expected) {
                 BareRecord::Current(reason) => CoverFact::from_reason(reason),
