@@ -13,6 +13,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import wifi_lent_heap  # noqa: E402
+import wifi_link_image  # noqa: E402
 from object_relocations import literal_string_ranges, member_text
 spec = importlib.util.spec_from_file_location("wifi_link", ROOT / "tools/verify-wifi-link.py")
 link = importlib.util.module_from_spec(spec)
@@ -95,8 +96,9 @@ SYMBOLS = {
 def elf(sections):
     """A little-endian ELF32 with only section headers and contents."""
     names, body, headers = bytearray(b"\0"), bytearray(52), [bytes(40)]
-    for name, (kind, flags, address, content) in sections.items():
-        headers.append(struct.pack("<10I", len(names), kind, flags, address, len(body), len(content), 0, 0, 4, 0))
+    for name, (kind, flags, address, content, *linked) in sections.items():
+        link_to, info = linked or (0, 0)
+        headers.append(struct.pack("<10I", len(names), kind, flags, address, len(body), len(content), link_to, info, 4, 0))
         names += name.encode() + b"\0"
         body += content
     headers.append(struct.pack("<10I", len(names), 3, 0, 0, len(body), len(names) + 10, 0, 0, 1, 0))
@@ -353,6 +355,130 @@ DWARF = """
     <251>   DW_AT_byte_size   : 8832
 """
 MOUNT = {"firmware/sd_library.cpp": "  mounted_ = SD.begin(board.sd.cs, SPI, spiHz, kSdMountPoint, 3, false);\n"}
+
+
+TEXT = 0x42000000
+NONE, CALL_PLT, PCREL_HI20, PCREL_LO12_I, PCREL_LO12_S, HI20, LO12_I, LO12_S, TPREL_LO12_I, RELAX = (
+    0, 19, 23, 24, 25, 26, 27, 28, 30, 51)
+GP_LO12_I, GP_LO12_S, GP = 70, 71, 0x3fc8d800
+
+
+def firmware(code=bytes(24)):
+    return elf({".flash.text": (1, 6, TEXT, code)})
+
+
+def side(symbols, entries, code=bytes(24), extra=None):
+    """firmware.relocs.elf: `code` at TEXT, a symbol table (index 0 is the null
+    symbol) and the relocations (offset, type, symbol, addend) against it."""
+    table = b"".join(struct.pack("<IIIBBH", 0, value, 0, 0, 0, 0) for value in [0, *symbols])
+    rela = b"".join(struct.pack("<IIi", TEXT + offset, symbol << 8 | kind, addend)
+                    for offset, kind, symbol, addend in entries)
+    return elf({".flash.text": (1, 6, TEXT, code), ".symtab": (2, 0, 0, table),
+                ".rela.flash.text": (4, 0x40, 0, rela, 2, 1), **(extra or {})})
+
+
+def referred(listing, relocated=None, gp=None):
+    """references() of one function given as `address: instruction  # note` lines."""
+    text = "\n".join(["42000000 <f>:"] + [
+        "{}:\t00000013          \t{}".format(*(part.strip() for part in line.split(":", 1))) for line in listing])
+    return wifi_link_image.references(wifi_link_image.parse_functions(text)[0], gp, relocated or {})
+
+
+CALLED = ([0x42000100], [(20, CALL_PLT, 1, 0)])  # one code relocation
+
+
+class Relocations(unittest.TestCase):
+    """The linker's relocations add to the addresses objdump resolves."""
+
+    def test_each_instruction_gets_its_relocations_values(self):
+        symbols = [0x3fc8f000, 0x3c230010, 0x3fc90000, TEXT + 12, 0x42000100]
+        entries = [(0, HI20, 1, 4), (4, LO12_I, 1, 4), (4, RELAX, 0, 0), (8, LO12_S, 2, -2),
+                   (12, PCREL_HI20, 3, 8), (16, PCREL_LO12_I, 4, 0), (20, CALL_PLT, 5, 0)]
+        self.assertEqual(wifi_link_image.relocations(side(symbols, entries), firmware()), {
+            TEXT: [(HI20, 0x3fc8f004)], TEXT + 4: [(LO12_I, 0x3fc8f004), (RELAX, 0)],
+            TEXT + 8: [(LO12_S, 0x3c23000e)], TEXT + 12: [(PCREL_HI20, 0x3fc90008)],
+            TEXT + 16: [(PCREL_LO12_I, 0x3fc90008)], TEXT + 20: [(CALL_PLT, 0x42000100)]})
+
+    def test_pcrel_lo_addend_moves_its_auipcs_target(self):
+        symbols = [0x3c230000, TEXT]
+        entries = [(0, PCREL_HI20, 1, 0), (8, PCREL_LO12_I, 2, 4), (12, PCREL_LO12_S, 2, -4)]
+        relocated = wifi_link_image.relocations(side(symbols, entries), firmware())
+        self.assertEqual((relocated[TEXT + 8], relocated[TEXT + 12]),
+                         ([(PCREL_LO12_I, 0x3c230004)], [(PCREL_LO12_S, 0x3c22fffc)]))
+        # The call clears a3, so only the relocation names the load's target.
+        listing = ["42000000: auipc a3,0xfa230", "42000004: jal 42000100 <leaf>", "42000008: lw a0,-28(a3)"]
+        self.assertIn(0x3c230004, referred(listing, relocated))
+
+    def test_pcrel_lo_without_its_pcrel_hi_stops(self):
+        with self.assertRaisesRegex(RuntimeError, "pcrel_lo at 42000010 has no pcrel_hi at 4200000c"):
+            wifi_link_image.relocations(side([TEXT + 12], [(16, PCREL_LO12_I, 1, 0)]), firmware())
+
+    def test_side_elf_must_load_exactly_firmware_elfs_bytes(self):
+        wifi_link_image.relocations(side(*CALLED), firmware())
+        patched = bytearray(24)
+        patched[5] = 1
+        for broken, message in ((side(*CALLED, bytes(patched)), "relocation image's .flash.text differs"),
+                                (side(*CALLED, bytes(28)), "relocation image's .flash.text differs"),
+                                (side(*CALLED, extra={".flash.rodata": (1, 2, 0x3c000000, bytes(4))}),
+                                 "loaded sections differ")):
+            with self.subTest(message=message), self.assertRaisesRegex(RuntimeError, message):
+                wifi_link_image.relocations(broken, firmware())
+
+    def test_missing_side_elf_stops(self):
+        with self.assertRaisesRegex(RuntimeError, "no firmware.relocs.elf beside firmware.elf"):
+            link.relocation_image(ROOT / ".build/absent/firmware.relocs.elf", firmware())
+
+    def test_side_elf_without_code_relocations_stops(self):
+        # firmware.elf itself, or a stripped side ELF, would silently add nothing.
+        for broken in (firmware(), side([], [])):
+            with self.assertRaisesRegex(RuntimeError, "keeps no code relocations"):
+                wifi_link_image.relocations(broken, firmware())
+
+    def test_load_note_without_a_relocation_stays(self):
+        # HI20 names the base object; the load reaches the next one at +4 with
+        # no relocation of its own, across a call that may preserve a3.
+        listing = ["42000000: lui a3,0x3c230", "42000004: jal 42000100 <leaf>", "42000008: lbu a0,4(a3) # 3c230004"]
+        self.assertEqual(referred(listing, {TEXT: [(HI20, 0x3c230000)]}), {0x3c230000, 0x42000100, 0x3c230004})
+        # A tail-called label's load, whose base comes from its caller.
+        self.assertEqual(referred(["42000000: lbu a0,4(a3) # 3c230004"]), {0x3c230004})
+
+    def test_relocations_add_to_load_store_and_addi_notes(self):
+        listing = ["42000000: lbu a5,0(a3) # 3c230000", "42000004: sw a0,8(a4) # 3c230008",
+                   "42000008: addi a0,a0,-336 # 3c230010", "4200000c: mv a1,a1"]
+        relocated = {TEXT: [(LO12_I, 0x3fc8f004), (RELAX, 0)], TEXT + 4: [(LO12_S, 0x3fc8f008), (NONE, 0)],
+                     TEXT + 8: [(LO12_I, 0x3fc8f010)], TEXT + 12: [(LO12_I, 0x3fc8f000)]}
+        self.assertEqual(referred(listing, relocated), {0x3c230000, 0x3c230008, 0x3c230010, 0x3fc8f004,
+                                                        0x3fc8f008, 0x3fc8f010, 0x3fc8f000})
+
+    def test_pcrel_pair_and_lui_name_their_address(self):
+        # Without notes, and with the call clearing a3, only relocations name these.
+        listing = ["42000000: lui a3,0x3fc8f", "42000004: jal 42000100 <leaf>", "42000008: lbu a0,4(a3)",
+                   "4200000c: auipc a5,0x0", "42000010: jal 42000100 <leaf>", "42000014: lw a0,8(a5)"]
+        relocated = {TEXT: [(HI20, 0x3fc8f000)], TEXT + 12: [(PCREL_HI20, 0x3fc90008)],
+                     TEXT + 20: [(PCREL_LO12_I, 0x3fc90008)]}
+        self.assertEqual(referred(listing, relocated), {0x3fc8f000, 0x42000100, 0x3fc90008})
+
+    def test_calls_jumps_and_branches_keep_their_notes(self):
+        self.assertEqual(referred(["42000000: jalr ra,8(t1) # 42000040", "42000004: jr 12(t2) # 42000050",
+                                   "42000008: beqz a0,42000010 <f+0x10>"]), {0x42000040, 0x42000050, 0x42000010})
+
+    def test_gp_relaxed_lo12_reads_its_base_and_immediate(self):
+        # ld relaxes a lo12 onto gp, or onto zero for an undefined weak symbol.
+        listing = ["42000000: lw a0,112(gp) # 3fc8d870", "42000004: sw a1,-4(gp)", "42000008: mv a2,gp",
+                   "4200000c: li a5,0"]
+        relocated = {TEXT: [(GP_LO12_I, 112)], TEXT + 4: [(GP_LO12_S, 0xfffffffc)], TEXT + 8: [(GP_LO12_I, 0)],
+                     TEXT + 12: [(GP_LO12_I, 0)]}
+        self.assertEqual(referred(listing, relocated, GP), {GP + 112, GP - 4, GP, 0})
+        for broken in ("lw a0,116(gp)", "lw a0,112(a5)"):
+            with self.subTest(broken=broken), self.assertRaisesRegex(RuntimeError, "does not match its relaxed"):
+                referred([f"42000000: {broken}"], {TEXT: [(GP_LO12_I, 112)]}, GP)
+
+    def test_unread_relocation_type_at_a_load_stops(self):
+        for instruction in ("lw a0,0(a0)", "mv a0,a1"):  # objdump's mv is addi rd,rs,0
+            with self.subTest(instruction=instruction), self.assertRaisesRegex(
+                    RuntimeError, f"{instruction[:2]} at 42000000 has relocation type 30"):
+                referred([f"42000000: {instruction}"], {TEXT: [(TPREL_LO12_I, 0)]})
+        self.assertEqual(referred(["42000000: jal 42000100 <leaf>"], {TEXT: [(CALL_PLT, 0x42000100)]}), {0x42000100})
 
 
 class LentHeapGate(unittest.TestCase):

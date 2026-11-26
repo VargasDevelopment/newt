@@ -13,6 +13,17 @@ MERGED = re.compile(r"\.(?:str|cst)\d|^\.eh_frame")
 # Instructions whose first operand is not a register they write.
 NO_DESTINATION = re.compile(r"^(?:s[bhwd]|fs[wd]|b\w*|j|jr|ret|fence(?:\.i)?|ecall|ebreak|nop|mret|wfi|unimp|csr[wsc]i?)$")
 CALLER_SAVED = ["ra"] + [f"a{i}" for i in range(8)] + [f"t{i}" for i in range(7)]
+# Loads, stores and addi (objdump spells `addi rd,rs,0` as `mv`): their address
+# comes only from the linker's relocation, never from objdump's note.
+DATA_FORMING = re.compile(r"^(?:l[bhwd]u?|s[bhwd]|fl[wd]|fs[wd]|addi|mv)$")
+# RISC-V psABI relocation types. Each address type gives S+A (a pcrel_lo, its
+# pcrel_hi's); none and relax only mark the linker's relaxation.
+NONE, PCREL_HI20, PCREL_LO12_I, PCREL_LO12_S, HI20, LO12_I, LO12_S, RELAX = 0, 23, 24, 25, 26, 27, 28, 51
+ADDRESSES = {PCREL_HI20, PCREL_LO12_I, PCREL_LO12_S, HI20, LO12_I, LO12_S}
+MARKERS = {NONE, RELAX}
+# ld's own types for a lo12 it relaxed onto gp, or onto zero for an undefined
+# weak symbol (readelf prints "unrecognized: 46/47"): S+A is the immediate.
+GP_LO12_I, GP_LO12_S = 70, 71
 
 
 class Image:
@@ -21,8 +32,9 @@ class Image:
     sections hold no pointers, and the map cannot place them, so they are not
     nodes."""
 
-    def __init__(self, elf: bytes, symbols: str, disassembly: str, link_map: str):
+    def __init__(self, elf: bytes, symbols: str, disassembly: str, link_map: str, relocations=None):
         self.elf = elf
+        self.relocations = relocations or {}  # see relocations()
         self.sections = elf_sections(elf)
         self.symbols = parse_symbols(symbols)
         functions = parse_functions(disassembly)
@@ -80,18 +92,64 @@ class Lookup:
         return None
 
 
-def elf_sections(data: bytes) -> dict:
+def section_headers(data: bytes) -> list:
+    """Each section header, in index order, with its name."""
     if data[:4] != b"\x7fELF" or data[4] != 1 or data[5] != 1:
         raise RuntimeError(f"{STOPPED}: not a little-endian ELF32 image")
     offset = struct.unpack_from("<I", data, 0x20)[0]
     size, count, names = struct.unpack_from("<HHH", data, 0x2e)
     headers = [struct.unpack_from("<10I", data, offset + index * size) for index in range(count)]
     table = headers[names][4]
-    result = {}
-    for name, kind, flags, address, start, length, *_ in headers:
-        label = data[table + name:data.index(b"\0", table + name)].decode()
-        result[label] = {"type": kind, "flags": flags, "address": address, "offset": start, "size": length}
-    return result
+    return [{"name": data[table + name:data.index(b"\0", table + name)].decode(), "type": kind, "flags": flags,
+             "address": address, "offset": start, "size": length, "link": link, "info": info}
+            for name, kind, flags, address, start, length, link, info, *_ in headers]
+
+
+def elf_sections(data: bytes) -> dict:
+    return {header.pop("name"): header for header in section_headers(data)}
+
+
+def relocations(side: bytes, elf: bytes) -> dict:
+    """{instruction address: [(type, S+A)]} for code, from the side ELF that
+    tools/rust_app_link.py links from the same inputs with -Wl,--emit-relocs.
+    Its relocations describe firmware.elf only if it loads exactly the same
+    bytes at the same addresses, so any difference stops the check, as does a
+    side ELF that keeps no code relocations (firmware.elf itself, or a
+    stripped copy)."""
+    ours, theirs = elf_sections(elf), section_headers(side)
+    loaded = {header["name"]: header for header in theirs if header["flags"] & 2}
+    if set(loaded) != {name for name, section in ours.items() if section["flags"] & 2}:
+        raise RuntimeError(f"{STOPPED}: the relocation image's loaded sections differ from firmware.elf's")
+    for name, header in loaded.items():
+        section = ours[name]
+        if any(header[key] != section[key] for key in ("type", "flags", "address", "size")) or (
+                section["type"] != 8 and side[header["offset"]:header["offset"] + header["size"]]
+                != elf[section["offset"]:section["offset"] + section["size"]]):
+            raise RuntimeError(f"{STOPPED}: the relocation image's {name} differs from firmware.elf's")
+    found, highs, lows = {}, {}, []
+    for header in theirs:
+        if header["type"] != 4 or not theirs[header["info"]]["flags"] & 4:  # RELA for a code section
+            continue
+        symbols = theirs[header["link"]]
+        for at in range(header["offset"], header["offset"] + header["size"], 12):
+            address, info, addend = struct.unpack_from("<IIi", side, at)
+            kind = info & 0xff
+            value = struct.unpack_from("<I", side, symbols["offset"] + 16 * (info >> 8) + 4)[0]
+            if kind in (PCREL_LO12_I, PCREL_LO12_S):
+                # Its symbol labels the auipc; its addend moves the auipc's
+                # target (binutils' riscv_resolve_pcrel_lo_relocs).
+                lows.append((address, kind, value, addend))
+                continue
+            found.setdefault(address, []).append((kind, (value + addend) & 0xffffffff))
+            if kind == PCREL_HI20:
+                highs[address] = (value + addend) & 0xffffffff
+    if not found and not lows:
+        raise RuntimeError(f"{STOPPED}: the relocation image keeps no code relocations")
+    for address, kind, auipc, addend in lows:
+        if auipc not in highs:
+            raise RuntimeError(f"{STOPPED}: the pcrel_lo at {address:x} has no pcrel_hi at {auipc:x}")
+        found.setdefault(address, []).append((kind, (highs[auipc] + addend) & 0xffffffff))
+    return found
 
 
 def parse_symbols(text: str) -> dict:
@@ -159,11 +217,24 @@ def file_name(path: str) -> str:
     return f"{match[1]}({match[2]})" if match else path.rsplit("/", 1)[-1]
 
 
-def references(function, gp):
-    """Every address one function's code refers to (see Limits)."""
+def references(function, gp, relocated):
+    """Every address one function's code refers to (see Limits). `relocated`:
+    each instruction's relocations (relocations())."""
     found, known = set(), {}
     for address, mnemonic, operands, resolved in function["code"]:
         parts = [part.strip() for part in operands.split(",")] if operands else []
+        forming = DATA_FORMING.match(mnemonic)
+        for kind, value in relocated.get(address, ()):
+            if kind in ADDRESSES:
+                found.add(value)
+            elif kind in (GP_LO12_I, GP_LO12_S):
+                found.add(relaxed_address(address, mnemonic, operands, value, gp))
+            elif forming and kind not in MARKERS:
+                raise RuntimeError(f"{STOPPED}: {mnemonic} at {address:x} has relocation type {kind}, "
+                                   "which this check does not read")
+        # Relocations only add references. A load with none can still reach
+        # an object at a displacement from a relocated base, so objdump's note
+        # stays, even though it can be stale; a false edge only stops a build.
         if resolved is not None:
             found.add(resolved)
         target = re.search(r"\b([0-9a-f]+) <", operands)
@@ -194,6 +265,26 @@ def references(function, gp):
         elif parts and not NO_DESTINATION.match(mnemonic):
             known.pop(parts[0], None)
     return found
+
+
+def relaxed_address(address, mnemonic, operands, immediate, gp):
+    """A relaxed lo12's address. Its base must be gp or zero and its immediate
+    S+A, or the relocation does not mean what this check reads it as."""
+    parts = [part.strip() for part in operands.split(",")]
+    memory = re.fullmatch(r"(-?\d+)\((\w+)\)", parts[-1])
+    if memory:
+        offset, base = int(memory[1]), memory[2]
+    elif mnemonic == "li":  # objdump's `li rd,imm` is `addi rd,zero,imm`
+        offset, base = int(parts[1], 0), "zero"
+    elif mnemonic == "addi":
+        offset, base = int(parts[2], 0), parts[1]
+    elif mnemonic == "mv":
+        offset, base = 0, parts[1]
+    else:
+        offset, base = None, None
+    if offset != immediate - (immediate >> 31 << 32) or base not in ("gp", "zero") or (base == "gp" and gp is None):
+        raise RuntimeError(f"{STOPPED}: {mnemonic} {operands} at {address:x} does not match its relaxed relocation")
+    return ((gp if base == "gp" else 0) + offset) & 0xffffffff
 
 
 def indirect_calls(function) -> int:

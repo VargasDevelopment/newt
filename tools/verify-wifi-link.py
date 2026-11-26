@@ -28,10 +28,17 @@ moved to flash, the C3 stays cache-safe only while IRAM code never calls it. Fro
    larger context fails the build instead of splitting the large heap.
 
 Limits: a reference is what the linked code spells: a call or jump, an
-address objdump resolves, a lui/auipc pair within a function, a gp offset or
-an aligned data word (in Newt's own objects, one they relocate: tools/
-object_relocations.py). A pointer built by other arithmetic, or kept by ROM
-code, is not seen, and an indirect call's target is unknown; the receipt
+address objdump resolves, the linker's relocation at an instruction, a
+lui/auipc pair within a function, a gp offset or an aligned data word (in
+Newt's own objects, one they relocate: tools/object_relocations.py).
+Relocations come from firmware.relocs.elf, the same link with
+-Wl,--emit-relocs (tools/rust_app_link.py); it must load exactly
+firmware.elf's bytes and keep code relocations, or the check stops.
+Relocations only add references: a load without one can still reach past its
+base, so objdump's note stays. A relocation type at a load, store or addi
+that the check does not read stops it, as does a gp-relaxed one whose base or
+immediate it does not match. A pointer built by other arithmetic, or kept by
+ROM code, is not seen, and an indirect call's target is unknown; the receipt
 counts IRAM's indirect calls. Device behavior is a separate claim.
 """
 import argparse
@@ -50,7 +57,7 @@ from freeink_sdk_routes import FIRMWARE_BUILD
 from native_output import owned_file, write_text
 from object_relocations import chance_words
 from wifi_lent_heap import firmware_sources, lent_heap
-from wifi_link_image import IRAM, STOPPED, Image, indirect_calls, references
+from wifi_link_image import IRAM, STOPPED, Image, indirect_calls, references, relocations
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOLS = ROOT / ".toolchain/platformio/packages/toolchain-riscv32-esp/bin"
@@ -186,7 +193,7 @@ def analyse(image: Image, chance=frozenset(), entries=ENTRIES, update_only=UPDAT
     roots = set()
     for index, node in enumerate(nodes):
         # `chance`: data words that only equal a function's start (tools/object_relocations.py).
-        found = references(node, gp) if node["kind"] == "code" else [v for at, v in image.words(node) if at not in chance]
+        found = references(node, gp, image.relocations) if node["kind"] == "code" else [v for at, v in image.words(node) if at not in chance]
         inside = {address for address in found if start <= address < end}
         if inside:
             lent_refs[index] = inside
@@ -320,6 +327,12 @@ def outside_calls(nodes, edges, wifi, root):
     return sorted(outside)
 
 
+def relocation_image(path: Path, elf: bytes) -> dict:
+    if not path.is_file():
+        raise RuntimeError(f"{STOPPED}: no {path.name} beside firmware.elf (tools/rust_app_link.py links it)")
+    return relocations(path.read_bytes(), elf)
+
+
 def tool(name, *arguments):
     return subprocess.run([str(TOOLS / f"riscv32-esp-elf-{name}"), *arguments], check=True,
                           capture_output=True, text=True).stdout
@@ -331,6 +344,8 @@ def main() -> None:
     build = Path(".pio") / FIRMWARE_BUILD / "build/newt_x3"
     parser.add_argument("--elf", type=Path, default=build / "firmware.elf")
     parser.add_argument("--map", type=Path, default=build / "firmware.map")
+    parser.add_argument("--relocations", type=Path, default=build / "firmware.relocs.elf",
+                        help="the same link with -Wl,--emit-relocs")
     parser.add_argument("--output", type=Path, default=Path(".build") / FIRMWARE_BUILD / "wifi-link-verification.json")
     parser.add_argument("--toolchain-bin", type=Path, default=TOOLS,
                         help="already installed pinned C3 tools (no acquisition)")
@@ -342,7 +357,9 @@ def main() -> None:
     TOOLS = args.toolchain_bin
     elf, link_map = ROOT / args.elf, ROOT / args.map
     output = owned_file(ROOT, ROOT / args.output, create_parents=True)
-    image = Image(elf.read_bytes(), tool("nm", str(elf)), tool("objdump", "-d", "-C", str(elf)), link_map.read_text())
+    data = elf.read_bytes()
+    image = Image(data, tool("nm", str(elf)), tool("objdump", "-d", "-C", str(elf)), link_map.read_text(),
+                  relocation_image(ROOT / args.relocations, data))
     profile = rust_entries(args.reading_only) if args.rust_app else (ENTRIES, UPDATE_ONLY, RUN)
     result = analyse(image, chance_words(image, lambda path: tool("readelf", "-rWS", str(ROOT / path)), ROOT), *profile)
     if args.reading_only:
