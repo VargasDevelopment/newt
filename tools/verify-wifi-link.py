@@ -27,18 +27,19 @@ moved to flash, the C3 stays cache-safe only while IRAM code never calls it. Fro
    comes from the ELF's DWARF and the firmware's only SD.begin call, so a
    larger context fails the build instead of splitting the large heap.
 
-Limits: a reference is what the linked code spells: a call, jump or branch
-target, the linker's relocation at an instruction, a lui/auipc pair within a
-function, a gp offset or an aligned data word (in Newt's own objects, one they
-relocate: tools/object_relocations.py). Relocations come from
-firmware.relocs.elf, the same link with -Wl,--emit-relocs
-(tools/rust_app_link.py); it must load exactly firmware.elf's bytes, or the
-check stops. A load, store or addi refers only through its relocation, never
-through objdump's note, which can carry an earlier lui of a register that has
-since been rewritten; a relocation type there that the check does not read
-stops it, as does a gp-relaxed one whose base or immediate it does not match. A pointer built by other arithmetic, or kept by ROM code, is not
-seen, and an indirect call's target is unknown; the receipt counts IRAM's
-indirect calls. Device behavior is a separate claim.
+Limits: a reference is what the linked code spells: a call or jump, an
+address objdump resolves, the linker's relocation at an instruction, a
+lui/auipc pair within a function, a gp offset or an aligned data word (in
+Newt's own objects, one they relocate: tools/object_relocations.py).
+Relocations come from firmware.relocs.elf, the same link with
+-Wl,--emit-relocs (tools/rust_app_link.py); it must load exactly
+firmware.elf's bytes and keep code relocations, or the check stops.
+Relocations only add references: a load without one can still reach past its
+base, so objdump's note stays. A relocation type at a load, store or addi
+that the check does not read stops it, as does a gp-relaxed one whose base or
+immediate it does not match. A pointer built by other arithmetic, or kept by
+ROM code, is not seen, and an indirect call's target is unknown; the receipt
+counts IRAM's indirect calls. Device behavior is a separate claim.
 """
 import argparse
 import fnmatch

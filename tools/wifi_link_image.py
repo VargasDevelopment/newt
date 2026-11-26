@@ -113,7 +113,9 @@ def relocations(side: bytes, elf: bytes) -> dict:
     """{instruction address: [(type, S+A)]} for code, from the side ELF that
     tools/rust_app_link.py links from the same inputs with -Wl,--emit-relocs.
     Its relocations describe firmware.elf only if it loads exactly the same
-    bytes at the same addresses, so any difference stops the check."""
+    bytes at the same addresses, so any difference stops the check, as does a
+    side ELF that keeps no code relocations (firmware.elf itself, or a
+    stripped copy)."""
     ours, theirs = elf_sections(elf), section_headers(side)
     loaded = {header["name"]: header for header in theirs if header["flags"] & 2}
     if set(loaded) != {name for name, section in ours.items() if section["flags"] & 2}:
@@ -134,15 +136,19 @@ def relocations(side: bytes, elf: bytes) -> dict:
             kind = info & 0xff
             value = struct.unpack_from("<I", side, symbols["offset"] + 16 * (info >> 8) + 4)[0]
             if kind in (PCREL_LO12_I, PCREL_LO12_S):
-                lows.append((address, kind, value))  # its symbol labels the auipc
+                # Its symbol labels the auipc; its addend moves the auipc's
+                # target (binutils' riscv_resolve_pcrel_lo_relocs).
+                lows.append((address, kind, value, addend))
                 continue
             found.setdefault(address, []).append((kind, (value + addend) & 0xffffffff))
             if kind == PCREL_HI20:
                 highs[address] = (value + addend) & 0xffffffff
-    for address, kind, auipc in lows:
+    if not found and not lows:
+        raise RuntimeError(f"{STOPPED}: the relocation image keeps no code relocations")
+    for address, kind, auipc, addend in lows:
         if auipc not in highs:
             raise RuntimeError(f"{STOPPED}: the pcrel_lo at {address:x} has no pcrel_hi at {auipc:x}")
-        found.setdefault(address, []).append((kind, highs[auipc]))
+        found.setdefault(address, []).append((kind, (highs[auipc] + addend) & 0xffffffff))
     return found
 
 
@@ -226,10 +232,10 @@ def references(function, gp, relocated):
             elif forming and kind not in MARKERS:
                 raise RuntimeError(f"{STOPPED}: {mnemonic} at {address:x} has relocation type {kind}, "
                                    "which this check does not read")
-        # objdump carries an earlier lui's value in a register even after the
-        # register is rewritten, so its note on a load, store or addi can name
-        # an address the code never forms. A call, jump or branch's is its target.
-        if resolved is not None and not forming:
+        # Relocations only add references. A load with none can still reach
+        # an object at a displacement from a relocated base, so objdump's note
+        # stays, even though it can be stale; a false edge only stops a build.
+        if resolved is not None:
             found.add(resolved)
         target = re.search(r"\b([0-9a-f]+) <", operands)
         if target:
