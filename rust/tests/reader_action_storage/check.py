@@ -170,10 +170,13 @@ def main():
             mutant = out / 'mutant-rust'
             shutil.copytree(ROOT / 'rust', mutant, ignore=shutil.ignore_patterns('target', '__pycache__'))
             (mutant / source_file.relative_to(ROOT / 'rust')).write_text(source_text.replace(before, after, 1))
+            # The mutant's rlibs share names with the real ones, so a shared
+            # target dir would feed them to the next run's positive build.
+            mutant_target = target / 'stale-digest-mutant'
             wire = run([cargo, 'build', '--lib', '-p', 'newt-c3-board', '-p', 'newt-device-ui',
                         '-p', 'newt-library-current', '--features', 'newt-phased-reader/dev-usb',
                         '--target', HOST, '--manifest-path', mutant / 'Cargo.toml',
-                        '--offline', '--frozen', '--locked', '--jobs', '2', '--target-dir', target,
+                        '--offline', '--frozen', '--locked', '--jobs', '2', '--target-dir', mutant_target,
                         '--message-format=json'])
             mutant_libraries = {}
             for line in wire.stdout.splitlines():
@@ -184,7 +187,9 @@ def main():
                             mutant_libraries[item['target']['name']] = Path(file)
             mutant_command = list(command)
             for i, arg in enumerate(mutant_command):
-                if i and mutant_command[i - 1] == '--extern':
+                if arg == '-Ldependency=' + str(deps):
+                    mutant_command[i] = '-Ldependency=' + str(mutant_target / HOST / 'debug/deps')
+                elif i and mutant_command[i - 1] == '--extern':
                     package = arg.split('=', 1)[0]
                     mutant_command[i] = package + '=' + str(mutant_libraries[package])
             run([*mutant_command, positive, '-o', out / name])
