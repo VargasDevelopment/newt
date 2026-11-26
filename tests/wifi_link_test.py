@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import wifi_lent_heap  # noqa: E402
 from object_relocations import literal_string_ranges, member_text
+from wifi_link_image import parse_functions, references  # noqa: E402
 spec = importlib.util.spec_from_file_location("wifi_link", ROOT / "tools/verify-wifi-link.py")
 link = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(link)
@@ -439,6 +440,43 @@ class ObjectMetadata(unittest.TestCase):
                     self.assertEqual(literal_string_ranges(image, read, ROOT), [])
                     read.assert_not_called()
 
+
+
+def referred(*listing):
+    """references() of one objdump -d listing, its instructions 4 bytes apart from 0x1000."""
+    function, = parse_functions("00001000 <f>:\n" + "\n".join(
+        f"{0x1000 + 4 * index:x}:\t00000013\t{line}" for index, line in enumerate(listing)))
+    return references(function, None)
+
+
+class ObjdumpNotes(unittest.TestCase):
+    """objdump's `# address` note follows a lui/auipc into later uses of that
+    register without seeing it rewritten; only a note it can still hold counts."""
+
+    def test_load_through_a_rewritten_base_ignores_the_stale_note(self):
+        # The base is a stack address both on entry to the loop and around its back edge.
+        self.assertNotIn(0x3c230000, referred(
+            "lui\ta3,0x3c230", "addi\ta3,sp,224", "lbu\ta5,0(a3) # 3c230000 <vtable>",
+            "addi\ta3,a3,1", "bne\ta3,a6,1008 <f+0x8>", "ret"))
+
+    def test_lui_then_load_still_refers(self):
+        self.assertIn(0x3c230000, referred("lui\ta3,0x3c230", "lbu\ta5,0(a3) # 3c230000 <vtable>", "ret"))
+
+    def test_note_reached_along_another_path_still_refers(self):
+        # One path restores s1 and returns; the branch keeps the lui value for the load.
+        self.assertIn(0x3fca3b98, referred(
+            "lui\ts1,0x3fca4", "beqz\ta0,1010 <f+0x10>", "lw\ts1,4(sp)", "ret",
+            "lw\ta0,-1128(s1) # 3fca3b98 <semaphore>", "ret"))
+
+    def test_jump_table_function_keeps_every_note(self):
+        # A bare `jr` has successors the listing cannot name, so no note is judged stale.
+        self.assertIn(0x3c230000, referred(
+            "lui\ta3,0x3c230", "addi\ta3,sp,224", "lbu\ta5,0(a3) # 3c230000 <vtable>", "jr\ta5"))
+
+    def test_call_note_still_refers(self):
+        # A call's note stands even with no lui/auipc of its base in view.
+        self.assertIn(0x40384df2, referred(
+            "addi\tra,sp,8", "jalr\t804(ra) # 40384df2 <xQueueSemaphoreTake>", "ret"))
 
 if __name__ == "__main__":
     unittest.main()

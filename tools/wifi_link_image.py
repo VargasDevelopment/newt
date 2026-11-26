@@ -13,6 +13,10 @@ MERGED = re.compile(r"\.(?:str|cst)\d|^\.eh_frame")
 # Instructions whose first operand is not a register they write.
 NO_DESTINATION = re.compile(r"^(?:s[bhwd]|fs[wd]|b\w*|j|jr|ret|fence(?:\.i)?|ecall|ebreak|nop|mret|wfi|unimp|csr[wsc]i?)$")
 CALLER_SAVED = ["ra"] + [f"a{i}" for i in range(8)] + [f"t{i}" for i in range(7)]
+# Loads and stores: a base register in parentheses.
+MEMORY = re.compile(r"^(?:l[bhwd]u?|s[bhwd]|fl[wd]|fs[wd])$")
+# Instructions after which control never falls through.
+UNCONDITIONAL = re.compile(r"^(?:j|jr|ret|mret)$")
 
 
 class Image:
@@ -162,9 +166,10 @@ def file_name(path: str) -> str:
 def references(function, gp):
     """Every address one function's code refers to (see Limits)."""
     found, known = set(), {}
+    stale = stale_notes(function["code"])
     for address, mnemonic, operands, resolved in function["code"]:
         parts = [part.strip() for part in operands.split(",")] if operands else []
-        if resolved is not None:
+        if resolved is not None and address not in stale:
             found.add(resolved)
         target = re.search(r"\b([0-9a-f]+) <", operands)
         if target:
@@ -194,6 +199,49 @@ def references(function, gp):
         elif parts and not NO_DESTINATION.match(mnemonic):
             known.pop(parts[0], None)
     return found
+
+
+def stale_notes(code) -> set:
+    """Loads and stores whose objdump address note is stale. objdump follows a
+    lui/auipc into later uses of that register without seeing it rewritten
+    (`addi a3,sp,224` before a loop that reads 0(a3)). A note stands while a
+    lui/auipc of the base can reach the instruction along the function's own
+    branches; a function with a jump table (a bare `jr`) keeps every note."""
+    if any(mnemonic == "jr" and resolved is None for _, mnemonic, _, resolved in code):
+        return set()
+    index = {address: i for i, (address, *_) in enumerate(code)}
+    successors = []
+    for i, (_, mnemonic, operands, _) in enumerate(code):
+        following = [] if UNCONDITIONAL.match(mnemonic) or i + 1 == len(code) else [i + 1]
+        target = re.search(r"\b([0-9a-f]+) <", operands)
+        if target and re.match(r"^(?:b\w*|j)$", mnemonic) and int(target[1], 16) in index:
+            following.append(index[int(target[1], 16)])
+        successors.append(following)
+    # held[i]: registers that may hold a lui/auipc value when instruction i starts.
+    held, reached, pending = [set() for _ in code], {0}, [0] if code else []
+    while pending:
+        i = pending.pop()
+        _, mnemonic, operands, _ = code[i]
+        parts = [part.strip() for part in operands.split(",")] if operands else []
+        after = set(held[i])
+        if mnemonic in ("jal", "jalr"):
+            after.difference_update(CALLER_SAVED)
+        elif parts and not NO_DESTINATION.match(mnemonic):
+            if mnemonic in ("lui", "auipc"):
+                after.add(parts[0])
+            else:
+                after.discard(parts[0])
+        for j in successors[i]:
+            if j not in reached or not after <= held[j]:
+                held[j] |= after
+                reached.add(j)
+                pending.append(j)
+    stale = set()
+    for i, (address, mnemonic, operands, resolved) in enumerate(code):
+        base = re.search(r"\((\w+)\)", operands)
+        if resolved is not None and MEMORY.match(mnemonic) and base and i in reached and base[1] not in held[i]:
+            stale.add(address)
+    return stale
 
 
 def indirect_calls(function) -> int:
