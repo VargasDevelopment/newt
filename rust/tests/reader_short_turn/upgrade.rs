@@ -67,8 +67,23 @@ fn seed_old_pages(card: &card::Card, files: &BTreeMap<String, Vec<u8>>, version:
     (format!("{path}.bak"), old)
 }
 
+fn seed_old_index(card: &card::Card, files: &BTreeMap<String, Vec<u8>>, version: u32) -> (String, Vec<u8>) {
+    let (path, current) = files
+        .iter()
+        .find(|(path, _)| path.contains("/Index/") && path.ends_with(".IDX"))
+        .unwrap();
+    let mut old = current.clone();
+    let manifest = old.len() - page_envelope::MANIFEST_BYTES as usize;
+    assert_eq!(&old[manifest..manifest + 4], b"NTBE");
+    old[manifest + 4..manifest + 8].copy_from_slice(&version.to_le_bytes());
+    let checksum = page_envelope::crc(u32::MAX, &old[manifest..manifest + 60]) ^ u32::MAX;
+    old[manifest + 60..].copy_from_slice(&checksum.to_le_bytes());
+    card.seed(path, old.clone());
+    (path.clone(), old)
+}
+
 pub fn resume(bytes: Vec<u8>) {
-    for old_version in [1u32, 2, 3] {
+    for old_version in [1u32, 2, 3, 4] {
         resume_from(bytes.clone(), old_version);
     }
     println!("PASS old Pages data misses, saved content resumes, and only Pages rebuilds");
@@ -126,6 +141,9 @@ fn resume_from(bytes: Vec<u8>, old_version: u32) {
         });
         let mut files = card_files(&card);
         assert!(files.keys().any(|path| path.contains("/State/")));
+        let index_version = if old_version == 4 { 4 } else { 3 };
+        let (index_path, old_index) = seed_old_index(&card, &files, index_version);
+        files.insert(index_path, old_index);
         let (backup, legacy) = seed_old_pages(&card, &files, old_version);
         assert_ne!(card_files(&card), files);
 
@@ -150,6 +168,7 @@ fn resume_from(bytes: Vec<u8>, old_version: u32) {
             let indexed = newt_phased_reader::index_build::open(&mut source, &digest, ports.storage,
                 ports.panel, ports.backend, ports.cache.store, None,
                 newt_phased_reader::index_build::Verification::Verified).unwrap();
+            assert!(!indexed.built(), "v{index_version} .IDX book index must stay admitted, not rebuild");
             assert!(!owner.open_physical(&indexed, &mut reader, &mut source, book, restored,
                 RestorePolicy::ExactPage, now(), &mut ports));
             assert_eq!(owner.restore_failure, RestoreFailure::InvalidCheckpoint);

@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 pub mod arabic;
+pub mod case;
 pub mod engine;
 pub mod images;
 pub mod plain;

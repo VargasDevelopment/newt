@@ -6,6 +6,16 @@ pub const ITALIC: u8 = 2;
 pub const UNDERLINE: u8 = 4;
 pub const SUP: u8 = 8;
 pub const SUB: u8 = 16;
+/// Style bits forwarded to `Font` callbacks and emitted `Run.flags`.
+pub const STYLE_MASK: u8 = BOLD | ITALIC | UNDERLINE | SUP | SUB;
+/// Layout-internal case bits carried in `Element.flags` and `Span.flags`;
+/// always stripped via `STYLE_MASK` before `Font` calls and `Run` emission.
+pub(crate) const SMALL_CAPS: u8 = 32;
+pub(crate) const TRANSFORM_SHIFT: u8 = 6;
+pub(crate) const TRANSFORM_MASK: u8 = 0xc0;
+pub(crate) const TRANSFORM_UPPER: u8 = 1;
+pub(crate) const TRANSFORM_LOWER: u8 = 2;
+pub(crate) const TRANSFORM_CAPITALIZE: u8 = 3;
 pub use crate::page_renderer::Font;
 #[derive(Clone, Copy)]
 pub struct Params<'a> {
@@ -163,6 +173,7 @@ pub struct Span {
     pub margin: u16,
     pub link: u8,
 }
+const _: () = assert!(core::mem::size_of::<Span>() == 8);
 #[derive(Clone, Copy, Default)]
 pub struct Line {
     pub start: usize,
@@ -181,6 +192,7 @@ pub struct Element {
     pub indent: i16,
     pub hidden: bool,
 }
+const _: () = assert!(core::mem::size_of::<Element>() == 8);
 impl Default for Element {
     fn default() -> Self {
         Self {

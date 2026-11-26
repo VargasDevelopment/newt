@@ -18,6 +18,17 @@ pub enum TextAlign {
     Center,
     Justify,
 }
+pub const SMALL_CAPS_MASK: u8 = 0x03;
+pub const SMALL_CAPS_INHERIT: u8 = 0;
+pub const SMALL_CAPS_NORMAL: u8 = 1;
+pub const SMALL_CAPS_ON: u8 = 2;
+pub const TEXT_TRANSFORM_SHIFT: u8 = 2;
+pub const TEXT_TRANSFORM_MASK: u8 = 0x1c;
+pub const TEXT_TRANSFORM_INHERIT: u8 = 0;
+pub const TEXT_TRANSFORM_NONE: u8 = 1;
+pub const TEXT_TRANSFORM_UPPERCASE: u8 = 2;
+pub const TEXT_TRANSFORM_LOWERCASE: u8 = 3;
+pub const TEXT_TRANSFORM_CAPITALIZE: u8 = 4;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CssDecl {
     pub size_pct: u16,
@@ -32,7 +43,11 @@ pub struct CssDecl {
     pub display_none: i8,
     pub underline: i8,
     pub vert_align: i8,
+    /// Packed `font-variant` small-caps (`SMALL_CAPS_MASK`) and `text-transform`
+    /// (`TEXT_TRANSFORM_MASK`). Fills the trailing alignment byte of `CssDecl`.
+    pub text_case: u8,
 }
+const _: () = assert!(core::mem::size_of::<CssDecl>() == 18);
 impl Default for CssDecl {
     fn default() -> Self {
         Self {
@@ -48,6 +63,7 @@ impl Default for CssDecl {
             display_none: -1,
             underline: -1,
             vert_align: -1,
+            text_case: 0,
         }
     }
 }
@@ -72,6 +88,13 @@ impl CssDecl {
             underline,
             vert_align
         );
+        if over.text_case & SMALL_CAPS_MASK != 0 {
+            self.text_case = (self.text_case & !SMALL_CAPS_MASK) | (over.text_case & SMALL_CAPS_MASK);
+        }
+        if over.text_case & TEXT_TRANSFORM_MASK != 0 {
+            self.text_case =
+                (self.text_case & !TEXT_TRANSFORM_MASK) | (over.text_case & TEXT_TRANSFORM_MASK);
+        }
     }
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -80,6 +103,7 @@ pub struct CssRule {
     pub class_hash: u32,
     pub decl: CssDecl,
 }
+const _: () = assert!(core::mem::size_of::<CssRule>() == 28);
 #[derive(Clone, Copy, Debug)]
 pub struct CssStylesheet<'a> {
     pub rules: &'a [CssRule],
@@ -168,6 +192,72 @@ fn length_to_pct(v: &[u8]) -> Option<(i32, bool)> {
 }
 fn margin(v: &[u8]) -> Option<i16> {
     length_to_pct(v).map(|(n, _)| n.min(1000) as i16)
+}
+// Packed [value, len, ascii_bytes...] tables keep RV32 keyword matching in a
+// single compact loop instead of unrolling per-character byte checks.
+static TEXT_CASE_PROPS: &[u8] =
+    b"\x01\x0cfont-variant\x02\x11font-variant-caps\x03\x0etext-transform";
+static CAPS_KEYWORDS: &[u8] =
+    b"\x01\x06normal\x02\x0asmall-caps\x02\x0eall-small-caps\x02\x0bpetite-caps\x02\x0fall-petite-caps";
+static TRANSFORM_KEYWORDS: &[u8] =
+    b"\x01\x04none\x02\x09uppercase\x03\x09lowercase\x04\x0acapitalize";
+
+#[inline(never)]
+fn lookup_keyword(v: &[u8], mut table: &[u8]) -> u8 {
+    while let Some((&[val, len], rest)) = table.split_first_chunk::<2>() {
+        let Some((kw, tail)) = rest.split_at_checked(usize::from(len)) else {
+            break;
+        };
+        if kw.eq_ignore_ascii_case(v) {
+            return val;
+        }
+        table = tail;
+    }
+    0
+}
+#[inline(never)]
+fn apply_text_case(d: &mut CssDecl, prop: &[u8], mut v: &[u8]) {
+    let kind = lookup_keyword(prop, TEXT_CASE_PROPS);
+    if kind == 1 || kind == 2 {
+        let (mut count, mut caps, mut saw_normal) = (0usize, 0usize, false);
+        while !v.is_empty() {
+            while let Some((&b, rest)) = v.split_first() {
+                if !is_space(b) {
+                    break;
+                }
+                v = rest;
+            }
+            let len = v.iter().position(|&b| is_space(b)).unwrap_or(v.len());
+            if len == 0 {
+                break;
+            }
+            let (tok, rest) = v.split_at(len);
+            v = rest;
+            count += 1;
+            match lookup_keyword(tok, CAPS_KEYWORDS) {
+                SMALL_CAPS_NORMAL => saw_normal = true,
+                SMALL_CAPS_ON => caps += 1,
+                _ => {}
+            }
+        }
+        let val = if kind == 2 && count != 1 {
+            0
+        } else if count == 1 && saw_normal {
+            SMALL_CAPS_NORMAL
+        } else if caps == 1 && !saw_normal {
+            SMALL_CAPS_ON
+        } else {
+            0
+        };
+        if val != 0 {
+            d.text_case = (d.text_case & !SMALL_CAPS_MASK) | val;
+        }
+    } else if kind == 3 {
+        let val = lookup_keyword(v, TRANSFORM_KEYWORDS);
+        if val != 0 {
+            d.text_case = (d.text_case & !TEXT_TRANSFORM_MASK) | (val << TEXT_TRANSFORM_SHIFT);
+        }
+    }
 }
 fn apply_declaration(d: &mut CssDecl, prop: &[u8], value: &[u8]) {
     let v = trim(value);
@@ -276,7 +366,7 @@ fn apply_declaration(d: &mut CssDecl, prop: &[u8], value: &[u8]) {
             b"baseline" => d.vert_align = 0,
             _ => {}
         },
-        _ => {}
+        _ => apply_text_case(d, prop, v),
     }
 }
 fn parse_declarations(text: &[u8]) -> CssDecl {

@@ -143,6 +143,7 @@ fn priority(d: &CssDecl) -> u8 {
         || d.margin_bottom_pct >= 0
         || d.underline >= 0
         || d.vert_align >= 0
+        || d.text_case != 0
     {
         1
     } else {
@@ -1247,4 +1248,90 @@ pub fn reconcile_capture(old: &Sources<'_>, again: &mut Sources<'_>) -> Status {
     }
     again.links = old.links;
     Status::Ok
+}
+
+#[cfg(test)]
+mod text_case_priority_tests {
+    use super::*;
+    use crate::css::{SMALL_CAPS_MASK, SMALL_CAPS_ON, TEXT_TRANSFORM_MASK, TEXT_TRANSFORM_SHIFT, TEXT_TRANSFORM_UPPERCASE};
+    use newt_core::css::cascade_for;
+
+    struct EmptySource;
+    impl BookSource for EmptySource {
+        fn size(&self) -> u64 {
+            0
+        }
+        fn read_at(&mut self, _: u64, _: &mut [u8]) -> i32 {
+            0
+        }
+    }
+
+    #[test]
+    fn small_caps_and_text_transform_rules_survive_rule_compaction() {
+        let mut css = [0u8; EMBEDDED];
+        let mut len = 0usize;
+        // 70 priority-0 filler rules force compaction past MAX_RULES = 64.
+        for i in 0..70u32 {
+            let mut rule = [0u8; 32];
+            let tens = b'0' + ((i / 10) as u8);
+            let ones = b'0' + ((i % 10) as u8);
+            let bytes = [
+                b'.', b'n', tens, ones, b'{', b'c', b'o', b'l', b'o', b'r', b':', b'r', b'e', b'd',
+                b'}', b'\n',
+            ];
+            rule[..bytes.len()].copy_from_slice(&bytes);
+            css[len..len + bytes.len()].copy_from_slice(&bytes);
+            len += bytes.len();
+        }
+        let tail = b".sc{font-variant:small-caps}\n.up{text-transform:uppercase}\n";
+        css[len..len + tail.len()].copy_from_slice(tail);
+        len += tail.len();
+
+        let mut sources = Sources {
+            links: [Member::default(); 4],
+            start: [0; 8],
+            length: [0; 8],
+            issues: 0,
+            used: len,
+            events: 1,
+            external_mask: 0,
+            text: &mut css,
+        };
+        sources.length[0] = len as u16;
+
+        let mut text = [0u8; RULE_BYTES];
+        let mut marks = [0u8; RULE_BYTES / 4];
+        let mut batch = [0u8; RULE_BYTES];
+        let mut sdk = [CssRule::default(); SDK_BATCH];
+        let mut pending = [CssRule::default(); MAX_RULES];
+        let mut chunk = [0u8; 256];
+        let mut scratch = BuildScratch {
+            text: &mut text,
+            marks: &mut marks,
+            batch: &mut batch,
+            sdk: &mut sdk,
+            pending: &mut pending,
+            chunk: &mut chunk,
+        };
+        let mut rules = [CssRule::default(); MAX_RULES];
+        let mut slot = Slot {
+            rules: &mut rules,
+            count: 0,
+            hash: ID,
+            spine: 0,
+            issues: 0,
+            state: State::Empty,
+        };
+        let mut empty = EmptySource;
+        let status = build(&mut empty, &sources, Some(&mut scratch), None, None, &mut slot, 0, None);
+        assert_eq!(status, Status::Ok);
+        let sheet = slot.sheet();
+        let sc = cascade_for(&sheet, Some(b"span"), Some(b"sc"), None);
+        assert_eq!(sc.text_case & SMALL_CAPS_MASK, SMALL_CAPS_ON);
+        let up = cascade_for(&sheet, Some(b"span"), Some(b"up"), None);
+        assert_eq!(
+            (up.text_case & TEXT_TRANSFORM_MASK) >> TEXT_TRANSFORM_SHIFT,
+            TEXT_TRANSFORM_UPPERCASE
+        );
+    }
 }

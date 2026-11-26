@@ -2,11 +2,23 @@
 //! media and binds route/block position; it does not authenticate a writer.
 #![forbid(unsafe_code)]
 
-// Pages written under v1 can contain split lines and duplicate character
-// starts; v2 can drop links past a page's link slots; v3 can place oversized
-// inline runs over the previous line or past the top margin. Regenerate them
-// in place through normal cache admission.
-const VERSION: u32 = 4;
+// Pages (.fibp) written under v1 can contain split lines and duplicate
+// character starts; v2 can drop links past a page's link slots; v3 can place
+// oversized inline runs over the previous line or past the top margin; v4
+// predates CSS small-caps and text-transform layout. Book indexes (.IDX and
+// legacy .fibx) carry no rendered page layout and stay valid from v3 onward.
+const VERSION: u32 = 5;
+const INDEX_MIN_VERSION: u32 = 3;
+
+pub fn is_index_name(name: Option<&[u8]>) -> bool {
+    name.map(c_string).is_some_and(|n| {
+        crate::book_index::FileName::parse(n)
+            .is_some_and(|f| f.kind() == crate::book_index::FileKind::Index)
+            || (n.len() == 69
+                && crate::cache_names::namespace::hex(&n[..64])
+                && &n[64..69] == b".fibx")
+    })
+}
 
 pub const BLOCK_BYTES: u32 = 4096;
 pub const MANIFEST_BYTES: u32 = 64;
@@ -111,8 +123,21 @@ pub fn manifest(
 }
 
 pub fn inspect(input: &[u8; 64], extent: u32, route: &Route, bytes: &mut u32) -> bool {
+    inspect_for(None, input, extent, route, bytes)
+}
+
+pub fn inspect_for(
+    name: Option<&[u8]>,
+    input: &[u8; 64],
+    extent: u32,
+    route: &Route,
+    bytes: &mut u32,
+) -> bool {
+    let version = get32(input, 4);
+    let version_ok = version == VERSION
+        || (is_index_name(name) && (INDEX_MIN_VERSION..=VERSION).contains(&version));
     if &input[..4] != b"NTBE"
-        || get32(input, 4) != VERSION
+        || !version_ok
         || get32(input, 12) != BLOCK_BYTES
         || get32(input, 60) != crc(u32::MAX, &input[..60]) ^ u32::MAX
         || &input[28..60] != route
@@ -224,7 +249,8 @@ impl<'n, 'a> VerifiedStore<'n, 'a> {
         let header: &[u8; 64] = self.directory[bytes..bytes + 64]
             .try_into()
             .expect("manifest extent");
-        if !inspect(
+        if !inspect_for(
+            self.query.name,
             header,
             self.query.extent,
             &self.query.route,

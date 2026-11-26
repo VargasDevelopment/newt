@@ -173,6 +173,14 @@ struct Home {
     state: SlotState,
     seal: u32,
 }
+const _: () = assert!(
+    size_of::<Home>()
+        == if cfg!(target_pointer_width = "64") {
+            1824
+        } else {
+            1812
+        }
+);
 impl Home {
     fn with_slot<R>(&mut self, operation: impl FnOnce(&mut styles::Slot<'_>) -> R) -> R {
         let mut slot = styles::Slot {
@@ -225,6 +233,7 @@ fn seal(home: &Home) -> u32 {
         mix(d.display_none as u32);
         mix(d.underline as u32);
         mix(d.vert_align as u32);
+        mix(u32::from(d.text_case));
     }
     h
 }
@@ -951,6 +960,31 @@ mod join_state_tests {
         // 4,096 B positions + 64 x 48 B cursors + 384 B writer prefix, no padding.
         assert_eq!(BANK_BYTES - parts.0.len(), newt_core::book_index_build::JOIN_STATE_BYTES);
         assert_eq!(parts.0.len(), 41_600);
+    }
+
+    #[test]
+    fn seal_detects_tampering_in_text_case() {
+        #[repr(align(16))]
+        struct Bank([u8; BANK_BYTES]);
+        let mut bank = Bank([0; BANK_BYTES]);
+        let (_, bytes) = top::<Home>(&mut bank.0).unwrap();
+        let home = init_home(bytes);
+        home.with_slot(|slot| {
+            slot.rules[0] = CssRule {
+                elem_hash: 1,
+                class_hash: 2,
+                decl: newt_core::css::CssDecl {
+                    text_case: newt_core::css::SMALL_CAPS_ON,
+                    ..newt_core::css::CssDecl::default()
+                },
+            };
+            slot.count = 1;
+            slot.state = styles::State::Settled;
+        });
+        let sealed = home.seal;
+        assert_eq!(sealed, seal(home));
+        home.rules[0].decl.text_case = newt_core::css::SMALL_CAPS_NORMAL;
+        assert_ne!(sealed, seal(home));
     }
 }
 
