@@ -237,12 +237,15 @@ impl Runtime {
                         let allowed = || !cancel.cancelled();
                         let mut pending = revision.with_verification_gate(saved.locator.spine, &mut finish, &allowed);
                         if let Some(indexed) = indexed { pending.start_indexed(indexed); }
+                        // A spilled index build reopens the source on a first open, which leaves a
+                        // provisional import pending; only the prepared route can finish it (#171).
+                        // Hint-admitted opens are not prepared and stay Selected.
                         super::drive::RunLoan { memory, ui: reader_ui, checkpoint, statistics, recovery,
                             accepted: &mut accepted, metadata: exit_metadata, flags: None, settings: current_settings }
                             .run(super::drive::Ports { io: scope.io, panel: &mut *scope.bus.panel,
                                 card: &mut *scope.card, preferences: &mut *scope.preferences,
                                 nvs: &mut *scope.nvs, facts: &mut *scope.facts }, &mut pages, &mut pending, &request, &callbacks, &mut pause,
-                                None, run_turn(false), &yielded, &observed, saves, title_deferred, index_trim_owed)
+                                None, run_turn(prepared), &yielded, &observed, saves, title_deferred, index_trim_owed)
                     } else {
                         if verification.state() != crate::reader_verification::Verification::Verified {
                             return Err(BookFailure::Open(Status::Stale));

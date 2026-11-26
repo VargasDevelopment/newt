@@ -16,7 +16,7 @@ impl Attributes for Attrs<'_> {
 }
 // Only metadata events are faked. The index builder, source, both loan paths,
 // cache adapter and card publish/read are the product implementations.
-struct Metadata { items:usize }
+struct Metadata { items:usize, spine:usize }
 impl ParserBackend for Metadata {
     fn create(&mut self) -> bool { true }
     fn close(&mut self) {}
@@ -32,34 +32,44 @@ impl ParserBackend for Metadata {
             }
             handler.end_element(b"manifest");
             handler.start_element(b"spine", &mut Attrs(&[]));
-            handler.start_element(b"itemref", &mut Attrs(&[(b"idref", b"chapter")]));
+            for i in 0..self.spine {
+                let id=if i==0 { "chapter".to_owned() } else { format!("id{i}") };
+                handler.start_element(b"itemref", &mut Attrs(&[(b"idref", id.as_bytes())]));
+            }
             handler.end_element(b"spine");
         } else { assert!(bytes.is_empty(), "unexpected metadata input"); }
         true
     }
 }
 struct Probe<'a, 'bank, L> {
-    storage: &'a mut Storage<'bank>, lender: &'a mut L, digest: &'a [u8; 32], probe: &'a [u8],
+    storage: &'a mut Storage<'bank>, lender: &'a mut L, digest: &'a [u8; 32], probe: &'a [u8], long: bool,
 }
 impl<N: Native + newt_native_storage::page_entries::PageEntries, L: BuildLoan>
     sources::Operation<N, Indexed> for Probe<'_, '_, L> {
     fn run(self, pages: &mut reader_pages::ReaderPages<'_, N>, source: sources::Source<'_>) -> Result<Indexed, BookFailure> {
-        let raw = match source {
-            sources::Source::Strict(raw) => raw,
+        let (raw, verification) = match source {
+            sources::Source::Strict(raw) => (raw, None),
             sources::Source::Session(raw, verification) => {
                 assert_eq!(verification.state(), crate::reader_verification::Verification::Verified);
-                raw
+                (raw, Some(verification))
             }
         };
-        let indexed = index_build::open(raw, self.digest, self.storage, self.lender,
-            &mut Metadata {items:1}, pages, None, Verification::Verified).unwrap();
+        // A long book: the one-member fixture needs 1,500 manifest items to
+        // spill the build's runs, as 545+ chapter books do on device.
+        let mut metadata = if self.long { Metadata { items: 1500, spine: 600 } } else { Metadata { items: 1, spine: 1 } };
+        // The firmware IndexPass sequence: a spilled build releases and
+        // reopens the source, and the reopen restarts session verification.
+        let result = index_build::open_releasing(raw, self.digest, self.storage, self.lender,
+            &mut metadata, pages, None, Verification::Verified);
+        let indexed = index_reopen::complete(result, pages, raw, self.digest, verification, &|| {}).unwrap();
         let mut probe = [0; 17];
         assert_eq!(raw.read_at(0, &mut probe), 17);
         assert!(pages.begin_write(self.probe) && pages.write(&probe) && pages.end_write());
         Ok(indexed)
     }
 }
-pub(crate) fn index(runtime: &mut Runtime, home: &mut app_image::Home<'_>, logical: &mut newt_core::frame::Frame) -> Indexed {
+pub(crate) fn index(runtime: &mut Runtime, home: &mut app_image::Home<'_>, logical: &mut newt_core::frame::Frame,
+    long: bool) -> Indexed {
     let probe: &[u8] = if runtime.session.is_some() { b"session-loan-probe" } else { b"standalone-loan-probe" };
     runtime.memory.probe = probe;
     let mut bank = [0; newt_phased_reader::phase_storage::BANK_BYTES];
@@ -70,7 +80,7 @@ pub(crate) fn index(runtime: &mut Runtime, home: &mut app_image::Home<'_>, logic
         let mut pages_native = scope.card.port(scope.io);
         sources::with_operation(runtime.session.as_deref_mut(), runtime.source.as_mut().unwrap(), filename,
             &mut source_native, &mut pages_native, logical, &crate::Never, None,
-            Probe { storage: &mut storage, lender: scope.bus.panel, digest: runtime.selection.digest(), probe }).unwrap()
+            Probe { storage: &mut storage, lender: scope.bus.panel, digest: runtime.selection.digest(), probe, long }).unwrap()
     }).unwrap()
 }
 
@@ -136,7 +146,7 @@ pub(crate) fn physical_handoffs(home:&mut app_image::Home<'_>,bytes:&[u8],digest
                 let hook=&trace;
                 let result=source.with_index_source(&mut source_native,name.as_bytes_with_nul(),&mut logical,Some(&crate::Never),None,|raw| {
                     let result=index_build::open_releasing(raw,digest,&mut storage,scope.bus.panel,
-                        &mut Metadata {items:1500},&mut pages,Some(hook),Verification::Verified);
+                        &mut Metadata {items:1500,spine:1},&mut pages,Some(hook),Verification::Verified);
                     let mut verification=crate::reader_verification::ReaderVerification::new();
                     let result=super::index_reopen::complete(result,&mut pages,raw,digest,
                         session_mode.then_some(&mut verification),&|| {});
