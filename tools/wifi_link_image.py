@@ -266,9 +266,16 @@ def relaxed_address(address, mnemonic, operands, immediate, gp):
     S+A, or the relocation does not mean what this check reads it as."""
     parts = [part.strip() for part in operands.split(",")]
     memory = re.fullmatch(r"(-?\d+)\((\w+)\)", parts[-1])
-    spelled = {"li": lambda: (int(parts[1], 0), "zero"), "addi": lambda: (int(parts[2], 0), parts[1]),
-               "mv": lambda: (0, parts[1])}  # objdump's `li rd,imm` is `addi rd,zero,imm`
-    offset, base = (int(memory[1]), memory[2]) if memory else spelled.get(mnemonic, lambda: (None, None))()
+    if memory:
+        offset, base = int(memory[1]), memory[2]
+    elif mnemonic == "li":  # objdump's `li rd,imm` is `addi rd,zero,imm`
+        offset, base = int(parts[1], 0), "zero"
+    elif mnemonic == "addi":
+        offset, base = int(parts[2], 0), parts[1]
+    elif mnemonic == "mv":
+        offset, base = 0, parts[1]
+    else:
+        offset, base = None, None
     if offset != immediate - (immediate >> 31 << 32) or base not in ("gp", "zero") or (base == "gp" and gp is None):
         raise RuntimeError(f"{STOPPED}: {mnemonic} {operands} at {address:x} does not match its relaxed relocation")
     return ((gp if base == "gp" else 0) + offset) & 0xffffffff
