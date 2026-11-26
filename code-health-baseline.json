@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 4057296,
+      "flash_bytes": 4057264,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "ae34d4d92815a1fc9fc9d95742735f519873bb53",
-      "before": 4057248,
-      "after": 4057296,
-      "reason": "+48 B over the 4,057,248 B ceiling recorded for main 3cc1f4b3 (#172): #171 (NEWT-215) opens the pending-verification branch of operate_image with the prepared route when the first-open import is provisional, so a book whose index build spills and reopens its source opens instead of failing as Stale; the prepared turn is now reachable from that branch. The same change measured +48 B on the previous main (4,040,000 -> 4,040,048 B). Clean regional DEV USB build with the pinned Python at ae34d4d9: 4,057,296 B. Usable app space 7,016,448 B; headroom 2,959,200 B (42.18%) -> 2,959,152 B (42.17%).",
-      "reviewer": "Newt Lead ruling 2026-11-26 (#171: quick firmware compile; re-record only if a clean health build moves flash); cross-family review (Astra xhigh) and Codex review of the change"
+      "source_revision": "20aa3ae3a79cbbfd6bf1547e5c99fe78a7bfdabc",
+      "before": 4057296,
+      "after": 4057264,
+      "reason": "-32 B under the 4,057,296 B ceiling recorded for main c6784f25 (#171): #174 (NEWT-216) splits admission's central-directory walk from catalog admission's 1,024-entry cap, so the index build walks with its own member limit (book_index::MAX_MEMBERS) and a book with more than 1,024 ZIP entries indexes instead of being refused. Ratchet down after a verified improvement. Clean regional DEV USB build with the pinned Python at 20aa3ae3: 4,057,264 B. RAM 124,096 -> 124,096 B (+0 B), RTC 300 -> 300 B (+0 B), lent Wi-Fi RAM 22,528 -> 22,528 B (+0 B). Usable app space 7,016,448 B; headroom 2,959,152 B (42.17%) -> 2,959,184 B (42.17%).",
+      "reviewer": "Newt Lead ruling 2026-11-26 (NEWT-216: clean health build, record flash if it moves); cross-family review (Astra xhigh) and Codex review of the change"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
