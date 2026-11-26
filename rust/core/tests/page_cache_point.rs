@@ -243,30 +243,54 @@ fn an_unordered_index_gives_the_point_no_owner() {
     assert_eq!(outcome.point, None);
 }
 
-/// Negative control: a reader that ends a page wherever the footer's point
-/// starts serves page 1 cut short where the product reader misses.
 #[test]
-fn a_reader_trusting_the_unverified_range_serves_a_wrong_page() {
-    let segment = Segment::new(VERSION_POINT, false, 4, Some((1, point_record(40))));
+fn overlapping_or_header_gaps_miss_and_disjoint_pages_still_hit() {
+    let stale = || Err(Status::Stale);
+    let segment = Segment::new(VERSION_POINT, false, 4, Some((3, point_record(40))));
+    let [a, b, c, d] = segment.offsets[..] else { unreachable!() };
+    let hit = |page: usize| Ok(segment.records[page].clone());
+    // Logical pages 0 and 2 share one gap and page 1 runs backwards. Pages 3..5
+    // are disjoint, and page 5 owns the point, so they still hit.
+    let file = envelope(&segment.rebuilt(VERSION_POINT, false, &[a, b, a, b, c, d], segment.point));
+    let outcome = read(&file, &[0, 1, 2, 3, 4, 5]).unwrap();
+    assert_eq!(outcome.pages, vec![stale(), stale(), stale(), hit(1), hit(2), hit(3)]);
     let (offset, length) = segment.point;
-    let file = envelope(&segment.with_footer((offset - 5, length)));
-    assert_eq!(read(&file, &[1]).unwrap().pages, vec![Err(Status::Stale)]);
-    let trusted = verified(&file, |access| {
-        let field = |access: &mut VerifiedAccess<'_, '_, '_, Raw>, at: u32| {
-            let mut b = [0; 4];
-            assert_eq!(access.read_at(NAME, at, &mut b), 4);
-            u32::from_le_bytes(b)
-        };
-        let footer = access.file_size(NAME) as u32 - 32;
-        let (index, point) = (field(access, footer), field(access, footer + 20));
-        let (start, next) = (field(access, index + 8), field(access, index + 16));
-        let end = if (start + 1..next).contains(&point) { point } else { next };
-        let mut bytes = vec![0; (end - start) as usize];
+    assert_eq!(outcome.point, Some(PointRange { offset, length }));
+    // A gap that starts in the header misses and cannot own a point there.
+    let plain = Segment::new(VERSION_POINT, false, 4, None);
+    let file = envelope(&plain.rebuilt(VERSION_POINT, false, &[0, a, b, c, d], (4, a - 4)));
+    let outcome = read(&file, &[0, 1, 2, 3, 4]).unwrap();
+    assert_eq!(outcome.pages, vec![stale(), hit(0), hit(1), hit(2), hit(3)]);
+    assert_eq!(outcome.point, None);
+}
+
+/// Negative control: deciding ownership from page 2's gap alone, without the
+/// index-wide checks, ends page 2 at the point. The real decoder then returns
+/// page 0's complete record as page 2; the product reader misses instead.
+#[test]
+fn a_reader_deciding_ownership_per_page_serves_a_wrong_page() {
+    let segment = Segment::new(VERSION_POINT, false, 5, Some((0, point_record(40))));
+    let o = &segment.offsets;
+    let entries = [o[0], o[1], o[0], o[1], o[4]];
+    let file = envelope(&segment.rebuilt(VERSION_POINT, false, &entries, segment.point));
+    let outcome = read(&file, &[2, 4]).unwrap();
+    assert_eq!(outcome.pages, vec![Err(Status::Stale), Ok(segment.records[4].clone())]);
+    let (offset, length) = segment.point;
+    let local = verified(&file, |access| {
+        // Page 2's gap is entries[2]..entries[3]; the point fills its tail.
+        let (start, end) = (entries[2], entries[3]);
+        assert!(offset > start && offset + length == end);
+        let mut bytes = vec![0; (offset - start) as usize];
         assert_eq!(access.read_at(NAME, start, &mut bytes), bytes.len() as i32);
         bytes
     });
-    assert_eq!(trusted.len(), segment.records[1].len() - 5);
-    assert_ne!(trusted, segment.records[1]);
+    let mut buffer = [0; 8192];
+    let mut arena = Arena::new(&mut buffer);
+    let mut runs = [Default::default(); 2];
+    let mut out = PageMemory { runs: &mut runs, images: &mut [], links: &mut [] };
+    let page = decode_record(&local, 2, &mut arena, &mut out).unwrap();
+    assert_eq!(page.bytes, &segment.records[0][..]);
+    assert_eq!(page.char_start, 0, "page 2 should start at 200 chars");
 }
 
 #[test]

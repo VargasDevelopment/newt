@@ -697,10 +697,30 @@ impl PageCacheReader {
         let point_end = self.point.offset.saturating_add(self.point.length);
         self.point.length != 0 && point_end > start && self.point.offset < end
     }
-    /// The page whose gap the point ends, after at least one page byte. A
-    /// point touching any other gap, a second such gap (an unordered index)
-    /// or a range past the index leaves no owner.
+    /// A v4 gap must be nonempty, lie between the header and the index, and
+    /// share no byte with another nonempty gap. A v3 index is not checked.
+    fn gap_valid(&self, pages: &[Entry], page: u32) -> bool {
+        let Some((start, end)) = self.gap(pages, page) else {
+            return false;
+        };
+        if !self.exact {
+            return true;
+        }
+        start >= 12
+            && start < end
+            && end <= self.index
+            && (0..self.count).all(|other| {
+                other == page
+                    || self.gap(pages, other).is_none_or(|(s, e)| s >= e || e <= start || s >= end)
+            })
+    }
+    /// The page whose valid gap the point ends, after at least one page byte.
+    /// A point touching any other gap, a second such gap or a range past the
+    /// index leaves no owner.
     fn point_owner(&self, pages: &[Entry]) -> Option<u32> {
+        if self.point.length == 0 {
+            return None;
+        }
         let end = self.point.offset.checked_add(self.point.length)?;
         if end > self.index {
             return None;
@@ -711,22 +731,28 @@ impl PageCacheReader {
             if !self.point_touches(start, gap_end) {
                 continue;
             }
-            if owner.is_some() || self.point.offset <= start || end != gap_end {
+            if owner.is_some()
+                || self.point.offset <= start
+                || end != gap_end
+                || !self.gap_valid(pages, page)
+            {
                 return None;
             }
             owner = Some(page);
         }
         owner
     }
-    /// Page extents use only the verified index and footer. The owner ends at
-    /// the point. Any other page the point touches is ambiguous and misses;
-    /// pages it does not touch still hit.
+    /// Page extents use only the verified index and footer. An invalid v4
+    /// gap misses. The owner ends at the point. Any other page the point
+    /// touches is ambiguous and misses; pages it does not touch still hit.
     fn page_extent(&self, m: &ReaderMemory<'_>, page: u32) -> Result<(u32, u32), Status> {
         if page >= self.count {
             return Err(Status::NotFound);
         }
         let (start, end) = self.gap(m.pages, page).ok_or(Status::NotFound)?;
-        if self.point_owner == Some(page) {
+        if !self.gap_valid(m.pages, page) {
+            Err(Status::Stale)
+        } else if self.point_owner == Some(page) {
             Ok((start, self.point.offset))
         } else if self.point_touches(start, end) {
             Err(Status::Stale)
