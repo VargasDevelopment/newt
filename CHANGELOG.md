@@ -15,6 +15,31 @@ Source-import closure for PR #16: immutable checkpoint
 authorship and subjects through an explicit bounded frozen-source import exception. New integration commits remain strictly conventional;
 no firmware version, tag or installed image is changed by that closure.
 
+## v0.6.0
+
+### Feat
+- **sleep**: make holiday outfits opt-in under Sleep screen (#128) (#143)
+- **core**: build the book index with a bounded external sort (#60) (#142)
+- **reader**: add the book index store (#60) (#139)
+- **update**: return from test builds to the official release (#20) (#131)
+- **reader**: check each ZIP member when it opens (#60) (#134)
+- **dev-usb**: stage files across the card with raw PUT blocks (#113) (#121)
+### Fix
+- **test**: build each preview control in its own folder (#162)
+- **epub**: bound Expat entity expansion limits (#153) (#157)
+- **release**: use fixed-width YYMMDDHHMM nightly identifiers (#154) (#155)
+- **ci**: give host and firmware checks descriptive names (#5) (#151)
+- **ci**: check PR titles without rerunning the gate (#98) (#150)
+- **dev-usb**: name the pinned interpreter before device access (#113) (#147)
+- **ui**: say holiday outfits are a choice in What's new (#128) (#144)
+- **reader**: keep reflow round-trip anchor (#115) (#141)
+- **reader**: keep 4-digit page counters from clipping in the footer (#101) (#138)
+- **reader**: handle interrupted changed-book reimport cleanly (#124) (#136)
+- **reader**: carry forward unconsumed PNG bytes across read boundaries (#126) (#137)
+- **reader**: verify and seed stats on demand for Mark as finished (#125) (#130)
+- **update**: create the card update folder automatically (#127) (#132)
+- **reader**: prefer newer durable progress over an admitted sleep record (#111) (#129)
+
 ## v0.5.0
 
 ### Feat
