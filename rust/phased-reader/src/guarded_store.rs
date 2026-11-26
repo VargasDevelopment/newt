@@ -56,4 +56,24 @@ impl<C: CacheStorage + ?Sized> CacheStorage for GuardedStore<'_, '_, C> {
         let written = self.inner.end_write_checked(&mut || (self.check)(ProducerCheck::Receipt));
         written && self.good()
     }
+    #[cfg(feature = "page-turn-trace")]
+    fn trace_micros(&self) -> u32 {
+        self.inner.trace_micros()
+    }
+    #[cfg(feature = "page-turn-trace")]
+    fn trace_segment_begin(&mut self, idx: u32) {
+        self.inner.trace_segment_begin(idx);
+    }
+    #[cfg(feature = "page-turn-trace")]
+    fn trace_add_tee_us(&mut self, us: u32) {
+        self.inner.trace_add_tee_us(us);
+    }
+    #[cfg(feature = "page-turn-trace")]
+    fn trace_segment_layout_done(&mut self) {
+        self.inner.trace_segment_layout_done();
+    }
+    #[cfg(feature = "page-turn-trace")]
+    fn trace_segment_end(&mut self, pages: u32) {
+        self.inner.trace_segment_end(pages);
+    }
 }

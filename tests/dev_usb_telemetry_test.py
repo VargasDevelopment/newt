@@ -138,6 +138,18 @@ def firmware_row_validation():
              b'COVER_CACHE scanned=4 art_shape=3 noart_shape=1 tmp_names=0 other=0 errors=0 limited=0 interrupted=0 '
              b'skipped=0\n'
              b'HOME_COVER eligible=1 attempted=1 step=6 ready=0 painted=0\n')
+    page_turn = (b'Reader action: schema=4 total=228318 residual=4386 flags=0 actions=1 route=5 miss=2\n'
+                 b'Reader action us: v=0,0,71894,0,6,0,586,58125,93211\n'
+                 b'Reader open us: select=12 progress=34 source=56 bind=78 commit=90 device=11\n'
+                 b'Reader close us: home=1 progress=2 release=3 exit=4 destination=5 device=6\n'
+                 b'Reader action rows: emitted=7 expected=7\n'
+                 b'Reader turn: pages=129 layout_us=71200 heap_min=50468 largest=49152 stack_min=6120\n'
+                 b'PC admit: at=21879 r=3 u=127\n'
+                 b'PC start: at=21879 from=0 next=0\n'
+                 b'PC grant: warm=0 census_us=14250 files=12 outcome=0 units=127 entries=244\n'
+                 b'PC seg: idx=1 pages=128 bytes=175104 layout_us=1240000 tee_us=98000 write_us=71000 fin_us=210000 commit_us=8400\n'
+                 b'PC seal: idx=1 read=42000 crc=55000 dir=29000 sync=18000 verify=64000 heap=48120 largest=45056 stack=5980\n'
+                 b'PC finish: at=32065 status=0 interrupted=0\n')
     dropped = (b'PC census: o=1 r=2 n=0,4,40,40,48 b=123 ms=88 u=0 title=Some Book\n'  # extra text
                b'PC target: from=chapter next=1\n'  # non-numeric field
                b'Runtime: kind=book-title stack-size=1 stack-min-free=1 heap-min-free=1\n'  # unknown kind
@@ -149,10 +161,15 @@ def firmware_row_validation():
                b'entries=3 dirs=1 cmp=0 list=kept walks=1 runs=0 ms=5 name=/Some Book.epub\n'  # a name
                b'Reader admission: free=1 largest=1 required=1 block=1 credit=1 book=Some Book\n'  # extra text
                b'HOME_COVER eligible=1 attempted=1 step=8 ready=0 painted=0\n'  # unknown step
-               b'HOME_COVER eligible=1 attempted=1 step=7 ready=1 painted=1 name=Some Book\n')  # a name
+               b'HOME_COVER eligible=1 attempted=1 step=7 ready=1 painted=1 name=Some Book\n'  # a name
+               b'Reader turn: pages=1 layout_us=2 heap_min=3 largest=4 stack_min=5 book=Some Book\n'  # extra text
+               b'PC grant: warm=2 census_us=1 files=0 outcome=0 units=1 entries=1\n'  # invalid flag
+               b'PC finish: at=1 status=0 interrupted=2\n'  # invalid flag
+               b'PC seg: idx=01 pages=1 bytes=2 layout_us=3 tee_us=4 write_us=5 fin_us=6 commit_us=7\n'  # non-canonical
+               b'PC seal: idx=0 read=1 crc=2 dir=3 sync=4 verify=5 heap=6 largest=7 stack=8 title=Some Book\n')
     peer = Peer()
     assert peer.request('PRESS next') == ['ACCEPTED', 'CONSUMED', 'RENDER_RETURN gen=2']
-    peer.pending = dropped + census + crossink + library + runtime + admission + cover
+    peer.pending = dropped + census + crossink + library + runtime + admission + cover + page_turn
     module.listen(peer.record, 0.3, module.ProtocolTimeout)
     rows = [{key: value for key, value in row.items() if key != 'monotonic'} for row in peer.firmware_rows.rows]
     assert rows == [{'row': 'target', 'from': 8, 'next': 1}, {'row': 'admission', 'r': 1, 's': 3, 'u': 0},
@@ -173,7 +190,27 @@ def firmware_row_validation():
                      'min_largest_observed': 114676, 'monitor_start': 0, 'monitor_stop': -1, 'stack_min_free': 7052},
                     {'row': 'cover_cache', 'scanned': 4, 'art_shape': 3, 'noart_shape': 1, 'tmp_names': 0, 'other': 0,
                      'errors': 0, 'limited': 0, 'interrupted': 0, 'skipped': 0},
-                    {'row': 'home_cover', 'eligible': 1, 'attempted': 1, 'step': 6, 'ready': 0, 'painted': 0}], rows
+                    {'row': 'home_cover', 'eligible': 1, 'attempted': 1, 'step': 6, 'ready': 0, 'painted': 0},
+                    {'row': 'reader_action', 'schema': 4, 'total': 228318, 'residual': 4386, 'flags': 0,
+                     'actions': 1, 'route': 5, 'miss': 2},
+                    {'row': 'reader_action_us', 'receipt': 0, 'verify': 0, 'ordinary': 71894, 'projection': 0,
+                     'metadata': 6, 'progress': 0, 'cache': 586, 'composition': 58125, 'display': 93211},
+                    {'row': 'reader_open_us', 'select': 12, 'progress': 34, 'source': 56, 'bind': 78,
+                     'commit': 90, 'device': 11},
+                    {'row': 'reader_close_us', 'home': 1, 'progress': 2, 'release': 3, 'exit': 4,
+                     'destination': 5, 'device': 6},
+                    {'row': 'reader_action_rows', 'emitted': 7, 'expected': 7},
+                    {'row': 'reader_turn', 'pages': 129, 'layout_us': 71200, 'heap_min': 50468, 'largest': 49152,
+                     'stack_min': 6120},
+                    {'row': 'pc_admit', 'at': 21879, 'r': 3, 'u': 127},
+                    {'row': 'pc_start', 'at': 21879, 'from': 0, 'next': 0},
+                    {'row': 'pc_grant', 'warm': 0, 'census_us': 14250, 'files': 12, 'outcome': 0, 'units': 127,
+                     'entries': 244},
+                    {'row': 'pc_seg', 'idx': 1, 'pages': 128, 'bytes': 175104, 'layout_us': 1240000,
+                     'tee_us': 98000, 'write_us': 71000, 'fin_us': 210000, 'commit_us': 8400},
+                    {'row': 'pc_seal', 'idx': 1, 'read': 42000, 'crc': 55000, 'dir': 29000, 'sync': 18000,
+                     'verify': 64000, 'heap': 48120, 'largest': 45056, 'stack': 5980},
+                    {'row': 'pc_finish', 'at': 32065, 'status': 0, 'interrupted': 0}], rows
     assert 'Book' not in repr(peer.firmware_rows.report())
     capped = Peer(census * 259)
     module.listen(capped.record, 0.5, module.ProtocolTimeout)

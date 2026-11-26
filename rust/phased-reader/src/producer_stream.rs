@@ -84,8 +84,14 @@ impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::Pro
         self.writer.open = false;
         self.writer.cache.set_total_chars(reader.info.total_chars);
         if crate::producer_store::with_source_store(self.store, self.source, reader.source_bytes,
-            false, self.guard_attempted.as_deref_mut(), |store|
-                self.writer.cache.finish(store, &self.state.name[..69], &self.memory)) {
+            false, self.guard_attempted.as_deref_mut(), |store| {
+                #[cfg(feature = "page-turn-trace")]
+                store.trace_segment_layout_done();
+                let ok = self.writer.cache.finish(store, &self.state.name[..69], &self.memory);
+                #[cfg(feature = "page-turn-trace")]
+                if ok { store.trace_segment_end(self.writer.cache.page_count()); }
+                ok
+            }) {
             Status::Ok
         } else {
             Status::IoError

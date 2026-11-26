@@ -137,6 +137,26 @@ impl<C: ?Sized, S: CacheStorage + ?Sized> CacheStorage for ProducerStore<'_, '_,
     fn end_write(&mut self) -> bool {
         self.flush() && self.cancellation.step(|| self.base.end_write())
     }
+    #[cfg(feature = "page-turn-trace")]
+    fn trace_micros(&self) -> u32 {
+        self.base.trace_micros()
+    }
+    #[cfg(feature = "page-turn-trace")]
+    fn trace_segment_begin(&mut self, idx: u32) {
+        self.base.trace_segment_begin(idx);
+    }
+    #[cfg(feature = "page-turn-trace")]
+    fn trace_add_tee_us(&mut self, us: u32) {
+        self.base.trace_add_tee_us(us);
+    }
+    #[cfg(feature = "page-turn-trace")]
+    fn trace_segment_layout_done(&mut self) {
+        self.base.trace_segment_layout_done();
+    }
+    #[cfg(feature = "page-turn-trace")]
+    fn trace_segment_end(&mut self, pages: u32) {
+        self.base.trace_segment_end(pages);
+    }
     // Inherit CacheStorage's unsupported read_back_at, as the frozen Store does.
 }
 

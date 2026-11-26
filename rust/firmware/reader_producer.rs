@@ -45,6 +45,8 @@ pub struct ProducerCallbacks<'a> {
     pub wait: Option<fn()>,
     #[cfg(all(feature = "rust-app", feature = "dev-usb"))]
     pub trace: Option<&'a dyn Fn(ProducerEvent)>,
+    #[cfg(feature = "page-turn-trace")]
+    pub trace_micros: &'a dyn Fn() -> u32,
 }
 /// Only measured scalars cross the short DEV observation loan.
 #[cfg(all(feature = "rust-app", feature = "dev-usb"))]
@@ -53,6 +55,10 @@ pub enum ProducerEvent {
     Admission { result: Admission, units: u8 },
     Start { spine: u32, ahead: u32 },
     Finish { status: Status, interrupted: bool },
+    #[cfg(feature = "page-turn-trace")]
+    Grant { warm: bool, census_us: u32, files: u32, outcome: MissingProbe, units: u8, entries: u8 },
+    #[cfg(feature = "page-turn-trace")]
+    Segment(newt_core::page_turn_trace::SegmentTrace),
 }
 struct Poll<'a> {
     callbacks: &'a ProducerCallbacks<'a>,
@@ -142,7 +148,20 @@ impl<'scope, 'sdk, 'route, 'bank, NativePort: Native + PageEntries>
         }
         struct Check<'a>(&'a dyn Fn() -> bool);
         impl Authority for Check<'_> { fn cancelled(&self) -> bool { (self.0)() } }
+        #[cfg(feature = "page-turn-trace")]
+        let census_started = (poll.callbacks.trace_micros)();
         let grant = self.pages.0.census(&Check(&cancelled), Some(clock), wait, Some(&need));
+        #[cfg(all(feature = "rust-app", feature = "page-turn-trace"))]
+        if let Some(trace) = poll.callbacks.trace {
+            trace(ProducerEvent::Grant {
+                warm: false,
+                census_us: (poll.callbacks.trace_micros)().wrapping_sub(census_started),
+                files: grant.files,
+                outcome: grant.outcome,
+                units: grant.units,
+                entries: grant.entries,
+            });
+        }
         if grant.outcome == MissingProbe::Stopped { return interrupted(visit, reader, source, digest, target); }
         if grant.outcome == MissingProbe::Denied {
             visit.deny_admission(position(reader, source, digest)); return Admission::Denied;
@@ -238,6 +257,15 @@ impl<'scope, 'sdk, 'route, 'bank, NativePort: Native + PageEntries>
                 if let Some(callback) = poll.callbacks.yield_now { callback.yield_now(); }
             }), pause: None });
         let authority = AttemptAuthority { cancel: &cancellation };
+        #[cfg(all(feature = "rust-app", feature = "page-turn-trace"))]
+        let on_segment = |seg| {
+            if let Some(trace) = callbacks.trace {
+                trace(ProducerEvent::Segment(seg));
+            }
+        };
+        #[cfg(all(feature = "rust-app", feature = "page-turn-trace"))]
+        let policy = ProducerPolicy::new(&authority).with_trace(callbacks.trace_micros, &on_segment);
+        #[cfg(not(all(feature = "rust-app", feature = "page-turn-trace")))]
         let policy = ProducerPolicy::new(&authority);
         let info = reader.info();
         let settings = self.settings;

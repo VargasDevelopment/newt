@@ -8,6 +8,8 @@ publish = false
 
 [features]
 dev-usb = []
+# Opt-in page-turn diagnostic trace; never enabled in shipping builds.
+page-turn-trace = []
 # Pinned-translation harnesses compare against oracles that never ran the
 # open-time member check, so they build unchecked members. Never on firmware.
 pinned-harness = []

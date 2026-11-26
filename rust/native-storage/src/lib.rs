@@ -115,6 +115,10 @@ pub struct ProducerPolicy<'a> {
     authority: &'a dyn Authority,
     failed: core::cell::Cell<bool>,
     cancellation_observed: core::cell::Cell<bool>,
+    #[cfg(feature = "page-turn-trace")]
+    trace_micros: Option<&'a dyn Fn() -> u32>,
+    #[cfg(feature = "page-turn-trace")]
+    on_segment: Option<&'a dyn Fn(newt_core::page_turn_trace::SegmentTrace)>,
 }
 impl<'a> ProducerPolicy<'a> {
     pub fn new(authority: &'a dyn Authority) -> Self {
@@ -122,6 +126,30 @@ impl<'a> ProducerPolicy<'a> {
             authority,
             failed: core::cell::Cell::new(false),
             cancellation_observed: core::cell::Cell::new(false),
+            #[cfg(feature = "page-turn-trace")]
+            trace_micros: None,
+            #[cfg(feature = "page-turn-trace")]
+            on_segment: None,
+        }
+    }
+    #[cfg(feature = "page-turn-trace")]
+    pub fn with_trace(
+        mut self,
+        micros: &'a dyn Fn() -> u32,
+        on_segment: &'a dyn Fn(newt_core::page_turn_trace::SegmentTrace),
+    ) -> Self {
+        self.trace_micros = Some(micros);
+        self.on_segment = Some(on_segment);
+        self
+    }
+    #[cfg(feature = "page-turn-trace")]
+    pub(crate) fn trace_micros(&self) -> u32 {
+        self.trace_micros.map_or(0, |clock| clock())
+    }
+    #[cfg(feature = "page-turn-trace")]
+    pub(crate) fn emit_segment(&self, trace: newt_core::page_turn_trace::SegmentTrace) {
+        if let Some(sink) = self.on_segment {
+            sink(trace);
         }
     }
     pub fn failed(&self) -> bool {

@@ -22,3 +22,4 @@ newt-sdk-heap = { path = "../sdk-heap" }
 default = ["rust-app"]
 rust-app = []
 embedded-sample = []
+page-turn-trace = []

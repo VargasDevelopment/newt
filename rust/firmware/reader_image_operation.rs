@@ -129,11 +129,15 @@ impl Runtime {
             let producer_yield = || producer.yield_now();
             #[cfg(all(feature = "rust-app", feature = "dev-usb"))]
             let producer_trace = |event| producer.trace(event);
+            #[cfg(feature = "page-turn-trace")]
+            let trace_micros = || clock.micros();
             let callbacks = ProducerCallbacks { entry: &entry, stop: &stopped,
                 pause_request: &pause_request, yield_now: Some(&producer_yield),
                 wait: Some(wait_one),
                 #[cfg(all(feature = "rust-app", feature = "dev-usb"))]
-                trace: Some(&producer_trace) };
+                trace: Some(&producer_trace),
+                #[cfg(feature = "page-turn-trace")]
+                trace_micros: &trace_micros };
             let mut pause = |duty: crate::reader_book::ProducerPause<'_, '_, '_, '_,
                 crate::sdk::Sdk552, crate::home_startup::FirmwareCard>, cancelled: &dyn Fn() -> bool| {
                 if cancelled() { return (newt_core::producer_policy::Stop::Interrupted, false); }

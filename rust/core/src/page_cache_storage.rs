@@ -21,6 +21,18 @@ pub trait CacheStorage {
     fn read_back_at(&mut self, _offset: u32, _dst: &mut [u8]) -> i32 {
         -1
     }
+    #[cfg(feature = "page-turn-trace")]
+    fn trace_micros(&self) -> u32 {
+        0
+    }
+    #[cfg(feature = "page-turn-trace")]
+    fn trace_segment_begin(&mut self, _idx: u32) {}
+    #[cfg(feature = "page-turn-trace")]
+    fn trace_add_tee_us(&mut self, _us: u32) {}
+    #[cfg(feature = "page-turn-trace")]
+    fn trace_segment_layout_done(&mut self) {}
+    #[cfg(feature = "page-turn-trace")]
+    fn trace_segment_end(&mut self, _pages: u32) {}
 }
 /// One checked cache read, as pinned ChapterPageCache readEntry/locate:
 /// beginRead(query), attach, the SDK read, query.finish, finishRead.

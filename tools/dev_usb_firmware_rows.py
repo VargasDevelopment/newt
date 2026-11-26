@@ -49,6 +49,36 @@ FIRMWARE_ROWS = {
     # 4 no valid identity, 5 known no cover, 6 cover file not ready, 7 ready.
     'home_cover': re.compile(rb'HOME_COVER eligible=(?P<eligible>%s) attempted=(?P<attempted>%s) step=(?P<step>[0-7]) '
                              rb'ready=(?P<ready>%s) painted=(?P<painted>%s)' % ((FLAG,) * 4)),
+    'reader_action': re.compile(rb'Reader action: schema=(?P<schema>%s) total=(?P<total>%s) residual=(?P<residual>%s) '
+                                rb'flags=(?P<flags>%s) actions=(?P<actions>%s) route=(?P<route>%s) miss=(?P<miss>%s)'
+                                % ((NUMBER,) * 7)),
+    'reader_action_us': re.compile(rb'Reader action us: v=(?P<receipt>%s),(?P<verify>%s),(?P<ordinary>%s),'
+                                   rb'(?P<projection>%s),(?P<metadata>%s),(?P<progress>%s),(?P<cache>%s),'
+                                   rb'(?P<composition>%s),(?P<display>%s)' % ((NUMBER,) * 9)),
+    'reader_open_us': re.compile(rb'Reader open us: select=(?P<select>%s) progress=(?P<progress>%s) '
+                                 rb'source=(?P<source>%s) bind=(?P<bind>%s) commit=(?P<commit>%s) device=(?P<device>%s)'
+                                 % ((NUMBER,) * 6)),
+    'reader_close_us': re.compile(rb'Reader close us: home=(?P<home>%s) progress=(?P<progress>%s) '
+                                  rb'release=(?P<release>%s) exit=(?P<exit>%s) destination=(?P<destination>%s) '
+                                  rb'device=(?P<device>%s)' % ((NUMBER,) * 6)),
+    'reader_action_rows': re.compile(rb'Reader action rows: emitted=(?P<emitted>%s) expected=(?P<expected>%s)'
+                                     % ((NUMBER,) * 2)),
+    'reader_turn': re.compile(rb'Reader turn: pages=(?P<pages>%s) layout_us=(?P<layout_us>%s) '
+                              rb'heap_min=(?P<heap_min>%s) largest=(?P<largest>%s) stack_min=(?P<stack_min>%s)'
+                              % ((NUMBER,) * 5)),
+    'pc_admit': re.compile(rb'PC admit: at=(?P<at>%s) r=(?P<r>%s) u=(?P<u>%s)' % ((NUMBER,) * 3)),
+    'pc_start': re.compile(rb'PC start: at=(?P<at>%s) from=(?P<from>%s) next=(?P<next>%s)' % ((NUMBER,) * 3)),
+    'pc_finish': re.compile(rb'PC finish: at=(?P<at>%s) status=(?P<status>%s) interrupted=(?P<interrupted>%s)'
+                            % (NUMBER, NUMBER, FLAG)),
+    'pc_grant': re.compile(rb'PC grant: warm=(?P<warm>%s) census_us=(?P<census_us>%s) files=(?P<files>%s) '
+                           rb'outcome=(?P<outcome>%s) units=(?P<units>%s) entries=(?P<entries>%s)'
+                           % (FLAG, NUMBER, NUMBER, NUMBER, NUMBER, NUMBER)),
+    'pc_seg': re.compile(rb'PC seg: idx=(?P<idx>%s) pages=(?P<pages>%s) bytes=(?P<bytes>%s) '
+                         rb'layout_us=(?P<layout_us>%s) tee_us=(?P<tee_us>%s) write_us=(?P<write_us>%s) '
+                         rb'fin_us=(?P<fin_us>%s) commit_us=(?P<commit_us>%s)' % ((NUMBER,) * 8)),
+    'pc_seal': re.compile(rb'PC seal: idx=(?P<idx>%s) read=(?P<read>%s) crc=(?P<crc>%s) dir=(?P<dir>%s) '
+                          rb'sync=(?P<sync>%s) verify=(?P<verify>%s) heap=(?P<heap>%s) largest=(?P<largest>%s) '
+                          rb'stack=(?P<stack>%s)' % ((NUMBER,) * 9)),
 }
 MAX_FIRMWARE_ROWS = 256
 MAX_LISTEN_SECONDS = 600

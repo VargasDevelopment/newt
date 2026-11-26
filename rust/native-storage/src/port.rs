@@ -875,6 +875,16 @@ impl<S: Native> Operation<'_, '_, S> {
     pub fn producing(&self) -> bool {
         self.producer.is_some()
     }
+    #[cfg(feature = "page-turn-trace")]
+    pub(crate) fn trace_micros(&self) -> u32 {
+        self.producer.map_or(0, |p| p.trace_micros())
+    }
+    #[cfg(feature = "page-turn-trace")]
+    pub(crate) fn emit_segment(&self, trace: newt_core::page_turn_trace::SegmentTrace) {
+        if let Some(p) = self.producer {
+            p.emit_segment(trace);
+        }
+    }
     pub fn detach_producer(&mut self) {
         self.producer = None;
         self.port.state.token = 0;

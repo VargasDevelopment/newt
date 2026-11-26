@@ -45,7 +45,12 @@ impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::Pro
                             &mut a.state.name, &mut |b, d| route.hash.hash(b, d)) {
                             return Ok(Status::Unsupported);
                         }
-                        Ok(if crate::producer_store::with_source_store(a.store, a.source, reader.source_bytes, true, a.guard_attempted.as_deref_mut(), |store| a.writer.cache.begin(store, &a.state.name[..69], a.state.generation, &memory)) {
+                        Ok(if crate::producer_store::with_source_store(a.store, a.source, reader.source_bytes, true, a.guard_attempted.as_deref_mut(), |store| {
+                            let ok = a.writer.cache.begin(store, &a.state.name[..69], a.state.generation, &memory);
+                            #[cfg(feature = "page-turn-trace")]
+                            if ok { store.trace_segment_begin(0); }
+                            ok
+                        }) {
                             Status::Ok
                         } else { Status::Unsupported })
                     })?;
@@ -60,7 +65,14 @@ impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::Pro
                 if status == Status::Ok && owner.writer.cancellation().step(|| newt_core::zip_window::source::validate(owner.source, reader.source_bytes) == Status::Ok) {
                     owner.with_unbuffered(|_, mut a| {
                         a.writer.cache.set_total_chars(chars);
-                        Ok(if pages == 0 || crate::producer_store::with_source_store(a.store, a.source, reader.source_bytes, true, a.guard_attempted.as_deref_mut(), |store| a.writer.cache.finish(store, &a.state.name[..69], &memory)) {
+                        Ok(if pages == 0 || crate::producer_store::with_source_store(a.store, a.source, reader.source_bytes, true, a.guard_attempted.as_deref_mut(), |store| {
+                            #[cfg(feature = "page-turn-trace")]
+                            store.trace_segment_layout_done();
+                            let ok = a.writer.cache.finish(store, &a.state.name[..69], &memory);
+                            #[cfg(feature = "page-turn-trace")]
+                            if ok { store.trace_segment_end(a.writer.cache.page_count()); }
+                            ok
+                        }) {
                             Status::Ok
                         } else { Status::IoError })
                     })

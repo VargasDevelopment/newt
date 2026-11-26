@@ -38,6 +38,10 @@ pub enum WorkKind {
     IndexResult,
     IndexCounts,
     IndexIo,
+    #[cfg(feature = "page-turn-trace")]
+    LayoutBegin,
+    #[cfg(feature = "page-turn-trace")]
+    LayoutEnd,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WorkEvent {
@@ -70,7 +74,7 @@ pub type Yield<'a> = Option<&'a dyn WorkYield>;
 #[path = "admission_work.rs"]
 mod work;
 pub use work::{ScopedWork, WorkYield};
-pub use work::{ActionScope, action_boundary, open_route, cache_miss};
+pub use work::{ActionScope, action_boundary, open_route, cache_miss, layout_begin, layout_end};
 /// Read-only phase observation. Callers must not nest scopes or reenter parsing.
 pub struct WorkScope<'a> {
     observer: Observer,

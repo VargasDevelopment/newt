@@ -43,5 +43,7 @@ rust-app = ["newt-c3-board/rust-app"]
 # The first bench image is reading-only by owner decision.
 wifi-update = []
 dev-usb = ["newt-device-ui/dev-usb", "newt-core/dev-usb", "newt-native-storage/dev-usb", "newt-phased-reader/dev-usb"]
+# Opt-in page-turn diagnostic trace; never enabled in shipping images.
+page-turn-trace = ["dev-usb", "newt-core/page-turn-trace", "newt-native-storage/page-turn-trace", "newt-phased-reader/page-turn-trace", "newt-c3-board/page-turn-trace"]
 # Owner-excluded from the bench image; proof follows its first image check.
 embedded-sample = ["newt-c3-board/embedded-sample", "newt-reader-ui/embedded-sample"]

@@ -148,6 +148,8 @@ impl ReaderWorkProfile {
         match event.kind {
             WorkKind::IndexStage | WorkKind::IndexResult | WorkKind::IndexIo | WorkKind::IndexCounts => {},
             WorkKind::ActionBoundary | WorkKind::OpenRoute | WorkKind::CacheMiss => {},
+            #[cfg(feature = "page-turn-trace")]
+            WorkKind::LayoutBegin | WorkKind::LayoutEnd => {},
             WorkKind::Phase => self.phase(event.phase, ms),
             WorkKind::InspectBegin => self.begin_stage(0, Operation::Inspect, us),
             WorkKind::InspectEnd => self.end_stage(0, Operation::Inspect, us),

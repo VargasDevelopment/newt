@@ -69,7 +69,12 @@ impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::Pro
                         { return Status::IoError; }
                         if !crate::producer_store::with_source_store(write.store, write.source,
                             reader.source_bytes, false, write.guard_attempted.as_deref_mut(),
-                            |store| write.writer.cache.begin(store, &write.state.name[..69], write.state.generation, &write.memory))
+                            |store| {
+                                let ok = write.writer.cache.begin(store, &write.state.name[..69], write.state.generation, &write.memory);
+                                #[cfg(feature = "page-turn-trace")]
+                                if ok { store.trace_segment_begin(0); }
+                                ok
+                            })
                         { return Status::OutOfMemory; }
                         write.finish_current(reader, phase, backend, breaker, route)
                     })

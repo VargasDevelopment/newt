@@ -448,15 +448,50 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
         for block in 0..count {
             let take = BLOCK_BYTES.min(payload - at);
             let data = &mut scratch.as_mut()[..take as usize];
-            if !self.file.read(at, data) || !self.file.allowed() {
+            #[cfg(feature = "page-turn-trace")]
+            let read_started = self.file.trace_micros();
+            let read_ok = self.file.read(at, data);
+            #[cfg(feature = "page-turn-trace")]
+            {
+                self.state.trace.seal.read_us = self
+                    .state
+                    .trace
+                    .seal
+                    .read_us
+                    .wrapping_add(self.file.trace_micros().wrapping_sub(read_started));
+            }
+            if !read_ok || !self.file.allowed() {
                 return false;
             }
+            #[cfg(feature = "page-turn-trace")]
+            let crc_started = self.file.trace_micros();
             let Some(checked) = self.readback_crc(&route, block, data, &mut whole, None) else {
                 return false;
             };
             let entry = checked.to_le_bytes();
             directory = envelope::crc(directory, &entry);
-            if !self.file.write(payload + 4 * block, &entry, self.file.bytes() == payload + 4 * block) {
+            #[cfg(feature = "page-turn-trace")]
+            {
+                self.state.trace.seal.crc_us = self
+                    .state
+                    .trace
+                    .seal
+                    .crc_us
+                    .wrapping_add(self.file.trace_micros().wrapping_sub(crc_started));
+            }
+            #[cfg(feature = "page-turn-trace")]
+            let dir_started = self.file.trace_micros();
+            let dir_ok = self.file.write(payload + 4 * block, &entry, self.file.bytes() == payload + 4 * block);
+            #[cfg(feature = "page-turn-trace")]
+            {
+                self.state.trace.seal.dir_us = self
+                    .state
+                    .trace
+                    .seal
+                    .dir_us
+                    .wrapping_add(self.file.trace_micros().wrapping_sub(dir_started));
+            }
+            if !dir_ok {
                 return false;
             }
             at += take;
@@ -472,10 +507,38 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
             directory ^ u32::MAX,
             whole ^ u32::MAX,
         );
-        if !self.file.write(payload + 4 * count, &manifest, self.file.bytes() == payload + 4 * count) || !self.file.sync() {
+        #[cfg(feature = "page-turn-trace")]
+        let manifest_started = self.file.trace_micros();
+        let manifest_ok = self.file.write(payload + 4 * count, &manifest, self.file.bytes() == payload + 4 * count);
+        #[cfg(feature = "page-turn-trace")]
+        {
+            self.state.trace.seal.dir_us = self
+                .state
+                .trace
+                .seal
+                .dir_us
+                .wrapping_add(self.file.trace_micros().wrapping_sub(manifest_started));
+        }
+        if !manifest_ok {
             return false;
         }
+        #[cfg(feature = "page-turn-trace")]
+        let sync_started = self.file.trace_micros();
+        let synced = self.file.sync();
+        #[cfg(feature = "page-turn-trace")]
+        {
+            self.state.trace.seal.sync_us = self.file.trace_micros().wrapping_sub(sync_started);
+        }
+        if !synced {
+            return false;
+        }
+        #[cfg(feature = "page-turn-trace")]
+        let verify_started = self.file.trace_micros();
         let verified = self.verify_page_payload(&route, payload, scratch.as_mut(), None);
+        #[cfg(feature = "page-turn-trace")]
+        {
+            self.state.trace.seal.verify_us = self.file.trace_micros().wrapping_sub(verify_started);
+        }
         self.file.settle(verified)
     }
     fn begin_cache_write(&mut self, name: &[u8], extent: u32) -> bool {
@@ -503,6 +566,13 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
             return false;
         }
         self.state.crc = u32::MAX;
+        #[cfg(feature = "page-turn-trace")]
+        {
+            self.state.trace = state::SegmentTraceState {
+                started_us: self.file.trace_micros(),
+                ..state::SegmentTraceState::default()
+            };
+        }
         true
     }
     /// Reserve payload and envelope together; physical size stays fixed while
@@ -776,6 +846,8 @@ impl<S: Native> CacheStorage for ChapterCacheAccess<'_, '_, S> {
         {
             return self.file.poison();
         }
+        #[cfg(feature = "page-turn-trace")]
+        let started = self.file.trace_micros();
         if !self.file.write(payload, bytes, self.file.bytes() == payload) {
             return false;
         }
@@ -792,6 +864,15 @@ impl<S: Native> CacheStorage for ChapterCacheAccess<'_, '_, S> {
             }
         } else {
             self.state.crc = envelope::crc(self.state.crc, bytes);
+        }
+        #[cfg(feature = "page-turn-trace")]
+        {
+            self.state.trace.seal.write_us = self
+                .state
+                .trace
+                .seal
+                .write_us
+                .wrapping_add(self.file.trace_micros().wrapping_sub(started));
         }
         self.state.payload += bytes.len() as u32;
         true
@@ -818,7 +899,27 @@ impl<S: Native> CacheStorage for ChapterCacheAccess<'_, '_, S> {
         }
         let lease = self.file.generation();
         let committed = if self.envelope_name().is_some() {
-            self.finalize_page() && self.file.commit(MAX_EXTENT, false)
+            #[cfg(feature = "page-turn-trace")]
+            let fin_started = self.file.trace_micros();
+            let finalized = self.finalize_page();
+            #[cfg(feature = "page-turn-trace")]
+            {
+                self.state.trace.seal.finalize_us =
+                    self.file.trace_micros().wrapping_sub(fin_started);
+            }
+            if finalized {
+                #[cfg(feature = "page-turn-trace")]
+                let commit_started = self.file.trace_micros();
+                let committed = self.file.commit(MAX_EXTENT, false);
+                #[cfg(feature = "page-turn-trace")]
+                {
+                    self.state.trace.seal.commit_us =
+                        self.file.trace_micros().wrapping_sub(commit_started);
+                }
+                committed
+            } else {
+                false
+            }
         } else {
             let mut footer = [0; FOOTER_BYTES as usize];
             footer[..4].copy_from_slice(&(self.state.crc ^ u32::MAX).to_le_bytes());
@@ -842,6 +943,41 @@ impl<S: Native> CacheStorage for ChapterCacheAccess<'_, '_, S> {
         }
         self.state.read_active = false;
         true
+    }
+    #[cfg(feature = "page-turn-trace")]
+    fn trace_micros(&self) -> u32 {
+        self.file.trace_micros()
+    }
+    #[cfg(feature = "page-turn-trace")]
+    fn trace_segment_begin(&mut self, idx: u32) {
+        self.state.trace.idx = idx;
+        self.state.trace.active = true;
+    }
+    #[cfg(feature = "page-turn-trace")]
+    fn trace_add_tee_us(&mut self, us: u32) {
+        self.state.trace.tee_us = self.state.trace.tee_us.wrapping_add(us);
+    }
+    #[cfg(feature = "page-turn-trace")]
+    fn trace_segment_layout_done(&mut self) {
+        let wall = self
+            .file
+            .trace_micros()
+            .wrapping_sub(self.state.trace.started_us);
+        self.state.trace.layout_us = wall.saturating_sub(self.state.trace.tee_us);
+    }
+    #[cfg(feature = "page-turn-trace")]
+    fn trace_segment_end(&mut self, pages: u32) {
+        if self.state.trace.active {
+            self.state.trace.active = false;
+            self.file.emit_segment(newt_core::page_turn_trace::SegmentTrace {
+                idx: self.state.trace.idx,
+                pages,
+                bytes: self.state.payload,
+                layout_us: self.state.trace.layout_us,
+                tee_us: self.state.trace.tee_us,
+                seal: self.state.trace.seal,
+            });
+        }
     }
 }
 

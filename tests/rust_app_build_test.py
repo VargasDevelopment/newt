@@ -301,6 +301,34 @@ class PinnedHarness(unittest.TestCase):
         # Control: the same query does see it where a harness turns it on.
         self.assertIn('pinned-harness', self.resolved_core_features('newt-parity', 'xml-native'))
 
+    def test_page_turn_trace_is_opt_in_and_excluded_from_shipping_image(self):
+        daily = self.resolved_core_features('newt-app-image', ','.join(daily_firmware.FEATURES))
+        self.assertNotIn('page-turn-trace', daily)
+        diagnostic = self.resolved_core_features(
+            'newt-app-image', ','.join(daily_firmware.FEATURES + ('page-turn-trace',)))
+        self.assertIn('page-turn-trace', diagnostic)
+        with self.assertRaises(ValueError):
+            daily_firmware.require_daily_image({
+                'image': daily_firmware.IMAGE,
+                'features': list(daily_firmware.FEATURES) + ['page-turn-trace'],
+            })
+        spec = importlib.util.spec_from_file_location('firmware_build', ROOT / 'tools/firmware-build.py')
+        fb = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fb)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            receipt = root / 'artifacts/code-health-regional-dev-usb.json'
+            receipt.parent.mkdir(parents=True)
+            with patch.object(fb, 'ROOT', root), \
+                    patch('code_health_resources.check_resources', return_value=['flash grew']) as check:
+                with self.assertRaisesRegex(RuntimeError, 'Resource ratchet failed'):
+                    fb.write_resource_report(receipt, {'ok': True}, {}, 'regional-dev-usb', diagnostic=False)
+                check.assert_called_once()
+                check.reset_mock()
+                fb.write_resource_report(receipt, {'ok': True}, {}, 'regional-dev-usb', diagnostic=True)
+                check.assert_not_called()
+                self.assertTrue(receipt.is_file())
+
     def test_firmware_targets_refuse_it_at_compile_time(self):
         source = (ROOT / 'rust/core/src/member_check.rs').read_text()
         guard = '#[cfg(all(feature = "pinned-harness", target_arch = "riscv32"))]\ncompile_error!('

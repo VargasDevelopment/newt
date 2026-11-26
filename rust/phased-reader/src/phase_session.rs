@@ -158,6 +158,7 @@ impl<C: ReadScope + CachePresence> PhasedChapterCache<'_, C> {
         request: CacheRequest,
         r: &mut OperationPhased<'_, 'trace, '_, '_, B, L>,
     ) -> CapturedPage<'trace> {
+        r.reader.reset_last_layout_pages();
         if r.reader.pending.is_some() {
             return CapturedPage::failed(Status::Unsupported);
         }

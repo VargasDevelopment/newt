@@ -84,6 +84,24 @@ impl Poll<'_, '_> {
             ProducerEvent::Finish { status, interrupted } => {
                 row(self.console, 96, format_args!("PC finish: at={} status={} interrupted={}\n", at, status as u8, u8::from(interrupted)));
             }
+            #[cfg(feature = "page-turn-trace")]
+            ProducerEvent::Grant { warm, census_us, files, outcome, units, entries } => {
+                row(self.console, 159, format_args!(
+                    "PC grant: warm={} census_us={} files={} outcome={} units={} entries={}\n",
+                    u8::from(warm), census_us, files, outcome as u8, units, entries));
+            }
+            #[cfg(feature = "page-turn-trace")]
+            ProducerEvent::Segment(seg) => {
+                row(self.console, 159, format_args!(
+                    "PC seg: idx={} pages={} bytes={} layout_us={} tee_us={} write_us={} fin_us={} commit_us={}\n",
+                    seg.idx, seg.pages, seg.bytes, seg.layout_us, seg.tee_us,
+                    seg.seal.write_us, seg.seal.finalize_us, seg.seal.commit_us));
+                let (heap, largest, stack) = newt_c3_board::hardware::sample_memory_lows();
+                row(self.console, 159, format_args!(
+                    "PC seal: idx={} read={} crc={} dir={} sync={} verify={} heap={} largest={} stack={}\n",
+                    seg.idx, seg.seal.read_us, seg.seal.crc_us, seg.seal.dir_us,
+                    seg.seal.sync_us, seg.seal.verify_us, heap, largest, stack));
+            }
         }
     }
     pub(super) fn after_duty(&self, deferred: bool, failed: bool) -> Stop {

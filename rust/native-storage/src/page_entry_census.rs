@@ -55,7 +55,13 @@ pub struct Request<'a> {
     pub need: Option<&'a PageCacheNeed>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Grant { pub units: u8, pub entries: u8, pub outcome: MissingProbe }
+pub struct Grant {
+    pub units: u8,
+    pub entries: u8,
+    pub outcome: MissingProbe,
+    #[cfg(feature = "page-turn-trace")]
+    pub files: u32,
+}
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 /// `Page` is a canonical file of the policy's own kind (a page or an index).
@@ -253,5 +259,11 @@ pub fn entry_census<N: PageEntries>(native:&mut N,request:Request<'_>)->Grant {
     let units=census.grant(native);
     let outcome=if units>=census.request.policy.required_units { MissingProbe::Ready }
         else if census.outcome==MissingProbe::Stopped { MissingProbe::Stopped } else { MissingProbe::Denied };
-    Grant{units,entries:if units!=0 { census.entries } else {0},outcome}
+    Grant {
+        units,
+        entries: if units != 0 { census.entries } else { 0 },
+        outcome,
+        #[cfg(feature = "page-turn-trace")]
+        files: census.count,
+    }
 }
