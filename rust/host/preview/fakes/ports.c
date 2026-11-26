@@ -524,12 +524,15 @@ static void edit_file(const char *path) {
  * FAT refuses a fourth open; the preview card refuses it too (#182). */
 enum { CARD_FILES = 3 };
 static int card_files;
+/* Only a close of a counted descriptor frees a slot, so a double close or a
+ * close of -1 cannot let a fourth file in. */
+static unsigned char card_counted[256];
 int preview_io_admit(void) { return card_files < CARD_FILES; }
 void preview_io_open(int32_t fd, const char *path) {
     const char *drop = preview_conf("cover.heap.drop.on");
     if (fd >= 0 && drop && *drop && strstr(path, drop)) cover_heap_dropped = 1;
     cover_usb_work = 1;
-    if (fd >= 0) ++card_files;
+    if (fd >= 0 && fd < 256) { card_counted[fd] = 1; ++card_files; }
     if (fd >= 0 && fd < 256) snprintf(descriptors[fd], sizeof descriptors[fd], "%s", path);
     trace_card("open", path);
     change_file(path);
@@ -592,10 +595,10 @@ int preview_io_fault(const char *operation, int32_t fd) {
     snprintf(what, sizeof what, "%s:%s", operation, fd >= 0 && fd < 256 ? descriptors[fd] : "");
     return preview_store_fault_at(what, script_next);
 }
-/* Every close frees its slot; "card-close:PATH" in store.refuse then reports
- * the close failed, as a FAT close whose flush fails does. */
+/* A close frees its counted slot even when it fails; "card-close:PATH" in
+ * store.refuse then reports the close failed, as a FAT close whose flush fails does. */
 int preview_io_close(int32_t fd) {
-    if (card_files > 0) --card_files;
+    if (fd >= 0 && fd < 256 && card_counted[fd]) { card_counted[fd] = 0; --card_files; }
     char what[4200];
     snprintf(what, sizeof what, "card-close:%s", fd >= 0 && fd < 256 ? descriptors[fd] : "");
     const int refused = preview_store_fault_at(what, script_next) == 1;
