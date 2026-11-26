@@ -279,6 +279,19 @@ def diagnostic_validation():
         assert sum(b' DIAG' in data for data in peer.writes) == 1
 
 
+def session_refresh_validation():
+    # The device ends a session after 60 s without a request (#170): a request
+    # 55 s after the last send says HELLO again first; one sent sooner does not.
+    for idle, refreshed in ((module.SESSION_REFRESH_SECONDS - 1, False), (module.SESSION_REFRESH_SECONDS, True)):
+        peer = DiagnosticPeer(None)
+        peer.hello('diagnostic-fixture')
+        peer.last_sent -= idle
+        peer.request('STATUS')
+        commands = [data.decode().split()[-1] for data in peer.writes]
+        assert commands == ['HELLO', 'HELLO', 'STATUS'] + ['HELLO', 'HELLO', 'STATUS'] * refreshed + ['STATUS'], commands
+        assert peer.session == (4 if refreshed else 2) and peer.expected_build == 'diagnostic-fixture'
+
+
 def diagnostic_v2_validation():
     def framed(boot, session, identifier, body):
         payload = f'!N1 {boot} {session} {identifier} {body}'.encode()
@@ -483,6 +496,7 @@ def main():
     firmware_row_validation()
     diagnostic_validation()
     diagnostic_v2_validation()
+    session_refresh_validation()
     command_bound_validation()
     freshness_validation()
     dirty_session_recovery()
@@ -508,7 +522,7 @@ def main():
                  ['live', '--port', '/dev/mock-only', '--expect-build', 'x', '--press', 'sleep', '--listen', '1']):
         result = subprocess.run([sys.executable, str(script), *args], capture_output=True)
         assert result.returncode == 2 and not result.stdout
-    print('PASS: fake serial protocol: Linux open without a reset (old-sequence control fails), double HELLO/random-ID freshness, bounded commands, strict diagnostics and CLI refusals; no device access')
+    print('PASS: fake serial protocol: Linux open without a reset (old-sequence control fails), double HELLO/random-ID freshness, HELLO again after 55 s idle, bounded commands, strict diagnostics and CLI refusals; no device access')
 
 
 if __name__ == '__main__':

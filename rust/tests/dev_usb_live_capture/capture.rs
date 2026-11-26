@@ -208,6 +208,11 @@ pub extern "C" fn nsc_connected() -> u8 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn nsc_link_present() -> u8 {
+    with_model(|m| u8::from(m.connected))
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn nsc_available() -> i32 {
     with_model(|m| m.rx_queue.len() as i32)
 }

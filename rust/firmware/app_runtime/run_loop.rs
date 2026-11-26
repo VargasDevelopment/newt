@@ -148,7 +148,7 @@ pub fn loop_body<'sdk>(home: &mut Home<'sdk>, ui: &mut Application<'sdk>, reader
                     #[cfg(feature = "dev-usb")]
                     {
                         let clock = home.bus.board.monotonic_clock();
-                        let connected = home.bus.log.dev_channel(clock).connected();
+                        let connected = home.bus.log.dev_channel(clock, &mut ui.usb_link.watch).connected();
                         let now = clock.millis();
                         let accepted = events.task.gate().with_pending(|pending| {
                             ui.bridge.consume_pending(pending, ticket, connected, now)
@@ -223,6 +223,7 @@ pub fn loop_body<'sdk>(home: &mut Home<'sdk>, ui: &mut Application<'sdk>, reader
         #[cfg(feature = "dev-usb")]
         {
             if ui.runtime_lows.publish(&ui.bridge, &mut home.bus.log, &mut ui.hardware) { wifi_report.arm(); }
+            ui.usb_link.publish(ui.bridge, &mut home.bus.log);
             wifi_report.publish(&mut home.bus.log, &ui.bridge);
         }
         events.action.complete(&mut home.bus.log, || {
@@ -323,7 +324,7 @@ pub fn poll(home: &mut Home<'_>, ui: &mut Application<'_>, reader: &impl Reader,
 ) -> Result<(), ImageError> {
     let facts = super::publication::Facts::current(ui);
     super::publication::Published { facts, displayed: &ui.displayed, hardware: &mut ui.hardware,
-        bridge: &mut ui.bridge, panels: &ui.panels, writes: true }.poll(home, reader, logical, events).map_err(ImageError::from)
+        bridge: &mut ui.bridge, link: &mut ui.usb_link.watch, panels: &ui.panels, writes: true }.poll(home, reader, logical, events).map_err(ImageError::from)
 }
 
 #[cfg(feature = "dev-usb")]

@@ -54,7 +54,14 @@ pub struct Bridge {
     refreshed: bool,
     capture_expired: bool,
     tx_flush_pending: bool,
+    /// One bit per `Ended` reason since the `USB link` row last took them
+    /// (#170). A byte fits the tail padding, so the Bridge stays 664 B.
+    ended: u8,
 }
+
+/// Why a live session ended, other than a new HELLO or a physical press.
+#[derive(Clone, Copy)]
+enum Ended { Link, Idle, Transmit, Tail }
 
 impl Bridge {
     pub const fn new(boot: u32) -> Self {
@@ -67,8 +74,20 @@ impl Bridge {
             rx_size: 0, tx_size: 0, tx_offset: 0, notification: 0,
             overflow: false, consumed: false, rendered: false, capture: false,
             refreshed: false, capture_expired: false, tx_flush_pending: false,
+            ended: 0,
         }
     }
+
+    /// Ends the session, noting why if one was live.
+    fn end(&mut self, why: Ended) {
+        if self.session != 0 { self.ended |= 1 << why as u8; }
+        self.cancel();
+    }
+    /// Takes the reasons noted since the last take: bit 0 link down, 1 idle
+    /// 60 s, 2 transmit stall, 3 tail flush. The row takes them every pass,
+    /// and a second live session needs a HELLO round trip, so a bit stands
+    /// for one end.
+    pub fn take_ended(&mut self) -> u8 { core::mem::take(&mut self.ended) }
 
     #[inline(never)]
     fn cancel(&mut self) {
@@ -92,7 +111,7 @@ impl Bridge {
         out.bytes(body);
         let length = out.required();
         if length.saturating_add(12) >= self.tx.len() {
-            self.cancel();
+            self.end(Ended::Transmit);
             return;
         }
         let checksum = crc32(&self.tx[..length]);
@@ -105,7 +124,7 @@ impl Bridge {
 
     pub fn consume(&mut self, ticket: u32, connected: bool, now: u32) -> bool {
         if !connected || self.session == 0 || now.wrapping_sub(self.session_activity) >= 60_000 {
-            self.cancel();
+            self.end(if connected { Ended::Idle } else { Ended::Link });
             if !connected { self.tx_flush_pending = false; }
             return false;
         }
@@ -159,7 +178,7 @@ impl Bridge {
         if channel.flush_tx_tail() {
             self.tx_flush_pending = false;
         } else if now.wrapping_sub(self.tx_progress) >= 1_000 {
-            self.cancel();
+            self.end(Ended::Tail);
             self.tx_flush_pending = false;
         }
     }
@@ -187,12 +206,12 @@ impl Bridge {
     pub fn poll(&mut self, channel: &mut dyn Channel, device: &mut dyn Device, build: &str, answer: bool) {
         let now = channel.now();
         if !channel.connected() {
-            self.cancel();
+            self.end(Ended::Link);
             self.tx_flush_pending = false;
             return;
         }
         if self.session != 0 && now.wrapping_sub(self.session_activity) >= 60_000 {
-            self.cancel();
+            self.end(Ended::Idle);
             return;
         }
         if self.capture && (now.wrapping_sub(self.lease_start) >= 15_000
@@ -208,7 +227,7 @@ impl Bridge {
             let remaining = usize::from(self.tx_size - self.tx_offset);
             let sent = channel.write(&self.tx[usize::from(self.tx_offset)..usize::from(self.tx_size)]);
             if sent > remaining {
-                self.cancel();
+                self.end(Ended::Transmit);
                 self.tx_flush_pending = false;
                 return;
             }
@@ -221,7 +240,7 @@ impl Bridge {
                 self.tx_offset = 0;
                 self.tx_flush_pending = true;
             } else if now.wrapping_sub(self.tx_progress) >= 1_000 {
-                self.cancel();
+                self.end(Ended::Transmit);
                 self.tx_flush_pending = false;
             }
             return;

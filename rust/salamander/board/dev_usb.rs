@@ -11,6 +11,8 @@ unsafe extern "C" {
     fn nsc_put_rx_end(previous: u32);
     fn nsc_put_rx_read(out: *mut u8, max_len: usize, queue_empty: *mut u8) -> usize;
     fn nsc_connected() -> u8;
+    fn nsc_link_present() -> u8;
+    fn nb_micros() -> u32;
     fn nsc_available() -> i32;
     fn nsc_read_byte() -> i32;
     fn nsc_available_for_write() -> i32;
@@ -25,9 +27,17 @@ fn wake_transmitter() -> bool {
     unsafe { nsc_wake_transmitter() != 0 }
 }
 
+/// HWCDC's latched flag: false after unplug, but also after one slow write
+/// while still plugged in. Writes use it; ending a session must not (#170).
 pub fn connected() -> bool {
     // SAFETY: scalar SDK observation; false for the disconnected/unbegun port.
     unsafe { nsc_connected() != 0 }
+}
+
+/// The raw SOF monitor behind HWCDC's plug check, with no latch.
+pub fn link_present() -> bool {
+    // SAFETY: scalar SDK observation of the tick-hook monitor; no side effect.
+    unsafe { nsc_link_present() != 0 }
 }
 
 pub fn available() -> i32 {
@@ -78,6 +88,23 @@ pub fn available_for_write() -> i32 {
     // SAFETY: scalar SDK observation, retaining no object or buffer.
     unsafe { nsc_available_for_write() }
 }
+
+/// Waits until HWCDC's transmit ring has room for `bytes`, for at most
+/// `budget_us`. Returns whether room came. Never writes, so HWCDC never
+/// waits on its own and latches `connected` false (#170).
+pub fn wait_for_room(bytes: usize, budget_us: u32) -> bool {
+    let need = i32::try_from(bytes).unwrap_or(i32::MAX);
+    // SAFETY: the SDK timer the board clock reads; startup began it before setup.
+    let start = unsafe { nb_micros() };
+    while available_for_write() < need {
+        // SAFETY: as above.
+        if unsafe { nb_micros() }.wrapping_sub(start) >= budget_us { return false; }
+    }
+    true
+}
+
+/// HWCDC's transmit ring size, the most one wait can make room for.
+pub const TX_RING_BYTES: usize = HWCDC_TX_RING_BYTES as usize;
 
 /// The sole begun Serial's receive authority. No memory or hardware state is
 /// held; borrowing it prevents concurrent or nested receive loans.

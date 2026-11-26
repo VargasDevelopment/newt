@@ -31,6 +31,7 @@ uint32_t nsc_put_rx_begin(void);
 void nsc_put_rx_end(uint32_t previous);
 size_t nsc_put_rx_read(uint8_t *out, size_t max_len, uint8_t *queue_empty);
 uint8_t nsc_connected(void);
+uint8_t nsc_link_present(void);
 int nsc_available(void);
 int nsc_read_byte(void);
 int nsc_available_for_write(void);

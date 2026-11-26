@@ -19,6 +19,7 @@ struct HWCDC {
     void setTxTimeoutMs(uint32_t) {}
     size_t write(const uint8_t*, size_t n) { return n; }
     explicit operator bool() const { return true; }
+    static bool isPlugged() { return true; }
     int available() { ++available_calls; return static_cast<int>(queued.size()); }
     int read() {
         if (queued.empty()) return -1;

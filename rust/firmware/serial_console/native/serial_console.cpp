@@ -73,6 +73,8 @@ size_t nsc_put_rx_read(uint8_t *out, size_t max_len, uint8_t *queue_empty) {
     return got;
 }
 uint8_t nsc_connected(void) { return nsc_port_connected(Serial); }
+// The raw SOF monitor HWCDC::isPlugged reads, without HWCDC's latched flag.
+uint8_t nsc_link_present(void) { return HWCDC::isPlugged() ? 1 : 0; }
 int nsc_available(void) { return nsc_port_available(Serial); }
 int nsc_read_byte(void) { return nsc_port_read_byte(Serial); }
 int nsc_available_for_write(void) { return nsc_port_available_for_write(Serial); }

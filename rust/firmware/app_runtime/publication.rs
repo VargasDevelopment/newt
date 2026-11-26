@@ -29,6 +29,7 @@ pub struct Published<'a, 'sdk> {
     pub displayed: &'a DisplayReceipt,
     pub hardware: &'a mut HardwareReader<'sdk>,
     pub bridge: &'a mut Bridge,
+    pub link: &'a mut newt_core::dev_link::LinkWatch,
     pub panels: &'a PanelRing,
     /// False while draining for a restart, when no card write may begin.
     pub writes: bool,
@@ -66,13 +67,13 @@ impl Published<'_, '_> {
         let put = if self.writes { Put::Admits(newt_core::dev_put::Facts { home: self.facts.screen == Screen::Home,
             reader_open: facts.opened, opening: diagnostics.opening || facts.reopen_owed }) } else { Put::Unavailable };
         let clock = home.bus.board.monotonic_clock();
-        let mut channel = home.bus.log.dev_channel(clock);
+        let mut channel = home.bus.log.dev_channel(clock, self.link);
         let mut publication = crate::app_dev::Publication { status, frame: facts.frame(self.facts.screen, logical), queue: events.queue,
             panels: self.panels, diagnostics, put };
         crate::app_dev::poll(self.bridge, &mut channel, &mut publication, crate::app_dev::BUILD_ID,
             update_confirm::image_confirmed(self.facts.first_screen));
         if let Put::Granted(session) = publication.put {
-            super::card_write::lease(self.bridge, home, events, session);
+            super::card_write::lease(self.bridge, self.link, home, events, session);
         }
         Ok(())
     }
