@@ -28,7 +28,9 @@ env.Append(LIBS=[env.File('$PROJECT_DIR/.build/rust-app/target/riscv32imc-unknow
 # firmware.relocs.elf with its own map, so firmware.elf, firmware.map and
 # firmware.bin stay exactly as they are. The verifier stops unless both
 # ELFs load the same bytes. It is its own target in the default build, so
-# SCons relinks it whenever it is missing or out of date.
-side = env.Clone(PROGNAME='firmware.relocs')
-side.Append(LINKFLAGS=['-Wl,--emit-relocs'])
-env.Alias('buildprog', side.Program(side.subst('$PROGPATH'), env['PIOBUILDFILES']))
+# SCons relinks it whenever it is missing or out of date. `-t nobuild` makes
+# no program to link, so there is no side link either.
+if env.get('PIOMAINPROG'):
+    side = env.Clone(PROGNAME='firmware.relocs')
+    side.Append(LINKFLAGS=['-Wl,--emit-relocs'])
+    env.Alias('buildprog', side.Program(side.subst('$PROGPATH'), env['PIOBUILDFILES']))
