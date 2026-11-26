@@ -46,6 +46,20 @@ def decode_record(line):
     return numbers + (match[4].decode('ascii'),)
 
 
+def glued_record(line):
+    """A console row cut short by a skipped write (#170) has no newline, so the
+    next reply follows it on one line. Return that reply only when it is a whole
+    checksummed record; the cut prefix is dropped, never kept as a row."""
+    start = line.find(b'!N1 ', 1)
+    if start < 0 or line.startswith(b'!N1 '):
+        return None
+    tail = line[start:]
+    match = RECORD.fullmatch(tail)
+    if not match or zlib.crc32(tail[:tail.rfind(b' *')]) != int(match[5], 16):
+        return None
+    return tail
+
+
 def decode_fields(body, required):
     fields = {}
     for token in body.split()[1:]:
@@ -163,7 +177,8 @@ class ProtocolClient:
                 self.buffer = bytearray(rest)
                 preexisting = self.pre_press_buffer > 0
                 self.pre_press_buffer = max(0, self.pre_press_buffer - len(line) - 1)
-                record = decode_record(bytes(line) + b'\n')
+                glued = glued_record(bytes(line) + b'\n')
+                record = decode_record(glued or bytes(line) + b'\n')
                 if record is not None:
                     if not record[3].startswith(self.untraced):
                         self.trace('response', *record[:3], record[3].partition(' ')[0], record[3])

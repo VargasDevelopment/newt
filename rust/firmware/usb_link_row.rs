@@ -29,7 +29,8 @@ impl UsbLinkRow {
         let link = self.watch.counts();
         let skipped = log.skipped();
         let [end_link, end_idle, end_tx, end_tail] = self.ended;
-        // Every total only grows, so their sum changes whenever one does.
+        // Every total only grows, so their wrapping sum changes whenever one
+        // does, unless exactly 65,536 increments pass between two rows.
         let sum = [link.blips, link.lost, link.latched, skipped, end_link, end_idle, end_tx, end_tail]
             .into_iter().fold(0u16, u16::wrapping_add);
         if sum == self.shown || bridge.output_pending() || bridge.request_pending() { return false; }

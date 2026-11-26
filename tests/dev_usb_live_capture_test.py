@@ -26,7 +26,7 @@ sys.path.insert(0, str(ROOT / 'tools'))
 from gate_tier import negative_controls
 
 BINARY = 'dev_usb_live_capture'
-TESTS = 5
+TESTS = 6
 # (what breaks, path under rust/, good text, broken text, test that must fail)
 CONTROLS = (
     ('Bridge skips flush_tx_tail on Apps live capture (reproduces Apps stall)',
@@ -51,13 +51,18 @@ CONTROLS = (
      'flush_tx_tail_waits_for_ring_drain_and_hw_fifo_before_sending_zlp'),
     ('put_ended(End::Cancelled) drops pending tail flush after a cancelled PUT reply',
      'firmware/dev_usb/commands.rs',
-     '            newt_core::dev_put::End::Cancelled => {\n'
-     '                self.cancel();\n'
+     '                    _ => self.cancel(),\n'
+     '                }\n'
      '                self.tx_progress = now;\n'
-     '                self.tx_flush_pending = true;\n'
-     '            }\n',
-     '            newt_core::dev_put::End::Cancelled => self.cancel(),\n',
+     '                self.tx_flush_pending = true;\n',
+     '                    _ => self.cancel(),\n'
+     '                }\n',
      'cancelled_put_reply_flushes_64_byte_tail'),
+    ('put_ended drops the session-end reason of a PUT lost to the link (#170)',
+     'firmware/dev_usb/commands.rs',
+     '                    Some(ExitReason::Disconnected) => self.end(Ended::Link),\n',
+     '                    Some(ExitReason::Disconnected) => self.cancel(),\n',
+     'a_put_lost_to_the_link_or_a_stall_counts_its_session_end'),
     ('Bridge::cancel clears pending transport tail flush during session cancellation',
      'firmware/dev_usb.rs',
      '        self.capture = false;\n        self.capture_expired = false;\n    }\n',

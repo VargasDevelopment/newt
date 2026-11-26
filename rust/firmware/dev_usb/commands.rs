@@ -112,8 +112,11 @@ impl Bridge {
     }
 
     /// A granted PUT's lease has ended: the session continues after its last
-    /// ID, needs a fresh HELLO, or is answered as one.
-    pub fn put_ended(&mut self, end: newt_core::dev_put::End, build: &str, now: u32) {
+    /// ID, needs a fresh HELLO, or is answered as one. `exit` is the lease's
+    /// observed reason, so a PUT lost to the link or a stall counts its end.
+    pub fn put_ended(&mut self, end: newt_core::dev_put::End, exit: Option<newt_core::dev_put::ExitReason>,
+        build: &str, now: u32) {
+        use newt_core::dev_put::ExitReason;
         match end {
             newt_core::dev_put::End::Kept { last_id } => {
                 self.last_id = last_id;
@@ -122,7 +125,11 @@ impl Bridge {
                 self.tx_flush_pending = true;
             }
             newt_core::dev_put::End::Cancelled => {
-                self.cancel();
+                match exit {
+                    Some(ExitReason::Disconnected) => self.end(Ended::Link),
+                    Some(ExitReason::TxStall) => self.end(Ended::Transmit),
+                    _ => self.cancel(),
+                }
                 self.tx_progress = now;
                 self.tx_flush_pending = true;
             }

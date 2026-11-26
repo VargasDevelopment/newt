@@ -117,7 +117,8 @@ def firmware_row_validation():
                 payload = f'!N1 12345 2 {identifier} {body}'.encode()
                 return payload + f' *{zlib.crc32(payload):08x}\n'.encode()
             self.pending += (b'PC target: from=8 next=1\n' + frame('ACCEPTED') + frame('CONSUMED') +
-                             b'PC admission: r=1 s=3 u=0\n' + frame('RENDER_RETURN gen=2'))
+                             # A skipped row suffix leaves its prefix glued to the next reply (#170).
+                             b'PC admission: r=1 s=3 u=0\nPC target: from=8 ne' + frame('RENDER_RETURN gen=2'))
         def read_data(self, remaining):
             data, self.pending = self.pending[:13], self.pending[13:]
             if not data:
@@ -150,6 +151,7 @@ def firmware_row_validation():
                  b'PC seg: idx=1 pages=128 bytes=175104 layout_us=1240000 tee_us=98000 write_us=71000 fin_us=210000 commit_us=8400\n'
                  b'PC seal: idx=1 read=42000 crc=55000 dir=29000 sync=18000 verify=64000 heap=48120 largest=45056 stack=5980\n'
                  b'PC finish: at=32065 status=0 interrupted=0\n')
+    usb_link = b'USB link: blips=3 lost=1 latched=2 skipped=4 end_link=1 end_idle=0 end_tx=5 end_tail=0\n'
     dropped = (b'PC census: o=1 r=2 n=0,4,40,40,48 b=123 ms=88 u=0 title=Some Book\n'  # extra text
                b'PC target: from=chapter next=1\n'  # non-numeric field
                b'Runtime: kind=book-title stack-size=1 stack-min-free=1 heap-min-free=1\n'  # unknown kind
@@ -166,10 +168,12 @@ def firmware_row_validation():
                b'PC grant: warm=2 census_us=1 files=0 outcome=0 units=1 entries=1\n'  # invalid flag
                b'PC finish: at=1 status=0 interrupted=2\n'  # invalid flag
                b'PC seg: idx=01 pages=1 bytes=2 layout_us=3 tee_us=4 write_us=5 fin_us=6 commit_us=7\n'  # non-canonical
-               b'PC seal: idx=0 read=1 crc=2 dir=3 sync=4 verify=5 heap=6 largest=7 stack=8 title=Some Book\n')
+               b'PC seal: idx=0 read=1 crc=2 dir=3 sync=4 verify=5 heap=6 largest=7 stack=8 title=Some Book\n'
+               b'USB link: blips=3 lost=1 latched=2 skipped=4 end_link=1 end_idle=0 end_tx=5\n'  # missing field
+               b'PC target: from=8 n!N1 12345 2 9 STATUS ready=1 *00000000\n')  # glued, bad checksum
     peer = Peer()
     assert peer.request('PRESS next') == ['ACCEPTED', 'CONSUMED', 'RENDER_RETURN gen=2']
-    peer.pending = dropped + census + crossink + library + runtime + admission + cover + page_turn
+    peer.pending = dropped + census + crossink + library + runtime + admission + cover + page_turn + usb_link
     module.listen(peer.record, 0.3, module.ProtocolTimeout)
     rows = [{key: value for key, value in row.items() if key != 'monotonic'} for row in peer.firmware_rows.rows]
     assert rows == [{'row': 'target', 'from': 8, 'next': 1}, {'row': 'admission', 'r': 1, 's': 3, 'u': 0},
@@ -210,7 +214,9 @@ def firmware_row_validation():
                      'tee_us': 98000, 'write_us': 71000, 'fin_us': 210000, 'commit_us': 8400},
                     {'row': 'pc_seal', 'idx': 1, 'read': 42000, 'crc': 55000, 'dir': 29000, 'sync': 18000,
                      'verify': 64000, 'heap': 48120, 'largest': 45056, 'stack': 5980},
-                    {'row': 'pc_finish', 'at': 32065, 'status': 0, 'interrupted': 0}], rows
+                    {'row': 'pc_finish', 'at': 32065, 'status': 0, 'interrupted': 0},
+                    {'row': 'usb_link', 'blips': 3, 'lost': 1, 'latched': 2, 'skipped': 4, 'end_link': 1,
+                     'end_idle': 0, 'end_tx': 5, 'end_tail': 0}], rows
     assert 'Book' not in repr(peer.firmware_rows.report())
     capped = Peer(census * 259)
     module.listen(capped.record, 0.5, module.ProtocolTimeout)

@@ -32,13 +32,14 @@ pub fn lease(bridge: &mut Bridge, link: &mut newt_core::dev_link::LinkWatch, hom
             // Acquire only after admission, memory, mount and hash succeeded,
             // before the offer lets the host send any FILE or DATA bytes.
             let mut wire = LeaseWire { channel: log.dev_channel(clock, link).receive_put(), events, tx_flush_pending: false, counters: observation::Counters::default() };
-            ended = Some(dev_put::run(session, memory, &mut wire, &mut card, hash));
+            let end = dev_put::run(session, memory, &mut wire, &mut card, hash);
+            ended = Some((end, wire.counters.reason()));
             wire.report();
         });
     });
     let now = home.bus.board.monotonic_clock().millis();
     match (mounted, ended) {
-        (_, Some(end)) => bridge.put_ended(end, crate::app_dev::BUILD_ID, now),
+        (_, Some((end, exit))) => bridge.put_ended(end, exit, crate::app_dev::BUILD_ID, now),
         (Ok(()), None) => bridge.put_refused(session.request, b"ERROR hash"),
         (Err(_), None) => bridge.put_refused(session.request, b"ERROR no-card"),
     }

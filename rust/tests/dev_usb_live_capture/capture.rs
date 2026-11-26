@@ -632,6 +632,23 @@ fn stalled_host_cancels_flush_and_consumed_waits_for_tail_flush() {
     assert!(bridge.consumption_acknowledged(ticket));
 }
 
+#[test]
+fn a_put_lost_to_the_link_or_a_stall_counts_its_session_end() {
+    // #170: the lease's exit reason reaches the USB link row's totals
+    // (bit 0 link, bit 2 transmit stall); other cancels count no reason.
+    use newt_core::dev_put::{End, ExitReason};
+    for (exit, bits) in [(Some(ExitReason::Disconnected), 1), (Some(ExitReason::TxStall), 4),
+        (Some(ExitReason::Syntax), 0), (None, 0)] {
+        with_model(|m| *m = HwCdcModel::new(0));
+        let mut bridge = Bridge::new(100);
+        let mut ch = BoardChannel { now_ms: 1_000 };
+        let mut dev = FakeDevice::new(3, 3);
+        let _ = exchange(&mut bridge, &mut ch, &mut dev, "N1 HELLO", 100, 1, 0, None);
+        bridge.put_ended(End::Cancelled, exit, "8dad3b493384", ch.now_ms);
+        assert_eq!(bridge.take_ended(), bits, "{exit:?}");
+    }
+}
+
 struct NoopCard;
 impl newt_core::dev_put::Card for NoopCard {
     fn entry(&mut self, _: &core::ffi::CStr) -> Result<newt_core::dev_put::Entry, i32> { Err(-1) }
@@ -760,7 +777,7 @@ fn cancelled_put_reply_flushes_64_byte_tail() {
     };
     assert_eq!(end, newt_core::dev_put::End::Cancelled);
 
-    bridge.put_ended(end, "8dad3b493384", ch.now_ms);
+    bridge.put_ended(end, None, "8dad3b493384", ch.now_ms);
     // Session cancellation (e.g. a subsequent physical button press) must keep
     // the pending transport tail flush alive.
     bridge.physical_input();
@@ -800,7 +817,7 @@ fn cancelled_put_reply_flushes_64_byte_tail() {
     // Bounded timeout: if the host stops draining USB after a cancelled PUT,
     // the 1,000 ms tx_progress limit clears `tx_flush_pending` cleanly.
     with_model(|m| m.host_drain_paused = true);
-    bridge.put_ended(newt_core::dev_put::End::Cancelled, "8dad3b493384", ch.now_ms);
+    bridge.put_ended(newt_core::dev_put::End::Cancelled, None, "8dad3b493384", ch.now_ms);
     with_model(|m| { let _ = m.write(b"pending"); });
     assert!(bridge.output_pending());
     ch.now_ms += 990;
