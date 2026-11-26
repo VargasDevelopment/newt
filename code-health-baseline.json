@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 4067616,
+      "flash_bytes": 4067648,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "13c0361740a4fc58cb4922f2113f832b85398873",
-      "before": 4064288,
-      "after": 4067616,
-      "reason": "+3,328 B over the 4,064,288 B ceiling recorded at e97901d3 (#170): adds target-first current-chapter page-cache fill ordering, three-way CurrentOutcome progress accounting, monotonic terminal failure classification, post-promote publication witnessing, grant-aware crowded-directory fill, unconditional cleanup I/O fault reporting, and verified-EOF totals checks across concurrent input (#168). Clean regional DEV USB build with the pinned Python at 13c03617: 4,067,616 B. RAM 124,096 -> 124,096 B (+0 B), RTC 300 -> 300 B (+0 B), lent Wi-Fi RAM 22,528 -> 22,528 B (+0 B), selected stacks +0 B (open_selected_profile 480 <= 656 B). Usable app space 7,016,448 B; headroom 2,952,160 B (42.07%) -> 2,948,832 B (42.03%). No memory floor or stack ceiling moves.",
-      "reviewer": "Independent static review and clean regional-dev-usb health measurement (2026-11-26, #168)"
+      "source_revision": "4d8b19dd8c7a5ee1a3c0316df1490f3820dcfaaf",
+      "before": 4067616,
+      "after": 4067648,
+      "reason": "+32 B over the 4,067,616 B ceiling recorded at 13c03617 (#168): #194 makes ChapterCacheAccess::suspend_producer_write close a held page read (the validated descriptor exists() keeps after a segment check) before suspending, so a duty that comes due while that read is held no longer poisons the port and ends the fill Terminal. An nm diff of the two clean ELFs gives +28 B of code, all in reader_book::producer::producer_idle::{{closure}} (826 -> 854 B, where suspend is inlined), and 4 B of image alignment. Control: a clean build of d287b36e (main without the change) measures 4,067,616 B. Clean regional DEV USB build with the pinned Python at 4d8b19dd: 4,067,648 B. RAM 124,096 -> 124,096 B (+0 B), RTC 300 -> 300 B (+0 B), lent Wi-Fi RAM 22,528 -> 22,528 B (+0 B), selected stacks unchanged; the closure's frame stays 320 B (from its prologue). Usable app space 7,016,448 B; headroom 2,948,832 B (42.03%) -> 2,948,800 B (42.03%). No memory floor or stack ceiling moves.",
+      "reviewer": "cross-family review (Astra xhigh) and Codex review of the #194 PR; Lead review pending"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",

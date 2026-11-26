@@ -1245,6 +1245,109 @@ fn detached_finalization_terminal_duty_denies_visit(bytes: &[u8]) {
     println!("PASS detached_finalization_terminal_duty_denies_visit");
 }
 
+/// #194: with all 4 segments sealed and the segment map missing, the boundary
+/// checks each segment with `exists()`, which keeps a validated read of the
+/// last one while the stream lays out the chapter for the map. A duty that
+/// comes due while that read is held must not end the fill Terminal.
+fn duty_due_while_read_held_completes(bytes: &[u8]) {
+    let (measured, _) = measure_page(bytes, 0, 0);
+    let mut digest = [0u8; 32];
+    assert!(sha256(bytes, &mut digest));
+    let stale = Cell::new(false);
+    let full = with_reader_session(bytes, 0, measured.char_start, &stale, |idle, card, _info| {
+        let ready = |_| ProducerEntry::Ready;
+        let callbacks = ProducerCallbacks {
+            entry: &ready,
+            stop: &|_| Stop::None,
+            pause_request: &|_, _| Some(Stop::None),
+            yield_now: None,
+            wait: None,
+        };
+        let mut duty = |_: &dyn Fn() -> bool| (Stop::None, false);
+        idle(&callbacks, &mut duty, &mut true);
+        assert_eq!(page_files(card).len(), 5, "precondition: 4 segments plus the segment map");
+    });
+    let map_path = page_files(&full).into_iter().find(|path| {
+        let probe = full.cold_bytes();
+        probe.0.borrow_mut().model.files.remove(path);
+        (0..4).all(|index| segment_cached(&probe, bytes, &digest, measured, index))
+    }).expect("must identify the segment map file");
+    let unmapped = full.cold_bytes();
+    unmapped.0.borrow_mut().model.files.remove(&map_path);
+
+    with_reader_session_seeded(bytes, 0, measured.char_start, &stale, |dest| {
+        let src = unmapped.0.borrow();
+        let mut dst = dest.0.borrow_mut();
+        dst.model.dirs = src.model.dirs.clone();
+        dst.model.files = src.model.files.clone();
+    }, |idle, card, info| {
+        // A sealed page read the producer holds, with no writer open.
+        let held = || {
+            let state = card.0.borrow();
+            let pages: Vec<_> = state.handles.values().filter(|p| p.contains("/Pages/")).collect();
+            !pages.is_empty() && pages.iter().all(|p| p.ends_with(".fibp"))
+        };
+        let held_path = core::cell::RefCell::new(None::<String>);
+        let pause_request = |_: u32, _: u8| {
+            if held_path.borrow().is_none() && held() {
+                let state = card.0.borrow();
+                *held_path.borrow_mut() = state.handles.values().find(|p| p.contains("/Pages/")).cloned();
+                None // The Progress duty comes due now.
+            } else {
+                Some(Stop::None)
+            }
+        };
+        let ready = |_| ProducerEntry::Ready;
+        let callbacks = ProducerCallbacks {
+            entry: &ready,
+            stop: &|_| Stop::None,
+            pause_request: &pause_request,
+            yield_now: None,
+            wait: None,
+        };
+        let read_in_duty = Cell::new(None::<bool>);
+        let trace_at_duty = Cell::new(0);
+        let mut duty = |_: &dyn Fn() -> bool| {
+            read_in_duty.set(Some(held()));
+            trace_at_duty.set(card.0.borrow().model.trace.len());
+            (Stop::None, false)
+        };
+        let out = idle(&callbacks, &mut duty, &mut true);
+        let path = held_path.borrow().clone().expect("precondition: a duty came due while a sealed page read was held");
+        assert_ne!(out.admission, Admission::Denied, "a duty due while a read is held must not end the fill");
+        assert_eq!(read_in_duty.get(), Some(false), "the pause must close the held read before the duty");
+        assert!(card.0.borrow().model.files.contains_key(&map_path), "the segment map is published after the duty");
+        assert_eq!(page_files(card).len(), 5, "no other page file appears");
+        assert_eq!(out.target, 1, "Done must advance visit target to prefetch spine 1");
+
+        // Closing the held read is safe: no op used a closed descriptor, the
+        // next attempt's lookup on this port opens that file again, and
+        // every segment still reads back.
+        let quiet = ProducerCallbacks {
+            entry: &ready,
+            stop: &|_| Stop::None,
+            pause_request: &|_, _| Some(Stop::None),
+            yield_now: None,
+            wait: None,
+        };
+        idle(&quiet, &mut |_| (Stop::None, false), &mut true);
+        let state = card.0.borrow();
+        let trace = &state.model.trace;
+        assert!(!trace.iter().any(|line| line.ends_with("EBADF")), "no op may use a closed descriptor");
+        let reopen = format!("open {path} rn = ");
+        assert!(
+            trace[trace_at_duty.get()..].iter()
+                .any(|line| line.strip_prefix(&reopen).is_some_and(|fd| fd.parse::<i32>().is_ok())),
+            "the closed read must reopen on the next lookup"
+        );
+        drop(state);
+        for index in 0..4 {
+            assert!(segment_cached(card, bytes, &digest, info, index), "segment {index} must stay readable");
+        }
+    });
+    println!("PASS duty_due_while_read_held_completes");
+}
+
 fn crowded_pages_dir_fills_across_four_entry_grants(bytes: &[u8]) {
     // Open spine 3 (5 segments of prose) at page 5 so all 5 segments are
     // reachable within two passes, guaranteeing attempt 1 hits the 4-entry grant cap.
@@ -1627,7 +1730,7 @@ fn main() {
         Some(other) => panic!("unexpected argument: {other}"),
     };
     let bytes = std::fs::read(path).unwrap();
-    let cases: [(&str, fn(&[u8])); 14] = [
+    let cases: [(&str, fn(&[u8])); 15] = [
         ("target_first_leftover_progress_and_cold_boot_hit", target_first_leftover_progress_and_cold_boot_hit),
         ("target_first_interrupt_after_first_segment", target_first_interrupt_after_first_segment),
         ("short_chapter_done_advances_to_prefetch", short_chapter_done_advances_to_prefetch),
@@ -1638,6 +1741,7 @@ fn main() {
         ("suspend_and_resume_input_stays_interruptible", suspend_and_resume_input_stays_interruptible),
         ("cleanup_unlink_fault_during_interrupt_denies_immediately", cleanup_unlink_fault_during_interrupt_denies_immediately),
         ("detached_finalization_terminal_duty_denies_visit", detached_finalization_terminal_duty_denies_visit),
+        ("duty_due_while_read_held_completes", duty_due_while_read_held_completes),
         ("crowded_pages_dir_fills_across_four_entry_grants", crowded_pages_dir_fills_across_four_entry_grants),
         ("final_pause_request_terminal_denies_visit", final_pause_request_terminal_denies_visit),
         ("post_rename_interrupt_on_third_try_completes_whole_and_map_chapters", post_rename_interrupt_on_third_try_completes_whole_and_map_chapters),

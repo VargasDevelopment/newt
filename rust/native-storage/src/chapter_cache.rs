@@ -245,7 +245,14 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
     pub fn producing(&self) -> bool {
         self.file.producing()
     }
+    /// A producer pause may find the validated read descriptor that `exists()`
+    /// keeps after a segment check (between segments, nothing is writing). The
+    /// port accepts only idle or a live writer, and State needs the descriptor,
+    /// so drop that read first; the next lookup reopens and revalidates it.
     pub fn suspend_producer_write(&mut self) -> bool {
+        if self.state.read_active && !self.file.writing() {
+            self.close();
+        }
         self.file.suspend_producer_write()
     }
     pub fn resume_producer_write(&mut self) -> bool {
