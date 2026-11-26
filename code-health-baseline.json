@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 4057264,
+      "flash_bytes": 4060608,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "20aa3ae3a79cbbfd6bf1547e5c99fe78a7bfdabc",
-      "before": 4057296,
-      "after": 4057264,
-      "reason": "-32 B under the 4,057,296 B ceiling recorded for main c6784f25 (#171): #174 (NEWT-216) splits admission's central-directory walk from catalog admission's 1,024-entry cap, so the index build walks with its own member limit (book_index::MAX_MEMBERS) and a book with more than 1,024 ZIP entries indexes instead of being refused. Ratchet down after a verified improvement. Clean regional DEV USB build with the pinned Python at 20aa3ae3: 4,057,264 B. RAM 124,096 -> 124,096 B (+0 B), RTC 300 -> 300 B (+0 B), lent Wi-Fi RAM 22,528 -> 22,528 B (+0 B). Usable app space 7,016,448 B; headroom 2,959,152 B (42.17%) -> 2,959,184 B (42.17%).",
-      "reviewer": "Newt Lead ruling 2026-11-26 (NEWT-216: clean health build, record flash if it moves); cross-family review (Astra xhigh) and Codex review of the change"
+      "source_revision": "93b6e2762f503d1701eeba1de84572d02a717edf",
+      "before": 4057264,
+      "after": 4060608,
+      "reason": "+3,344 B over the 4,057,264 B ceiling recorded at 20aa3ae3 (#174): NEWT-217 restores the plain-text (!par_case) layout fast path and reader stack headroom lost in #172 by specializing measure_plain, advance_plain, and plain line segmentation/placement while outlining measure_lines, place_line, record, and cold case-styled helpers. Clean regional DEV USB build with the pinned Python at 93b6e276: 4,060,608 B. RAM 124,096 -> 124,096 B (+0 B), RTC 300 -> 300 B (+0 B), lent Wi-Fi RAM 22,528 -> 22,528 B (+0 B), selected stacks +0 B (open_selected_profile 480 <= 656 B). Usable app space 7,016,448 B; headroom 2,959,184 B (42.17%) -> 2,955,840 B (42.13%). No memory floor or stack ceiling moves.",
+      "reviewer": "Newt Lead ruling 2026-11-26 (NEWT-217: clean health build flash record); cross-family review (Astra xhigh) and Codex review of the change"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",

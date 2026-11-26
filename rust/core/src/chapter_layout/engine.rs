@@ -250,6 +250,44 @@ impl<'a> EngineState<'a> {
         }
         self.par_case || (s.flags & !STYLE_MASK != 0)
     }
+    #[inline(never)]
+    fn rewind_case_cut(&self, cut: usize, end: usize, bytes: &[u8], span_flush: bool) -> usize {
+        let mut tmp = [0u8; 4];
+        let head = (end - cut).min(4);
+        if head > 0 {
+            tmp[..head].copy_from_slice(&self.storage.text[cut..cut + head]);
+        }
+        let tail = (4 - head).min(bytes.len());
+        tmp[head..head + tail].copy_from_slice(&bytes[..tail]);
+        let look = &tmp[..head + tail];
+        let next_cp = if utf8_incomplete(look) {
+            None
+        } else {
+            let mut p = 0;
+            Some(decode(look, &mut p))
+        };
+        let min_cut = if span_flush {
+            if self.span_count > 1 {
+                usize::from(self.storage.spans[1].start).max(1)
+            } else {
+                cut
+            }
+        } else {
+            1
+        };
+        let rewind = continuation_rewind(
+            &self.storage.text[..cut],
+            next_cp,
+            true,
+            self.par_dir,
+            min_cut,
+        );
+        if rewind >= min_cut && rewind < cut {
+            rewind
+        } else {
+            cut
+        }
+    }
     fn append(&mut self, backend: &mut dyn Backend, bytes: &[u8]) -> usize {
         let text_full = self.len + 1 >= self.storage.text.len();
         let span_flush = bytes != b"\n" && self.span_bank_needs_flush();
@@ -281,39 +319,7 @@ impl<'a> EngineState<'a> {
                 return 0;
             }
             if self.par_case {
-                let mut tmp = [0u8; 4];
-                let head = (end - cut).min(4);
-                if head > 0 {
-                    tmp[..head].copy_from_slice(&self.storage.text[cut..cut + head]);
-                }
-                let tail = (4 - head).min(bytes.len());
-                tmp[head..head + tail].copy_from_slice(&bytes[..tail]);
-                let look = &tmp[..head + tail];
-                let next_cp = if utf8_incomplete(look) {
-                    None
-                } else {
-                    let mut p = 0;
-                    Some(decode(look, &mut p))
-                };
-                let min_cut = if span_flush {
-                    if self.span_count > 1 {
-                        usize::from(self.storage.spans[1].start).max(1)
-                    } else {
-                        cut
-                    }
-                } else {
-                    1
-                };
-                let rewind = continuation_rewind(
-                    &self.storage.text[..cut],
-                    next_cp,
-                    true,
-                    self.par_dir,
-                    min_cut,
-                );
-                if rewind >= min_cut && rewind < cut {
-                    cut = rewind;
-                }
+                cut = self.rewind_case_cut(cut, end, bytes, span_flush);
             }
             let span_at_cut = if cut < end { self.span_index(cut) } else { 0 };
             let old_span_count = self.span_count;
@@ -636,6 +642,34 @@ impl<'a> EngineState<'a> {
         }
     }
     #[inline(never)]
+    fn shaped_case_styled(
+        &self,
+        backend: &mut dyn Backend,
+        pos: usize,
+        mut cp: u32,
+        span_flags: u8,
+        prev_small_cap: bool,
+    ) -> (u32, bool, bool) {
+        if cp == 0x00ad {
+            return (cp, prev_small_cap, true);
+        }
+        if span_flags & TRANSFORM_MASK != 0 {
+            cp = self.transform_codepoint(backend, cp, pos, span_flags);
+        }
+        if span_flags & SMALL_CAPS != 0 {
+            // Inhibit lowercase ligatures (such as fi/fl) in small-caps runs.
+            let up = case::to_upper(cp);
+            if up != cp && backend.covers(up) {
+                return (up, true, true);
+            }
+            if is_combining(cp) {
+                return (cp, prev_small_cap, true);
+            }
+            return (cp, false, true);
+        }
+        (cp, false, false)
+    }
+    #[inline(never)]
     pub(super) fn shaped_case(
         &mut self,
         backend: &mut dyn Backend,
@@ -674,26 +708,17 @@ impl<'a> EngineState<'a> {
             }
         }
         let span_flags = self.storage.spans[si].flags;
+        let mut has_transform = false;
+        if self.par_case && (cp == 0x00ad || span_flags & !STYLE_MASK != 0) {
+            let (mapped, small_cap, done) =
+                self.shaped_case_styled(backend, pos, cp, span_flags, prev_small_cap);
+            if done {
+                return (mapped, small_cap);
+            }
+            cp = mapped;
+            has_transform = span_flags & TRANSFORM_MASK != 0;
+        }
         let style = span_flags & STYLE_MASK;
-        let has_transform = span_flags & TRANSFORM_MASK != 0;
-        let has_small_caps = span_flags & SMALL_CAPS != 0;
-        if cp == 0x00ad && self.par_case {
-            return (cp, prev_small_cap);
-        }
-        if has_transform {
-            cp = self.transform_codepoint(backend, cp, pos, span_flags);
-        }
-        if has_small_caps {
-            // Inhibit lowercase ligatures (such as fi/fl) in small-caps runs.
-            let up = case::to_upper(cp);
-            if up != cp && backend.covers(up) {
-                return (up, true);
-            }
-            if is_combining(cp) {
-                return (cp, prev_small_cap);
-            }
-            return (cp, false);
-        }
         // Ordered spans make the next start the exact boundary of this span.
         let span_end = if si + 1 < self.span_count {
             usize::from(self.storage.spans[si + 1].start)
@@ -719,7 +744,24 @@ impl<'a> EngineState<'a> {
         }
         (cp, false)
     }
-    #[inline(never)]
+    #[inline(always)]
+    fn advance_plain(backend: &mut dyn Backend, cp: u32, prev: u32, sz: u16, style: u8) -> i32 {
+        if cp == 10 || cp == 0xad {
+            return 0;
+        }
+        let mut a = i32::from(backend.advance(cp, sz, style));
+        if prev != 0 {
+            a += i32::from(backend.kerning(prev, cp, sz, style));
+            // Both spacing rules require at least one CJK-range codepoint.
+            if (prev | cp) >= 0x2e80 {
+                if crosses(prev, cp) {
+                    a += i32::from(sz / 4)
+                }
+                a += compression(prev, cp, sz)
+            }
+        }
+        a
+    }
     fn advance_sized(
         backend: &mut dyn Backend,
         cp: u32,
@@ -755,29 +797,28 @@ impl<'a> EngineState<'a> {
         a
     }
     #[inline(never)]
-    fn step_advance(
+    fn step_advance_case(
         &self,
         backend: &mut dyn Backend,
         st: &mut StepState,
         cp: u32,
         small_cap: bool,
+        s: Span,
+        base_sz: u16,
         si: usize,
         at: usize,
     ) -> i32 {
-        let s = self.storage.spans[si];
-        if cp == 0x00ad && self.par_case {
+        if cp == 0x00ad {
             return 0;
         }
         let lvl = self.storage.levels[at];
         let extra = if self.params.focus && lvl & 64 != 0 { BOLD } else { 0 };
         let level = lvl & 7;
-        let base_sz = self.size(s.size);
         let sz = if small_cap { case::small_cap_px(base_sz) } else { base_sz };
         let run_split = small_cap != st.prev_small_cap
-            || (self.par_case
-                && (si as u16 != st.prev_span
-                    || extra != st.prev_extra
-                    || level != st.prev_level));
+            || si as u16 != st.prev_span
+            || extra != st.prev_extra
+            || level != st.prev_level;
         let kern_prev = if run_split { 0 } else { st.prev_kern };
         let adv = Self::advance_sized(
             backend,
@@ -787,7 +828,7 @@ impl<'a> EngineState<'a> {
             sz,
             base_sz,
             s.flags | extra,
-            self.par_case,
+            true,
         );
         st.prev_kern = cp;
         st.prev_script = cp;
@@ -796,6 +837,32 @@ impl<'a> EngineState<'a> {
         st.prev_level = level;
         st.prev_small_cap = small_cap;
         adv
+    }
+    #[inline(always)]
+    fn step_advance(
+        &self,
+        backend: &mut dyn Backend,
+        st: &mut StepState,
+        cp: u32,
+        small_cap: bool,
+        s: Span,
+        base_sz: u16,
+        si: usize,
+        at: usize,
+    ) -> i32 {
+        if !self.par_case {
+            let adv = Self::advance_plain(
+                backend,
+                cp,
+                st.prev_kern,
+                base_sz,
+                (s.flags | self.extra(at)) & STYLE_MASK,
+            );
+            st.prev_kern = cp;
+            st.prev_script = cp;
+            return adv;
+        }
+        self.step_advance_case(backend, st, cp, small_cap, s, base_sz, si, at)
     }
     #[inline(never)]
     fn hyphen_width(&self, backend: &mut dyn Backend, tail: Tail) -> i32 {
@@ -832,21 +899,55 @@ impl<'a> EngineState<'a> {
         self.margin_at_byte(self.span_index(at), at)
     }
     #[inline(never)]
-    fn measure_from(
-        &mut self,
-        backend: &mut dyn Backend,
-        from: usize,
-        to: usize,
-        init: Option<StepState>,
-    ) -> (i32, StepState) {
-        let (mut width, mut i) = (0, from);
+    fn measure_plain(&mut self, backend: &mut dyn Backend, from: usize, to: usize) -> i32 {
+        let (mut width, mut prev, mut i) = (0, 0, from);
         let mut si = self.span_index(from);
-        let mut st = init.unwrap_or_else(|| StepState::reset(si));
         while i < to {
             while si + 1 < self.span_count && usize::from(self.storage.spans[si + 1].start) <= i {
                 si += 1;
             }
             let s = self.storage.spans[si];
+            let span_size = self.size(s.size);
+            let span_end = if si + 1 < self.span_count {
+                usize::from(self.storage.spans[si + 1].start).min(to)
+            } else {
+                to
+            };
+            if i == usize::from(s.start) && s.margin > 0 {
+                width += self.margin(s);
+                prev = 0;
+            }
+            while i < span_end {
+                let start = i;
+                let (cp, _) = self.shaped_case(backend, to, &mut i, si, false);
+                width += Self::advance_plain(
+                    backend,
+                    cp,
+                    prev,
+                    span_size,
+                    (s.flags | self.extra(start)) & STYLE_MASK,
+                );
+                prev = cp;
+            }
+        }
+        width
+    }
+    #[inline(never)]
+    fn measure_case(
+        &mut self,
+        backend: &mut dyn Backend,
+        from: usize,
+        to: usize,
+        st: &mut StepState,
+    ) -> i32 {
+        let (mut width, mut i) = (0, from);
+        let mut si = self.span_index(from);
+        while i < to {
+            while si + 1 < self.span_count && usize::from(self.storage.spans[si + 1].start) <= i {
+                si += 1;
+            }
+            let s = self.storage.spans[si];
+            let span_size = self.size(s.size);
             let span_end = if si + 1 < self.span_count {
                 usize::from(self.storage.spans[si + 1].start).min(to)
             } else {
@@ -855,12 +956,7 @@ impl<'a> EngineState<'a> {
             if i == usize::from(s.start) {
                 let m = self.margin_at_byte(si, i);
                 width += m;
-                // Plain path preserves pre-#43 stored-margin reset even when a
-                // subpixel percentage rounds to 0 px; case path resets kerning
-                // while keeping script context and any preceding hyphen tail.
-                if !self.par_case && s.margin > 0 {
-                    st = StepState::reset(si);
-                } else if self.par_case && m > 0 {
+                if m > 0 {
                     st.prev_kern = 0;
                 }
             }
@@ -868,10 +964,52 @@ impl<'a> EngineState<'a> {
                 let start = i;
                 let same_span_sc = st.prev_small_cap && si as u16 == st.prev_span;
                 let (cp, small_cap) = self.shaped_case(backend, to, &mut i, si, same_span_sc);
-                width += self.step_advance(backend, &mut st, cp, small_cap, si, start);
+                width += self.step_advance_case(backend, st, cp, small_cap, s, span_size, si, start);
             }
         }
-        (width, st)
+        width
+    }
+    #[inline(never)]
+    fn measure_line_case(
+        &mut self,
+        backend: &mut dyn Backend,
+        start: usize,
+        end: usize,
+        flags: u8,
+    ) -> i32 {
+        let mut st = StepState::reset(self.span_index(start));
+        let mut width = self.measure_case(backend, start, end, &mut st);
+        if flags & 2 != 0 {
+            width += self.hyphen_width(backend, st.tail());
+        }
+        width
+    }
+    #[inline(never)]
+    fn try_hyphen_case(
+        &mut self,
+        backend: &mut dyn Backend,
+        line: usize,
+        word: usize,
+        budget: i32,
+        pos: &[u8],
+    ) -> usize {
+        let mut pre_st = StepState::reset(self.span_index(line));
+        let prefix = self.measure_case(backend, line, word, &mut pre_st);
+        // Preserve #172's word-start hyphen probe callback order in host traces.
+        let word_span = self.storage.spans[self.span_index(word)];
+        let _ = backend.advance(45, self.size(word_span.size), word_span.flags & STYLE_MASK);
+        for p in pos.iter().rev() {
+            let split = word + usize::from(*p);
+            if split > line {
+                let mut end_st = pre_st;
+                let part_w = self.measure_case(backend, word, split, &mut end_st);
+                let hw = self.hyphen_width(backend, end_st.tail());
+                if prefix + part_w + hw <= budget {
+                    return split;
+                }
+            }
+        }
+        0
     }
     fn try_hyphen(&mut self, backend: &mut dyn Backend, line: usize, word: usize, budget: i32) -> usize {
         let Some(h) = self.hyphenator else { return 0 };
@@ -895,31 +1033,22 @@ impl<'a> EngineState<'a> {
         if n == 0 {
             return 0;
         }
-        let (prefix, pre_st) = self.measure_from(backend, line, word, None);
+        if self.par_case {
+            return self.try_hyphen_case(backend, line, word, budget, &pos[..n]);
+        }
+        let prefix = self.measure_plain(backend, line, word);
         let word_span = self.storage.spans[self.span_index(word)];
-        let hw_word = i32::from(backend.advance(45, self.size(word_span.size), word_span.flags & STYLE_MASK));
+        let hw = i32::from(backend.advance(45, self.size(word_span.size), word_span.flags & STYLE_MASK));
         for p in pos[..n].iter().rev() {
             let split = word + usize::from(*p);
-            if split > line {
-                let (part_w, end_st) = self.measure_from(
-                    backend,
-                    word,
-                    split,
-                    if self.par_case { Some(pre_st) } else { None },
-                );
-                let hw = if self.par_case {
-                    self.hyphen_width(backend, end_st.tail())
-                } else {
-                    hw_word
-                };
-                if prefix + part_w + hw <= budget {
-                    return split;
-                }
+            if split > line && prefix + self.measure_plain(backend, word, split) + hw <= budget {
+                return split;
             }
         }
         0
     }
-    fn record(
+    #[inline(never)]
+    fn record_case(
         &mut self,
         backend: &mut dyn Backend,
         start: usize,
@@ -929,14 +1058,10 @@ impl<'a> EngineState<'a> {
         has_visible: bool,
     ) -> bool {
         let had_newline = end > start && self.storage.text[end - 1] == b'\n';
-        if self.par_case
-            && !has_visible
-            && !had_newline
-            && (carry_cut || self.continued || self.line_count > 0)
-        {
+        if !has_visible && !had_newline && (carry_cut || self.continued || self.line_count > 0) {
             return false;
         }
-        let trim_shy = self.par_case && (flags & 2 == 0 || self.rtl);
+        let trim_shy = flags & 2 == 0 || self.rtl;
         loop {
             if end > start && matches!(self.storage.text[end - 1], b' ' | b'\n') {
                 end -= 1;
@@ -949,6 +1074,26 @@ impl<'a> EngineState<'a> {
             } else {
                 break;
             }
+        }
+        self.storage.lines[self.line_count] = self.line_metrics(backend, start, end, flags);
+        self.line_count += 1;
+        true
+    }
+    #[inline(never)]
+    fn record(
+        &mut self,
+        backend: &mut dyn Backend,
+        start: usize,
+        mut end: usize,
+        flags: u8,
+        carry_cut: bool,
+        has_visible: bool,
+    ) -> bool {
+        if self.par_case {
+            return self.record_case(backend, start, end, flags, carry_cut, has_visible);
+        }
+        while end > start && matches!(self.storage.text[end - 1], b' ' | b'\n') {
+            end -= 1;
         }
         self.storage.lines[self.line_count] = self.line_metrics(backend, start, end, flags);
         self.line_count += 1;
@@ -978,13 +1123,51 @@ impl<'a> EngineState<'a> {
             }
             prev = cp
         }
-        let (width, end_st) = self.measure_from(backend, start, end, None);
-        r.width = width;
-        if flags & 2 != 0 {
-            r.width += self.hyphen_width(backend, end_st.tail());
+        if !self.par_case {
+            r.width = self.measure_plain(backend, start, end);
+            if flags & 2 != 0 {
+                let s = self.storage.spans[self.span_index(if end > start { end - 1 } else { start })];
+                r.width += i32::from(backend.advance(45, self.size(s.size), s.flags & STYLE_MASK));
+            }
+        } else {
+            r.width = self.measure_line_case(backend, start, end, flags);
         }
         r
     }
+    #[inline(never)]
+    fn rewind_combining_cut(&self, start: usize, at: usize) -> usize {
+        let mut cand = at;
+        while cand > start {
+            let mut prev = cand - 1;
+            while prev > start && self.storage.text[prev] & 0xc0 == 0x80 {
+                prev -= 1;
+            }
+            let mut probe = prev;
+            let pcp = decode(&self.storage.text[..cand], &mut probe);
+            if probe != cand {
+                break;
+            }
+            if is_combining(pcp) || pcp == 0x00ad {
+                cand = prev;
+            } else {
+                if pcp != 32 && pcp != 10 {
+                    cand = prev;
+                }
+                break;
+            }
+        }
+        let mut scan = start;
+        let mut prefix_visible = false;
+        while scan < cand {
+            let vcp = decode(&self.storage.text[..cand], &mut scan);
+            if vcp != 32 && vcp != 10 && vcp != 0x00ad {
+                prefix_visible = true;
+                break;
+            }
+        }
+        if prefix_visible { cand } else { at }
+    }
+    #[inline(never)]
     fn measure_lines(&mut self, backend: &mut dyn Backend, continuing: bool) -> usize {
         self.line_count = 0;
         let mut carry_from = self.len;
@@ -1065,7 +1248,8 @@ impl<'a> EngineState<'a> {
         let mut has_space = false;
         let mut resume_after_space = 0;
         let mut st = StepState::reset(0);
-        let (mut si, mut span_start, mut span_end) = (0, 0, 0);
+        let (mut si, mut span_start, mut span_end, mut span_size) = (0, 0, 0, 0);
+        let mut s = Span::default();
         while i < self.len && self.line_count + 1 < self.storage.lines.len() {
             let max = base
                 - if self.line_count == 0 && !self.continued {
@@ -1077,16 +1261,22 @@ impl<'a> EngineState<'a> {
             // A line rewind can cross a span boundary; refresh only on exit.
             if at < span_start || at >= span_end {
                 si = self.span_index(at);
-                span_start = usize::from(self.storage.spans[si].start);
+                s = self.storage.spans[si];
+                span_start = usize::from(s.start);
                 span_end = if si + 1 < self.span_count {
                     usize::from(self.storage.spans[si + 1].start)
                 } else {
                     self.len
                 };
+                span_size = self.size(s.size);
             }
             let same_span_sc = st.prev_small_cap && si as u16 == st.prev_span;
             let (cp, small_cap) = self.shaped_case(backend, self.len, &mut i, si, same_span_sc);
-            let margin = self.margin_at_byte(si, at);
+            let margin = if !self.par_case {
+                if at == span_start { self.margin(s) } else { 0 }
+            } else {
+                self.margin_at_byte(si, at)
+            };
             if margin > 0 {
                 if self.par_case {
                     st.prev_kern = 0;
@@ -1094,7 +1284,7 @@ impl<'a> EngineState<'a> {
                     st = StepState::reset(si);
                 }
             }
-            let adv = margin + self.step_advance(backend, &mut st, cp, small_cap, si, at);
+            let adv = margin + self.step_advance(backend, &mut st, cp, small_cap, s, span_size, si, at);
             let first_glyph = at == start || (self.par_case && !line_visible && !has_space);
             if cp != 10 && width + adv > max && !first_glyph {
                 if self.par_case && !line_visible {
@@ -1114,41 +1304,11 @@ impl<'a> EngineState<'a> {
                 } else if last > start {
                     (last, if self.last_shy { 2 } else { 0 })
                 } else {
-                    let mut cut = at;
-                    if self.par_case && is_combining(cp) {
-                        let mut cand = at;
-                        while cand > start {
-                            let mut prev = cand - 1;
-                            while prev > start && self.storage.text[prev] & 0xc0 == 0x80 {
-                                prev -= 1;
-                            }
-                            let mut probe = prev;
-                            let pcp = decode(&self.storage.text[..cand], &mut probe);
-                            if probe != cand {
-                                break;
-                            }
-                            if is_combining(pcp) || pcp == 0x00ad {
-                                cand = prev;
-                            } else {
-                                if pcp != 32 && pcp != 10 {
-                                    cand = prev;
-                                }
-                                break;
-                            }
-                        }
-                        let mut scan = start;
-                        let mut prefix_visible = false;
-                        while scan < cand {
-                            let vcp = decode(&self.storage.text[..cand], &mut scan);
-                            if vcp != 32 && vcp != 10 && vcp != 0x00ad {
-                                prefix_visible = true;
-                                break;
-                            }
-                        }
-                        if prefix_visible {
-                            cut = cand;
-                        }
-                    }
+                    let cut = if self.par_case && is_combining(cp) {
+                        self.rewind_combining_cut(start, at)
+                    } else {
+                        at
+                    };
                     (cut, 0)
                 };
                 self.record(backend, start, end, flags, false, true);
@@ -1177,17 +1337,19 @@ impl<'a> EngineState<'a> {
                 continue;
             }
             width += adv;
-            if cp == 32 {
-                if !line_visible {
-                    has_space = true;
-                    resume_after_space = i;
+            if self.par_case {
+                if cp == 32 {
+                    if !line_visible {
+                        has_space = true;
+                        resume_after_space = i;
+                    }
+                } else if cp == 0xad {
+                    if !line_visible && has_space && margin == 0 && resume_after_space == at {
+                        resume_after_space = i;
+                    }
+                } else if cp != 10 {
+                    line_visible = true;
                 }
-            } else if cp == 0xad {
-                if !line_visible && has_space && margin == 0 && resume_after_space == at {
-                    resume_after_space = i;
-                }
-            } else if cp != 10 {
-                line_visible = true;
             }
             match self.storage.breaks[i - 1] {
                 0 => {
@@ -1228,11 +1390,13 @@ impl<'a> EngineState<'a> {
         }
         if start < self.len && self.line_count < self.storage.lines.len() {
             let mut tail_keep = line_visible;
-            let mut scan = i;
-            while !tail_keep && scan < self.len {
-                let cp = decode(&self.storage.text[..self.len], &mut scan);
-                if cp != 32 && cp != 0xad {
-                    tail_keep = true;
+            if self.par_case {
+                let mut scan = i;
+                while !tail_keep && scan < self.len {
+                    let cp = decode(&self.storage.text[..self.len], &mut scan);
+                    if cp != 32 && cp != 0xad {
+                        tail_keep = true;
+                    }
                 }
             }
             let cut_end = continuing && self.storage.text[self.len - 1] != b'\n';
@@ -1541,6 +1705,7 @@ impl<'a> EngineState<'a> {
             > i32::from(self.params.height) - i32::from(self.params.bottom)
             && (self.run_count > 0 || self.image_count > 0 || self.y > self.params.top)
     }
+    #[inline(never)]
     fn place_line(
         &mut self,
         backend: &mut dyn Backend,
@@ -1681,7 +1846,7 @@ impl<'a> EngineState<'a> {
         let mut active_link = 0;
         if self.par_case && !self.rtl && segs[0].flags & (SEG_GAP | SEG_SPACE) != 0 {
             let sp0 = self.storage.spans[segs[0].span];
-            self.apply_seg_gap(backend, segs[0], sp0, justify, per, &mut remainder, &mut x);
+            self.apply_seg_gap_case(&segs[0], sp0, justify, per, &mut remainder, &mut x);
         }
         if self.par_case && self.rtl && !trailing.is_empty() {
             x += i32::from(trailing.margin) + i32::from(trailing.space_adv);
@@ -1696,10 +1861,26 @@ impl<'a> EngineState<'a> {
             }
         }
         for v in 0..n {
-            let sg = segs[usize::from(order[v])];
+            let sg = &segs[usize::from(order[v])];
             let span = self.storage.spans[sg.span];
+            let base_sz = self.size(span.size);
             if !self.par_case && v > 0 {
-                self.apply_seg_gap(backend, sg, span, justify, per, &mut remainder, &mut x);
+                if sg.flags & (SEG_GAP | SEG_SPACE) != 0 {
+                    if sg.flags & SEG_SPACE != 0 {
+                        x += i32::from(backend.advance(32, base_sz, span.flags & STYLE_MASK))
+                    }
+                    if justify {
+                        x += per;
+                        if remainder > 0 {
+                            x += 1;
+                            remainder -= 1
+                        }
+                    }
+                } else if sg.flags & SEG_SCRIPT != 0 {
+                    x += i32::from(base_sz / 4)
+                } else if sg.flags & SEG_COMPRESS != 0 {
+                    x -= i32::from(base_sz / 2)
+                }
             }
             if self.par_case {
                 x += i32::from(sg.shy_margin);
@@ -1707,24 +1888,28 @@ impl<'a> EngineState<'a> {
             if (!self.par_case || !is_only_shy(&self.storage.text[sg.start..sg.end]))
                 && sg.start == usize::from(span.start)
             {
-                x += self.margin_at_byte(sg.span, sg.start);
+                x += if !self.par_case {
+                    self.margin(span)
+                } else {
+                    self.margin_at_byte(sg.span, sg.start)
+                };
             }
             let hy = sg.end == r.end && r.flags & 2 != 0 && !self.rtl;
-            if !self.emit_segment(backend, sg, hy, baseline, &mut x, &mut active_link) {
+            if !self.emit_segment(backend, sg, span, base_sz, hy, baseline, &mut x, &mut active_link) {
                 // Unpublished runs, links and bytes are discarded together.
                 // The caller retries this whole line at the top of the next page.
                 (self.run_count, self.link_count, self.pool_len) = before;
                 return self.refused_line();
             }
             if self.par_case && v + 1 < n {
-                let g = segs[usize::from(gap_at[v])];
+                let g = &segs[usize::from(gap_at[v])];
                 let g_span = self.storage.spans[g.span];
-                self.apply_seg_gap(backend, g, g_span, justify, per, &mut remainder, &mut x);
+                self.apply_seg_gap_case(g, g_span, justify, per, &mut remainder, &mut x);
             }
         }
         if self.par_case && self.rtl && segs[0].flags & (SEG_GAP | SEG_SPACE) != 0 {
             let sp0 = self.storage.spans[segs[0].span];
-            self.apply_seg_gap(backend, segs[0], sp0, justify, per, &mut remainder, &mut x);
+            self.apply_seg_gap_case(&segs[0], sp0, justify, per, &mut remainder, &mut x);
         }
         if before.0 == 0 {
             self.page_chars = self.chars.wrapping_add(count(&self.storage.text[..r.start]));
@@ -1742,10 +1927,9 @@ impl<'a> EngineState<'a> {
         LinePlacement::Placed(rest)
     }
     #[inline(never)]
-    fn apply_seg_gap(
+    fn apply_seg_gap_case(
         &self,
-        backend: &mut dyn Backend,
-        sg: Segment,
+        sg: &Segment,
         span: Span,
         justify: bool,
         per: i32,
@@ -1753,26 +1937,9 @@ impl<'a> EngineState<'a> {
         x: &mut i32,
     ) {
         if sg.flags & (SEG_GAP | SEG_SPACE) != 0 {
-            if self.par_case {
-                *x += i32::from(sg.space_adv);
-                if justify {
-                    for _ in 0..sg.space_gaps {
-                        *x += per;
-                        if *remainder > 0 {
-                            *x += 1;
-                            *remainder -= 1
-                        }
-                    }
-                }
-            } else {
-                if sg.flags & SEG_SPACE != 0 {
-                    *x += i32::from(backend.advance(
-                        32,
-                        self.size(span.size),
-                        span.flags & STYLE_MASK,
-                    ))
-                }
-                if justify {
+            *x += i32::from(sg.space_adv);
+            if justify {
+                for _ in 0..sg.space_gaps {
                     *x += per;
                     if *remainder > 0 {
                         *x += 1;
@@ -1786,18 +1953,17 @@ impl<'a> EngineState<'a> {
             *x -= i32::from(self.size(span.size) / 2)
         }
     }
-    #[inline(never)]
     fn emit_segment(
         &mut self,
         backend: &mut dyn Backend,
-        sg: Segment,
+        sg: &Segment,
+        span: Span,
+        base_sz: u16,
         hy: bool,
         baseline: i16,
         x: &mut i32,
         active_link: &mut u8,
     ) -> bool {
-        let span = self.storage.spans[sg.span];
-        let base_sz = self.size(span.size);
         let small_cap = sg.flags & SEG_SMALL_CAP != 0;
         let sz = if small_cap { case::small_cap_px(base_sz) } else { base_sz };
         let style = (span.flags | sg.extra) & STYLE_MASK;
@@ -1807,7 +1973,11 @@ impl<'a> EngineState<'a> {
             if cp == 0x00ad && self.par_case {
                 continue;
             }
-            width += Self::advance_sized(backend, cp, prev, prev, sz, base_sz, style, false);
+            width += if !small_cap {
+                Self::advance_plain(backend, cp, prev, base_sz, style)
+            } else {
+                Self::advance_sized(backend, cp, prev, prev, sz, base_sz, style, false)
+            };
             prev = cp
         }
         let n = sg.end - sg.start;
