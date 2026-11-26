@@ -155,6 +155,9 @@ def main():
         ('trust-orphan', reopen,
          'pages.0.invalidate_index(digest);', '/* retain orphan */',
          'failed or missing reopened source must revoke its index'),
+        ('selected-after-spill-reopen', operation,
+         'None, run_turn(prepared), &yielded', 'None, run_turn(false), &yielded',
+         'a spill-reopened first open must finish the prepared import'),
         ('stale-published-digest', ROOT / 'rust/phased-reader/src/index_build.rs',
          'Identity { digest: *digest, policy:', 'Identity { digest: [0;32], policy:',
          'publication must bind the bytes digest'),
@@ -196,6 +199,7 @@ def main():
         assert rejected.returncode == 101 and witness in rejected.stderr, rejected.stderr
     print('PASS changed reopened bytes, byte-digest publication and missing-source revocation; skip-verification, stale-digest and trusted-orphan controls rejected')
     print('PASS actual operation/index loans, physical spill release/reopen, reopen refusal, power-cut cold reads and verification revocation; compact, idle-lending, route-drift and retained-index controls rejected')
+    print('PASS spill-reopened first open opens Prepared; selected-after-spill-reopen control rejected')
     common = [cargo, 'test', '--offline', '--frozen', '--locked',
               '--manifest-path', ROOT / 'rust/Cargo.toml', '--target', HOST,
               '--target-dir', target, '--jobs', '2']

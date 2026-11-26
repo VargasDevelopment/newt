@@ -138,7 +138,11 @@ mod selected {
             let n = bytes.len().min(out.len()); out[..n].copy_from_slice(&bytes[..n]); n as i32
         }
     }
-    impl newt_phased_reader::index_build::ReleasableSource for SelectedSource {}
+    // Bytes stay in memory, so a spilled index build can release and reopen.
+    impl newt_phased_reader::index_build::ReleasableSource for SelectedSource {
+        fn release(&mut self) -> bool { true }
+        fn reopen(&mut self) -> bool { true }
+    }
     impl SelectedSource {
         pub fn with_index_source<N,R>(&mut self,_:&mut N,_:&[u8],_:&mut[u8],_:Option<&dyn newt_native_storage::Authority>,_:Option<&dyn FileObserver>,work:impl FnOnce(&mut dyn newt_phased_reader::index_build::ReleasableSource)->R)->core::result::Result<R,()> {Ok(work(self))}
         pub fn bound(&self) -> bool { true }
@@ -230,6 +234,8 @@ mod image {
     pub mod drive {
         use super::*;
         pub struct Opening { pub accepted_save: bool, pub at: u32, pub indexed: newt_phased_reader::index_build::Indexed }
+        // Whether the last turn opened through the prepared import route.
+        thread_local! { pub static PREPARED: Cell<Option<bool>> = const { Cell::new(None) }; }
         #[derive(Clone, Copy)] pub struct Turn<'a> { pub indexed: Option<&'a newt_phased_reader::index_build::Indexed>, pub paint_first: bool, pub accepted_save: bool, pub step: Option<reader_book::BookStep>, pub settings: ViewSettings, pub open: newt_reader_ui::PhysicalOpen }
         pub struct Ports<'a,'io,'scope,'sdk> {
             pub io: &'io newt_native_io::UiIo, pub panel: &'a mut newt_c3_board::ReaderPanel<'scope,'sdk>,
@@ -249,6 +255,7 @@ mod image {
                 _: &dyn Fn(), _: &dyn Fn(newt_core::admission::WorkEvent),
                 _: &mut Saves, _: bool, _: &mut bool,
             ) -> core::result::Result<reader_book::BookExit,BookFailure> {
+                PREPARED.with(|prepared| prepared.set(Some(matches!(turn.open, newt_reader_ui::PhysicalOpen::Prepared))));
                 if matches!(turn.step, Some(reader_book::BookStep::Idle { .. })) {
                     use core::sync::atomic::Ordering::Relaxed;
                     assert!(!request.cancel.cancelled());
@@ -309,6 +316,7 @@ fn main() {
     source.bytes[100]^=1;
     image::index_loans::physical_handoffs(&mut home,&source.bytes,&digest);
     let filename = std::env::args().nth(2).expect("catalog name");
+    let filename_for_spill = filename.clone();
     let mut key = [0;64];
     let key = reader_book::route_key(&filename,&mut reader_hash::PackageHasher::from_live_sdk(),&mut key).unwrap();
     let route = newt_native_storage::RouteState::new(reader_book::CACHE_ROOT,key);
@@ -352,7 +360,7 @@ fn main() {
     let mut control=();let queue=app_image::Queue;
     let mut events=app_image::Events { control:&mut control,queue:&queue,action:reader_action::Trace,task:PhantomData };
     let mut logical=[0xa5;newt_core::frame::FRAME_BYTES];
-    image::index_loans::index(&mut runtime,&mut home,&mut logical);
+    image::index_loans::index(&mut runtime,&mut home,&mut logical,false);
     assert!(runtime.session.as_ref().unwrap().source.is_some(),"index loans retain the operation's revision owner");
     logical.fill(0xa5);
     reads.borrow_mut().clear();
@@ -387,12 +395,70 @@ fn main() {
         assert!(session.pages.close(&mut native,&route).unwrap().clean);
     }).unwrap();
     drop(session);
-    let indexed=image::index_loans::index(&mut runtime,&mut home,&mut logical);
+    let indexed=image::index_loans::index(&mut runtime,&mut home,&mut logical,false);
     logical.fill(0xa5);
     reads.borrow_mut().clear();
     image::execute_open(&mut runtime,&mut home,&mut ui,&mut logical,&mut events,indexed);
     assert_eq!(reads.borrow().as_slice(),&[4096,4096],"standalone operation uses the source seen by the index pass");
     println!("PASS whole actual operate_image: caller frame loan, whole-block retention and original-scratch withdrawal; RunLoan is a typed host consumer");
+    spill_reopened_first_open(&mut runtime,&mut home,&mut ui,&mut logical,&mut events,&filename_for_spill,&digest);
+}
+
+// #171: a first open whose index build spills reopens the source, which
+// restarts verification. The provisional import must still open Prepared;
+// a hint-admitted pending open keeps Selected.
+fn spill_reopened_first_open(runtime:&mut image::Runtime,home:&mut app_image::Home<'_>,ui:&mut app_image::Application<'_>,
+    logical:&mut newt_core::frame::Frame,events:&mut app_image::Events<'_,'_>,filename:&str,digest:&[u8;32]) {
+    use crate::reader_verification::Verification;
+    let mut key=[0;64];
+    let key=reader_book::route_key(filename,&mut reader_hash::PackageHasher::from_live_sdk(),&mut key).unwrap();
+    let route=newt_native_storage::RouteState::new(reader_book::CACHE_ROOT,key);
+    let receipt=home.with_reader_io(|scope| {
+        let mut native=scope.card.port(scope.io);
+        sd_revision::SdRevisionState::new(&mut native,&route.lend(&Never,now))
+    }).unwrap();
+    let mut session=Box::new(image::session::Session {
+        route, receipt, pages:newt_native_storage::chapter_cache::ChapterCacheState::new(),
+        whole:reader_hash::MbedHasher::default(), block:reader_hash::MbedHasher::default(), scratch:[0;256], source:None,
+        verification:image::session::Verification::new(),
+    });
+    let source=runtime.source.as_mut().unwrap();
+    home.with_reader_io(|scope| {
+        let mut native=scope.card.port(scope.io);
+        let route=session.route.lend(&Never,now);
+        // Cold first open: no index for this digest yet.
+        let mut pages=reader_pages::ReaderPages(newt_native_storage::chapter_cache::ChapterCacheStorage::lend(&mut session.pages,&mut native,&route).unwrap());
+        pages.0.invalidate_index(digest);
+        let name=*newt_core::book_index::FileName::new(digest,newt_core::book_index::FileKind::Index).as_bytes();
+        assert!(newt_core::page_cache::CacheStorage::file_size(&mut pages,&name)<0);
+        drop(pages);
+        let mut receipt=sd_revision::SdRevisionStorage::lend(&mut session.receipt,&mut native,&route).unwrap();
+        let mut revision=ImportedRevision::compact(&mut receipt,&mut session.whole,&mut session.block,&mut session.scratch);
+        assert!(revision.begin_import(&mut **source));
+        session.source=Some(ReaderSource::new(revision).into_state());
+    }).unwrap();
+    session.verification.control().flags.set_prepared(true);
+    runtime.session=Some(session);
+    let indexed=image::index_loans::index(runtime,home,logical,true);
+    assert!(indexed.built() && indexed.source_reopened() && !indexed.verified_now(),"a 600-spine-item book must spill and reopen: {indexed:?}");
+    assert_eq!(runtime.session.as_ref().unwrap().verification.state(),Verification::Pending);
+    image::drive::PREPARED.with(|prepared| prepared.set(None));
+    image::execute_open(runtime,home,ui,logical,events,indexed);
+    assert_eq!(image::drive::PREPARED.with(Cell::get),Some(true),
+        "a spill-reopened first open must finish the prepared import");
+    // Hint path: verification pending over a selected revision, no prepare.
+    let session=runtime.session.as_mut().unwrap();let raw=runtime.source.as_mut().unwrap();
+    assert!(session.verification.finish_with_update(&mut **raw,digest,&mut[0;4096],&mut||true,&mut|hash,bytes|
+        newt_phased_reader::imported_revision::RevisionHasher::update(hash,bytes)));
+    let indexed=image::index_loans::index(runtime,home,logical,true);
+    assert!(!indexed.built() && !indexed.source_reopened());
+    let session=runtime.session.as_mut().unwrap();
+    assert!(!session.verification.control().flags.prepared());
+    assert!(session.verification.begin(&**runtime.source.as_ref().unwrap(),reader_hash::MbedHasher::default));
+    image::drive::PREPARED.with(|prepared| prepared.set(None));
+    image::execute_open(runtime,home,ui,logical,events,indexed);
+    assert_eq!(image::drive::PREPARED.with(Cell::get),Some(false),"a hint-admitted pending open stays Selected");
+    println!("PASS spill-reopened first open: 600 spine items open Prepared; hint-admitted pending open stays Selected");
 }
 
 impl nvs::Inventory for Flash {
