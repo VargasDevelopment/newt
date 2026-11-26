@@ -45,6 +45,7 @@ pub fn run(root: &Path) -> std::io::Result<()> {
     ] {
         let mut source = Source::open(&root.join(format!("language-{name}.epub")))?;
         let mut breaks = Breaks { expected: tag, seen: 0 };
+        assert!(store.prepare_index(&mut source, &digest, &mut storage, &mut *native, &mut parser).is_ok());
         assert_eq!(reader.open_phased(&mut source, &mut storage, &mut *native, &mut parser), Status::Ok);
         {
             let mut operation = OperationPhased::new(&mut reader, &mut storage, &mut *native, &mut parser, &mut breaks);

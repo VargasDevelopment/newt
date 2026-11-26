@@ -1,4 +1,7 @@
 //! Compare the index with the real package parser and phased navigation adapter.
+#[path = "../../phased-reader/host/index_store.rs"]
+mod index_store;
+use index_store::BuildStore;
 use super::*;
 use newt_core::{book_index::{self as index, NONE}, book_index_build as builder,
     canonical, package_parsers, phased_metadata::{copy_display_title, BookLanguage},
@@ -453,30 +456,6 @@ pub fn small_cases() {
     tiny_items_and_internal_entities_spill_in_package_callback();
 }
 
-#[derive(Default)]
-struct BuildStore { work: Vec<u8>, cache: Vec<u8>, pending: Vec<u8>, index_opens: usize }
-impl builder::WorkFile for BuildStore {
-    fn append(&mut self, bytes: &[u8]) -> bool { self.work.extend_from_slice(bytes); true }
-    fn read_at(&mut self, at: u32, out: &mut [u8]) -> bool {
-        let Some(input) = self.work.get(at as usize..at as usize + out.len()) else { return false; };
-        out.copy_from_slice(input); true
-    }
-    fn remove_work(&mut self) -> bool { self.work.clear(); true }
-    fn sync_work(&mut self) -> bool { true }
-}
-impl CacheStorage for BuildStore {
-    fn remove(&mut self, _: &[u8]) -> bool { self.cache.clear(); true }
-    fn file_size(&mut self, _: &[u8]) -> i64 { self.cache.len() as i64 }
-    fn read_at(&mut self, _: &[u8], at: u32, out: &mut [u8]) -> i32 {
-        if at == 0 && out.len() == index::HEADER_BYTES as usize { self.index_opens += 1; }
-        let Some(input) = self.cache.get(at as usize..at as usize + out.len()) else { return -1; };
-        out.copy_from_slice(input); out.len() as i32
-    }
-    fn begin_write(&mut self, _: &[u8]) -> bool { self.pending.clear(); true }
-    fn write(&mut self, bytes: &[u8]) -> bool { self.pending.extend_from_slice(bytes); true }
-    fn end_write(&mut self) -> bool { self.cache = std::mem::take(&mut self.pending); true }
-}
-
 // Both packages have 1,024 ZIP members and 350 identical 22-byte manifest
 // items. The second expands those items inside Expat, beyond the input bytes.
 fn tiny_items_and_internal_entities_spill_in_package_callback() {
@@ -494,18 +473,4 @@ fn tiny_items_and_internal_entities_spill_in_package_callback() {
         let (_, callback_spilled) = agreement_variant(&mut source, label, 32768, 512, 32768, false, false);
         assert!(callback_spilled, "{label}: work opened during OPF callback");
     }
-}
-
-impl phase_storage::ReadScope for BuildStore {
-    fn query<R>(&mut self, _: &[u8], _: bool, _: &mut [u8], live: &mut dyn FnMut() -> bool,
-        read: impl FnOnce(&mut dyn CacheStorage) -> R) -> Result<(R, bool), Status> {
-        if !live() { return Err(Status::Stale); }
-        let result = read(self);
-        Ok((result, live()))
-    }
-}
-
-impl CachePresence for BuildStore {
-    fn with_index<R>(&mut self, _: &[u8; 32], _: impl FnOnce(&mut dyn index_build::Store) -> R) -> Option<R> { None }
-    fn present(&mut self, _: &[u8], _: bool) -> bool { !self.cache.is_empty() }
 }

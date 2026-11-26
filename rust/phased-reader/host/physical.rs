@@ -4,6 +4,9 @@ use newt_core::{page_cache::CacheStorage, zip_container::Status, zip_window::sou
 use newt_phased_reader::{CachePresence, hash_provider::CacheHash,
     phase_storage::{BANK_BYTES, BuildLoan, ReadScope}};
 use std::{io::Read, path::Path};
+#[path = "index_store.rs"]
+mod index_store;
+use index_store::BuildStore;
 
 pub struct Source(std::io::Cursor<Vec<u8>>);
 impl Source {
@@ -33,8 +36,19 @@ impl BuildLoan for Bank {
 pub struct Store {
     pub name: Vec<u8>,
     pub file: Vec<u8>,
+    index: BuildStore,
 }
 impl Store {
+    pub fn prepare_index(&mut self, source: &mut Source, digest: &[u8; 32],
+        storage: &mut newt_phased_reader::phase_storage::Storage<'_>, lender: &mut Bank,
+        parser: &mut newt_target_expat::Expat,
+    ) -> Result<newt_phased_reader::index_build::Indexed, Status> {
+        // Language fixtures deliberately share a digest to isolate the page
+        // cache key. Their index must instead come from this fixture's bytes.
+        self.index = BuildStore::default();
+        newt_phased_reader::index_build::open(source, digest, storage, lender, parser,
+            self, None, newt_phased_reader::index_build::Verification::Verified)
+    }
     pub fn copy_file_from(&mut self, saved: &Self) {
         self.name.clone_from(&saved.name);
         self.file.clone_from(&saved.file);
@@ -61,6 +75,15 @@ impl CacheStorage for Store {
     fn remove(&mut self, _: &[u8]) -> bool { false }
 }
 impl ReadScope for Store {
+    fn query_index<R>(&mut self, name: &[u8], digest: &[u8; 32], opening: bool,
+        scratch: &mut [u8], live: &mut dyn FnMut() -> bool,
+        read: impl FnOnce(&mut dyn CacheStorage) -> R,
+    ) -> Result<(R, bool), Status> {
+        self.index.query_index(name, digest, opening, scratch, live, read)
+    }
+    fn invalidate_index(&mut self, digest: &[u8; 32]) -> bool {
+        self.index.invalidate_index(digest)
+    }
     fn query<R>(&mut self, name: &[u8], _: bool, _: &mut [u8], live: &mut dyn FnMut() -> bool,
         read: impl FnOnce(&mut dyn CacheStorage) -> R,
     ) -> Result<(R, bool), Status> {
@@ -69,7 +92,7 @@ impl ReadScope for Store {
     }
 }
 impl CachePresence for Store {
-    fn with_index<R>(&mut self, _: &[u8; 32], _: impl FnOnce(&mut dyn newt_phased_reader::index_build::Store) -> R) -> Option<R> { None }
+    fn with_index<R>(&mut self, _: &[u8; 32], operation: impl FnOnce(&mut dyn newt_phased_reader::index_build::Store) -> R) -> Option<R> { Some(operation(&mut self.index)) }
     fn present(&mut self, name: &[u8], _: bool) -> bool { self.name == name && !self.file.is_empty() }
 }
 
