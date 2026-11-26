@@ -28,7 +28,7 @@ impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::Pro
         let mut chars = 0;
         if status == Status::Ok {
             status = self.with_index(|owner, mut memory| {
-                let mut last = NextPass { status: Status::Ok, pages: 0, chars: 0, restyle: false };
+                let mut last = NextPass { status: Status::Ok, pages: 0, chars: 0, restyle: false, layout_done: false };
                 while last.status == Status::Ok && owner.writer.cancellation().checkpoint() {
                     last = owner.next_pass(reader, spine, backend, breaker, true, &mut memory)?;
                     if last.status != Status::Ok || !last.restyle { break; }

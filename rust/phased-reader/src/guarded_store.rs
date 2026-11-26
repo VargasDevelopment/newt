@@ -76,4 +76,10 @@ impl<C: CacheStorage + ?Sized> CacheStorage for GuardedStore<'_, '_, C> {
     fn trace_segment_end(&mut self, pages: u32) {
         self.inner.trace_segment_end(pages);
     }
+    fn last_write_published(&self) -> bool {
+        self.inner.last_write_published()
+    }
+    fn producer_can_begin(&self) -> bool {
+        self.inner.producer_can_begin()
+    }
 }

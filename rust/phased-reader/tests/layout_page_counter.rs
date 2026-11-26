@@ -455,7 +455,7 @@ fn layout_page_counter_tracks_open_early_stop_misses_and_zero_layout_cache_hits(
                 },
             )
             .unwrap();
-        assert_eq!(produced, Status::Ok);
+        assert_eq!(produced, newt_core::producer_visit::CurrentOutcome::Done);
     }
     {
         let mut op = OperationPhased::new(&mut reader, &mut storage, &mut loan, &mut parser, &mut breaker);
@@ -753,7 +753,7 @@ fn display_preferences_still_produce_and_hit_the_page_cache() {
             })
             .unwrap();
         let case = format!("slim bar {slim_progress_bar}, refresh {refresh_pages}");
-        assert_eq!(produced, Status::Ok, "{case}: producer must run");
+        assert_eq!(produced, newt_core::producer_visit::CurrentOutcome::Done, "{case}: producer must run");
         assert!(!cache_store.files.is_empty(), "{case}: producer must seal segments");
 
         let request = CacheRequest { spine: 0, target: 5, anchor: false, staged: false, cache_only: false, build_on_miss: false };

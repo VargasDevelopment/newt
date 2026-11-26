@@ -442,7 +442,7 @@ class LandingTest(unittest.TestCase):
             self.assertFalse(receipt.exists())
 
     def test_native_recipe_uses_sealed_product_inputs_and_exact_trace_filter(self):
-        for count in (16, 15):
+        for count in (19, 18):
             with self.subTest(count=count), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory); ws = root/'source'; ws.mkdir()
                 fixture = ws/'tests/producer_forwarding/expected-outputs.bin.zlib'
@@ -459,7 +459,7 @@ class LandingTest(unittest.TestCase):
                 runner = SimpleNamespace(output=root, env={'RUSTFLAGS': '-Dwarnings native-objects'},
                     tools={'clang++': 'mock-clang'}, run=Mock(), cargo=Mock(return_value=passed(count, 17)))
                 with patch.object(landing, 'load', side_effect=[native, sha, recipe]):
-                    if count == 16:
+                    if count == 19:
                         result = landing.native_forwarding(checker, mocked_support, runner, root)
                         self.assertEqual(result['forwarding_cases'], 55)
                     else:

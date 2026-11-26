@@ -71,10 +71,17 @@ impl<C: ProducerProbe + CachePresence> PhasedChapterCache<'_, C> {
         if whole != MissingProbe::Ready || count == 0 { return whole; }
         let mut work = MissingProbe::Complete;
         let mut skipped = false;
+        let start = (info.page / segment::PAGES).min(count - 1);
         if let Some(need) = need.as_deref_mut() { need.files = 0; }
-        for k in 0..=count {
+        for step in 0..=count {
             if need.is_none() && work != MissingProbe::Complete { break; }
-            let map = k == count;
+            let map = step == count;
+            let k = if map || start == 0 {
+                step
+            } else {
+                let idx = start + step;
+                if idx >= count { idx - count } else { idx }
+            };
             let current = ChapterSegment { index: k, pages: info.page_count, chars: info.total_chars };
             if !self.producer_name(digest, spine, &mut name, &mut generation, language)
                 || !(if map { segment::map_name(&mut name, &mut |b, d| self.hash.hash(b, d)) }

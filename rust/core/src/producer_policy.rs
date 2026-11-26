@@ -36,6 +36,13 @@ impl<'ctx, C: ?Sized> Cancellation<'ctx, C> {
     pub fn interrupted(&self) -> bool {
         self.reason.get() == Stop::Interrupted
     }
+    pub fn terminal(&self) -> bool {
+        self.reason.get() == Stop::Terminal
+    }
+    /// Unconditionally latch a terminal failure, even over an earlier interruption.
+    pub fn fail_terminal(&self) {
+        self.reason.set(Stop::Terminal);
+    }
     pub fn stopped(&self) -> bool {
         if self.reason.get() == Stop::None {
             self.reason.set(self.hooks.stop.map_or(Stop::Terminal,
@@ -60,8 +67,11 @@ impl<'ctx, C: ?Sized> Cancellation<'ctx, C> {
     pub fn pause_point_with(&self, pause: impl FnOnce(&Self) -> Stop) -> bool {
         if !self.checkpoint() { return false; }
         let reason = pause(self);
-        // Work inside pause may already have latched a different reason.
-        if self.reason.get() == Stop::None { self.reason.set(reason); }
+        // Terminal failures from pause override any concurrently latched
+        // interruption; otherwise preserve the first latched reason.
+        if reason == Stop::Terminal || self.reason.get() == Stop::None {
+            self.reason.set(reason);
+        }
         self.checkpoint()
     }
     pub fn result(&self, ok: bool) -> bool {
@@ -152,5 +162,64 @@ impl<C: ?Sized, S: BookSource + ProducerReceipt + ?Sized> ProducerBookSource<'_,
                 == crate::zip_container::Status::Ok,
             ProducerCheck::Receipt => self.source.producer_receipt_live(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_failures_override_interrupted_monotonically() {
+        let stop = Cell::new(Stop::Interrupted);
+        let cancel = Cancellation::new(Hooks {
+            context: &stop,
+            stop: Some(|s: &Cell<Stop>| s.get()),
+            yield_now: None,
+            pause: None,
+        });
+        assert!(cancel.stopped());
+        assert!(cancel.interrupted());
+        assert!(!cancel.terminal());
+        // Ordinary result(false) preserves an already-latched interruption.
+        assert!(!cancel.result(false));
+        assert!(cancel.interrupted());
+        assert!(!cancel.terminal());
+        // fail_terminal overrides a latched interruption.
+        cancel.fail_terminal();
+        assert!(cancel.terminal());
+        assert!(!cancel.interrupted());
+
+        // pause_point_with returning Stop::Terminal overrides an interruption
+        // latched during the pause callback.
+        stop.set(Stop::None);
+        let cancel = Cancellation::new(Hooks {
+            context: &stop,
+            stop: Some(|s: &Cell<Stop>| s.get()),
+            yield_now: None,
+            pause: None,
+        });
+        assert!(!cancel.pause_point_with(|same| {
+            stop.set(Stop::Interrupted);
+            assert!(same.stopped());
+            assert!(same.interrupted());
+            Stop::Terminal
+        }));
+        assert!(cancel.terminal());
+        assert!(!cancel.interrupted());
+        // A later pause cannot downgrade a latched terminal stop.
+        assert!(!cancel.pause_point_with(|_| Stop::Interrupted));
+        assert!(cancel.terminal());
+
+        // With no prior latch, result(false) latches Stop::Terminal.
+        stop.set(Stop::None);
+        let cancel = Cancellation::new(Hooks {
+            context: &stop,
+            stop: Some(|s: &Cell<Stop>| s.get()),
+            yield_now: None,
+            pause: None,
+        });
+        assert!(!cancel.result(false));
+        assert!(cancel.terminal());
     }
 }

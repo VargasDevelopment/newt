@@ -14,6 +14,7 @@ pub(super) enum Lookup {
 pub(super) struct SegmentTraceState {
     pub(super) active: bool,
     pub(super) idx: u32,
+    pub(super) bytes: u32,
     pub(super) started_us: u32,
     pub(super) layout_us: u32,
     pub(super) tee_us: u32,
@@ -34,6 +35,7 @@ pub(super) struct State {
     /// The open record is a pre-#179 Pages/ name, copied to Meta/ on close.
     pub(super) legacy: bool,
     pub(super) lookup: Lookup,
+    pub(super) last_published: bool,
     pub(super) payload: u32,
     pub(super) crc: u32,
     #[cfg(feature = "page-turn-trace")]

@@ -11,11 +11,13 @@ pub const BUFFER_BYTES: usize = 1024;
 /// The tail keeps these bytes while the Store's source-guard loan changes.
 pub struct StoreState<'window> {
     buffer: Option<&'window mut [u8; BUFFER_BYTES]>,
-    used: usize,
+    used: u16,
+    end_committed: bool,
 }
+const _: () = assert!(core::mem::size_of::<StoreState<'_>>() == 2 * core::mem::size_of::<usize>());
 impl<'window> StoreState<'window> {
     pub fn new(buffer: Option<&'window mut [u8; BUFFER_BYTES]>) -> Self {
-        Self { buffer, used: 0 }
+        Self { buffer, used: 0, end_committed: false }
     }
 }
 
@@ -66,14 +68,17 @@ impl<'loan, 'window, 'ctx, 'pause, C: ?Sized, S: CacheStorage + ?Sized> Producer
         self.state.used = 0;
         self.state.buffer.take()
     }
+    pub(crate) fn clear_end_committed(&mut self) { self.state.end_committed = false; }
+    pub(crate) fn end_committed(&self) -> bool { self.state.end_committed }
     pub fn flush(&mut self) -> bool {
-        if self.state.used == 0 {
+        let used = usize::from(self.state.used);
+        if used == 0 {
             return self.cancellation.checkpoint();
         }
         let Some(buffer) = self.state.buffer.as_deref() else {
             return false;
         };
-        if !self.cancellation.step(|| self.base.write(&buffer[..self.state.used])) {
+        if !self.cancellation.step(|| self.base.write(&buffer[..used])) {
             return false;
         }
         self.state.used = 0;
@@ -81,7 +86,7 @@ impl<'loan, 'window, 'ctx, 'pause, C: ?Sized, S: CacheStorage + ?Sized> Producer
     }
     /// Remains occupied after a failed flush, even if the base accepted bytes.
     pub fn buffered_bytes(&self) -> usize {
-        self.state.used
+        usize::from(self.state.used)
     }
 }
 impl<C: ?Sized, S: CacheStorage + ?Sized> CacheStorage for ProducerStore<'_, '_, '_, '_, C, S> {
@@ -110,6 +115,7 @@ impl<C: ?Sized, S: CacheStorage + ?Sized> CacheStorage for ProducerStore<'_, '_,
         }
     }
     fn begin_write(&mut self, name: &[u8]) -> bool {
+        self.state.end_committed = false;
         self.cancellation.step(|| self.base.begin_write(name))
     }
     fn write(&mut self, bytes: &[u8]) -> bool {
@@ -121,12 +127,14 @@ impl<C: ?Sized, S: CacheStorage + ?Sized> CacheStorage for ProducerStore<'_, '_,
             if !self.cancellation.checkpoint() {
                 return false;
             }
-            let take = input.len().min(BUFFER_BYTES - self.state.used);
-            buffer[self.state.used..self.state.used + take].copy_from_slice(&input[..take]);
-            self.state.used += take;
+            let used = usize::from(self.state.used);
+            let take = input.len().min(BUFFER_BYTES - used);
+            buffer[used..used + take].copy_from_slice(&input[..take]);
+            let next_used = used + take;
+            self.state.used = next_used as u16;
             input = &input[take..];
-            if self.state.used == BUFFER_BYTES {
-                if !self.cancellation.step(|| self.base.write(&buffer[..self.state.used])) {
+            if next_used == BUFFER_BYTES {
+                if !self.cancellation.step(|| self.base.write(&buffer[..next_used])) {
                     return false;
                 }
                 self.state.used = 0;
@@ -135,7 +143,24 @@ impl<C: ?Sized, S: CacheStorage + ?Sized> CacheStorage for ProducerStore<'_, '_,
         self.cancellation.checkpoint()
     }
     fn end_write(&mut self) -> bool {
-        self.flush() && self.cancellation.step(|| self.base.end_write())
+        self.state.end_committed = false;
+        if !self.flush() {
+            return false;
+        }
+        let mut committed = false;
+        let ok = self.cancellation.step(|| {
+            let done = self.base.end_write();
+            committed = done || self.base.last_write_published();
+            done
+        });
+        self.state.end_committed = committed;
+        ok
+    }
+    fn last_write_published(&self) -> bool {
+        self.state.end_committed || self.base.last_write_published()
+    }
+    fn producer_can_begin(&self) -> bool {
+        self.base.producer_can_begin()
     }
     #[cfg(feature = "page-turn-trace")]
     fn trace_micros(&self) -> u32 {

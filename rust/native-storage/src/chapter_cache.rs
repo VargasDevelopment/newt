@@ -542,6 +542,7 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
         self.file.settle(verified)
     }
     fn begin_cache_write(&mut self, name: &[u8], extent: u32) -> bool {
+        self.state.last_published = false;
         self.forget_absent_name(name);
         let lease = self.reset();
         if self.file.generation() != lease {
@@ -894,6 +895,7 @@ impl<S: Native> CacheStorage for ChapterCacheAccess<'_, '_, S> {
             ChapterCacheAccess { file, state }.end_write())
     }
     fn end_write(&mut self) -> bool {
+        self.state.last_published = false;
         if !self.file.writing() {
             return false;
         }
@@ -933,6 +935,11 @@ impl<S: Native> CacheStorage for ChapterCacheAccess<'_, '_, S> {
                 && self.validate()
                 && self.file.commit(MAX_BYTES + FOOTER_BYTES, false)
         };
+        #[cfg(feature = "page-turn-trace")]
+        {
+            self.state.trace.bytes = self.state.payload;
+        }
+        self.state.last_published = committed || self.file.promoted();
         if !committed {
             self.file.settle(false);
             // Not close(): see adopt_legacy.
@@ -972,12 +979,20 @@ impl<S: Native> CacheStorage for ChapterCacheAccess<'_, '_, S> {
             self.file.emit_segment(newt_core::page_turn_trace::SegmentTrace {
                 idx: self.state.trace.idx,
                 pages,
-                bytes: self.state.payload,
+                bytes: self.state.trace.bytes,
                 layout_us: self.state.trace.layout_us,
                 tee_us: self.state.trace.tee_us,
                 seal: self.state.trace.seal,
             });
         }
+    }
+    fn last_write_published(&self) -> bool {
+        self.state.last_published
+    }
+    fn producer_can_begin(&self) -> bool {
+        !self.file.producing()
+            || (self.state.entries > 0
+                && self.file.write_credit() >= u64::from(newt_core::cache_names::namespace::PAGE_CANDIDATE))
     }
 }
 

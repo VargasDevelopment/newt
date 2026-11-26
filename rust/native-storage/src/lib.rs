@@ -165,6 +165,12 @@ impl<'a> ProducerPolicy<'a> {
             self.authority.failure();
         }
     }
+    /// Unconditionally record a confirmed native I/O error that ran despite an
+    /// already-observed cancellation (such as cleanup close or unlink).
+    pub fn record_io_failure(&self) {
+        self.failed.set(true);
+        self.authority.failure();
+    }
     pub fn boundary(&self) -> bool {
         if self.failed.get() || self.cancellation_observed.get() {
             return false;

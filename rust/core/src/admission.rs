@@ -444,14 +444,19 @@ impl<'a, S: BookSource + ?Sized> ChapterSource<'a, S> {
         self.reader.with_source(operation)
     }
     pub fn finish(&mut self) -> bool {
-        if self.policy.is_some_and(|policy| policy.cancelled()) { return false; }
+        self.finish_checked().0
+    }
+    /// Like `finish`, also reporting whether exact EOF was verified before any
+    /// post-EOF cancellation check returned false.
+    pub fn finish_checked(&mut self) -> (bool, bool) {
+        if self.policy.is_some_and(|policy| policy.cancelled()) { return (false, false); }
         let mut extra = [0];
         let ended = self.consumed == self.length && self.reader.read(&mut extra) == 0;
         if let Some(policy) = self.policy {
             policy.result(ended);
-            if policy.cancelled() { return false; }
+            if policy.cancelled() { return (false, ended); }
         }
-        ended
+        (ended, ended)
     }
 }
 impl<S: BookSource + ?Sized> BookSource for ChapterSource<'_, S> {
