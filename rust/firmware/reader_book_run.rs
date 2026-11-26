@@ -262,11 +262,6 @@ where
                                 continue;
                             }
                         }
-                        if *index_trim_owed && !request.cancel.cancelled() {
-                            *index_trim_owed = !trim_index(resources.pages, request, producer.wait, &opened_digest);
-                            idle_quiet_from = Some(now());
-                            continue;
-                        }
                         let (parsed, repaint, quiet_from) = if let Some(visit) = producer_visit.as_mut() {
                             let Some(result) = revision.with_producer_source(|source| source.map(|source|
                                 visit.with(|visit| resources.producer_idle(io, card, checkpoint, pause, visit,
@@ -282,6 +277,10 @@ where
                                 owner.tracker.snapshot(now()), None,
                             );
                             if repaint || restored.is_err() { composed = Some(restored); }
+                        } else if quiet_from.is_none() && *index_trim_owed && !request.cancel.cancelled() {
+                            // Index housekeeping yields to page production: it runs only on
+                            // a pass where the producer did no work, so it never delays pages.
+                            *index_trim_owed = trim_index(resources.pages, request, producer.wait, &opened_digest);
                         }
                     }
                     continue;
@@ -416,6 +415,9 @@ where
     result
 }
 
+/// Trims the index folder to its grant with the open index pinned; true while the
+/// trim is still owed. Only input-cancelled trims resume; a failed delete waits for
+/// the next built index, so a bad card can't retry on every idle pass.
 // Keep census scratch and the pinned name out of the shared drive frame.
 #[inline(never)]
 fn trim_index<N: newt_native_storage::Native + newt_native_storage::page_entries::PageEntries>(
@@ -423,5 +425,5 @@ fn trim_index<N: newt_native_storage::Native + newt_native_storage::page_entries
 ) -> bool {
     let pinned = newt_core::book_index::FileName::new(digest, newt_core::book_index::FileKind::Index);
     pages.0.index_trim(request.cancel, request.now, wait, pinned.as_bytes()).outcome
-        == newt_native_storage::MissingProbe::Ready
+        == newt_native_storage::MissingProbe::Stopped
 }
