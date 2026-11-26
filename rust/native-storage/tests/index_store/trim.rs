@@ -26,7 +26,7 @@ fn opened(ties: bool) -> Card {
     let mut card = populated(ties);
     reserve(&mut card);
     with_store(&mut card, |s| write(s, BOOK)).unwrap();
-    assert_eq!(card.indexes().len(), 32);
+    assert_eq!(card.indexes().len(), 31);
     card
 }
 fn expected(ties: bool) -> Vec<String> {
@@ -36,15 +36,18 @@ fn expected(ties: bool) -> Vec<String> {
     card.indexes()
 }
 
+// For current indexes within the byte quota: at most 2 deletes at 32 files,
+// none at 30 or fewer. Temporaries and legacy long names always go, and byte
+// pressure can take more (see the census tests).
 #[test]
-fn open_at_cap_deletes_only_one_and_below_cap_deletes_none() {
-    for count in [32, 0, 3, 24, 29, 31, 33, 40] {
+fn open_frees_only_the_two_slots_a_spilled_build_needs() {
+    for count in [32, 0, 3, 24, 29, 30, 31, 33, 40] {
         let mut card = Card::new();
         for i in 0..count { card.seed(&leaf(&[i; 32]), 100, i64::from(i)); }
         reserve(&mut card);
-        assert_eq!(count as usize - card.indexes().len(), usize::from(count.saturating_sub(31)),
+        assert_eq!(count as usize - card.indexes().len(), usize::from(count.saturating_sub(30)),
             "open reservation at {count} files");
-        assert!(card.indexes().len() < 32);
+        assert!(card.indexes().len() <= 30);
     }
 }
 
@@ -60,17 +63,19 @@ fn idle_trim_kept_set_equals_inline_census_for_mixed_sizes_times_and_ties() {
 }
 
 #[test]
-fn idle_trim_excludes_the_pinned_pair_from_both_count_and_bytes() {
+fn idle_trim_pins_only_the_open_index_and_ages_out_its_siblings() {
+    use newt_core::book_index::{FileKind, FileName};
     for ties in [false, true] {
         let mut card = populated(ties);
         let name = leaf(&BOOK.digest);
-        // Set aside even an oldest pair larger than the entire quota.
-        card.seed(&name, 9 * 1024 * 1024, -1);
-        card.seed(&backup(&name), 9 * 1024 * 1024, if ties { 0 } else { -1 });
+        // The open `.IDX` is set aside even when oldest and over the whole quota.
+        card.seed(&name, 17 * 1024 * 1024, -1);
+        // A rebuild's `.BAK` keeps the old index's time, and an orphan `.WRK`
+        // shares the 8.3 base. Both count and go like any other file.
+        card.seed(&backup(&name), 100, -1);
+        card.seed(FileName::new(&BOOK.digest, FileKind::Work).as_str(), 100, 40);
         assert_eq!(trim(&mut card, &Never), MissingProbe::Ready);
-        let mut kept = expected(ties);
-        kept.push(backup(&name)); kept.sort();
-        assert_eq!(card.indexes(), kept);
+        assert_eq!(card.indexes(), expected(ties));
     }
 }
 
@@ -79,7 +84,7 @@ fn failed_idle_delete_is_denied_and_a_later_trim_finishes() {
     let mut card = opened(false);
     card.model.faults.push(Fault::new(Op::Unlink, 1, 1, Effect::Errno("EIO"), 0));
     assert_eq!(trim(&mut card, &Never), MissingProbe::Denied);
-    assert_eq!(card.indexes().len(), 32);
+    assert_eq!(card.indexes().len(), 31);
     assert_eq!(with_store(&mut card, |s| read(s, &BOOK, complete)), Some(true));
     assert_eq!(trim(&mut card, &Never), MissingProbe::Ready);
     assert_eq!(card.indexes(), expected(false));
@@ -100,8 +105,8 @@ fn cancellation_at_every_trim_poll_preserves_the_open_index_and_resumes() {
     for stop in 0..probe.polls.get() {
         let mut card = opened(true);
         assert_eq!(trim(&mut card, &After { polls: Cell::new(0), stop }), MissingProbe::Stopped);
-        assert!(card.indexes().len() <= 32);
-        interrupted_after_delete |= card.indexes().len() < 32;
+        assert!(card.indexes().len() <= 31);
+        interrupted_after_delete |= card.indexes().len() < 31;
         assert_eq!(with_store(&mut card, |s| read(s, &BOOK, complete)), Some(true));
         assert_eq!(trim(&mut card, &Never), MissingProbe::Ready);
         assert_eq!(card.indexes(), expected);

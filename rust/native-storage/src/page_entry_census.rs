@@ -6,7 +6,7 @@ use crate::{Authority, Error, Kind, MissingProbe, Native};
 use crate::page_entries::{PageEntries, PageEntry as Entry};
 use newt_core::{cache_names::namespace::{self as names, Form, Kind as NameKind, PageCacheNeed, PageName, PageNameSet}, reader_scheduler::YieldCadence};
 
-/// Idle index trimming sets the newly published pair aside entirely.
+/// Idle index trimming sets the newly published index aside entirely.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PinnedAccounting { Count, Exclude }
 
@@ -24,7 +24,7 @@ pub struct Policy {
     pub required_units: u8,
     /// Pages keep a `.bak` and its canonical file. An index `.bak` is just an
     /// older copy left by a rebuild, evicted by age like any index; only the
-    /// open book's pair is kept.
+    /// open book's `.IDX` is kept.
     pub keep_backups: bool,
     pub pinned_accounting: PinnedAccounting,
 }
@@ -39,9 +39,10 @@ pub const INDEXES: Policy = Policy {
     required_units: names::INDEX_REQUIRED_UNITS, keep_backups: false, pinned_accounting: PinnedAccounting::Count,
 };
 
-/// Reserve only the hard-cap slot on the open path.
-pub const INDEX_WRITE: Policy = Policy { entry_grant: names::INDEX_ENTRY_CAP as u8, ..INDEXES };
-/// Reproduce the pre-write kept set with the newly published pair set aside.
+/// The open path frees only what the hard cap needs. A spilled build holds its
+/// `.WRK` and the index `.TMP` at once, so it reserves two slots under the cap.
+pub const INDEX_WRITE: Policy = Policy { entry_grant: (names::INDEX_ENTRY_CAP - 1) as u8, ..INDEXES };
+/// Reproduce the pre-write kept set with the newly published index set aside.
 pub const INDEX_TRIM: Policy = Policy { pinned_accounting: PinnedAccounting::Exclude, ..INDEXES };
 
 pub struct Request<'a> {
@@ -201,8 +202,10 @@ impl<'a, 'folder> Census<'a, 'folder> {
         self.poll()
     }
     fn pinned(&self, name: &[u8], parsed: PageName) -> bool {
+        // Only the open `.IDX` is pinned. Its `.BAK` (a rebuild's old copy) and
+        // any orphan `.WRK`/`.TMP` share its 8.3 base, but count and age out.
         if self.request.policy.kind==NameKind::Index {
-            self.request.pinned.is_some_and(|p|p.get(..8)==name.get(..8))
+            parsed.form==Form::Canonical && self.request.pinned.is_some_and(|p|p.get(..8)==name.get(..8))
         } else { self.request.pinned==Some(&name[..parsed.canonical_bytes]) }
     }
     fn consider(&mut self,entry:&Entry<'_>,parsed:PageName) {

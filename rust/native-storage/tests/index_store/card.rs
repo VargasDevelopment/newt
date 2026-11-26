@@ -6,14 +6,16 @@ use newt_native_storage::*;
 use std::collections::BTreeMap;
 
 /// The FAT model plus what it lacks: file times for eviction order, a count
-/// of open files for the card's small descriptor budget, and a power cut that
-/// stops the card, so no cleanup runs between the cut and the next boot.
+/// of open files for the card's small descriptor budget, the most files the
+/// index folder held, and a power cut that stops the card, so no cleanup runs
+/// between the cut and the next boot.
 #[derive(Default)]
 pub(super) struct Card {
     pub(super) model: Model,
     pub(super) times: BTreeMap<String, i64>,
     pub(super) open: u32,
     pub(super) most_open: u32,
+    pub(super) most_indexes: usize,
     pub(super) creates: u32,
     pub(super) cstr_opens: u32,
     pub(super) writes: u32,
@@ -54,6 +56,7 @@ impl Native for Card {
             }
         }
         let fd = self.live(|m| m.open(path, mode))?;
+        self.most_indexes = self.most_indexes.max(self.indexes().len());
         self.open += 1;
         self.most_open = self.most_open.max(self.open);
         Ok(fd)

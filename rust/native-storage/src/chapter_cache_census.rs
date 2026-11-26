@@ -17,7 +17,7 @@ impl<S: crate::page_entries::PageEntries> ChapterCacheStorage<'_, S> {
         })
     }
     /// Book indexes: their own folder and quota. `pinned` is the open book's
-    /// 8.3 index file name in that folder; it and its `.BAK` are never evicted.
+    /// 8.3 index file name in that folder; only that `.IDX` is never evicted.
     /// Callers treat any outcome as advisory: a failed eviction must not fail
     /// the open.
     pub fn index_census(
@@ -26,11 +26,11 @@ impl<S: crate::page_entries::PageEntries> ChapterCacheStorage<'_, S> {
     ) -> crate::page_entry_census::Grant {
         self.index_policy_census(&crate::page_entry_census::INDEXES, cancel, clock, wait, pinned)
     }
-    /// Only reserve a slot before a build; leave reserve trimming for settled idle.
+    /// Only reserve the cap's slots before a build; leave reserve trimming for settled idle.
     pub fn index_write_census(&mut self, cancel: &dyn Authority) -> crate::page_entry_census::Grant {
         self.index_policy_census(&crate::page_entry_census::INDEX_WRITE, cancel, None, None, None)
     }
-    /// The open pair survives and consumes no reserve in the idle trim.
+    /// The open `.IDX` survives and consumes no reserve in the idle trim.
     pub fn index_trim(&mut self, cancel: &dyn Authority, clock: fn() -> u32,
         wait: Option<fn()>, pinned: &[u8],
     ) -> crate::page_entry_census::Grant {

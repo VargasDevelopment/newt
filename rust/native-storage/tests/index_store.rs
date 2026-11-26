@@ -248,16 +248,17 @@ fn a_rebuilt_index_and_its_backup_stay_evictable() {
     assert_eq!(card.indexes(), pair(&book));
 
     // The open book also has a pair; with a newer orphan, the folder is
-    // crowded. The oldest unpinned files go first, backups included.
+    // crowded. The oldest unpinned files go first, backups included: only the
+    // open `.IDX` is pinned, not its own `.BAK`.
     let pinned = leaf(&[1; 32]);
     card.seed(&pinned, 6 * MIB, 5);
-    card.seed(&backup(&pinned), 6 * MIB, 1);
-    card.seed(&leaf(&[2; 32]), 2 * MIB, 3);
+    card.seed(&backup(&pinned), 6 * MIB, 0);
+    card.seed(&leaf(&[2; 32]), 8 * MIB, 3);
     let grant = with_store(&mut card, |store| {
         store.index_census(&Never, None, None, Some(pinned.as_bytes()))
     });
     assert_eq!(grant.outcome, MissingProbe::Ready);
-    assert_eq!(card.indexes(), pair(&pinned));
+    assert_eq!(card.indexes(), [pinned]);
 }
 
 use newt_core as core_api;
@@ -271,12 +272,12 @@ fn spilling_build(card: &mut Card) -> core::result::Result<(), newt_core::book_i
     let mut buffer = [0; 448];
     let mut join = build_support::JoinBacking::new();
     let mut state = join.state();
-    // Sweep before creating a live work file, never between these two loans.
-    with_store(card, |store| store.index_census(&Never, None, None, None));
     let source = card.open("/sd/source", Open::SourceReadOnly).map_err(|_| BuildError::Write(WriteError::Storage))?;
     let prepared = with_store(card, |store| {
         let mut store = IndexBuildStore::lend(store, &mut work, &BOOK.digest)
             .ok_or(BuildError::Write(WriteError::Storage))?;
+        // The open path's reservation, before the work file exists.
+        store.census(&|| false);
         build_support::prepare(&mut store, &mut buffer, 64, 8, 8, 8, &mut state)
     });
     let closed = card.close(source).is_ok();
@@ -333,6 +334,17 @@ fn spilling_build_cuts_every_card_step_and_uses_three_files() {
     let work_bytes = core::mem::size_of::<IndexWorkState>();
     let view_bytes = core::mem::size_of::<IndexBuildStore<'_, '_, Card>>();
     println!("SPILLING CARD cuts={steps} most_open={} work_state={work_bytes} view={view_bytes}", good.most_open);
+}
+
+#[test]
+fn a_spilled_build_at_a_full_folder_never_exceeds_the_cap() {
+    let mut card = build_card();
+    for i in 0..32u8 { card.seed(&leaf(&[i; 32]), 100, i64::from(i)); }
+    spilling_build(&mut card).unwrap();
+    // The `.WRK` and the index `.TMP` coexist, so the reservation needs two slots.
+    assert_eq!(card.most_indexes, 32);
+    assert_eq!(card.indexes().len(), 31);
+    assert_eq!(with_store(&mut card, |s| read(s, &BOOK, built_index_complete)), Some(true));
 }
 
 #[test]
