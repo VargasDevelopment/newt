@@ -262,6 +262,17 @@ fn overlapping_or_header_gaps_miss_and_disjoint_pages_still_hit() {
     let outcome = read(&file, &[0, 1, 2, 3, 4]).unwrap();
     assert_eq!(outcome.pages, vec![stale(), hit(0), hit(1), hit(2), hit(3)]);
     assert_eq!(outcome.point, None);
+    // Empty and backwards gaps inside the point hold no bytes, so they miss
+    // without taking the point from page 2, which still owns it.
+    let segment = Segment::new(VERSION_POINT, false, 4, Some((2, point_record(40))));
+    let [_, _, c, d] = segment.offsets[..] else { unreachable!() };
+    let inside = segment.point.0 + 1;
+    let file = envelope(&segment.rebuilt(VERSION_POINT, false, &[inside, inside, c, d], segment.point));
+    let outcome = read(&file, &[0, 1, 2, 3]).unwrap();
+    let hit = |page: usize| Ok(segment.records[page].clone());
+    assert_eq!(outcome.pages, vec![stale(), stale(), hit(2), hit(3)]);
+    let (offset, length) = segment.point;
+    assert_eq!(outcome.point, Some(PointRange { offset, length }));
 }
 
 /// Negative control: deciding ownership from page 2's gap alone, without the

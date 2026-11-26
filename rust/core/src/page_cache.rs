@@ -691,11 +691,12 @@ impl PageCacheReader {
         };
         Some((start, end))
     }
-    /// Whether the footer's point range touches the bytes `start..end`.
-    /// An overflowing range reaches the end of the address space.
+    /// Whether the footer's point range shares a byte with `start..end`. An
+    /// empty or backwards gap has no bytes, so it touches nothing. An
+    /// overflowing range reaches the end of the address space.
     fn point_touches(&self, start: u32, end: u32) -> bool {
         let point_end = self.point.offset.saturating_add(self.point.length);
-        self.point.length != 0 && point_end > start && self.point.offset < end
+        self.point.length != 0 && start < end && point_end > start && self.point.offset < end
     }
     /// A v4 gap must be nonempty, lie between the header and the index, and
     /// share no byte with another nonempty gap. A v3 index is not checked.
