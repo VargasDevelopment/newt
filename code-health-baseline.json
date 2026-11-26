@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 4060640,
+      "flash_bytes": 4060720,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "41d16634ecc3b5c575176764676d019b21d7326c",
-      "before": 4060608,
-      "after": 4060640,
-      "reason": "+32 B over the 4,060,608 B ceiling recorded at 93b6e276 (NEWT-217): #181 (#177, NEWT-218) bumps NO_ART_VERSION from C to D so no-cover records written under the old 1,024-entry cover cap retry once. With version C the older-version test in cover::bare_record_at could never hold, so the retry branch was compiled out; with D it is live. An nm diff of the two clean ELFs puts all +32 B in newt_core::cover::bare_record (122 -> 154 B), with no rodata or data change. Control: a clean build of 33ac3187 (the cap fix without the bump) measures 4,060,608 B. Clean regional DEV USB build with the pinned Python at 41d16634: 4,060,640 B. RAM 124,096 -> 124,096 B (+0 B), RTC 300 -> 300 B (+0 B), lent Wi-Fi RAM 22,528 -> 22,528 B (+0 B), selected stacks +0 B (open_selected_profile 480 <= 656 B). Usable app space 7,016,448 B; headroom 2,955,840 B (42.13%) -> 2,955,808 B (42.13%). No memory floor or stack ceiling moves.",
-      "reviewer": "Newt Lead ruling 2026-11-26 (#181: record the +32 B retry branch); cross-family review (Astra xhigh) and Codex review of the change"
+      "source_revision": "03d259f1ab8b31d60e5752731db0609f093629b1",
+      "before": 4060640,
+      "after": 4060720,
+      "reason": "+80 B over the 4,060,640 B ceiling recorded at 41d16634 (#181): NEWT-219 (#182) frees the reader session's Pages and receipt before Home's cover job, so the job's book and stage files fit the card's three open files beside the selected source, and keeps a failed close of that release for the next session close. An nm diff of the two clean ELFs puts +76 B in app_runtime::run_loop::loop_body (10,722 -> 10,798 B, the inlined Session::release_for_cover call in the Home cover producer), +4 B in reader_image::session::Session::close (164 -> 168 B, the kept failure) and +4 B in Session::try_new (572 -> 576 B, its initializer), with no rodata or data change. Control: a clean build of e2ebc7c6 (main without the change) measures 4,060,640 B. Clean regional DEV USB build with the pinned Python at 03d259f1: 4,060,720 B. RAM 124,096 -> 124,096 B (+0 B), RTC 300 -> 300 B (+0 B), lent Wi-Fi RAM 22,528 -> 22,528 B (+0 B), selected stacks +0 B (open_selected_profile 480 <= 656 B). Usable app space 7,016,448 B; headroom 2,955,808 B (42.13%) -> 2,955,728 B (42.13%). No memory floor or stack ceiling moves.",
+      "reviewer": "Newt Lead ruling 2026-11-26 (NEWT-219: record the +80 B Home cover release); cross-family review (Astra xhigh) and Codex review of the change"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",

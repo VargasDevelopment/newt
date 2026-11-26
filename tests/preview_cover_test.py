@@ -21,7 +21,7 @@ same build with one firmware change in its generated copy (never in rust/firmwar
 
 These are host facts only. The preview's heap is fixed and its file metadata
 is complete, so heap declines and the device's third full-book read stay
-hardware checks.
+hardware checks. Its card, like the device's mount, opens at most three files.
 """
 import functools
 import os
@@ -40,7 +40,7 @@ import preview_driver  # noqa: E402
 import rust_preview  # noqa: E402
 from gate_tier import negative_controls  # noqa: E402
 
-BACK, CONFIRM, LEFT, RIGHT = 0, 1, 2, 3
+BACK, CONFIRM, LEFT, RIGHT, POWER = 0, 1, 2, 3, 6
 SHELF = (CONFIRM,)
 # rust/firmware/reader_cover_idle.rs CoverResult.
 PRODUCED, CANCELLED, DECLINED, MISSING, UNSUPPORTED, INVALID, IO_ERROR = 2, 3, 4, 5, 6, 8, 9
@@ -466,6 +466,29 @@ def home(binary):
                 return f'Home does not paint {book}\'s new cover'
 
 
+def failed_release(binary):
+    """A close that fails as Home frees the reader's files for cover work is
+    not forgotten: the next idle tick still makes the cover, and the next
+    sleep reports the failure and stops."""
+    book = 'Alder'
+    with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
+        world = World(binary, scratch)
+        world.run(to_book(book) + (CONFIRM,))
+        shutil.rmtree(world.covers)
+        preview_driver.write_conf(world.directory, {'store.refuse': 'card-close:/newt-sd/Newt/Cache/Imported/'})
+        try:
+            world.run((BACK, POWER))
+        except RuntimeError:
+            pass
+        else:
+            return 'sleep after a failed release did not stop'
+        log = (world.directory / 'serial.log').read_text(errors='replace')
+        made, sleep, error = (log.find(text) for text in (
+            f'COVER work=attempt result={PRODUCED}', 'Newt sleep request', 'Newt reader close error'))
+        if not 0 <= made < sleep < error:
+            return f'cover, sleep and close error rows at {made}, {sleep} and {error}'
+
+
 def old_records(binary):
     """Bare records from older decoders (CJB6, CJB5, CJB3 and CJB7) are retried
     once and then never again; a current CJDU one, and older art, stay as is."""
@@ -703,7 +726,14 @@ CASES = [
         [('cover_idle_step.rs', '    if outcome.result==R::Produced{published();}\n', '')],
         # Home hands the cover source its book name without the terminator.
         [('app_runtime/home_cover.rs', 'prepare_home_cover(&mut covers, Some(&identity.filename), pixels)',
-          'prepare_home_cover(&mut covers, newt_core::library_name::name_bytes(&identity.filename), pixels)')]]),
+          'prepare_home_cover(&mut covers, newt_core::library_name::name_bytes(&identity.filename), pixels)')],
+        # The reader keeps its receipt open, so the job's book and stage
+        # files do not fit beside it and the selected source (#182).
+        [('reader_image_session.rs', 'let receipt = self.receipt.close(native, &route)?.clean;',
+          'let receipt = true;')]]),
+    (failed_release, [
+        # A failed release is forgotten once its descriptor is gone.
+        [('reader_image_session.rs', 'self.release_failed |= !(pages && receipt);', '')]]),
     (old_records, [
         # A CJB6 bare record reads as current.
         [('cover_probe.rs', 'match cover::record((payload!=0).then_some(crc^u32::MAX),le32(&header[24..])){',

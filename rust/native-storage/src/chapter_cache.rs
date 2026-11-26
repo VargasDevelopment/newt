@@ -223,10 +223,13 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
     }
     /// A producer pause owns its suspended provisional writer. Durable state
     /// borrows the freed descriptor without resetting that transaction.
-    pub fn release_for_state(&mut self) {
-        if !self.file.producing() {
-            self.close();
+    /// False when the close failed; the next release would forget that.
+    pub fn release_for_state(&mut self) -> bool {
+        if self.file.producing() {
+            return true;
         }
+        self.close();
+        self.file.released_cleanly(self.file.generation())
     }
     /// Keeps exactly a validated page descriptor; metadata opens displace it.
     pub fn close_metadata(&mut self) {

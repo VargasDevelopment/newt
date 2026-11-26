@@ -105,14 +105,13 @@ impl Runtime{
         let mut shelf_count=0usize;
         let dispatched=if !shelf&&!home_eligible{empty_visit(&mut self.idle,screen,&poll)}else{
             let result=home.with_storage_io(|home,io|{
-                // The optional selected source/receipt stay alive. Return only
-                // the actual Pages lease before cover files/allocations begin.
+                // The selected source stays open; the session frees Pages and
+                // its receipt, so the job's book and stage files fit (#182).
                 if let Some(context)=self.session.as_mut(){
-                    let context=&mut**context;let mut native=home.card.port(io);
-                    let route=context.route.lend(&super::boot::NoCancel,millis);
-                    let Ok(mut pages)=newt_native_storage::chapter_cache::ChapterCacheStorage::lend(
-                        &mut context.pages,&mut native,&route)else{return Dispatch::Generated(CoverResult::IoError);};
-                    pages.access().release_for_state();
+                    let mut native=home.card.port(io);
+                    if context.release_for_cover(&mut native,&super::boot::NoCancel,millis)!=Ok(true){
+                        return Dispatch::Generated(CoverResult::IoError);
+                    }
                 }
                 let generation=&mut self.cover_generation;
                 let mut published=||Self::note_cover_publication(generation);

@@ -260,7 +260,11 @@ static void reply(const char *text) {
     dev_step++;
 }
 static FILE *serial_log;
-void nsc_begin(void) { serial_log = fopen(preview_path("serial.log"), "ab"); }
+/* Line-buffered, so a run the firmware stops (abort) keeps its rows. */
+void nsc_begin(void) {
+    serial_log = fopen(preview_path("serial.log"), "ab");
+    if (serial_log) setvbuf(serial_log, NULL, _IOLBF, 0);
+}
 void nsc_set_tx_timeout_ms(uint32_t ms) { (void)ms; }
 void nsc_flush(void) { if (serial_log) fflush(serial_log); }
 uint8_t nsc_wake_transmitter(void) { return 1; }
@@ -469,9 +473,9 @@ int32_t newt_nvs_visit(uint8_t (*visit)(void *, const char *, const char *, uint
 /* ---- the card: native_io.c's POSIX calls, relocated, plus these hooks ---- */
 static char descriptors[256][4096];
 static int cover_heap_dropped;
-/* "card.trace=TEXT": each file open or folder listing of a card path holding
- * TEXT appends "open PATH" or "list PATH" to card-trace.txt, so a test can
- * see which card work a boot did. */
+/* "card.trace=TEXT": each file open, close or folder listing of a card path
+ * holding TEXT appends "open PATH", "close PATH" (or "close-refused PATH") or
+ * "list PATH" to card-trace.txt, so a test can see which card work a boot did. */
 static void trace_card(const char *operation, const char *path) {
     const char *trace = preview_conf("card.trace");
     if (!trace || !*trace || !strstr(path, trace)) return;
@@ -516,10 +520,19 @@ static void edit_file(const char *path) {
     fclose(file);
     utimensat(AT_FDCWD, host, (struct timespec[2]){before.st_atim, before.st_mtim}, 0);
 }
+/* The device mounts the card with three open files (board.cpp's SD.begin), so
+ * FAT refuses a fourth open; the preview card refuses it too (#182). */
+enum { CARD_FILES = 3 };
+static int card_files;
+/* Only a close of a counted descriptor frees a slot, so a double close or a
+ * close of -1 cannot let a fourth file in. */
+static unsigned char card_counted[256];
+int preview_io_admit(void) { return card_files < CARD_FILES; }
 void preview_io_open(int32_t fd, const char *path) {
     const char *drop = preview_conf("cover.heap.drop.on");
     if (fd >= 0 && drop && *drop && strstr(path, drop)) cover_heap_dropped = 1;
     cover_usb_work = 1;
+    if (fd >= 0 && fd < 256) { card_counted[fd] = 1; ++card_files; }
     if (fd >= 0 && fd < 256) snprintf(descriptors[fd], sizeof descriptors[fd], "%s", path);
     trace_card("open", path);
     change_file(path);
@@ -581,6 +594,19 @@ int preview_io_fault(const char *operation, int32_t fd) {
     char what[4200];
     snprintf(what, sizeof what, "%s:%s", operation, fd >= 0 && fd < 256 ? descriptors[fd] : "");
     return preview_store_fault_at(what, script_next);
+}
+/* A close frees its counted slot even when it fails; "card-close:PATH" in
+ * store.refuse then reports the close failed, as a FAT close whose flush fails does. */
+int preview_io_close(int32_t fd) {
+    if (fd >= 0 && fd < 256 && card_counted[fd]) { card_counted[fd] = 0; --card_files; }
+    char what[4200];
+    snprintf(what, sizeof what, "card-close:%s", fd >= 0 && fd < 256 ? descriptors[fd] : "");
+    const int refused = preview_store_fault_at(what, script_next) == 1;
+    if (fd >= 0 && fd < 256) {
+        trace_card(refused ? "close-refused" : "close", descriptors[fd]);
+        descriptors[fd][0] = 0;
+    }
+    return refused;
 }
 /* "card-stat:PATH" in store.refuse fails every stat; "card.stat.once=TEXT"
  * fails only the first stat whose path holds TEXT (transient SD read glitch). */
