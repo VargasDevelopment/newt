@@ -424,7 +424,7 @@ impl PageCacheWriter {
             e.offset,
             scratch.view_mut(range).ok_or(Status::OutOfMemory)?,
         )?;
-        decode_page(range, page, scratch, out)
+        decode_page(range, page, scratch, out, false)
     }
 }
 fn get_bytes(pool: &[u8], b: Bytes) -> Option<&[u8]> {
@@ -481,6 +481,30 @@ impl<'a> IndexAllocation<'a> for IndexSlices<'a> {
         self.anchors.take().ok_or(Status::OutOfMemory)
     }
 }
+/// Segment payload versions. A v4 footer adds one optional resume-point range
+/// (`point_offset`, `point_length`) just before its magic:
+///
+/// ```text
+/// whole   v3: index count anchors anchor_count total                        FIBX  (24 B)
+///         v4: index count anchors anchor_count total             point len  FIBX  (32 B)
+/// partial v3: index count anchors anchor_count total consumed all           FIBx  (32 B)
+///         v4: index count anchors anchor_count total consumed all point len FIBx  (40 B)
+/// ```
+///
+/// A point fills the tail of one page's gap (the bytes up to the next page or
+/// the index), so that page's extent ends at the point. Its content is never
+/// trusted for page extents: see `point_owner` and `page_extent`. A v4 page
+/// must also decode to exactly its extent, so stray bytes make it miss.
+pub const VERSION_PAGES: u16 = 3;
+pub const VERSION_POINT: u16 = 4;
+
+/// A resume point's verified position in its segment payload.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PointRange {
+    pub offset: u32,
+    pub length: u32,
+}
+
 #[derive(Default)]
 pub struct PageCacheReader {
     name: Option<ByteRange>,
@@ -491,6 +515,12 @@ pub struct PageCacheReader {
     partial: bool,
     consumed: u32,
     build_total: u32,
+    /// v4 pages must decode to exactly their extent.
+    exact: bool,
+    /// The footer's point range: verified structure, unchecked; length 0 is none.
+    point: PointRange,
+    /// The one page whose gap the point ends, decided once at open.
+    point_owner: Option<u32>,
 }
 impl PageCacheReader {
     pub fn page_count(&self) -> u32 {
@@ -536,6 +566,9 @@ impl PageCacheReader {
         let name = cstr(name);
         self.name = a.copy_nul(Some(name));
         self.count = 0;
+        self.exact = false;
+        self.point = PointRange::default();
+        self.point_owner = None;
         if self.name.is_none() {
             return Err(Status::OutOfMemory);
         }
@@ -545,7 +578,11 @@ impl PageCacheReader {
         }
         let mut h = [0; 12];
         read_fully(s, Some(name), 0, &mut h)?;
-        if &h[..4] != b"FIBP" || u16_at(&h, 4) != 3 || u32_at(&h, 8) != hash {
+        let version = u16_at(&h, 4);
+        if &h[..4] != b"FIBP"
+            || !matches!(version, VERSION_PAGES | VERSION_POINT)
+            || u32_at(&h, 8) != hash
+        {
             return Err(Status::Stale);
         }
         let mut magic = [0; 4];
@@ -556,11 +593,12 @@ impl PageCacheReader {
         if !self.partial && &magic != b"FIBX" {
             return Err(Status::Stale);
         }
-        let fs = if self.partial { 32 } else { 24 };
+        let point_fields = if version == VERSION_POINT { 8 } else { 0 };
+        let fs = (if self.partial { 32 } else { 24 }) + point_fields;
         if size < 12 + fs {
             return Err(Status::Stale);
         }
-        let mut f = [0; 32];
+        let mut f = [0; 40];
         read_fully(
             s,
             Some(name),
@@ -575,6 +613,11 @@ impl PageCacheReader {
         if self.partial {
             self.consumed = u32_at(&f, 20);
             self.build_total = u32_at(&f, 24);
+        }
+        self.exact = version == VERSION_POINT;
+        if self.exact {
+            let at = fs as usize - 12;
+            self.point = PointRange { offset: u32_at(&f, at), length: u32_at(&f, at + 4) };
         }
         if self.index < 12
             || anchor_off as i64 + anchors as i64 * 8 + fs != size
@@ -618,6 +661,7 @@ impl PageCacheReader {
         }
         self.anchors = anchors as usize;
         self.count = count;
+        self.point_owner = self.point_owner(&pages[..count as usize]);
         Ok(ReaderMemory {
             pages,
             anchors: anchor_records,
@@ -636,6 +680,91 @@ impl PageCacheReader {
             .iter()
             .find(|a| a.hash == hash)
             .map(|a| a.chars)
+    }
+    /// The page's gap: from its index entry to the next entry, or to the index.
+    fn gap(&self, pages: &[Entry], page: u32) -> Option<(u32, u32)> {
+        let start = pages.get(page as usize)?.offset;
+        let end = if page + 1 < self.count {
+            pages.get(page as usize + 1)?.offset
+        } else {
+            self.index
+        };
+        Some((start, end))
+    }
+    /// Whether the footer's point range shares a byte with `start..end`. An
+    /// empty or backwards gap has no bytes, so it touches nothing. An
+    /// overflowing range reaches the end of the address space.
+    fn point_touches(&self, start: u32, end: u32) -> bool {
+        let point_end = self.point.offset.saturating_add(self.point.length);
+        self.point.length != 0 && start < end && point_end > start && self.point.offset < end
+    }
+    /// A v4 gap must be nonempty, lie between the header and the index, and
+    /// share no byte with another nonempty gap. A v3 index is not checked.
+    fn gap_valid(&self, pages: &[Entry], page: u32) -> bool {
+        let Some((start, end)) = self.gap(pages, page) else {
+            return false;
+        };
+        if !self.exact {
+            return true;
+        }
+        start >= 12
+            && start < end
+            && end <= self.index
+            && (0..self.count).all(|other| {
+                other == page
+                    || self.gap(pages, other).is_none_or(|(s, e)| s >= e || e <= start || s >= end)
+            })
+    }
+    /// The page whose valid gap the point ends, after at least one page byte.
+    /// A point touching any other gap, a second such gap or a range past the
+    /// index leaves no owner.
+    fn point_owner(&self, pages: &[Entry]) -> Option<u32> {
+        if self.point.length == 0 {
+            return None;
+        }
+        let end = self.point.offset.checked_add(self.point.length)?;
+        if end > self.index {
+            return None;
+        }
+        let mut owner = None;
+        for page in 0..self.count {
+            let (start, gap_end) = self.gap(pages, page)?;
+            if !self.point_touches(start, gap_end) {
+                continue;
+            }
+            if owner.is_some()
+                || self.point.offset <= start
+                || end != gap_end
+                || !self.gap_valid(pages, page)
+            {
+                return None;
+            }
+            owner = Some(page);
+        }
+        owner
+    }
+    /// Page extents use only the verified index and footer. An invalid v4
+    /// gap misses. The owner ends at the point. Any other page the point
+    /// touches is ambiguous and misses; pages it does not touch still hit.
+    fn page_extent(&self, m: &ReaderMemory<'_>, page: u32) -> Result<(u32, u32), Status> {
+        if page >= self.count {
+            return Err(Status::NotFound);
+        }
+        let (start, end) = self.gap(m.pages, page).ok_or(Status::NotFound)?;
+        if !self.gap_valid(m.pages, page) {
+            Err(Status::Stale)
+        } else if self.point_owner == Some(page) {
+            Ok((start, self.point.offset))
+        } else if self.point_touches(start, end) {
+            Err(Status::Stale)
+        } else {
+            Ok((start, end))
+        }
+    }
+    /// The resume point's range, when exactly one page owns it. A bad range
+    /// loses only the point; the point's reader checks its content.
+    pub fn point(&self) -> Option<PointRange> {
+        self.point_owner.map(|_| self.point)
     }
     pub fn page_for_char(&self, m: &ReaderMemory<'_>, chars: u32) -> u32 {
         if self.count == 0 {
@@ -661,18 +790,7 @@ impl PageCacheReader {
         scratch: &'a mut Arena<'_>,
         out: &'a mut PageMemory<'_>,
     ) -> Result<Page<'a>, Status> {
-        if page >= self.count {
-            return Err(Status::NotFound);
-        }
-        let start = m.pages.get(page as usize).ok_or(Status::NotFound)?.offset;
-        let end = if page + 1 < self.count {
-            m.pages
-                .get(page as usize + 1)
-                .ok_or(Status::NotFound)?
-                .offset
-        } else {
-            self.index
-        };
+        let (start, end) = self.page_extent(m, page)?;
         let range = allocate_blob(scratch, start, end)?;
         let name = names
             .view(self.name.ok_or(Status::NotFound)?)
@@ -683,7 +801,7 @@ impl PageCacheReader {
             start,
             scratch.view_mut(range).ok_or(Status::OutOfMemory)?,
         )?;
-        decode_page(range, page, scratch, out)
+        decode_page(range, page, scratch, out, self.exact)
     }
 }
 /// Independent typed storage is required because safe Arena is byte-only.
@@ -702,11 +820,14 @@ fn copy_string(a: &mut Arena<'_>, blob: ByteRange, pos: usize, len: usize) -> Re
     a.view_mut(r).ok_or(Status::OutOfMemory)?[len] = 0;
     Ok(())
 }
+/// `exact` (v4) requires the record to fill the blob; v3 keeps the SDK's
+/// tolerance of trailing bytes.
 fn decode_page<'a>(
     blob: ByteRange,
     index: u32,
     a: &'a mut Arena<'_>,
     out: &'a mut PageMemory<'_>,
+    exact: bool,
 ) -> Result<Page<'a>, Status> {
     let b = a.view(blob).ok_or(Status::Stale)?;
     if b.len() < 10 {
@@ -807,6 +928,9 @@ fn decode_page<'a>(
         pos += tl + fl;
     }
     // SDK accepts unconsumed trailing bytes and reserved bytes.
+    if exact && pos != a.view(blob).ok_or(Status::Stale)?.len() {
+        return Err(Status::Stale);
+    }
     Ok(Page {
         bytes: a.view(blob).ok_or(Status::Stale)?,
         runs: &out.runs[..nr],
@@ -828,7 +952,7 @@ pub fn decode_record<'a>(
     a.view_mut(r)
         .ok_or(Status::OutOfMemory)?
         .copy_from_slice(record);
-    decode_page(r, index, a, out)
+    decode_page(r, index, a, out, false)
 }
 /// Temporary callback adapter; retained writer state owns no parser/frame loans.
 pub struct WriterSink<'a, S: CacheStorage> {
