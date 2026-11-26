@@ -481,6 +481,29 @@ impl<'a> IndexAllocation<'a> for IndexSlices<'a> {
         self.anchors.take().ok_or(Status::OutOfMemory)
     }
 }
+/// Segment payload versions. A v4 footer adds one optional resume-point range
+/// (`point_offset`, `point_length`) just before its magic:
+///
+/// ```text
+/// whole   v3: index count anchors anchor_count total                        FIBX  (24 B)
+///         v4: index count anchors anchor_count total             point len  FIBX  (32 B)
+/// partial v3: index count anchors anchor_count total consumed all           FIBx  (32 B)
+///         v4: index count anchors anchor_count total consumed all point len FIBx  (40 B)
+/// ```
+///
+/// A point sits in the gap after a page and before the next page or the
+/// index, so that page's extent ends at the point. Its content is never
+/// trusted for page extents: see `page_extent` and `point`.
+pub const VERSION_PAGES: u16 = 3;
+pub const VERSION_POINT: u16 = 4;
+
+/// A resume point's verified position in its segment payload.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PointRange {
+    pub offset: u32,
+    pub length: u32,
+}
+
 #[derive(Default)]
 pub struct PageCacheReader {
     name: Option<ByteRange>,
@@ -491,6 +514,8 @@ pub struct PageCacheReader {
     partial: bool,
     consumed: u32,
     build_total: u32,
+    point_offset: u32,
+    point_length: u32,
 }
 impl PageCacheReader {
     pub fn page_count(&self) -> u32 {
@@ -536,6 +561,8 @@ impl PageCacheReader {
         let name = cstr(name);
         self.name = a.copy_nul(Some(name));
         self.count = 0;
+        self.point_offset = 0;
+        self.point_length = 0;
         if self.name.is_none() {
             return Err(Status::OutOfMemory);
         }
@@ -545,7 +572,11 @@ impl PageCacheReader {
         }
         let mut h = [0; 12];
         read_fully(s, Some(name), 0, &mut h)?;
-        if &h[..4] != b"FIBP" || u16_at(&h, 4) != 3 || u32_at(&h, 8) != hash {
+        let version = u16_at(&h, 4);
+        if &h[..4] != b"FIBP"
+            || !matches!(version, VERSION_PAGES | VERSION_POINT)
+            || u32_at(&h, 8) != hash
+        {
             return Err(Status::Stale);
         }
         let mut magic = [0; 4];
@@ -556,11 +587,12 @@ impl PageCacheReader {
         if !self.partial && &magic != b"FIBX" {
             return Err(Status::Stale);
         }
-        let fs = if self.partial { 32 } else { 24 };
+        let point_fields = if version == VERSION_POINT { 8 } else { 0 };
+        let fs = (if self.partial { 32 } else { 24 }) + point_fields;
         if size < 12 + fs {
             return Err(Status::Stale);
         }
-        let mut f = [0; 32];
+        let mut f = [0; 40];
         read_fully(
             s,
             Some(name),
@@ -575,6 +607,10 @@ impl PageCacheReader {
         if self.partial {
             self.consumed = u32_at(&f, 20);
             self.build_total = u32_at(&f, 24);
+        }
+        if version == VERSION_POINT {
+            let at = fs as usize - 12;
+            (self.point_offset, self.point_length) = (u32_at(&f, at), u32_at(&f, at + 4));
         }
         if self.index < 12
             || anchor_off as i64 + anchors as i64 * 8 + fs != size
@@ -637,6 +673,59 @@ impl PageCacheReader {
             .find(|a| a.hash == hash)
             .map(|a| a.chars)
     }
+    /// The page's bytes before any point: from its index entry to the next
+    /// page's entry, or to the index for the last page.
+    fn gap(&self, m: &ReaderMemory<'_>, page: u32) -> Result<(u32, u32), Status> {
+        if page >= self.count {
+            return Err(Status::NotFound);
+        }
+        let start = m.pages.get(page as usize).ok_or(Status::NotFound)?.offset;
+        let end = if page + 1 < self.count {
+            m.pages.get(page as usize + 1).ok_or(Status::NotFound)?.offset
+        } else {
+            self.index
+        };
+        Ok((start, end))
+    }
+    /// Page extents use only the verified index and footer. A point that fills
+    /// the tail of this page's gap ends the page. A point range overlapping the
+    /// page any other way is ambiguous, so this page misses; pages it does not
+    /// touch still hit. An overflowing range reaches the end of the address space.
+    fn page_extent(&self, m: &ReaderMemory<'_>, page: u32) -> Result<(u32, u32), Status> {
+        let (start, end) = self.gap(m, page)?;
+        let point_start = self.point_offset;
+        let point_end = point_start.saturating_add(self.point_length);
+        if self.point_length == 0 || point_end <= start || point_start >= end {
+            return Ok((start, end));
+        }
+        if point_start > start && point_end == end {
+            Ok((start, point_start))
+        } else {
+            Err(Status::Stale)
+        }
+    }
+    /// The resume point, when its range is unambiguous: it ends exactly one
+    /// page's gap, after at least one byte of that page, and touches no other
+    /// page. A bad range loses only the point; its content is checked later.
+    pub fn point(&self, m: &ReaderMemory<'_>) -> Option<PointRange> {
+        let point = PointRange { offset: self.point_offset, length: self.point_length };
+        let end = point.offset.checked_add(point.length)?;
+        if point.length == 0 || end > self.index {
+            return None;
+        }
+        let mut owners = 0;
+        for page in 0..self.count {
+            let (start, gap_end) = self.gap(m, page).ok()?;
+            if end <= start || point.offset >= gap_end {
+                continue;
+            }
+            if point.offset <= start || end != gap_end {
+                return None;
+            }
+            owners += 1;
+        }
+        (owners == 1).then_some(point)
+    }
     pub fn page_for_char(&self, m: &ReaderMemory<'_>, chars: u32) -> u32 {
         if self.count == 0 {
             return 0;
@@ -661,18 +750,7 @@ impl PageCacheReader {
         scratch: &'a mut Arena<'_>,
         out: &'a mut PageMemory<'_>,
     ) -> Result<Page<'a>, Status> {
-        if page >= self.count {
-            return Err(Status::NotFound);
-        }
-        let start = m.pages.get(page as usize).ok_or(Status::NotFound)?.offset;
-        let end = if page + 1 < self.count {
-            m.pages
-                .get(page as usize + 1)
-                .ok_or(Status::NotFound)?
-                .offset
-        } else {
-            self.index
-        };
+        let (start, end) = self.page_extent(m, page)?;
         let range = allocate_blob(scratch, start, end)?;
         let name = names
             .view(self.name.ok_or(Status::NotFound)?)
