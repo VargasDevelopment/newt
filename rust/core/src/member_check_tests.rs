@@ -156,3 +156,58 @@ fn cover_discovery_reads_only_a_checked_cover() {
         assert_eq!(locate(&m), (MetadataStatus::Malformed, 0));
     }
 }
+
+/// Stored members in this order, each holding `BODY`.
+fn stored(names: &[Vec<u8>]) -> Vec<u8> {
+    let (mut z, mut directory) = (Vec::new(), Vec::new());
+    for name in names {
+        let local = z.len() as u32;
+        z.extend(0x04034b50u32.to_le_bytes());
+        z.extend([20, 0, 0, 0, 0, 0]); // version, flags, method
+        z.extend([0; 8]); // time, date, crc
+        z.extend((BODY.len() as u32).to_le_bytes());
+        z.extend((BODY.len() as u32).to_le_bytes());
+        z.extend((name.len() as u16).to_le_bytes());
+        z.extend(0u16.to_le_bytes());
+        z.extend(name);
+        z.extend(BODY);
+        directory.extend(0x02014b50u32.to_le_bytes());
+        directory.extend([20, 0, 20, 0, 0, 0, 0, 0]); // versions, flags, method
+        directory.extend([0; 8]);
+        directory.extend((BODY.len() as u32).to_le_bytes());
+        directory.extend((BODY.len() as u32).to_le_bytes());
+        directory.extend((name.len() as u16).to_le_bytes());
+        directory.extend([0; 12]); // extra, comment, disk, internal, external attributes
+        directory.extend(local.to_le_bytes());
+        directory.extend(name);
+    }
+    let (offset, count) = (z.len() as u32, names.len() as u16);
+    z.extend(&directory);
+    z.extend(0x06054b50u32.to_le_bytes());
+    z.extend([0; 4]);
+    z.extend(count.to_le_bytes());
+    z.extend(count.to_le_bytes());
+    z.extend((directory.len() as u32).to_le_bytes());
+    z.extend(offset.to_le_bytes());
+    z.extend([0; 2]);
+    z
+}
+
+#[test]
+fn cover_discovery_walks_any_member_count_within_the_directory_cap() {
+    use crate::cover::{Member as Cover, MetadataStatus};
+    // `filler` members named in `name_bytes` bytes, then the cover last.
+    let locate = |filler: usize, name_bytes: usize| {
+        let mut names: Vec<Vec<u8>> =
+            (0..filler).map(|i| std::format!("OEBPS/{i:0>w$}", w = name_bytes - 6).into_bytes()).collect();
+        names.push(b"OEBPS/c.xhtml".to_vec());
+        let mut source = Bytes { data: stored(&names), fail_at: None };
+        crate::cover::discovery::locate(&mut source, b"OEBPS/c.xhtml", &mut Cover::default())
+    };
+    // A 2,000-chapter book, past catalog admission's 1,024 members (#177).
+    assert_eq!(locate(2000, 16), MetadataStatus::Ok);
+    // The 1 MiB directory still bounds the walk: 526-byte records fit
+    // 1,992 + the cover's 59 bytes (1,047,851 B); 1,994 do not.
+    assert_eq!(locate(1992, 480), MetadataStatus::Ok);
+    assert_eq!(locate(1994, 480), MetadataStatus::Unsupported);
+}

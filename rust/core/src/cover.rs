@@ -98,10 +98,11 @@ impl NoCoverReason {
         }
     }
 }
-/// Bare record version byte: `CJ` + version + reason (`CJCM`, `CJCU`, `CJCI`, `CJCX`).
+/// Bare record version byte: `CJ` + version + reason (`CJDM`, `CJDU`, `CJDI`, `CJDX`).
 /// Bump this byte when a decoder change can turn an older negative into art;
 /// every older version retries once without a growing legacy list.
-pub const NO_ART_VERSION: u8 = b'C';
+/// `D`: discovery walks past 1,024 ZIP entries, so older `CJCU` books retry (#177).
+pub const NO_ART_VERSION: u8 = b'D';
 pub const fn no_art_route(reason: NoCoverReason) -> u32 {
     u32::from_le_bytes([b'C', b'J', NO_ART_VERSION, reason.byte()])
 }
