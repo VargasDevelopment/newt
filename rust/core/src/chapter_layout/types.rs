@@ -24,6 +24,7 @@ pub struct Params<'a> {
     pub widow: u8,
     pub embedded_styles: bool,
     pub focus: bool,
+    pub inline_ascent: bool,
     pub stylesheet: Option<CssStylesheet<'a>>,
 }
 impl Default for Params<'_> {
@@ -44,6 +45,7 @@ impl Default for Params<'_> {
             widow: 2,
             embedded_styles: true,
             focus: false,
+            inline_ascent: false,
             stylesheet: None,
         }
     }
@@ -122,6 +124,9 @@ impl Font for SplitBackend<'_> {
     }
     fn covers(&mut self, c: u32) -> bool {
         self.font.covers(c)
+    }
+    fn ink_extents(&mut self, c: u32, s: u16, f: u8) -> Option<(i16, i16)> {
+        self.font.ink_extents(c, s, f)
     }
 }
 impl Sink for SplitBackend<'_> {

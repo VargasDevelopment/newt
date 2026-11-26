@@ -68,7 +68,7 @@ fn seed_old_pages(card: &card::Card, files: &BTreeMap<String, Vec<u8>>, version:
 }
 
 pub fn resume(bytes: Vec<u8>) {
-    for old_version in [1u32, 2] {
+    for old_version in [1u32, 2, 3] {
         resume_from(bytes.clone(), old_version);
     }
     println!("PASS old Pages data misses, saved content resumes, and only Pages rebuilds");

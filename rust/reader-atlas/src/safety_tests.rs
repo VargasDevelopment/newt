@@ -104,3 +104,48 @@ fn non_latin_glyphs_resample_at_native_sizes() {
     f.draw(&mut frame,Geometry::reader(false),100,200,0x2192,22,0).unwrap();
     assert!(frame.iter().any(|&b| b != 0));
 }
+#[test]
+fn ink_extents_matches_draw_for_every_atlas_glyph() {
+    let mut f = ReaderAtlas;
+    assert_eq!(f.ink_extents(0x01d9, 75, 0), Some((80, 0))); // Ǚ: top bearing 32 at 30 px -> 80 px
+    assert_eq!(f.ink_extents(0x210a, 75, 0), Some((28, 30))); // ℊ: height 23, top 11 -> 58 - 28 = 30 px
+    assert_eq!(f.ink_extents(b'g' as u32, 75, 0), Some((40, 18)));
+    assert_eq!(f.ink_extents(b'_' as u32, 75, 0), Some((0, 13)));
+    for blank in [0x20u32, 0xa0, 0xad, 0x200b, 0xfe0f, 0xfeff] {
+        assert_eq!(f.ink_extents(blank, 75, 0), Some((0, 0)), "U+{blank:04X} must report zero ink");
+    }
+    // Every atlas glyph across all 4 styles agrees with draw() on empty vs non-empty and never overflows.
+    for style in 0u8..4 {
+        let (fc, ad) = (face(style), added(style));
+        for index in 0..COUNT {
+            let cp = if index < ASCII {
+                index as u32 + 32
+            } else if index < LEGACY {
+                u32::from(kReaderExtraCodepoints[index - ASCII])
+            } else {
+                u32::from(kReaderAddedCodepoints[index - LEGACY])
+            };
+            for px in [22u16, 30, 75] {
+                let (above, below) = f.ink_extents(cp, px, style).unwrap();
+                let g = shape(fc, ad, style, index, effective_size(px));
+                let draws = semantic(fc, ad, cp) < 0 && g.width > 0 && g.height > 0;
+                assert_eq!(above > 0 || below > 0, draws, "U+{cp:04X} style {style} px {px}");
+            }
+        }
+    }
+    // Concrete pixel check: placing Ǚ at margin + above and ℊ at content_bottom - below loses 0 ink bits.
+    let geom = Geometry::reader(false);
+    let mut center = std::vec![0u8; 52272];
+    let mut edge = std::vec![0u8; 52272];
+    let bits = |buf: &[u8]| buf.iter().map(|b| b.count_ones()).sum::<u32>();
+    for (cp, at_top) in [(0x01d9u32, true), (0x210a, false), (b'g' as u32, false)] {
+        let (above, below) = f.ink_extents(cp, 75, 0).unwrap();
+        center.fill(0);
+        edge.fill(0);
+        f.draw(&mut center, geom, 100, 400, cp, 75, 0).unwrap();
+        let baseline = if at_top { geom.margin + i32::from(above) } else { geom.content_bottom - i32::from(below) };
+        f.draw(&mut edge, geom, 100, baseline, cp, 75, 0).unwrap();
+        assert!(bits(&center) > 0);
+        assert_eq!(bits(&edge), bits(&center), "U+{cp:04X} clipped at edge baseline {baseline}");
+    }
+}

@@ -226,6 +226,9 @@ impl Font for SelectingSink<'_, '_> {
     fn kerning(&mut self, a: u32, b: u32, px: u16, flags: u8) -> i16 {
         self.metrics.kerning(a, b, px, flags)
     }
+    fn ink_extents(&mut self, cp: u32, px: u16, flags: u8) -> Option<(i16, i16)> {
+        self.metrics.ink_extents(cp, px, flags)
+    }
 }
 impl Sink for SelectingSink<'_, '_> {
     fn anchor(&mut self, hash: u32, start: u32) {

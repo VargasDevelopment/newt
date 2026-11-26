@@ -1527,6 +1527,7 @@ pub(crate) fn reader_parameters<'s>(page_layout: PageLayout, slot: Option<&'s Sl
         base_size: page_layout.text_size.px(),
         align: TextAlign::Justify,
         embedded_styles: false,
+        inline_ascent: true,
         language: Some(language.tag()),
         stylesheet: slot.filter(|slot| slot.count != 0).map(Slot::sheet),
         ..Params::default()
