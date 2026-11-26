@@ -38,7 +38,9 @@ Newt is early alpha software. Expect rough edges, and please
 - **Reading.** EPUB books from anywhere on the card. Chapters, a reading
   menu, portrait or landscape, an optional slim progress bar, and Mark as
   finished. Each book remembers its page. Put the X3 to sleep while reading,
-  and it wakes on that page.
+  and it wakes on that page. Book covers show on Home and in Books, but
+  pictures inside the chapters aren't shown yet: you see the text around
+  them only.
 - **Home.** The book you are reading, plus Books, Apps and Settings.
 - **Reading statistics.** Days read and time of day, per book and overall.
   If the card holds CrossInk's reading history, Newt imports it once.
