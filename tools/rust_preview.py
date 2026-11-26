@@ -16,6 +16,8 @@ path (app_runtime/home_cover.rs) is copied in for its edit.
 the input fake, a software reset on each restart (exit 75), until the presses
 are used up and the loop is idle.
 """
+import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -167,16 +169,52 @@ def _control_command(command, optimize):
         '-Cdebug-assertions=no', '-Coverflow-checks=no']
 
 
+def control_inputs(link_text: str, edits, optimize: bool) -> str:
+    """What a control is built from: the last build's link, binary and host
+    root, the edits and each edited file as the control reads it. A rebuilt
+    positive preview changes this, so its controls rebuild too."""
+    digest = hashlib.sha256()
+    for part in (link_text.encode(), FIRMWARE.read_bytes(), (WORK / 'host.rs').read_bytes(),
+                 json.dumps((edits, optimize)).encode()):
+        digest.update(hashlib.sha256(part).digest())
+    for name, _, _ in edits:
+        path = WORK / 'source' / name
+        digest.update(hashlib.sha256((path if path.exists() else host_build.FIRMWARE / name).read_bytes()).digest())
+    return digest.hexdigest()
+
+
 def control(edits, *, optimize: bool = True) -> Path:
     """Relink the last build over a private copy of its generated sources, so
     parallel controls never see each other's edits. Timing-independent suites
-    may skip root optimization; the positive preview stays optimized."""
-    link = json.loads(LINK.read_text())
+    may skip root optimization; the positive preview stays optimized.
+
+    Gate phases run at once and may ask for the same control. Under a per-key
+    lock the first builds it and the rest reuse it, so no caller deletes a
+    binary another phase is still running. The inputs stamp is written last,
+    so a failed build is never reused."""
+    link_text = LINK.read_text()
+    link = json.loads(link_text)
     command = _control_command(link['command'], optimize)
-    source = WORK / 'source'
     key = '%08x' % zlib.crc32(json.dumps((edits, optimize)).encode())
-    out = WORK / 'controls' / key
-    shutil.rmtree(out, ignore_errors=True)
+    controls = WORK / 'controls'
+    controls.mkdir(parents=True, exist_ok=True)
+    out = controls / key
+    program = out / 'firmware'
+    stamp = out / 'inputs.sha256'
+    inputs = control_inputs(link_text, edits, optimize)
+    with open(controls / f'{key}.lock', 'a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if program.is_file() and stamp.is_file() and stamp.read_text() == inputs:
+            return program
+        shutil.rmtree(out, ignore_errors=True)
+        _link_control(edits, command, link['environment'], out, program)
+        stamp.write_text(inputs)
+    return program
+
+
+def _link_control(edits, command, environment, out: Path, program: Path) -> None:
+    """One control's private source copy, edited, then linked to `program`."""
+    source = WORK / 'source'
     out.mkdir(parents=True)
     copies = out / 'source'
     shutil.copytree(source, copies)
@@ -200,11 +238,9 @@ def control(edits, *, optimize: bool = True) -> Path:
         path.write_text(text.replace(old, new))
     host = out / 'host.rs'
     host.write_text(rewire((WORK / 'host.rs').read_text()))
-    env = {**os.environ, **link['environment']}
-    program = out / 'firmware'
+    env = {**os.environ, **environment}
     subprocess.run([*command, host, '-o', program], cwd=ROOT, env=env, check=True,
                    capture_output=True, text=True, timeout=900)
-    return program
 
 
 def other_slot_selected(directory: Path) -> bool:
