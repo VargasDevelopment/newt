@@ -3,7 +3,7 @@
 use crate::{reader_hash::MbedHasher, reader_verification::ReaderVerification,
     sd_revision::SdRevisionState};
 use newt_native_storage::{Native, RouteState, Authority, LoanError,
-    chapter_cache::ChapterCacheState};
+    chapter_cache::{ChapterCacheState, ChapterCacheStorage}};
 use newt_reader_ui::ReaderSourceState;
 use newt_phased_reader::imported_revision::RevisionPorts;
 use newt_sdk_heap::Fixed;
@@ -18,6 +18,8 @@ pub(super) struct Session {
     pub(super) scratch: [u8; 256],
     pub(super) source: Option<ReaderSourceState>,
     pub(super) verification: ReaderVerification<MbedHasher>,
+    /// A failed `release_for_cover` close, which `close` still reports.
+    release_failed: bool,
 }
 impl Session {
     pub(super) fn prepared_change<N: Native>(&mut self,
@@ -58,6 +60,7 @@ impl Session {
                 block: unsafe { MbedHasher::new(None) },
                 scratch: [0; 256], source: None,
                 verification: ReaderVerification::new(),
+                release_failed: false,
             }
         })
     }
@@ -71,10 +74,27 @@ impl Session {
         // Both real descriptors are closed, even if the first close fails.
         let receipt = self.receipt.close(native, &route);
         let pages = self.pages.close(native, &route);
+        let released = !core::mem::take(&mut self.release_failed);
         match (receipt, pages) {
-            (Ok(receipt), Ok(pages)) => Ok(receipt.clean && pages.clean),
+            (Ok(receipt), Ok(pages)) => Ok(receipt.clean && pages.clean && released),
             (Err(error), _) | (_, Err(error)) => Err(error),
         }
+    }
+
+    /// Home's cover job needs two of the card's three open files while the
+    /// selected source stays open (#182), so close Pages and the receipt.
+    /// The next open or reader operation reloads both. Ok(false) is a failed
+    /// close, which the next `close` still reports. A changed book's prepared
+    /// import can only reach Home if Back lands between its Stale open and
+    /// the next idle reopen; it then costs one more full hash on the next Read.
+    pub(super) fn release_for_cover<N: Native>(&mut self, native: &mut N,
+        cancel: &dyn Authority, now: fn() -> u32,
+    ) -> Result<bool, LoanError> {
+        let route = self.route.lend(cancel, now);
+        let pages = ChapterCacheStorage::lend(&mut self.pages, native, &route)?.access().release_for_state();
+        let receipt = self.receipt.close(native, &route)?.clean;
+        self.release_failed |= !(pages && receipt);
+        Ok(pages && receipt)
     }
 }
 

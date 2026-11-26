@@ -221,6 +221,12 @@ does not reset that writer. A later cached turn reacquires Pages through the
 existing complete source/receipt/cache checks. No per-book exception or extra
 reader-open/page-turn hook is involved.
 
+Home's cover job needs two files (the book and its stage file) while the
+selected source stays open. Before each job, the session releases Pages and
+closes the receipt; the next open or reader operation reloads both. A failed
+close there is kept, so the next session close still reports it and sleep
+stops rather than treating the state as clean.
+
 A first-open index pass releases Pages before building. A resident build keeps
 its selected source open. If the work file spills, the pass releases that source
 only after parsing and joining, then publishes with receipt, work and index temp

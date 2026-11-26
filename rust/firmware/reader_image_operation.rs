@@ -208,7 +208,7 @@ impl Runtime {
             };
             let context = &mut **context;
             let session::Session { route, receipt, pages, whole, block, scratch,
-                source: state, verification } = context;
+                source: state, verification, .. } = context;
             let prepared = verification.control().flags.prepared();
             if initialize { verification.control().flags.set_prepared(false); }
             let route = route.lend(&cancel, millis);

@@ -57,10 +57,21 @@ def native_io(text: str) -> str:
     text = text.replace('#include "native_io.h"', '#include "native_io.h"\n'
                         'extern char *fixture_path(const char *);\n'
                         'extern void preview_io_open(int32_t, const char *);\n'
+                        'extern int preview_io_admit(void);\n'
+                        'extern int preview_io_close(int32_t);\n'
                         'extern void preview_io_list(const char *);\n'
                         'extern int preview_io_fault(const char *, int32_t);\n'
                         'extern int preview_stat_fault(const char *);', 1)
     text = text.replace('    *out = fd;', '    preview_io_open(fd, path);\n    *out = fd;', 1)
+    # The card's three open files, and a refused close that still frees its slot.
+    text = text.replace('    const int fd = open(path, flags, 0600);',
+                        '    if (!preview_io_admit()) return failure(ENFILE);\n'
+                        '    const int fd = open(path, flags, 0600);', 1)
+    text = text.replace('int32_t newt_io_close(int32_t fd) { return status(close(fd)); }',
+                        'int32_t newt_io_close(int32_t fd) {\n'
+                        '    const int refused = preview_io_close(fd);\n'
+                        '    const int32_t result = status(close(fd));\n'
+                        '    return refused && result == N_OK ? failure(EIO) : result;\n}', 1)
     text = text.replace('    DIR *dir = opendir(path);', '    preview_io_list(path);\n    DIR *dir = opendir(path);', 1)
     text = text.replace('int32_t newt_io_stat(const char *path, uint32_t no_follow, struct newt_io_stat *out) {',
                         'int32_t newt_io_stat(const char *path, uint32_t no_follow, struct newt_io_stat *out) {\n'
@@ -82,8 +93,17 @@ def download(text: str) -> str:
     text = text.replace('#include <unistd.h>', '#include <unistd.h>\n'
                         'extern char *fixture_path(const char *);\nextern uint32_t nb_millis(void);\n'
                         'extern void preview_io_open(int32_t, const char *);\n'
+                        'extern int preview_io_admit(void);\n'
+                        'extern int preview_io_close(int32_t);\n'
                         'extern int preview_io_fault(const char *, int32_t);', 1)
     text = text.replace('    *fd = result;', '    preview_io_open(result, path);\n    *fd = result;', 1)
+    text = text.replace('    const int result = open(path, O_WRONLY | O_CREAT | O_TRUNC, (mode_t)mode);',
+                        '    if (!preview_io_admit()) return ENFILE;\n'
+                        '    const int result = open(path, O_WRONLY | O_CREAT | O_TRUNC, (mode_t)mode);', 1)
+    text = text.replace('    const int result = close(fd);',
+                        '    const int refused = preview_io_close(fd);\n'
+                        '    const int result = close(fd);\n'
+                        '    if (refused && result == 0) return EIO;', 1)
     text = text.replace('    const ssize_t result = write(fd, bytes, count);',
                         '    if (preview_io_fault("card-write", fd) == 1) return EIO;\n'
                         '    const ssize_t result = write(fd, bytes, count);', 1)
