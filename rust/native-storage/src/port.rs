@@ -75,6 +75,14 @@ impl<S: Native> Operation<'_, '_, S> {
             p.record_failure();
         }
     }
+    fn producer_io_failure(&mut self) {
+        if let Some(p) = self.producer {
+            p.record_io_failure();
+        }
+    }
+    pub fn promoted(&self) -> bool {
+        self.port.state.promoted
+    }
     fn settle(&mut self, ok: bool) -> bool {
         if !ok {
             self.producer_failure()
@@ -105,7 +113,7 @@ impl<S: Native> Operation<'_, '_, S> {
         self.boundary();
         let r = self.port.native.close(fd);
         if r.is_err() {
-            self.producer_failure()
+            self.producer_io_failure()
         }
         r
     }
@@ -175,7 +183,7 @@ impl<S: Native> Operation<'_, '_, S> {
             self.boundary();
             let ok = self.port.native.unlink(&path).is_ok();
             if !ok {
-                self.producer_failure();
+                self.producer_io_failure();
                 self.port.state.failed = true
             }
         }
@@ -359,6 +367,7 @@ impl<S: Native> Operation<'_, '_, S> {
         true
     }
     pub fn begin(&mut self, bytes: u32, fixed: bool) -> bool {
+        self.port.state.promoted = false;
         if self.port.state.fd.is_some() || self.port.state.owns || self.canonical().is_empty() {
             return false;
         }
@@ -847,6 +856,7 @@ impl<S: Native> Operation<'_, '_, S> {
         true
     }
     pub fn commit(&mut self, maximum: u32, retain: bool) -> bool {
+        self.port.state.promoted = false;
         if !self.port.state.writing || !self.port.state.synced || !self.stable(self.port.state.generation) {
             return self.fail();
         }
@@ -860,6 +870,7 @@ impl<S: Native> Operation<'_, '_, S> {
         if !self.allowed() || !self.promote() {
             return self.fail();
         }
+        self.port.state.promoted = true;
         self.port.state.names = None;
         self.port.state.owns = false;
         self.port.state.writing = false;
@@ -933,7 +944,9 @@ impl<S: Native> Operation<'_, '_, S> {
         if self.port.native.close(fd).is_ok() {
             true
         } else {
-            self.poison()
+            self.producer_io_failure();
+            self.port.state.failed = true;
+            false
         }
     }
     pub fn resume_producer_write(&mut self) -> bool {
@@ -954,7 +967,15 @@ impl<S: Native> Operation<'_, '_, S> {
             return self.poison();
         }
         let path = self.port.state.path;
-        self.port.state.fd = self.io(|s| s.open(&path, Open::ReadWriteNonblock)).ok();
+        match self.io(|s| s.open(&path, Open::ReadWriteNonblock)) {
+            Ok(fd) => self.port.state.fd = Some(fd),
+            Err(Error::Cancelled) => return self.poison(),
+            Err(_) => {
+                self.producer_io_failure();
+                self.port.state.failed = true;
+                return false;
+            }
+        }
         if !self.stable(self.port.state.generation) {
             return self.poison();
         }

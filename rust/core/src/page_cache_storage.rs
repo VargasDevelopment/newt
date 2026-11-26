@@ -33,6 +33,15 @@ pub trait CacheStorage {
     fn trace_segment_layout_done(&mut self) {}
     #[cfg(feature = "page-turn-trace")]
     fn trace_segment_end(&mut self, _pages: u32) {}
+    /// Positive witness that the most recent `end_write` durably published its
+    /// canonical file, even if a later post-promotion cancellation check failed.
+    fn last_write_published(&self) -> bool {
+        false
+    }
+    /// Whether the active producer grant can begin another file in this attempt.
+    fn producer_can_begin(&self) -> bool {
+        true
+    }
 }
 /// One checked cache read, as pinned ChapterPageCache readEntry/locate:
 /// beginRead(query), attach, the SDK read, query.finish, finishRead.

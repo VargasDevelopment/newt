@@ -25,6 +25,7 @@ pub struct FilePortState {
     pub(super) invalid: bool,
     pub(super) deferred_fresh: bool,
     pub(super) deferred_failed: bool,
+    pub(super) promoted: bool,
     pub(super) defer_depth: u8,
     pub(super) immutable_depth: u8,
 }
@@ -49,6 +50,7 @@ impl FilePortState {
             invalid: false,
             deferred_fresh: false,
             deferred_failed: false,
+            promoted: false,
             defer_depth: 0,
             immutable_depth: 0,
         }

@@ -12,7 +12,7 @@ import time
 SDK_PIN = 'cd6f5b831c8fad899723b6d406586f00c575f021'
 HOST = 'x86_64-unknown-linux-gnu'
 # Exact count of the workspace's host tests, so a test that stops running fails landing.
-PORTABLE_TESTS = 676
+PORTABLE_TESTS = 678
 RV32 = 'riscv32imc-unknown-none-elf'
 FEATURES = 'dev-usb,wifi-update,embedded-sample'
 
@@ -115,10 +115,10 @@ def native_forwarding(checker, support, runner, snapshot):
         output = runner.cargo(ws, runner.output/'target', 'test', '-p', 'newt-phased-reader',
                               '--lib', '--features', 'native-host', '--target', HOST,
                               'producer_stream_tests::traces')
-        require_tests(support, output, 16, filtered=True)
+        require_tests(support, output, 19, filtered=True)
         recipe = load('landing_recipe', snapshot / 'rust/tests/producer_forwarding/recipe.py')
         support.require(len(recipe.MATRIX) == 55, 'complete forwarding matrix')
-        return {'passed_tests': 16, 'forwarding_cases': 55,
+        return {'passed_tests': 19, 'forwarding_cases': 55,
                 'fixture_sha256': checker.digest(ws/'tests/producer_forwarding/expected-outputs.bin.zlib'),
                 'native_source_sha256': support.source_inventory(ws),
                 'openssl_inputs': seals[1].hashes}

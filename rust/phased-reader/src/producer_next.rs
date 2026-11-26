@@ -13,12 +13,14 @@ pub struct NextPass {
     pub pages: u32,
     pub chars: u32,
     pub restyle: bool,
+    pub(crate) layout_done: bool,
 }
 struct Parsed {
     status: Status,
     pages: u32,
     chars: u32,
     verdict: Verdict,
+    layout_done: bool,
 }
 impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::ProducerReceipt + ?Sized> Producer<'_, '_, '_, C, S, F> {
     /// The enclosing scheduler already admitted the cache/SDK lease. Selection
@@ -45,7 +47,7 @@ impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::Pro
             phase.settle_watched(a.source, backend, &reader.selections[reader.active ^ 1],
                 spine, parsed.verdict, parsed.status, reader.on_yield)
         })?;
-        Ok(NextPass { status, pages: parsed.pages, chars: parsed.chars, restyle })
+        Ok(NextPass { status, pages: parsed.pages, chars: parsed.chars, restyle, layout_done: parsed.layout_done })
     }
 }
 
@@ -59,7 +61,8 @@ impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::Pro
         let selected = &reader.selections[reader.active ^ 1];
         let mut parsed = phase.watched_layout(backend, breaker, |slot, lr, io, backing| {
             let mut failed = Parsed { status: Status::Ok, pages: 0, chars: 0,
-                verdict: Verdict { state: slot.state, stopped: false, cleared: false } };
+                verdict: Verdict { state: slot.state, stopped: false, cleared: false },
+                layout_done: false };
             if !prepare { self.begin_stream(); }
             let mut chapter = match ChapterSource::open(&mut *self.source, &selected.entry,
                 resources::decoder(&mut io.decoder), reader.on_yield, Some(cancellation)) {
@@ -106,15 +109,23 @@ impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::Pro
                     }
                 }
                 let verdict = session.stream.with_source(|watch, _| watch.verdict());
+                let mut layout_done = false;
                 if status == Status::Ok && !verdict.stopped
                     && (prepare || !self.writer.segmented || self.writer.seen <= PAGES)
-                    && !session.stream.with_source(|watch, _| watch.with_source(|chapter| chapter.finish())) {
-                    status = Status::Truncated;
+                {
+                    let (finished, ended) = session.stream.with_source(|watch, _| {
+                        watch.with_source(|chapter| chapter.finish_checked())
+                    });
+                    if !finished {
+                        status = Status::Truncated;
+                    }
+                    layout_done = ended && counted <= MAX_PAGES && !self.writer.refused;
                 }
                 if counted > MAX_PAGES || (status == Status::Ok && self.writer.refused) {
                     status = Status::Unsupported;
+                    layout_done = false;
                 }
-                let result = Parsed { status, pages: engine.pages, chars: engine.chars, verdict };
+                let result = Parsed { status, pages: engine.pages, chars: engine.chars, verdict, layout_done };
                 session.abort();
                 result
             })

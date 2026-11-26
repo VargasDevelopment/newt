@@ -29,6 +29,30 @@ impl Admission {
     }
 }
 
+/// Outcome of one current-chapter producer attempt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CurrentOutcome {
+    /// Whole chapter (or all segments and the segment map) is complete.
+    Done,
+    /// At least one segment sealed durably; the attempt stopped cleanly
+    /// (input interruption or leftover segments needing another pass).
+    Progress,
+    /// No clean forward progress, or a terminal failure occurred.
+    NoProgress(crate::zip_container::Status),
+}
+
+impl CurrentOutcome {
+    /// Done and terminal NoProgress retain quiet; Progress and interrupted
+    /// NoProgress renew the shared quiet window so the reader settles again.
+    pub fn quiet_after(self, interrupted: bool, now: impl FnOnce() -> u32) -> Option<u32> {
+        match self {
+            Self::Done => None,
+            Self::Progress => Some(now()),
+            Self::NoProgress(_) => interrupted.then(now),
+        }
+    }
+}
+
 /// Successful and terminal attempts retain quiet; only interruption renews it.
 pub fn quiet_after_attempt(successful: bool, interrupted: bool,
     now: impl FnOnce() -> u32,
@@ -136,6 +160,36 @@ impl<'region> ProducerVisit<'region> {
     }
     pub fn spent(&mut self) { self.admission = Admission::Spent; }
     pub fn granted(&mut self) { self.admission = Admission::Granted; }
+    /// Apply the outcome of one current-chapter producer attempt and return
+    /// any renewed quiet timestamp.
+    pub fn finish_current(
+        &mut self,
+        position: Option<Position>,
+        target: u32,
+        eligible: bool,
+        outcome: CurrentOutcome,
+        interrupted: bool,
+        now: impl FnOnce() -> u32,
+    ) -> Option<u32> {
+        match outcome {
+            CurrentOutcome::Done => {
+                self.complete(position, target, false);
+                self.count_try(position, true, target);
+            }
+            CurrentOutcome::Progress => {
+                self.pending(position, eligible);
+            }
+            CurrentOutcome::NoProgress(_) => {
+                self.count_try(position, !interrupted, target);
+                if interrupted {
+                    self.pending(position, eligible);
+                } else {
+                    self.deny_admission(position);
+                }
+            }
+        }
+        outcome.quiet_after(interrupted, now)
+    }
     /// A queued stop before admission spends no try. A stop after a grant
     /// counts the target before withdrawing native credit and checking again.
     pub fn stop_admission(&mut self, position: Option<Position>, eligible: bool,
@@ -221,5 +275,59 @@ mod tests {
         assert!(!visit.pending(position, true));
         assert_eq!(visit.into_parts(), (u16::MAX, Admission::Denied, false));
         assert_eq!(ledger, [0xa5; LEDGER_BYTES]);
+    }
+
+    #[test]
+    fn finish_current_accounts_done_progress_interrupted_and_terminal_outcomes() {
+        use crate::zip_container::Status;
+        let position = Some(Position { spine: 2, spines: 8, verified: true });
+
+        // Progress (interrupted or leftover) keeps target and tries unchanged,
+        // re-arms pending, and renews the quiet window.
+        let mut ledger = [0; LEDGER_BYTES];
+        let mut visit = ProducerVisit::new(&mut ledger);
+        assert!(visit.pending(position, true));
+        for interrupted in [false, true] {
+            visit.spent();
+            let quiet = visit.finish_current(position, 2, true, CurrentOutcome::Progress, interrupted, || 5000);
+            assert_eq!(quiet, Some(5000));
+            assert_eq!(visit.target(position), 2);
+            assert_eq!(visit.tries(position, 2), 0);
+            assert_eq!(visit.admission(), Admission::Pending);
+            assert!(visit.pending(position, true));
+        }
+
+        // Done advances target to prefetch, closes current tries, retains quiet.
+        visit.spent();
+        assert_eq!(visit.finish_current(position, 2, true, CurrentOutcome::Done, false, || 6000), None);
+        assert_eq!(visit.target(position), 3);
+        assert_eq!(visit.tries(position, 2), 3);
+        assert!(visit.pending(position, true));
+
+        // Three interrupted NoProgress attempts spend 3 tries and deny the view.
+        let mut ledger = [0; LEDGER_BYTES];
+        let mut visit = ProducerVisit::new(&mut ledger);
+        assert!(visit.pending(position, true));
+        for attempt in 1..=3 {
+            visit.spent();
+            let quiet = visit.finish_current(position, 2, true,
+                CurrentOutcome::NoProgress(Status::IoError), true, || 7000 + u32::from(attempt));
+            assert_eq!(quiet, Some(7000 + u32::from(attempt)));
+            assert_eq!(visit.tries(position, 2), attempt);
+            assert_eq!(visit.target(position), 2);
+            assert_eq!(visit.pending(position, true), attempt < 3);
+        }
+
+        // Terminal NoProgress denies admission at once and retains quiet.
+        let mut ledger = [0; LEDGER_BYTES];
+        let mut visit = ProducerVisit::new(&mut ledger);
+        assert!(visit.pending(position, true));
+        visit.spent();
+        let quiet = visit.finish_current(position, 2, true,
+            CurrentOutcome::NoProgress(Status::Stale), false, || 9000);
+        assert_eq!(quiet, None);
+        assert_eq!(visit.tries(position, 2), 3);
+        assert_eq!(visit.admission(), Admission::Denied);
+        assert!(!visit.pending(position, true));
     }
 }

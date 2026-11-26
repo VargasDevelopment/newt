@@ -20,13 +20,32 @@ pub struct Segments {
     pub skipped: u32,
     pub(crate) staged: bool,
     pub(crate) language: Option<BookLanguage>,
+    pub(crate) start: u8,
+    pub(crate) sealed: u8,
 }
+const _: () = assert!(core::mem::size_of::<Segments>() == 148);
 impl Segments {
     pub fn new(certified_pages: u32) -> Self {
         Self { name: [0; 128], generation: 0, next: 0,
             count: if certified_pages > segment::MAX_PAGES { 0 } else { ChapterSegment::count(certified_pages) },
             skipped: u32::MAX, staged: false,
-            language: None }
+            language: None, start: 0, sealed: 0 }
+    }
+    pub(crate) fn set_start(&mut self, segment: u32) {
+        self.start = if self.count == 0 {
+            0
+        } else {
+            segment.min(self.count - 1) as u8
+        };
+    }
+    pub(crate) fn segment_index(&self, step: u32) -> u32 {
+        let start = u32::from(self.start);
+        if start == 0 || self.count == 0 {
+            step
+        } else {
+            let idx = start + step;
+            if idx >= self.count { idx - self.count } else { idx }
+        }
     }
     fn identify(&mut self, route: &mut Route<'_>, spine: u32) -> bool {
         // Frozen identity publishes the generation before the fallible hash.
@@ -51,15 +70,23 @@ impl Segments {
             }
             writer.open = false;
             writer.cache.set_total_chars(route.info.total_chars);
+            let was_failed = writer.cache.failed();
+            store.clear_end_committed();
             #[cfg(feature = "page-turn-trace")]
             store.trace_segment_layout_done();
-            if !writer.cache.finish(store, &self.name[..69], memory) { return Status::IoError; }
-            #[cfg(feature = "page-turn-trace")]
-            store.trace_segment_end(writer.cache.page_count());
+            let finished = writer.cache.finish(store, &self.name[..69], memory);
+            let committed = finished || (!was_failed && store.end_committed());
+            if committed {
+                self.sealed = self.sealed.saturating_add(1);
+                #[cfg(feature = "page-turn-trace")]
+                store.trace_segment_end(writer.cache.page_count());
+            }
+            if !finished { return Status::IoError; }
         }
         while self.next < self.count {
-            let index = self.next;
+            let step = self.next;
             self.next = self.next.wrapping_add(1);
+            let index = self.segment_index(step);
             let segment = ChapterSegment { index, pages: route.info.page_count, chars: route.info.total_chars };
             let spine = route.info.spine;
             if !self.identify(route, spine) || !segment::segment_name(segment, &mut self.name, &mut |b, d| route.hash.hash(b, d)) {
@@ -67,13 +94,35 @@ impl Segments {
             }
             if store.exists(&self.name[..69]) { continue; }
             if !store.checkpoint() { return Status::IoError; }
-            if segment.first() < writer.seen { self.skipped = self.skipped.min(index); continue; }
+            if segment.first() < writer.seen { self.skipped = self.skipped.min(step); continue; }
+            if !store.producer_can_begin() { self.skipped = self.skipped.min(step); continue; }
             if !writer.cache.begin(store, &self.name[..69], self.generation, memory) { return Status::OutOfMemory; }
             #[cfg(feature = "page-turn-trace")]
             store.trace_segment_begin(index);
             writer.first = segment.first();
             writer.open = true;
             return Status::Ok;
+        }
+        Status::Ok
+    }
+    /// After EOF finishes the final physical segment under a wrapped `start > 0`,
+    /// earlier segments (`0..start`) remain in `self.next..self.count`. Record any
+    /// absent step in `self.skipped` so a later pass or attempt fills them.
+    pub(crate) fn scan_remaining<C: ?Sized, S: CacheStorage + ?Sized>(
+        &mut self, store: &mut ProducerStore<'_, '_, '_, '_, C, S>, route: &mut Route<'_>,
+    ) -> Status {
+        while self.next < self.count {
+            let step = self.next;
+            self.next = self.next.wrapping_add(1);
+            let index = self.segment_index(step);
+            let segment = ChapterSegment { index, pages: route.info.page_count, chars: route.info.total_chars };
+            let spine = route.info.spine;
+            if !self.identify(route, spine) || !segment::segment_name(segment, &mut self.name, &mut |b, d| route.hash.hash(b, d)) {
+                return Status::IoError;
+            }
+            if store.exists(&self.name[..69]) { continue; }
+            if !store.checkpoint() { return Status::IoError; }
+            self.skipped = self.skipped.min(step);
         }
         Status::Ok
     }

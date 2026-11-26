@@ -153,7 +153,7 @@ fn settled_oversize_chapters_are_denied_before_cache_io_or_writes() {
             })?;
             Ok(producer.produce_current(&mut reader, &mut parser, &mut breaker, &mut route))
         });
-        assert_eq!(result, Ok(Status::Unsupported));
+        assert_eq!(result, Ok(newt_core::producer_visit::CurrentOutcome::NoProgress(Status::Unsupported)));
         assert!(files.names.is_empty(), "no segment file may begin");
         assert_eq!((files.writes, files.probes, hash.0), (0, 0, 0));
     }
