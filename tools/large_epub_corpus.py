@@ -509,7 +509,7 @@ CASES: tuple[Case, ...] = (
          BookSpec(chapters=1, chapter_paragraphs=25500), expected_sync6=False, expected_small32=False),
     Case("web-novel-envelope", "long-web-novel", "full", "Ok", "Ok", "menu", "Long text-only web novel inside current limits (240 chapters x 40 KiB = ~9.6 MiB)",
          BookSpec(chapters=240, chapter_bytes=40 * KIB, toc_kind="nav"), expected_menu_valid=True, expected_authored=True, expected_menu_count=240, expected_fallback="None"),
-    Case("web-novel-2000ch", "long-web-novel", "full", "Unsupported", "Unsupported", "admit", "2,000-chapter plain-text web novel (~20 MiB text, 2,004 entries): refused at 1,024",
+    Case("web-novel-2000ch", "long-web-novel", "full", "Unsupported", "Unsupported", "admit", "2,000-chapter plain-text web novel (~20 MiB text, 2,004 entries): host catalog admission refuses it at 1,024; the device reader indexes it",
          BookSpec(chapters=2000, chapter_bytes=10 * KIB, toc_kind="nav")),
     *(Case(f"damaged-chapter-{fault}", "member-check", "fast", "Ok", "Ok", "damaged",
            f"Chapter 3's local header fails the open-time check ({fault}): the book opens, chapter 1 reads, chapter 3 is refused",

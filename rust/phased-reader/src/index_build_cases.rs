@@ -17,10 +17,19 @@ impl BookSource for Source {
     }
 }
 fn zip() -> Source {
+    stored_zip(&[(b"META-INF/container.xml".to_vec(), b"C".as_slice()),
+        (b"book.opf".to_vec(), b"P"), (b"c".to_vec(), b"reading unchanged")])
+}
+/// Container, package and `chapters` members named `c0`, `c1`, ...
+fn long_zip(chapters: usize) -> Source {
+    let mut members = vec![(b"META-INF/container.xml".to_vec(), b"C".as_slice()), (b"book.opf".to_vec(), b"L")];
+    members.extend((0..chapters).map(|i| (std::format!("c{i}").into_bytes(), b"x".as_slice())));
+    stored_zip(&members)
+}
+fn stored_zip(members: &[(Vec<u8>, &[u8])]) -> Source {
     let mut bytes = Vec::new();
     let mut central = Vec::new();
-    for (name, data) in [(b"META-INF/container.xml".as_slice(), b"C".as_slice()),
-        (b"book.opf", b"P"), (b"c", b"reading unchanged")] {
+    for (name, data) in members {
         let offset = bytes.len() as u32;
         let mut local = [0u8; 30];
         local[..4].copy_from_slice(&0x04034b50u32.to_le_bytes());
@@ -42,7 +51,8 @@ fn zip() -> Source {
     bytes.extend_from_slice(&central);
     let mut end = [0u8; 22];
     end[..4].copy_from_slice(&0x06054b50u32.to_le_bytes());
-    end[8..10].copy_from_slice(&3u16.to_le_bytes()); end[10..12].copy_from_slice(&3u16.to_le_bytes());
+    let count = u16::try_from(members.len()).unwrap();
+    end[8..10].copy_from_slice(&count.to_le_bytes()); end[10..12].copy_from_slice(&count.to_le_bytes());
     end[12..16].copy_from_slice(&(central.len() as u32).to_le_bytes());
     end[16..20].copy_from_slice(&offset.to_le_bytes()); bytes.extend_from_slice(&end);
     Source { bytes, cancelled: std::rc::Rc::new(Cell::new(false)) }
@@ -70,6 +80,20 @@ impl ParserBackend for Parser {
             h.end_element(b"manifest");
             h.start_element(b"spine", &mut Attrs(&[]));
             h.start_element(b"itemref", &mut Attrs(&[(b"idref", b"id0")]));
+            h.end_element(b"spine");
+        } else if bytes == b"L" {
+            h.start_element(b"manifest", &mut Attrs(&[]));
+            for i in 0..self.items {
+                let (id, href) = (std::format!("id{i}"), std::format!("c{i}"));
+                h.start_element(b"item", &mut Attrs(&[(b"id", id.as_bytes()), (b"href", href.as_bytes()),
+                    (b"media-type", b"application/xhtml+xml")]));
+            }
+            h.end_element(b"manifest");
+            h.start_element(b"spine", &mut Attrs(&[]));
+            for i in 0..self.items {
+                let id = std::format!("id{i}");
+                h.start_element(b"itemref", &mut Attrs(&[(b"idref", id.as_bytes())]));
+            }
             h.end_element(b"spine");
         }
         true
@@ -274,4 +298,24 @@ fn reopen_failure_refuses_the_open_after_a_complete_publication() {
     assert!(card.removed && card.work.is_empty() && card.pending.is_empty());
     assert!(header(&mut card).is_some(),"failed reopen may leave only a complete index");
     assert_eq!(card.most,3);
+}
+/// The catalog caps a book at 1,024 ZIP entries because it allocates one entry
+/// record per member; the index streams members, so it builds past that (#174).
+#[test]
+fn a_2000_chapter_book_indexes_past_the_catalog_entry_cap() {
+    let mut card = Card::default();
+    let mut source = HandoffSource { source: long_zip(2000), released: card.source_released.clone(),
+        releases: 0, reopens: 0, fail_reopen: false };
+    let mut shared = Box::new([0; crate::phase_storage::BANK_BYTES]);
+    let mut storage = Storage::new(&mut shared);
+    let mut loan = Loan(vec![0; crate::phase_storage::BANK_BYTES + 15]);
+    let indexed = open_releasing(&mut source, &[7;32], &mut storage, &mut loan,
+        &mut Parser { items: 2000 }, &mut card, None, Verification::Verified).unwrap();
+    assert!(indexed.source_reopened(), "2,000 spine items spill");
+    let index = header(&mut card).expect("the index publishes");
+    assert_eq!((index.header().members, index.header().spine), (2002, 2000));
+    // Negative control: catalog admission (1,024 entries) still refuses the same book.
+    let mut parse = vec![0; crate::phase_storage::BANK_BYTES];
+    assert_eq!(admission::inspect(&mut admission::ScheduledSource::new(&mut long_zip(2000), None, None),
+        &mut newt_core::zip_window::arena::Arena::new(&mut parse), &mut [0; 4099]), Status::Unsupported);
 }

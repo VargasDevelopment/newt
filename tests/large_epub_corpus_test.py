@@ -67,7 +67,7 @@ INDEX_TOC_CONTROL = (
     "index.header().navigation_declared, status", "false, status", "toc-declared-missing",
 )
 CONTROLS = (
-    ("the 1,024-entry cap is raised", ADMISSION, "d.entries > 1024", "d.entries > 2048", "zip-entries-over"),
+    ("the 1,024-entry cap is raised", ADMISSION, "CATALOG_MAX_ENTRIES: u32 = 1024;", "CATALOG_MAX_ENTRIES: u32 = 2048;", "zip-entries-over"),
     ("the 1 MiB central-directory cap is raised", ADMISSION, "d.size > 1024 * 1024", "d.size > 2 * 1024 * 1024", "central-dir-over"),
     ("the 4 MiB member cap is raised", ZIP_RULES, "uncompressed_bytes > EPUB_MAX_MEMBER_BYTES", "false", "member-size-over"),
     ("the 64 MiB expanded-total cap is removed", ADMISSION, "if expanded > EPUB_MAX_EXPANDED_BYTES {", "if false {", "expanded-total-over"),

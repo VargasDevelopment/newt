@@ -92,8 +92,8 @@ fn prepare<'r, 'p, 's, 'o, B: ParserBackend + ?Sized>(
     stage(hook, 2);
     let mut view = IndexSource(live);
     let mut central = ScheduledSource::new(&mut view as &mut dyn BookSource, None, policy);
-    let status = admission::inspect_with_visitor(&mut central,
-        &mut Arena::new(&mut *parse), scan, |member| builder.visit(store, member, &mut *progress));
+    let status = admission::walk_central(&mut central, &mut Arena::new(&mut *parse), scan,
+        newt_core::book_index::MAX_MEMBERS, |member| builder.visit(store, member, &mut *progress));
     if status != Status::Ok { return Err(status); }
     stage(hook, 3);
     let container = index_member(&mut **live.borrow_mut(), &mut *parse, scan, b"META-INF/container.xml")?;
@@ -140,7 +140,8 @@ fn index_member(
 ) -> Result<Checked, Status> {
     use newt_core::{admission, book_index, zip_container, member_check};
     let mut found = None;
-    let status = admission::inspect_with_visitor(&mut newt_core::admission::ScheduledSource::new(source, None, None), &mut Arena::new(parse), scan, |m| {
+    let status = admission::walk_central(&mut newt_core::admission::ScheduledSource::new(source, None, None),
+        &mut Arena::new(parse), scan, book_index::MAX_MEMBERS, |m| {
         if found.is_none() && m.hash == book_index::name_hash(path) { found = Some(m); }
         Status::Ok
     });
