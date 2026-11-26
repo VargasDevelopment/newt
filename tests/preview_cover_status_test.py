@@ -99,8 +99,8 @@ def seed_world(binary, directory, books_spec):
 
 def making_and_batch_settle(binary):
     """Four permanent no-cover verdicts show Making cover before idle, add zero
-    refreshes during generation, do one batched settle repaint, save CJCM/CJCU/
-    CJCI/CJCX on SD, and restore cleanly on cold restart."""
+    refreshes during generation, do one batched settle repaint, save CJDM/CJDU/
+    CJDI/CJDX on SD, and restore cleanly on cold restart."""
     spec = [
         ('A Missing', None),
         ('B Unsupported', minimal_jpeg(frame=0xc9)),
@@ -128,8 +128,8 @@ def making_and_batch_settle(binary):
 
         # Verify exact 28-byte versioned bare records on SD.
         expected_routes = {
-            'A Missing': b'CJCM', 'B Unsupported': b'CJCU',
-            'C Incomplete': b'CJCI', 'D Damaged': b'CJCX',
+            'A Missing': b'CJDM', 'B Unsupported': b'CJDU',
+            'C Incomplete': b'CJDI', 'D Damaged': b'CJDX',
         }
         covers = d / 'card/Newt/Covers'
         for name, route in expected_routes.items():
@@ -155,18 +155,18 @@ def making_and_batch_settle(binary):
         if len(set(notes)) != 4:
             return 'the four permanent reasons did not draw four distinct notes'
 
-        # Corrupt bare route word (CJCZ) falls back to Making cover and regenerates CJCM.
+        # Corrupt bare route word (CJDZ) falls back to Making cover and regenerates CJDM.
         bad = bytearray((covers / 'A Missing.epub.nlc').read_bytes())
-        bad[24:28] = b'CJCZ'
+        bad[24:28] = b'CJDZ'
         (covers / 'A Missing.epub.nlc').write_bytes(bytes(bad))
         corrupt_making, _, _, _ = run_once(binary, d, [CONFIRM], {'freeze': 'cover.work'})
         if slot_box(corrupt_making, 0) != slot_box(making, 0):
-            return 'corrupt bare route CJCZ did not fall back to Making cover'
+            return 'corrupt bare route CJDZ did not fall back to Making cover'
         if any(note_strip(corrupt_making)):
             return 'corrupt bare route showed a bogus note while unsettled'
         _, attempts, _, _ = run_once(binary, d, [CONFIRM], {'freeze': ''})
-        if attempts != [MISSING] or (covers / 'A Missing.epub.nlc').read_bytes()[24:28] != b'CJCM':
-            return f'corrupt bare route did not regenerate CJCM: {attempts}'
+        if attempts != [MISSING] or (covers / 'A Missing.epub.nlc').read_bytes()[24:28] != b'CJDM':
+            return f'corrupt bare route did not regenerate CJDM: {attempts}'
 
 
 def declined_low_heap_settle(binary):
@@ -255,7 +255,7 @@ def non_retryable_blank_note(binary):
 def transient_and_persistent_book_stat(binary):
     """A retryable book-stat EIO maps to Pending (not Unavailable): on a one-book
     shelf, a first transient stat error still draws Making cover and triggers the
-    settle repaint once recovery saves CJCM; a persistent stat error settles as
+    settle repaint once recovery saves CJDM; a persistent stat error settles as
     retryable and shows 'Cover will be made later'."""
     book = '/newt-sd/Newt/Books/A Missing.epub'
     with tempfile.TemporaryDirectory(prefix='newt-48-stat-recover-') as td:
@@ -264,7 +264,7 @@ def transient_and_persistent_book_stat(binary):
         # Baseline settled frame with no stat fault (shows 'No cover in this book').
         clean_settled, _, _, _ = run_once(binary, d, [CONFIRM], {})
         (d / 'card/Newt/Covers/A Missing.epub.nlc').unlink()
-        # First stat fails with EIO; cover worker recovers and writes CJCM -> settle repaint must fire.
+        # First stat fails with EIO; cover worker recovers and writes CJDM -> settle repaint must fire.
         making, _, _, _ = run_once(binary, d, [CONFIRM], {'card.stat.once': book, 'freeze': 'cover.work'})
         if any(note_strip(making)):
             return 'transient book-stat error drew a bottom note while Making cover'
@@ -303,12 +303,12 @@ def home_quiet_h2_and_retry(binary):
     with tempfile.TemporaryDirectory(prefix='newt-48-home-') as td:
         d = Path(td)
         seed_world(binary, d, [('A Coverless', None)])
-        # Open book from Books (which settles CJCM), return to Home for cached baseline gen.
+        # Open book from Books (which settles CJDM), return to Home for cached baseline gen.
         run_once(binary, d, [CONFIRM, CONFIRM], {})
         _, cached_attempts, cached_gens, cached_log = run_once(binary, d, [BACK], {})
         if cached_attempts:
-            return f'Home cached CJCM re-decoded cover: {cached_attempts}'
-        # Re-open book, remove covers, return to Home: settles to CJCM with ZERO extra Home refreshes.
+            return f'Home cached CJDM re-decoded cover: {cached_attempts}'
+        # Re-open book, remove covers, return to Home: settles to CJDM with ZERO extra Home refreshes.
         run_once(binary, d, [CONFIRM, CONFIRM], {})
         covers = d / 'card/Newt/Covers'
         if covers.exists():
@@ -319,8 +319,8 @@ def home_quiet_h2_and_retry(binary):
             return f'Home coverless book expected [MISSING], got {attempts}'
         if gens != cached_gens or log.count('HOME_COVER ') != cached_log.count('HOME_COVER '):
             return f'Home H2 added an extra refresh on coverless book: {gens} vs cached {cached_gens}'
-        if (covers / 'A Coverless.epub.nlc').read_bytes()[24:28] != b'CJCM':
-            return 'Home did not persist CJCM'
+        if (covers / 'A Coverless.epub.nlc').read_bytes()[24:28] != b'CJDM':
+            return 'Home did not persist CJDM'
 
     # Legacy CJB7 bare record on a book WITH art retries on Home and paints art.
     with tempfile.TemporaryDirectory(prefix='newt-48-home-retry-') as td:

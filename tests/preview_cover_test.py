@@ -52,8 +52,8 @@ SIGNATURE = b'NLC2\x90\0\xbc\0'
 WIDTH, HEIGHT, ROW_BYTES = 144, 188, 18
 ART, NO_ART = 28 + ROW_BYTES * HEIGHT, 28
 # Routes on card (little-endian rust/core/src/cover.rs CJ+version+reason).
-CJCM, CJCU, CJB7, CJB6, CJB5, CJB3 = b'CJCM', b'CJCU', b'CJB7', b'CJB6', b'CJB5', b'CJB3'
-NO_COVER_ROUTE = {MISSING: CJCM, UNSUPPORTED: CJCU}
+CJDM, CJDU, CJB7, CJB6, CJB5, CJB3 = b'CJDM', b'CJDU', b'CJB7', b'CJB6', b'CJB5', b'CJB3'
+NO_COVER_ROUTE = {MISSING: CJDM, UNSUPPORTED: CJDU}
 MTIME = 1790812800
 # Book name: how its cover is declared and stored (epub() forms), and its
 # image (picture() kinds, a JPEG by default).
@@ -321,8 +321,8 @@ def books():
     return folder
 
 
-def record(book, route=CJCU):
-    """A bare cover record for `book` on `route` (CJCM, CJCU, or legacy CJB3..CJB7)."""
+def record(book, route=CJDU):
+    """A bare cover record for `book` on `route` (CJDM, CJDU, or legacy CJB3..CJB7)."""
     return SIGNATURE + struct.pack('<QQ', (books() / f'{book}.epub').stat().st_size, MTIME) + route
 
 
@@ -468,22 +468,22 @@ def home(binary):
 
 def old_records(binary):
     """Bare records from older decoders (CJB6, CJB5, CJB3 and CJB7) are retried
-    once and then never again; a current CJCU one, and older art, stay as is."""
+    once and then never again; a current CJDU one, and older art, stay as is."""
     # Past the first shelf only the gap is retried; other books are current.
     gap_shelf = shelves()[-1]
     kept = prepared('Dogwood', bytes(range(256)) * 13 + bytes(56))
-    records = {**{book: record(book, CJCU) for book in BOOKS[4:]}, 'Alder': record('Alder', CJB6),
-               'Birch': record('Birch', CJCU), 'Cedar': record('Cedar', CJB3), 'Dogwood': kept, GAP: record(GAP, CJB7)}
+    records = {**{book: record(book, CJDU) for book in BOOKS[4:]}, 'Alder': record('Alder', CJB6),
+               'Birch': record('Birch', CJDU), 'Cedar': record('Cedar', CJB3), 'Dogwood': kept, GAP: record(GAP, CJB7)}
     with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
         world = World(binary, scratch, records)
         _, results, _ = world.run(SHELF)
         for book, route in (('Alder', 'CJB6'), ('Cedar', 'CJB3')):
             if problem := art_problem(world, book):
                 return f'the {route} record was not retried: {problem}'
-        if world.cover('Birch') != record('Birch', CJCU) or world.cover('Dogwood') != kept or results != [PRODUCED] * 2:
-            return f'the CJCU record or the older art was not kept as it is (attempts {results})'
+        if world.cover('Birch') != record('Birch', CJDU) or world.cover('Dogwood') != kept or results != [PRODUCED] * 2:
+            return f'the CJDU record or the older art was not kept as it is (attempts {results})'
         _, results, _ = world.run(to_book(gap_shelf[0]))
-        if results != [UNSUPPORTED] or world.cover(GAP) != record(GAP, CJCU):
+        if results != [UNSUPPORTED] or world.cover(GAP) != record(GAP, CJDU):
             return f'the unsupported book\'s CJB7 retry ended {results} with {world.cover(GAP)!r}'
         _, results, _ = world.run(to_book(gap_shelf[0]))
         if results:
@@ -592,7 +592,7 @@ def low_heap(binary):
     heap back makes its cover."""
     shelf = next(names for names in shelves() if WIDE in names)
     # Only the wide PNG's shelf has cover work; the walk passes current books.
-    records = {book: record(book, CJCU) for book in BOOKS if book not in shelf}
+    records = {book: record(book, CJDU) for book in BOOKS if book not in shelf}
     # Room for 64 KiB kept free and 53 KiB more: enough to admit cover work
     # (its planned peak includes the staging write block) and for every other
     # book's blocks, too little for the wide PNG's block, a little over 53 KiB.
@@ -615,7 +615,7 @@ def commit_heap_drop(binary):
     """An admitted CRC block survives a later heap dip during the pending open,
     for both artwork and a no-art record."""
     for book, result in (('Alder', PRODUCED), (GAP, UNSUPPORTED)):
-        records = {name: record(name, CJCU) for name in BOOKS if name != book}
+        records = {name: record(name, CJDU) for name in BOOKS if name != book}
         with tempfile.TemporaryDirectory(prefix='newt-covers-') as scratch:
             world = World(binary, scratch, records, **{'cover.heap.drop.on': '.nlc.tmp'})
             _, results, _ = world.run(to_book(book))
@@ -625,7 +625,7 @@ def commit_heap_drop(binary):
             if book in SUPPORTED:
                 if problem := art_problem(world, book):
                     return problem
-            elif world.cover(book) != record(book, CJCU):
+            elif world.cover(book) != record(book, CJDU):
                 return 'commit heap dip lost the no-art record'
 
 

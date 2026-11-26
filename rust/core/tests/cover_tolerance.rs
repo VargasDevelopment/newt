@@ -418,12 +418,17 @@ fn old_no_art_records_retry_once() {
         assert_eq!(cover::record(None, route), Record::Generate);
         assert_eq!(cover::bare_record(route), BareRecord::Retry);
     }
+    // Books refused before discovery walked past 1,024 entries retry once (#177);
+    // the record the retry writes then stays.
+    let (old, now) = (u32::from_le_bytes(*b"CJCU"), u32::from_le_bytes(*b"CJDU"));
+    assert_eq!(cover::bare_record(old), BareRecord::Retry);
+    assert_eq!(cover::bare_record(now), BareRecord::Current(NoCoverReason::Unsupported));
     // Current versioned routes (`CJ` + version + reason) settle with their exact copy.
     let cases = [
-        (NoCoverReason::Missing, *b"CJCM", b"No cover in this book".as_slice()),
-        (NoCoverReason::Unsupported, *b"CJCU", b"Cover format not supported".as_slice()),
-        (NoCoverReason::Incomplete, *b"CJCI", b"Cover file is incomplete".as_slice()),
-        (NoCoverReason::Invalid, *b"CJCX", b"Cover file is damaged".as_slice()),
+        (NoCoverReason::Missing, *b"CJDM", b"No cover in this book".as_slice()),
+        (NoCoverReason::Unsupported, *b"CJDU", b"Cover format not supported".as_slice()),
+        (NoCoverReason::Incomplete, *b"CJDI", b"Cover file is incomplete".as_slice()),
+        (NoCoverReason::Invalid, *b"CJDX", b"Cover file is damaged".as_slice()),
     ];
     for (reason, tag, note) in cases {
         let route = cover::no_art_route(reason);
@@ -440,7 +445,7 @@ fn old_no_art_records_retry_once() {
         assert_eq!(cover::record(Some(route), route), Record::Current);
     }
     // Unknown reason bytes, future versions, and non-CJ words are rejected as Other.
-    for bad in [*b"CJCZ", *b"CJDM", *b"CJB8", *b"XXXX"].map(u32::from_le_bytes) {
+    for bad in [*b"CJDZ", *b"CJEM", *b"CJB8", *b"XXXX"].map(u32::from_le_bytes) {
         assert_eq!(cover::bare_record(bad), BareRecord::Other);
         assert_eq!(cover::record(None, bad), Record::Generate);
     }
