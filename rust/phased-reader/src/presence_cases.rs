@@ -611,10 +611,8 @@ pub fn actual_reader_cases<B: ParserBackend + ?Sized>(
     let old_page = r.reader.has_page;
     let old_opened = r.reader.opened;
     r.reader.opened = false;
-    for v in VECTORS
-        .iter()
-        .filter(|v| v.settings.slim_progress_bar && v.settings.refresh_pages == 5)
-    {
+    // Every slim bar and refresh choice is stored: only the page layout gates.
+    for v in VECTORS {
         r.reader.page_layout = v.settings.page_layout();
         for page in [false, true] {
             r.reader.has_page = page;
@@ -661,11 +659,7 @@ pub fn actual_reader_cases<B: ParserBackend + ?Sized>(
                     ..v.settings
                 },
                 ViewSettings {
-                    slim_progress_bar: false,
-                    ..v.settings
-                },
-                ViewSettings {
-                    refresh_pages: 10,
+                    text_size: if v.settings.text_size == TextSize::Px30 { TextSize::Px22 } else { TextSize::Px30 },
                     ..v.settings
                 },
             ] {
