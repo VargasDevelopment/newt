@@ -83,7 +83,9 @@ pub fn locate(source: &mut dyn BookSource, wanted: &[u8], out: &mut Member) -> S
     if !path(b"", wanted, &mut canonical) || wanted != cbytes(&canonical)
         || source.size() < 22 || source.size() > 64 * 1024 * 1024 { return S::Unsupported; }
     let d = match directory(source) { Ok(d) => d, Err(e) => return e };
-    if d.count > 1024 || d.bytes > 1024 * 1024 { return S::Unsupported; }
+    // The walk streams records through fixed buffers, so no member count cap:
+    // the 1 MiB directory bounds it (#177).
+    if d.bytes > 1024 * 1024 { return S::Unsupported; }
     let end = u64::from(d.offset) + u64::from(d.bytes);
     if end != d.eocd || end > source.size() || source.size() - end < 22 { return S::Malformed; }
     let mut header = [0; 46];
