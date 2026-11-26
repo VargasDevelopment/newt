@@ -21,6 +21,10 @@ pub struct ReaderState {
     malformed_utf8: bool,
     empty_chapter: bool,
     work: Observer,
+    #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+    last_layout_pages: u32,
+    #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+    total_layout_pages: u64,
 }
 
 /// Read-only projection of retained state and its caller-owned selections.
@@ -47,7 +51,21 @@ impl ReaderState {
             malformed_utf8: false,
             empty_chapter: false,
             work: None,
+            #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+            last_layout_pages: 0,
+            #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+            total_layout_pages: 0,
         }
+    }
+
+    #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+    pub fn last_layout_pages(&self) -> u32 {
+        self.last_layout_pages
+    }
+
+    #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+    pub fn total_layout_pages(&self) -> u64 {
+        self.total_layout_pages
     }
 
     /// Return the resulting state before lending the same backing again.
@@ -60,6 +78,10 @@ impl ReaderState {
             pending, pending_cached, pending_undeclared, active, source_bytes,
             page_layout, opened, has_page, info, proofs, styles_ready,
             undeclared_styles, malformed_utf8, empty_chapter, work,
+            #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+            last_layout_pages,
+            #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+            total_layout_pages,
         } = self;
         PhasedReader {
             pending, pending_cached, pending_undeclared, selections, plan,
@@ -67,6 +89,10 @@ impl ReaderState {
             styles_ready, undeclared_styles, malformed_utf8, empty_chapter,
             on_yield: None,
             work,
+            #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+            last_layout_pages,
+            #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+            total_layout_pages,
         }
     }
 
@@ -83,11 +109,19 @@ impl PhasedReader<'_, '_> {
             active, source_bytes, page_layout, opened, has_page, info, proofs,
             styles_ready, undeclared_styles, malformed_utf8, empty_chapter,
             on_yield: _, work,
+            #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+            last_layout_pages,
+            #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+            total_layout_pages,
         } = self;
         ReaderState {
             pending, pending_cached, pending_undeclared, active, source_bytes,
             page_layout, opened, has_page, info, proofs, styles_ready,
             undeclared_styles, malformed_utf8, empty_chapter, work,
+            #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+            last_layout_pages,
+            #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+            total_layout_pages,
         }
     }
 }
@@ -115,5 +149,15 @@ impl ReaderView<'_> {
 
     pub fn malformed_utf8(&self) -> bool {
         self.state.malformed_utf8
+    }
+
+    #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+    pub fn last_layout_pages(&self) -> u32 {
+        self.state.last_layout_pages
+    }
+
+    #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+    pub fn total_layout_pages(&self) -> u64 {
+        self.state.total_layout_pages
     }
 }

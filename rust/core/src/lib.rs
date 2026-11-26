@@ -143,3 +143,5 @@ pub mod save_notice;
 pub mod reader_work_profile;
 pub mod selection_authority;
 pub mod cover;
+#[cfg(feature = "page-turn-trace")]
+pub mod page_turn_trace;

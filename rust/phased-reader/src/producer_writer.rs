@@ -55,10 +55,17 @@ impl<'loan, 'ctx, 'pause, C: ?Sized> CappedWriter<'loan, 'ctx, C> {
         } else {
             false
         };
-        if (!skip && self.cache.page_count() >= PAGES) || !self.cancellation.checkpoint()
-            || (!skip && !self.cache.on_page(store, memory, page))
-        {
+        if (!skip && self.cache.page_count() >= PAGES) || !self.cancellation.checkpoint() {
             self.refused = true;
+        } else if !skip {
+            #[cfg(feature = "page-turn-trace")]
+            let started = store.trace_micros();
+            let wrote = self.cache.on_page(store, memory, page);
+            #[cfg(feature = "page-turn-trace")]
+            store.trace_add_tee_us(store.trace_micros().wrapping_sub(started));
+            if !wrote {
+                self.refused = true;
+            }
         }
         self.cancellation.result(!self.refused);
         !self.refused

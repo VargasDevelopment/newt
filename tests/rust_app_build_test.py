@@ -4,6 +4,7 @@ import hashlib
 from contextlib import nullcontext, redirect_stderr
 import io
 import importlib.util
+import json
 import os
 from pathlib import Path
 import shlex
@@ -300,6 +301,39 @@ class PinnedHarness(unittest.TestCase):
         self.assertNotIn('pinned-harness', self.resolved_core_features('newt-app-image', ','.join(daily_firmware.FEATURES)))
         # Control: the same query does see it where a harness turns it on.
         self.assertIn('pinned-harness', self.resolved_core_features('newt-parity', 'xml-native'))
+
+    def test_page_turn_trace_is_opt_in_and_excluded_from_shipping_image(self):
+        daily = self.resolved_core_features('newt-app-image', ','.join(daily_firmware.FEATURES))
+        self.assertNotIn('page-turn-trace', daily)
+        diagnostic = self.resolved_core_features(
+            'newt-app-image', ','.join(daily_firmware.FEATURES + ('page-turn-trace',)))
+        self.assertIn('page-turn-trace', diagnostic)
+        with self.assertRaises(ValueError):
+            daily_firmware.require_daily_image({
+                'image': daily_firmware.IMAGE,
+                'features': list(daily_firmware.FEATURES) + ['page-turn-trace'],
+            })
+        # Release build tooling stays free of diagnostic flags.
+        self.assertNotIn('--page-turn-trace', (ROOT / 'tools/firmware-build.py').read_text())
+        spec = importlib.util.spec_from_file_location(
+            'page_turn_trace_build', ROOT / 'tools/page-turn-trace-build.py')
+        diag = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(diag)
+        self.assertEqual(diag.DIAGNOSTIC_FEATURES, daily_firmware.FEATURES + ('page-turn-trace',))
+        with patch.object(sys, 'argv', ['page-turn-trace-build.py', '--health-report']), \
+                redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as exited:
+                diag.main()
+            self.assertEqual(exited.exception.code, 2)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            receipt = root / 'artifacts/code-health-regional-dev-usb.json'
+            receipt.parent.mkdir(parents=True)
+            with patch.object(diag, 'ROOT', root), \
+                    patch('code_health_resources.check_resources') as check:
+                diag.write_diagnostic_report(receipt, {'ok': True})
+                check.assert_not_called()
+                self.assertEqual(json.loads(receipt.read_text()), {'ok': True})
 
     def test_firmware_targets_refuse_it_at_compile_time(self):
         source = (ROOT / 'rust/core/src/member_check.rs').read_text()

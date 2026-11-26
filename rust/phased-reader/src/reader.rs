@@ -138,6 +138,10 @@ pub struct PhasedReader<'a, 'p> {
     pub empty_chapter: bool,
     pub on_yield: newt_core::admission::Yield<'a>,
     pub work: Observer,
+    #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+    last_layout_pages: u32,
+    #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+    total_layout_pages: u64,
 }
 impl<'a, 'p> PhasedReader<'a, 'p> {
     pub fn new(
@@ -170,6 +174,26 @@ impl<'a, 'p> PhasedReader<'a, 'p> {
     }
     pub fn staged_selection(&self) -> &Selection {
         &self.selections[self.active ^ 1]
+    }
+    #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+    pub fn last_layout_pages(&self) -> u32 {
+        self.last_layout_pages
+    }
+    #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+    pub fn total_layout_pages(&self) -> u64 {
+        self.total_layout_pages
+    }
+    #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+    pub fn reset_layout_pages(&mut self) {
+        self.last_layout_pages = 0;
+        self.total_layout_pages = 0;
+    }
+    #[inline]
+    pub(crate) fn reset_last_layout_pages(&mut self) {
+        #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+        {
+            self.last_layout_pages = 0;
+        }
     }
     /// Composition only. Drop caller parse views after return, before repaint.
     /// An unpublished capture owns the inactive selection until publish.
@@ -272,6 +296,11 @@ impl<'a, 'p> PhasedReader<'a, 'p> {
         self.info = PageInfo::default();
         self.malformed_utf8 = false;
         self.empty_chapter = false;
+        #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+        {
+            self.last_layout_pages = 0;
+            self.total_layout_pages = 0;
+        }
         for s in self.selections.iter_mut() {
             s.clear();
         }
@@ -393,6 +422,7 @@ impl<'a, 'p> PhasedReader<'a, 'p> {
         lr: &mut LayoutResources<'_>,
         lease: Option<&Lease>,
     ) -> Status {
+        self.reset_last_layout_pages();
         if matches!(mode, Target::TocResolve | Target::TocPage) {
             return self.failed(Status::Unsupported);
         }
@@ -434,6 +464,7 @@ impl<'a, 'p> PhasedReader<'a, 'p> {
         lr: &mut LayoutResources<'_>,
         lease: Option<&Lease>,
     ) -> Status {
+        self.reset_last_layout_pages();
         if self.plan.is_none() {
             return Status::Unsupported;
         }
@@ -582,6 +613,11 @@ impl<'a, 'p> PhasedReader<'a, 'p> {
                 Ok(v) => v,
                 Err(e) => break Err(e),
             };
+            #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+            {
+                self.last_layout_pages = self.last_layout_pages.saturating_add(pages);
+                self.total_layout_pages = self.total_layout_pages.saturating_add(u64::from(pages));
+            }
             if verdict.stopped {
                 status = settle_stopped_style(
                     source,
@@ -1105,6 +1141,7 @@ fn pass_stream<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
         .map_err(|_| Status::OutOfMemory)?;
         let stream = XmlStream::new(&mut input, None, r.backend);
         let mut session = ChapterSession::new(stream);
+        admission::layout_begin(on_yield);
         let mut status = session.begin(
             &raw,
             xml_session::Resources {
@@ -1139,6 +1176,7 @@ fn pass_stream<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
         let pages = engine.pages;
         let chars = engine.chars;
         session.abort();
+        admission::layout_end(on_yield, pages);
         (status, pages, chars, complete)
     };
     let state = sink.state;
@@ -1332,6 +1370,7 @@ impl PhasedReader<'_, '_> {
                 lease,
             );
         }
+        self.reset_last_layout_pages();
         let status = self.layout(
             source,
             spine,
@@ -1393,6 +1432,7 @@ impl PhasedReader<'_, '_> {
         lr: &mut LayoutResources<'_>,
         lease: Option<&Lease>,
     ) -> Status {
+        self.reset_last_layout_pages();
         if toc_index != NO_TOC && self.plan.is_none() {
             return Status::Unsupported;
         }

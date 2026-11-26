@@ -9,6 +9,17 @@ pub(super) enum Lookup {
     Invalid,
 }
 
+#[cfg(feature = "page-turn-trace")]
+#[derive(Clone, Copy, Default)]
+pub(super) struct SegmentTraceState {
+    pub(super) active: bool,
+    pub(super) idx: u32,
+    pub(super) started_us: u32,
+    pub(super) layout_us: u32,
+    pub(super) tee_us: u32,
+    pub(super) seal: newt_core::page_turn_trace::SealBreakdown,
+}
+
 /// Scalar state kept between loans; the descriptor stays in the FilePort.
 #[derive(Default)]
 pub(super) struct State {
@@ -25,6 +36,8 @@ pub(super) struct State {
     pub(super) lookup: Lookup,
     pub(super) payload: u32,
     pub(super) crc: u32,
+    #[cfg(feature = "page-turn-trace")]
+    pub(super) trace: SegmentTraceState,
 }
 
 /// Persistent cache state: the existing descriptor and existing cache scalars.

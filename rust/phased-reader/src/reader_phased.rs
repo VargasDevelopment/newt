@@ -442,6 +442,12 @@ impl PhasedReader<'_, '_> {
                     Ok(v) => v,
                     Err(e) => break Err(e),
                 };
+                #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+                {
+                    self.last_layout_pages = self.last_layout_pages.saturating_add(pages);
+                    self.total_layout_pages =
+                        self.total_layout_pages.saturating_add(u64::from(pages));
+                }
                 if verdict.stopped {
                     status =
                         phase.settle(source, backend, selected, spine, verdict, self.on_yield)?;
@@ -530,6 +536,7 @@ impl PhasedReader<'_, '_> {
         backend: &mut B,
         breaker: &mut dyn newt_core::chapter_layout::types::LineBreak,
     ) -> Status {
+        self.reset_last_layout_pages();
         if self.plan.is_none() {
             return Status::Unsupported;
         }
@@ -567,6 +574,7 @@ impl PhasedReader<'_, '_> {
         breaker: &mut dyn newt_core::chapter_layout::types::LineBreak,
         mut select: impl FnMut(&mut Self, &mut S, u32, &mut Phase<'_>, &mut B) -> Result<bool, Status>,
     ) -> Status {
+        self.reset_last_layout_pages();
         if self.plan.is_none() { return Status::Unsupported; }
         if toc_index == NO_TOC {
             return self.layout_phased_selected(
@@ -580,9 +588,6 @@ impl PhasedReader<'_, '_> {
                 breaker,
                 &mut select,
             );
-        }
-        if self.plan.is_none() {
-            return Status::Unsupported;
         }
         let status = self.layout_phased_selected(
             source,

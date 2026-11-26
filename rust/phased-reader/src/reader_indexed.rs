@@ -173,6 +173,7 @@ impl PhasedReader<'_, '_> {
         lender: &mut impl BuildLoan, backend: &mut B,
         breaker: &mut dyn newt_core::chapter_layout::types::LineBreak,
     ) -> Status {
+        self.reset_last_layout_pages();
         if self.plan.is_none() { return Status::Unsupported; }
         if matches!(mode, Target::TocResolve | Target::TocPage) { return self.failed(Status::Unsupported); }
         self.layout_phased_selected(source, spine, target, mode, storage, lender, backend, breaker,

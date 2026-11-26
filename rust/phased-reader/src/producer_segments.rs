@@ -51,7 +51,11 @@ impl Segments {
             }
             writer.open = false;
             writer.cache.set_total_chars(route.info.total_chars);
+            #[cfg(feature = "page-turn-trace")]
+            store.trace_segment_layout_done();
             if !writer.cache.finish(store, &self.name[..69], memory) { return Status::IoError; }
+            #[cfg(feature = "page-turn-trace")]
+            store.trace_segment_end(writer.cache.page_count());
         }
         while self.next < self.count {
             let index = self.next;
@@ -65,6 +69,8 @@ impl Segments {
             if !store.checkpoint() { return Status::IoError; }
             if segment.first() < writer.seen { self.skipped = self.skipped.min(index); continue; }
             if !writer.cache.begin(store, &self.name[..69], self.generation, memory) { return Status::OutOfMemory; }
+            #[cfg(feature = "page-turn-trace")]
+            store.trace_segment_begin(index);
             writer.first = segment.first();
             writer.open = true;
             return Status::Ok;

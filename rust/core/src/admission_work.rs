@@ -27,6 +27,20 @@ pub fn cache_miss(hook: Yield<'_>, reason: CacheMissReason) {
     #[cfg(not(feature = "dev-usb"))]
     let _ = (hook, reason);
 }
+#[inline]
+pub fn layout_begin(hook: Yield<'_>) {
+    #[cfg(feature = "page-turn-trace")]
+    if let Some(hook) = hook { hook.observe(WorkEvent::new(super::WorkKind::LayoutBegin, 0)); }
+    #[cfg(not(feature = "page-turn-trace"))]
+    let _ = hook;
+}
+#[inline]
+pub fn layout_end(hook: Yield<'_>, pages: u32) {
+    #[cfg(feature = "page-turn-trace")]
+    if let Some(hook) = hook { hook.observe(WorkEvent::new(super::WorkKind::LayoutEnd, pages as i32)); }
+    #[cfg(not(feature = "page-turn-trace"))]
+    let _ = (hook, pages);
+}
 
 /// Restores the suspended stage on every return, using the same short hook.
 pub struct ActionScope<'a> {

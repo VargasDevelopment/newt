@@ -175,4 +175,20 @@ impl HardwareReader<'_> {
     }
 }
 
+/// Opt-in diagnostic snapshot of (min_free_heap, largest_heap_block, current_task_stack_low).
+#[cfg(feature = "page-turn-trace")]
+pub fn sample_memory_lows() -> (u32, u32, u32) {
+    let mut heap = 0u32;
+    let mut largest = 0u32;
+    let mut stack = 0u32;
+    // SAFETY: synchronous read-only SDK heap/task-water-mark probes on the UI task;
+    // each output is private, aligned, and initialized on NB_HW_OK.
+    unsafe {
+        if nb_hw_min_free_heap(&mut heap) != 0 { heap = 0; }
+        if nb_hw_largest_heap_block(&mut largest) != 0 { largest = 0; }
+        if nb_hw_current_task_stack_low(&mut stack) != 0 { stack = 0; }
+    }
+    (heap, largest, stack)
+}
+
 const _: () = assert!(size_of::<HardwareReader<'static>>() == 0);

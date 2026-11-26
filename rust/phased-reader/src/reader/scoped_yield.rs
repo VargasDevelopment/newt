@@ -24,6 +24,10 @@ struct Returned<'op, 'p> {
     malformed_utf8: &'op mut bool,
     empty_chapter: &'op mut bool,
     work: &'op mut Observer,
+    #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+    last_layout_pages: &'op mut u32,
+    #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+    total_layout_pages: &'op mut u64,
 }
 impl Drop for Returned<'_, '_> {
     fn drop(&mut self) {
@@ -42,6 +46,11 @@ impl Drop for Returned<'_, '_> {
         *self.malformed_utf8 = take(&mut self.reader.malformed_utf8);
         *self.empty_chapter = take(&mut self.reader.empty_chapter);
         *self.work = self.reader.work.take();
+        #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+        {
+            *self.last_layout_pages = take(&mut self.reader.last_layout_pages);
+            *self.total_layout_pages = take(&mut self.reader.total_layout_pages);
+        }
     }
 }
 
@@ -86,6 +95,10 @@ impl<'m, 'p> PhasedReader<'m, 'p> {
             active, source_bytes, page_layout, opened, has_page, info, proofs,
             styles_ready, undeclared_styles, malformed_utf8, empty_chapter,
             on_yield: _, work: observer,
+            #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+            last_layout_pages,
+            #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+            total_layout_pages,
         } = self;
         let reader = PhasedReader {
             pending: pending.take(),
@@ -106,12 +119,20 @@ impl<'m, 'p> PhasedReader<'m, 'p> {
             empty_chapter: take(empty_chapter),
             on_yield: Some(hook),
             work: observer.take(),
+            #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+            last_layout_pages: take(last_layout_pages),
+            #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+            total_layout_pages: take(total_layout_pages),
         };
         let mut returned = Returned {
             reader, pending, pending_cached, pending_undeclared, active,
             source_bytes, page_layout, opened, has_page, info, proofs,
             styles_ready, undeclared_styles, malformed_utf8, empty_chapter,
             work: observer,
+            #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+            last_layout_pages,
+            #[cfg(any(test, feature = "page-turn-trace", not(target_os = "none")))]
+            total_layout_pages,
         };
         work(&mut returned.reader)
     }

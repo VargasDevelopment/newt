@@ -8,6 +8,7 @@ publish = false
 
 [features]
 dev-usb = ["newt-core/dev-usb"]
+page-turn-trace = ["newt-core/page-turn-trace"]
 native-host = []
 style-recapture-fixture = []
 
