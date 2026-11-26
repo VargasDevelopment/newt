@@ -25,7 +25,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
 import zlib
 
 sys.dont_write_bytecode = True
@@ -172,9 +171,6 @@ def _control_command(command, optimize):
 
 # A control's folder: controls/<edits key>-<owner pid>-<random>.
 CONTROL_FOLDER = re.compile(r'[0-9a-f]{8}-([0-9]+)-[^/]+')
-# Folders from before per-call controls (controls/<edits key>) carry no owner.
-LEGACY_CONTROL = re.compile(r'[0-9a-f]{8}(?:\.lock)?')
-LEGACY_CONTROL_SECONDS = 6 * 3600
 _owned_controls: list[Path] = []
 
 
@@ -191,25 +187,12 @@ def _owner_alive(pid: int) -> bool:
 def sweep_controls(controls: Path) -> None:
     """Remove controls whose owner process is gone: a phase killed before its
     exit cleanup leaks its folders. A live owner's folder is never removed; a
-    reused pid only delays removal until that process exits too. Ownerless
-    legacy entries go once they are hours old."""
-    now = time.time()
+    reused pid only delays removal until that process exits too. Anything
+    else, such as an older checkout's controls/<edits key>, is left alone."""
     for entry in controls.iterdir():
         owner = CONTROL_FOLDER.fullmatch(entry.name)
-        if owner:
-            stale = not _owner_alive(int(owner.group(1)))
-        else:
-            try:
-                stale = bool(LEGACY_CONTROL.fullmatch(entry.name)) and \
-                    now - entry.lstat().st_mtime > LEGACY_CONTROL_SECONDS
-            except FileNotFoundError:  # another sweep removed it
-                continue
-        if not stale:
-            continue
-        if entry.is_dir() and not entry.is_symlink():
+        if owner and not _owner_alive(int(owner.group(1))):
             shutil.rmtree(entry, ignore_errors=True)
-        else:
-            entry.unlink(missing_ok=True)
 
 
 def _remove_owned_controls() -> None:

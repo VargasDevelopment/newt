@@ -15,7 +15,6 @@ import subprocess
 import sys
 import tempfile
 import threading
-import time
 import unittest
 from unittest import mock
 
@@ -117,15 +116,11 @@ class ControlTests(unittest.TestCase):
         child.wait()
         dead = self.controls / f'0123abcd-{child.pid}-x'
         live = self.controls / f'0123abcd-{os.getpid()}-y'
-        legacy = self.controls / '0123abcd'
-        for folder in (dead, live, legacy):
+        for folder in (dead, live):
             (folder / 'source').mkdir(parents=True)
-        old = time.time() - rust_preview.LEGACY_CONTROL_SECONDS - 60
-        os.utime(legacy, (old, old))
         rust_preview.sweep_controls(self.controls)
         self.assertFalse(dead.exists())
         self.assertTrue(live.exists(), "the sweep removed a live owner's control")
-        self.assertFalse(legacy.exists())
 
     def test_a_finished_process_leaves_no_control_behind(self):
         script = (f'import sys; sys.path.insert(0, {str(ROOT / "tools")!r})\n'
