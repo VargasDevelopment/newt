@@ -4,6 +4,7 @@ import hashlib
 from contextlib import nullcontext, redirect_stderr
 import io
 import importlib.util
+import json
 import os
 from pathlib import Path
 import shlex
@@ -312,22 +313,27 @@ class PinnedHarness(unittest.TestCase):
                 'image': daily_firmware.IMAGE,
                 'features': list(daily_firmware.FEATURES) + ['page-turn-trace'],
             })
-        spec = importlib.util.spec_from_file_location('firmware_build', ROOT / 'tools/firmware-build.py')
-        fb = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(fb)
+        # Release build tooling stays free of diagnostic flags.
+        self.assertNotIn('--page-turn-trace', (ROOT / 'tools/firmware-build.py').read_text())
+        spec = importlib.util.spec_from_file_location(
+            'page_turn_trace_build', ROOT / 'tools/page-turn-trace-build.py')
+        diag = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(diag)
+        self.assertEqual(diag.DIAGNOSTIC_FEATURES, daily_firmware.FEATURES + ('page-turn-trace',))
+        with patch.object(sys, 'argv', ['page-turn-trace-build.py', '--health-report']), \
+                redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as exited:
+                diag.main()
+            self.assertEqual(exited.exception.code, 2)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             receipt = root / 'artifacts/code-health-regional-dev-usb.json'
             receipt.parent.mkdir(parents=True)
-            with patch.object(fb, 'ROOT', root), \
-                    patch('code_health_resources.check_resources', return_value=['flash grew']) as check:
-                with self.assertRaisesRegex(RuntimeError, 'Resource ratchet failed'):
-                    fb.write_resource_report(receipt, {'ok': True}, {}, 'regional-dev-usb', diagnostic=False)
-                check.assert_called_once()
-                check.reset_mock()
-                fb.write_resource_report(receipt, {'ok': True}, {}, 'regional-dev-usb', diagnostic=True)
+            with patch.object(diag, 'ROOT', root), \
+                    patch('code_health_resources.check_resources') as check:
+                diag.write_diagnostic_report(receipt, {'ok': True})
                 check.assert_not_called()
-                self.assertTrue(receipt.is_file())
+                self.assertEqual(json.loads(receipt.read_text()), {'ok': True})
 
     def test_firmware_targets_refuse_it_at_compile_time(self):
         source = (ROOT / 'rust/core/src/member_check.rs').read_text()
