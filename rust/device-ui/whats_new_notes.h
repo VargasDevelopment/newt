@@ -7,15 +7,12 @@
 // Keep each quoted date/change on its own line.
 namespace newt {
 inline constexpr WhatsNewUpdate kWhatsNew[] = {
-    {"Nov 25, 2026",
-     {"Choose your text size.",
-      "Landscape works both ways.",
-      "Covers show when they're being made, or why a book has none.",
-      "Reader settings survive a power-off.",
-      "After an update, Newt still wakes straight to your page.",
-      "Choose which holidays Newt dresses up for in Sleep screen settings."}},
-    {"Nov 24, 2026",
-     {"Book covers appear faster.",
+    {"Nov 26, 2026",
+     {"Mark as finished works right after you open a book.",
+      "Switching to landscape and back keeps your page.",
+      "Waking no longer jumps back to an older page.",
+      "4-digit page numbers no longer get cut off.",
+      "Choose which holidays Newt dresses up for in Sleep screen settings.",
       "Various smaller enhancements."}},
 };
 }  // namespace newt
