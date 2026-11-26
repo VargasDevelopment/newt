@@ -192,11 +192,13 @@ fn pending_miss_finishes_once_before_build_and_hit_leaves_verification_alone() {
         &mut Parser { items: 1 }, &mut card, None, Verification::Pending(&mut finish)).unwrap();
     assert_eq!(token.digest(), &[7;32]);
     assert!(token.verified_now());
+    assert!(token.built());
     assert_eq!(finishes.get(), 1);
     let counts = (card.census, card.creates, card.writes);
     let token = open(&mut source, &[7;32], &mut storage, &mut loan,
         &mut Parser { items: 1 }, &mut card, None, Verification::Pending(&mut finish)).unwrap();
     assert!(!token.verified_now());
+    assert!(!token.built());
     assert_eq!(finishes.get(), 1);
     assert_eq!((card.census, card.creates, card.writes), counts);
 }

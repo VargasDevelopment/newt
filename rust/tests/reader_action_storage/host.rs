@@ -60,8 +60,11 @@ mod app_image {
     impl Application<'_> {
         pub fn read_info_with_clock(&mut self, _: &newt_c3_board::MonotonicClock, _: reader_action::Trace) -> core::result::Result<(), ()> { panic!("no battery work in source-loan fixture") }
     }
+    pub static TURN_PENDING: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
     pub struct Queue;
-    impl Queue { pub fn pending(&self) -> bool { false } }
+    impl Queue {
+        pub fn pending(&self) -> bool { TURN_PENDING.load(core::sync::atomic::Ordering::Relaxed) }
+    }
     pub struct Events<'a, 'task> {
         pub control: &'a mut (), pub queue: &'a Queue, pub action: reader_action::Trace,
         pub task: PhantomData<&'task ()>,
@@ -214,7 +217,7 @@ mod image {
         pub source: Option<Box<selected::SelectedSource>>, pub session: Option<Box<session::Session>>,
         pub checkpoint: ReaderCheckpoint, pub statistics: ReadingStatsRuntime, pub recovery: Option<reader_book::PendingRecovery>,
         pub cadence: newt_core::reader_scheduler::YieldCadence, pub settings: ViewSettings,
-        pub exit_metadata: Option<Fixed<reader_exit_metadata::ExitMetadata>>, pub last_progress: Cell<u32>, pub saves: Saves, pub idle: Idle,
+        pub exit_metadata: Option<Fixed<reader_exit_metadata::ExitMetadata>>, pub last_progress: Cell<u32>, pub saves: Saves, pub idle: Idle, pub index_trim_owed: bool,
     }
     impl Runtime {
         pub fn book(&self) -> Option<&newt_c3_board::reader_memory::Runtime<'static,'static>> { Some(&self.memory.runtime) }
@@ -241,11 +244,20 @@ mod image {
         }
         impl RunLoan<'_> {
             pub fn run<'io>(self, _: Ports<'_,'io,'_,'_>, pages: &mut reader_pages::ReaderPages<'_, impl Native>,
-                source: &mut impl newt_reader_ui::SourceOperations, _: &reader_book::BookRequest<'_>, _: &reader_book::ProducerCallbacks<'_>,
-                _: &mut reader_book::ProducerPauseFn<'_,'io,Flash,card::Card>, _: Option<(&mut [u8;256],&mut u16)>, _: Turn<'_>,
+                source: &mut impl newt_reader_ui::SourceOperations, request: &reader_book::BookRequest<'_>, _: &reader_book::ProducerCallbacks<'_>,
+                _: &mut reader_book::ProducerPauseFn<'_,'io,Flash,card::Card>, _: Option<(&mut [u8;256],&mut u16)>, turn: Turn<'_>,
                 _: &dyn Fn(), _: &dyn Fn(newt_core::admission::WorkEvent),
-                _: &mut Saves, _: bool,
+                _: &mut Saves, _: bool, _: &mut bool,
             ) -> core::result::Result<reader_book::BookExit,BookFailure> {
+                if matches!(turn.step, Some(reader_book::BookStep::Idle { .. })) {
+                    use core::sync::atomic::Ordering::Relaxed;
+                    assert!(!request.cancel.cancelled());
+                    // Inject a turn after idle admission, as while census is walking.
+                    app_image::TURN_PENDING.store(true, Relaxed);
+                    assert!(request.cancel.cancelled(), "a queued turn must cancel the idle trim authority");
+                    app_image::TURN_PENDING.store(false, Relaxed);
+                    assert!(!request.cancel.cancelled());
+                }
                 let mut first = [0;4096]; let mut second = [0;4096];
                 assert_eq!(source.read_at(0,&mut first),4096); assert_eq!(source.read_at(0,&mut second),4096);
                 assert_eq!(first,second);
@@ -330,7 +342,7 @@ fn main() {
         saved:Progress::default(), title:Box::leak(Box::new([0;256])), home:Box::leak(Box::new(newt_device_ui::HomeData::default())),
         source:Some(source), session:Some(session), checkpoint:ReaderCheckpoint::new(reader_book::CheckpointRestore::Latest),
         statistics:ReadingStatsRuntime::default(), recovery:None, cadence:newt_core::reader_scheduler::YieldCadence::new(),
-        settings:ViewSettings::default(), exit_metadata:None, last_progress:Cell::new(u32::MAX), saves:image::Saves, idle:image::Idle,
+        settings:ViewSettings::default(), exit_metadata:None, last_progress:Cell::new(u32::MAX), saves:image::Saves, idle:image::Idle, index_trim_owed:false,
     };
     let mut ui=app_image::Application {
         info:newt_reader_ui::DeviceInfo::default(), app:newt_core::app::AppState::default(),

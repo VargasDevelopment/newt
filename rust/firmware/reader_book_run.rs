@@ -23,6 +23,7 @@ pub(crate) fn drive<'io, 'm, 'p, 'scope, 'sdk, 'route, P: CardPort, F, N: nvs::N
     visit_parts: Option<VisitParts<'_>>,
     _metadata: Option<&mut Option<newt_sdk_heap::Fixed<crate::reader_exit_metadata::ExitMetadata>>>,
     title_deferred: bool, mut saves: Option<&mut newt_core::save_notice::ReadingSaveNotice>,
+    index_trim_owed: &mut bool,
     mut next: F, pause: &mut ProducerPauseFn<'_, 'io, N, P>,
 ) -> Result<BookExit, BookFailure>
 where
@@ -261,6 +262,11 @@ where
                                 continue;
                             }
                         }
+                        if *index_trim_owed && !request.cancel.cancelled() {
+                            *index_trim_owed = !trim_index(resources.pages, request, producer.wait, &opened_digest);
+                            idle_quiet_from = Some(now());
+                            continue;
+                        }
                         let (parsed, repaint, quiet_from) = if let Some(visit) = producer_visit.as_mut() {
                             let Some(result) = revision.with_producer_source(|source| source.map(|source|
                                 visit.with(|visit| resources.producer_idle(io, card, checkpoint, pause, visit,
@@ -408,4 +414,14 @@ where
     #[cfg(feature = "checkpoint-fixture")]
     if matches!(route, Route::WholeLoop) { owner.close(&mut reader); }
     result
+}
+
+// Keep census scratch and the pinned name out of the shared drive frame.
+#[inline(never)]
+fn trim_index<N: newt_native_storage::Native + newt_native_storage::page_entries::PageEntries>(
+    pages: &mut crate::reader_pages::ReaderPages<'_, N>, request: &BookRequest<'_>, wait: Option<fn()>, digest: &Digest,
+) -> bool {
+    let pinned = newt_core::book_index::FileName::new(digest, newt_core::book_index::FileKind::Index);
+    pages.0.index_trim(request.cancel, request.now, wait, pinned.as_bytes()).outcome
+        == newt_native_storage::MissingProbe::Ready
 }

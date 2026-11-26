@@ -33,11 +33,13 @@ pub trait Store: WorkFile + CacheStorage {
 ///
 /// ```compile_fail
 /// use newt_phased_reader::index_build::Indexed;
-/// let _ = Indexed { digest: [0; 32], verified_now: true, reopened: false };
+/// let _ = Indexed { digest: [0; 32], verified_now: true, reopened: false, built: false };
 /// ```
 #[derive(Debug)]
-pub struct Indexed { digest: [u8; 32], verified_now: bool, reopened: bool }
+pub struct Indexed { digest: [u8; 32], verified_now: bool, reopened: bool, built: bool }
 impl Indexed {
+    /// This pass published a new or rebuilt index, rather than using a hit.
+    pub fn built(&self) -> bool { self.built }
     pub fn digest(&self) -> &[u8; 32] { &self.digest }
     pub fn verified_now(&self) -> bool { self.verified_now }
     pub fn source_reopened(&self) -> bool { self.reopened }
@@ -70,7 +72,7 @@ pub fn open_releasing<B: ParserBackend + ?Sized, C: ReadScope + CachePresence>(
     let identity = Identity { digest: *digest, policy: admission::POLICY_VERSION };
     stage(hook, 0);
     let existed = match probe(source, &identity, lender, store, hook) {
-        Ok((true, _)) => { result(hook, 0, Status::Ok, true); return Ok(Indexed { digest: *digest, verified_now: false, reopened: false }); }
+        Ok((true, _)) => { result(hook, 0, Status::Ok, true); return Ok(Indexed { digest: *digest, verified_now: false, reopened: false, built: false }); }
         Ok((false, existed)) => existed,
         Err(status) => { result(hook, 3, status, true); return Err(status); }
     };
@@ -82,7 +84,7 @@ pub fn open_releasing<B: ParserBackend + ?Sized, C: ReadScope + CachePresence>(
         true
     } else { false };
     let reopened = attempt(source, digest, identity, storage, lender, backend, store, hook, existed)?;
-    Ok(Indexed { digest: *digest, verified_now: verified_now && !reopened, reopened })
+    Ok(Indexed { digest: *digest, verified_now: verified_now && !reopened, reopened, built: true })
 }
 
 // Out of line so the work state and the build's frames are not on the stack

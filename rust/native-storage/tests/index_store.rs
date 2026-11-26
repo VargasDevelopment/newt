@@ -572,3 +572,6 @@ fn reserved_index_retries_short_io_and_refuses_failed_allocation() {
         assert_eq!(with_store(&mut card, |store| read(store, &BOOK, complete)), success.then_some(true));
     }
 }
+
+#[path = "index_store/trim.rs"]
+mod trim;

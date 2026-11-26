@@ -79,6 +79,7 @@ impl RunLoan<'_, '_, '_> {
         visit: Option<(&mut [u8; 256], &mut u16)>, turn: Turn<'_>,
         yielded: &dyn Fn(), observed: &dyn Fn(WorkEvent),
         saves: &mut newt_core::save_notice::ReadingSaveNotice, title_deferred: bool,
+        index_trim_owed: &mut bool,
     ) -> Result<BookExit, BookFailure> {
         let mut breaker = NativeBreak;
         let mut hash = crate::reader_hash::PackageHasher::from_live_sdk();
@@ -107,7 +108,7 @@ impl RunLoan<'_, '_, '_> {
                 scope.preferences, &mut mounted, &crate::reader_hash::package_hash,
                 self.statistics, self.accepted, self.recovery, request.identity, request.saved, digest,
                 callbacks, ledger, turn.indexed, turn.paint_first, reader_book::run::Route::Short, turn.accepted_save,
-                parts, Some(self.metadata), title_deferred, Some(saves), |between, _, _| {
+                parts, Some(self.metadata), title_deferred, Some(saves), index_trim_owed, |between, _, _| {
                     if let Some(Err(status)) = between.composed { paint_failure = Some(status); }
                     next.take()
                 }, pause)

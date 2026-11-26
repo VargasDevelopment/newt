@@ -6,9 +6,12 @@ use crate::{Authority, Error, Kind, MissingProbe, Native};
 use crate::page_entries::{PageEntries, PageEntry as Entry};
 use newt_core::{cache_names::namespace::{self as names, Form, Kind as NameKind, PageCacheNeed, PageName, PageNameSet}, reader_scheduler::YieldCadence};
 
-/// One quota folder of block-envelope cache files, evicted oldest-written
-/// first (FAT does not refresh times on reads). Other known cache names found
-/// there rank as legacy and go first.
+/// Idle index trimming sets the newly published pair aside entirely.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PinnedAccounting { Count, Exclude }
+
+/// One quota folder, evicted oldest-written first (FAT does not refresh
+/// times on reads). Other known cache names rank as legacy and go first.
 #[derive(Clone, Copy, Debug)]
 pub struct Policy {
     pub folder: &'static str,
@@ -23,17 +26,23 @@ pub struct Policy {
     /// older copy left by a rebuild, evicted by age like any index; only the
     /// open book's pair is kept.
     pub keep_backups: bool,
+    pub pinned_accounting: PinnedAccounting,
 }
 pub const PAGES: Policy = Policy {
     folder: "/Pages", kind: NameKind::Page, quota: names::PAGE_QUOTA,
     entry_cap: names::PAGE_ENTRY_CAP, entry_grant: names::PAGE_ENTRY_GRANT,
-    required_units: names::PAGE_REQUIRED_UNITS, keep_backups: true,
+    required_units: names::PAGE_REQUIRED_UNITS, keep_backups: true, pinned_accounting: PinnedAccounting::Count,
 };
 pub const INDEXES: Policy = Policy {
     folder: "/Index", kind: NameKind::Index, quota: names::INDEX_QUOTA,
     entry_cap: names::INDEX_ENTRY_CAP, entry_grant: names::INDEX_ENTRY_GRANT,
-    required_units: names::INDEX_REQUIRED_UNITS, keep_backups: false,
+    required_units: names::INDEX_REQUIRED_UNITS, keep_backups: false, pinned_accounting: PinnedAccounting::Count,
 };
+
+/// Reserve only the hard-cap slot on the open path.
+pub const INDEX_WRITE: Policy = Policy { entry_grant: names::INDEX_ENTRY_CAP as u8, ..INDEXES };
+/// Reproduce the pre-write kept set with the newly published pair set aside.
+pub const INDEX_TRIM: Policy = Policy { pinned_accounting: PinnedAccounting::Exclude, ..INDEXES };
 
 pub struct Request<'a> {
     pub policy: &'a Policy,
@@ -152,6 +161,9 @@ impl<'a, 'folder> Census<'a, 'folder> {
             if parsed.form==Form::Backup { self.backups.add(&name[..parsed.canonical_bytes]); }
             return true;
         }
+        if self.request.policy.pinned_accounting == PinnedAccounting::Exclude && self.pinned(name, parsed) {
+            return self.result(entry.regular);
+        }
         let good=entry.regular && names::add(&mut self.total,entry.bytes);
         if !self.result(good) { return false; }
         self.count=self.count.wrapping_add(1);
@@ -188,13 +200,16 @@ impl<'a, 'folder> Census<'a, 'folder> {
         self.victim[index].rank=Rank::None;self.met+=1;self.deleted=self.deleted.wrapping_add(1);
         self.poll()
     }
+    fn pinned(&self, name: &[u8], parsed: PageName) -> bool {
+        if self.request.policy.kind==NameKind::Index {
+            self.request.pinned.is_some_and(|p|p.get(..8)==name.get(..8))
+        } else { self.request.pinned==Some(&name[..parsed.canonical_bytes]) }
+    }
     fn consider(&mut self,entry:&Entry<'_>,parsed:PageName) {
         let Some(name)=entry.name else { return; };
         let keep_backups=self.request.policy.keep_backups;
         let canonical=&name[..parsed.canonical_bytes];
-        let pinned=if self.request.policy.kind==NameKind::Index {
-            self.request.pinned.is_some_and(|p|p.get(..8)==name.get(..8))
-        } else {self.request.pinned==Some(canonical)};
+        let pinned=self.pinned(name, parsed);
         let page=parsed.kind==self.request.policy.kind;
         let rank=if page && parsed.form==Form::Temporary { Rank::Temporary }
             else if !page { Rank::Legacy }

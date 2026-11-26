@@ -99,7 +99,7 @@ impl Runtime {
         let was_accepted = accepted;
         let title_deferred = self.selection.flags() & flag::TITLE_DEFERRED != 0;
         let Self { memory, reader_ui, source, session: context, checkpoint, statistics, recovery,
-            cadence, exit_metadata, selection, idle, saves, settings: current_settings, .. } = self;
+            cadence, exit_metadata, selection, idle, saves, index_trim_owed, settings: current_settings, .. } = self;
         let (Some(memory), Some(source)) = (memory.external_mut(), source.as_mut()) else {
                 return Err(BookFailure::Open(Status::OutOfMemory));
             };
@@ -200,7 +200,7 @@ impl Runtime {
                             .run(super::drive::Ports { io: scope.io, panel: &mut *scope.bus.panel,
                                 card: &mut *scope.card, preferences: &mut *scope.preferences,
                                 nvs: &mut *scope.nvs, facts: &mut *scope.facts }, &mut pages, &mut strict, &request, &callbacks, &mut pause,
-                                None, run_turn(false), &yielded, &observed, saves, title_deferred)
+                                None, run_turn(false), &yielded, &observed, saves, title_deferred, index_trim_owed)
                     }).map_err(|_| BookFailure::Source)?
                 };
                 let closed = state.close(&mut pages_native, &route);
@@ -242,7 +242,7 @@ impl Runtime {
                             .run(super::drive::Ports { io: scope.io, panel: &mut *scope.bus.panel,
                                 card: &mut *scope.card, preferences: &mut *scope.preferences,
                                 nvs: &mut *scope.nvs, facts: &mut *scope.facts }, &mut pages, &mut pending, &request, &callbacks, &mut pause,
-                                None, run_turn(false), &yielded, &observed, saves, title_deferred)
+                                None, run_turn(false), &yielded, &observed, saves, title_deferred, index_trim_owed)
                     } else {
                         if verification.state() != crate::reader_verification::Verification::Verified {
                             return Err(BookFailure::Open(Status::Stale));
@@ -254,7 +254,7 @@ impl Runtime {
                                 .run(super::drive::Ports { io: scope.io, panel: &mut *scope.bus.panel,
                                 card: &mut *scope.card, preferences: &mut *scope.preferences,
                                 nvs: &mut *scope.nvs, facts: &mut *scope.facts }, &mut pages, revision, &request, &callbacks, &mut pause,
-                                    Some((ledger, view)), run_turn(prepared), &yielded, &observed, saves, title_deferred))
+                                    Some((ledger, view)), run_turn(prepared), &yielded, &observed, saves, title_deferred, index_trim_owed))
                             .ok_or(BookFailure::Revision)?
                     }
                 }).map_err(|_| BookFailure::Revision)?

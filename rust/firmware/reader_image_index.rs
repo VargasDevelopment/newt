@@ -59,6 +59,7 @@ impl Runtime {
         if result.as_ref().is_ok_and(Indexed::source_reopened) {
             *self.selection.flags_mut() |= newt_core::selection_authority::flag::UNCONFIRMED;
         }
+        if result.as_ref().is_ok_and(Indexed::built) { self.index_trim_owed = true; }
         result
     }
 }

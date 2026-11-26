@@ -17,16 +17,31 @@ impl<S: crate::page_entries::PageEntries> ChapterCacheStorage<'_, S> {
         })
     }
     /// Book indexes: their own folder and quota. `pinned` is the open book's
-    /// 8.3 index file name in that folder; it and its `.BAK` are never evicted. Run it only before writing a new index, never on a repeat
-    /// open. Callers treat any outcome as advisory: a failed eviction must
-    /// not fail the open.
+    /// 8.3 index file name in that folder; it and its `.BAK` are never evicted.
+    /// Callers treat any outcome as advisory: a failed eviction must not fail
+    /// the open.
     pub fn index_census(
         &mut self, cancel: &dyn Authority, clock: Option<fn() -> u32>,
         wait: Option<fn()>, pinned: Option<&[u8]>,
     ) -> crate::page_entry_census::Grant {
+        self.index_policy_census(&crate::page_entry_census::INDEXES, cancel, clock, wait, pinned)
+    }
+    /// Only reserve a slot before a build; leave reserve trimming for settled idle.
+    pub fn index_write_census(&mut self, cancel: &dyn Authority) -> crate::page_entry_census::Grant {
+        self.index_policy_census(&crate::page_entry_census::INDEX_WRITE, cancel, None, None, None)
+    }
+    /// The open pair survives and consumes no reserve in the idle trim.
+    pub fn index_trim(&mut self, cancel: &dyn Authority, clock: fn() -> u32,
+        wait: Option<fn()>, pinned: &[u8],
+    ) -> crate::page_entry_census::Grant {
+        self.index_policy_census(&crate::page_entry_census::INDEX_TRIM, cancel, Some(clock), wait, Some(pinned))
+    }
+    fn index_policy_census(&mut self, policy: &crate::page_entry_census::Policy,
+        cancel: &dyn Authority, clock: Option<fn() -> u32>, wait: Option<fn()>, pinned: Option<&[u8]>,
+    ) -> crate::page_entry_census::Grant {
         let port = &mut self.file;
         crate::page_entry_census::entry_census(&mut *port.native, crate::page_entry_census::Request {
-            policy: &crate::page_entry_census::INDEXES, root: Some(port.route.root()), cancel, clock, wait,
+            policy, root: Some(port.route.root()), cancel, clock, wait,
             pinned, need: None,
         })
     }

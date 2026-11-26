@@ -133,7 +133,7 @@ fn scenario(bytes: Vec<u8>, finished: bool) {
             let exit = reader_book::run::drive(io, &mut card, &request, &mut reader, &mut owner, ui,
                 &mut source, &mut resources, &mut prefs, &mut mounted, &hash, &mut statistics,
                 &mut accepted, &mut recovery, book, saved, digest, &callbacks, None, if initialize { Some(&indexed) } else { None },
-                paint_first, reader_book::run::Route::Short, false, None, None, false, None,
+                paint_first, reader_book::run::Route::Short, false, None, None, false, None, &mut false,
                 |turn, _, _| {
                     if let Some(composed) = turn.composed { assert!(composed.is_ok()); compositions += 1; }
                     step.take()

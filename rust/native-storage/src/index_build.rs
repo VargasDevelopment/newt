@@ -51,7 +51,7 @@ impl<'op, 'a, N: Native> IndexBuildStore<'op, 'a, N> {
     pub fn census(&mut self, cancelled: &dyn Fn() -> bool) where N: crate::page_entries::PageEntries {
         struct Live<'a>(&'a dyn Fn() -> bool);
         impl crate::Authority for Live<'_> { fn cancelled(&self) -> bool { (self.0)() } }
-        self.cache.index_census(&Live(cancelled), None, None, None);
+        self.cache.index_write_census(&Live(cancelled));
     }
     /// The live work descriptor, creating the file on first use.
     fn open(&mut self) -> Option<i32> {
