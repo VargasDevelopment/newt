@@ -39,9 +39,9 @@ fn agreement_variant(source: &mut impl BookSource, name: &str, buffer_bytes: usi
         let mut store = BuildStore::default();
         let mut builder = builder::Builder::new(&mut buffer, min_read, run_bytes).unwrap();
         let mut scan = [0; 4099];
-        assert_eq!(admission::inspect_with_visitor(
+        assert_eq!(admission::walk_central(
             &mut admission::ScheduledSource::new(parts.workflow.source, None, None), parse, &mut scan,
-            |m| builder.visit(&mut store, m, &mut |_| true)), Status::Ok);
+            index::MAX_MEMBERS, |m| builder.visit(&mut store, m, &mut |_| true)), Status::Ok);
         let identity = index::Identity { digest: [17; 32], policy: 1 };
         let (mut positions, mut cursors, mut saved) =
             ([0; builder::POSITION_WORDS], [builder::Cursor::default(); builder::CURSORS], [0; builder::WRITER_PREFIX]);
@@ -423,8 +423,8 @@ fn colliding_32_bit_ids_select_the_exact_indexed_item() {
             let mut buffer = vec![0; buffer_bytes];
             let mut store = BuildStore::default();
             let mut build = builder::Builder::new(&mut buffer, min_read, run_bytes).unwrap();
-            assert_eq!(admission::inspect_with_visitor(&mut admission::ScheduledSource::new(parts.workflow.source, None, None),
-                parse, &mut [0; 4099], |member| build.visit(&mut store, member, &mut |_| true)), Status::Ok);
+            assert_eq!(admission::walk_central(&mut admission::ScheduledSource::new(parts.workflow.source, None, None),
+                parse, &mut [0; 4099], index::MAX_MEMBERS, |member| build.visit(&mut store, member, &mut |_| true)), Status::Ok);
             let mut positions = [0; builder::POSITION_WORDS];
             let mut cursors = [builder::Cursor::default(); builder::CURSORS];
             let mut saved = [0; builder::WRITER_PREFIX];

@@ -169,14 +169,18 @@ pub fn inspect<S: BookSource + ?Sized>(
     parse: &mut Arena<'_>,
     scan: &mut [u8; 4099],
 ) -> Status {
-    inspect_with_visitor(source, parse, scan, |_| Status::Ok)
+    walk_central(source, parse, scan, CATALOG_MAX_ENTRIES, |_| Status::Ok)
 }
+/// Catalog admission later allocates one `Entry` per member, so it keeps
+/// this cap. The index streams members and passes `book_index::MAX_MEMBERS`.
+const CATALOG_MAX_ENTRIES: u32 = 1024;
 
 /// Shares admission's central walk; the ordinary call eliminates the visitor.
-pub fn inspect_with_visitor<S: BookSource + ?Sized>(
+pub fn walk_central<S: BookSource + ?Sized>(
     source: &mut ScheduledSource<'_, S>,
     parse: &mut Arena<'_>,
     scan: &mut [u8; 4099],
+    max_entries: u32,
     mut visit: impl FnMut(crate::book_index::Member) -> Status,
 ) -> Status {
     let mut d = Directory::default();
@@ -184,7 +188,7 @@ pub fn inspect_with_visitor<S: BookSource + ?Sized>(
     if status != Status::Ok {
         return status;
     }
-    if d.entries == 0 || d.entries > 1024 || d.size > 1024 * 1024 {
+    if d.entries == 0 || u32::from(d.entries) > max_entries || d.size > 1024 * 1024 {
         return Status::Unsupported;
     }
     let end = u64::from(d.offset) + u64::from(d.size);
