@@ -66,6 +66,11 @@ CONTROLS = (
      '            if false {\n                (CurrentOutcome::Done, status)\n            } else if self.state.sealed > 0 {\n',
      'post_rename_interrupt_on_third_try_completes_whole_and_map_chapters',
      'post-rename interrupt on published segment map must complete and advance to prefetch'),
+    ('suspend-keeps-held-read', 'native-storage/src/chapter_cache.rs',
+     '        if self.state.read_active && !self.file.writing() {\n            self.close();\n        }\n',
+     '',
+     'duty_due_while_read_held_completes',
+     'a duty due while a read is held must not end the fill'),
     ('cleanup-unlink-fault-suppressed', 'native-storage/src/port.rs',
      '            if !ok {\n                self.producer_io_failure();\n                self.port.state.failed = true\n            }',
      '            if !ok {\n                self.producer_failure();\n                self.port.state.failed = true\n            }',
@@ -269,8 +274,8 @@ def main():
             compile_host(run, workspace, target, libraries, objects, positive,
                          opt_level=1, warnings_as_errors=False)
             stdout = run.run([positive, epub], workspace)
-            support.require('PASS producer fill policy (14 cases)' in stdout,
-                            'all 14 fill-policy and cold-boot cache hit cases must pass')
+            support.require('PASS producer fill policy (15 cases)' in stdout,
+                            'all 15 fill-policy and cold-boot cache hit cases must pass')
             print(stdout, end='', flush=True)
 
             if negative_controls(__file__):
