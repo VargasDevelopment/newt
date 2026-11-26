@@ -326,11 +326,11 @@ pub trait CachePresence {
     fn present(&mut self, name: &[u8], opening: bool) -> bool;
 }
 
+/// Cached pages hold layout only. The slim bar and refresh cadence are drawn
+/// or applied at show time, so only the page layout must match. Those two
+/// still name the cache (identity), so each choice keeps its own files.
 pub(super) fn reader_settings_match(reader: &PhasedReader<'_, '_>, settings: ViewSettings) -> bool {
-    let defaults = ViewSettings::default();
     reader.page_layout == settings.page_layout()
-        && settings.slim_progress_bar == defaults.slim_progress_bar
-        && settings.refresh_pages == defaults.refresh_pages
 }
 
 /// Presence hint before OPF selection on warm open or resume-picture lookup.

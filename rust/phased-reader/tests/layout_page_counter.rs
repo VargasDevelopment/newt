@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Focused host test for PhasedReader's layout-page counter across open,
-//! early-stop miss passes, cache hits, and ReaderState round-trips (#168).
+//! early-stop miss passes, cache hits, and ReaderState round-trips (#168),
+//! and the page cache with non-default display preferences (#187).
 use newt_core::{
     chapter_layout::types::LineBreak,
     page_cache::CacheStorage,
@@ -701,4 +702,72 @@ fn layout_page_counter_tracks_open_early_stop_misses_and_zero_layout_cache_hits(
     relended.close();
     assert_eq!((relended.last_layout_pages(), relended.total_layout_pages()), (0, 0));
     let _ = PageInfo::default();
+}
+
+/// The slim bar and refresh cadence change no page, so they must not turn the
+/// page-turn cache off (#187): the producer seals segments and a turn hits
+/// them with no layout. A different text size still never reuses them.
+#[test]
+fn display_preferences_still_produce_and_hit_the_page_cache() {
+    use newt_core::preferences::TextSize;
+    use newt_core::producer_policy::{Cancellation, Hooks, Stop};
+    fn never_stop(_: &()) -> Stop {
+        Stop::None
+    }
+    for (slim_progress_bar, refresh_pages) in [(false, 5), (true, 10), (false, 1)] {
+        let settings = ViewSettings {
+            orientation: Orientation::Portrait,
+            slim_progress_bar,
+            refresh_pages,
+            ..ViewSettings::default()
+        };
+        let mut source = VecSource(synthetic_epub(60));
+        let mut shared = Box::new(Bank([0; BANK_BYTES]));
+        let mut parse = vec![0u8; FRAME_BYTES];
+        let mut storage = PhaseStorage::new(&mut shared.0);
+        let mut loan = HostLoan(&mut parse);
+        let mut parser = MiniXml::default();
+        let mut breaker = SimpleBreak;
+        let mut runs = Box::new([Run::default(); RUNS]);
+        let mut text = Box::new(PlanText([0; TEXT]));
+        let mut plan = Plan::new(&mut *runs, &mut text.0);
+        let mut selections = [Selection::default(), Selection::default()];
+        let mut frame: Box<Frame> = Box::new([0u8; FRAME_BYTES]);
+        let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), settings.page_layout());
+        assert_eq!(reader.open_phased(&mut source, &mut storage, &mut loan, &mut parser), Status::Ok);
+        assert_eq!(
+            reader.capture_phased(&mut source, 0, 0, Target::Page, &mut storage, &mut loan, &mut parser, &mut breaker),
+            Status::Ok
+        );
+        assert_eq!(reader.publish(&mut source, &mut frame), Status::Ok);
+
+        let mut cache_store = MemCache::default();
+        let mut hash = Hash64;
+        let digest = [0x42u8; 32];
+        let cancel = Cancellation::new(Hooks { context: &(), stop: Some(never_stop), yield_now: None, pause: None });
+        let info = reader.info();
+        let mut route = newt_phased_reader::producer::Route { settings, digest: &digest, info, hash: &mut hash };
+        let produced = storage
+            .with_producer(&mut loan, &cancel, &mut cache_store, &mut source, info.page_count, None, |producer| {
+                Ok(producer.produce_current(&mut reader, &mut parser, &mut breaker, &mut route))
+            })
+            .unwrap();
+        let case = format!("slim bar {slim_progress_bar}, refresh {refresh_pages}");
+        assert_eq!(produced, Status::Ok, "{case}: producer must run");
+        assert!(!cache_store.files.is_empty(), "{case}: producer must seal segments");
+
+        let request = CacheRequest { spine: 0, target: 5, anchor: false, staged: false, cache_only: false, build_on_miss: false };
+        let mut op = OperationPhased::new(&mut reader, &mut storage, &mut loan, &mut parser, &mut breaker);
+        let mut cache = PhasedChapterCache { store: &mut cache_store, hash: &mut hash, settings };
+        let shown = cache.capture(&mut source, &digest, request, &mut op);
+        assert_eq!(shown.status, Status::Ok, "{case}");
+        assert!(shown.hit, "{case}: turn must hit the cache");
+        assert_eq!(op.reader.publish(&mut source, &mut frame), Status::Ok);
+        assert_eq!(op.reader.last_layout_pages(), 0, "{case}: a hit lays out no page");
+
+        // Control: another text size is another page layout and never reuses these pages.
+        let other = ViewSettings { text_size: TextSize::Px22, ..settings };
+        let mut cache = PhasedChapterCache { store: &mut cache_store, hash: &mut hash, settings: other };
+        assert!(!cache.capture(&mut source, &digest, request, &mut op).hit, "{case}: other layout must miss");
+    }
 }
