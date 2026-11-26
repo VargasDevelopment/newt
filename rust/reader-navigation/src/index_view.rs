@@ -34,7 +34,7 @@ impl BookView for IndexedBook<'_, '_> {
     fn declared_spine(&self, row: usize) -> u32 {
         if let Some(mapping) = self.mapping { return mapping.get(row).copied().unwrap_or(NO_SPINE); }
         if !usable_entry(self, row) { return NO_SPINE; }
-        let href = self.toc_href(row).expect("usable declaration");
+        let Some(href) = self.toc_href(row) else { return NO_SPINE; };
         if href.first().is_none_or(|&byte| byte == 0) { return NO_SPINE; }
         (self.lookup)(href)
     }

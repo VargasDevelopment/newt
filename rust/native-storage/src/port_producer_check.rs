@@ -5,7 +5,8 @@ impl<'op, 'a, S: Native> Operation<'op, 'a, S> {
         path.truncate(self.port.state.final_bytes);
         if self.port.state.owns && newt_core::book_index::FileName::parse(self.suffix().as_bytes()).is_some() {
             path.truncate(path.len()-3);
-            path.write_str("IDX").expect("same-width index extension");
+            // Cannot fail: it rewrites the three bytes just truncated.
+            let _ = path.write_str("IDX");
         }
         path
     }

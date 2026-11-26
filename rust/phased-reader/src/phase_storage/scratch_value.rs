@@ -67,6 +67,8 @@ impl<T> Drop for ScratchValue<'_, T> {
             }
         }
         let _scrub = Scrub(core::ptr::from_mut(self.0).cast(), size_of::<T>());
+        // SAFETY: self.0 is the only live T in this extent and this owner drops
+        // it exactly once; the scrub guard above zeroes the bytes afterwards.
         unsafe { core::ptr::drop_in_place(self.0); }
     }
 }

@@ -155,7 +155,8 @@ impl<S: Native> Operation<'_, '_, S> {
         let temporary = self.port.state.owns.then(|| self.port.state.path);
         if self.port.state.owns && newt_core::book_index::FileName::parse(self.suffix().as_bytes()).is_some() {
             self.port.state.path.truncate(self.port.state.final_bytes-3);
-            self.port.state.path.write_str("IDX").expect("same-width index extension");
+            // Cannot fail: it rewrites the three bytes just truncated.
+            let _ = self.port.state.path.write_str("IDX");
         }
         self.port.state.token = 0;
         self.port.state.owns = false;
@@ -721,7 +722,7 @@ impl<S: Native> Operation<'_, '_, S> {
         let mut interrupted = 0;
         while !input.is_empty() {
             if !self.stable(lease) { return self.poison(); }
-            let fd = self.port.state.fd.unwrap();
+            let Some(fd) = self.port.state.fd else { return self.poison(); };
             if *position != Some(offset) && self.io(|native| native.seek(fd, offset)) != Ok(u64::from(offset)) {
                 *position = None;
                 return self.poison();
@@ -787,7 +788,8 @@ impl<S: Native> Operation<'_, '_, S> {
         }
         {
             let Some(backup)=self.backup_name() else {return false;};
-            self.port.state.names.as_mut().expect("transaction names")[1]=backup;
+            let Some(names)=self.port.state.names.as_mut() else {return false;};
+            names[1]=backup;
         }
         if !matches!(
             self.named_io(|s, _, names| s.stat(&names[0], false)),

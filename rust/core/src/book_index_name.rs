@@ -38,8 +38,9 @@ impl FileName {
     }
     pub fn as_bytes(&self)->&[u8;12] {&self.0}
     pub fn as_str(&self)->&str {
-        // Both constructors admit only the ASCII FAT alphabet above.
-        core::str::from_utf8(&self.0).expect("validated index filename")
+        // Both constructors admit only the ASCII FAT alphabet above, so the
+        // empty fallback is unreachable.
+        core::str::from_utf8(&self.0).unwrap_or_default()
     }
 }
 
