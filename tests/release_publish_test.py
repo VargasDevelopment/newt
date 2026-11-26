@@ -8,6 +8,7 @@ from contextlib import redirect_stderr, redirect_stdout
 import io
 import os
 from pathlib import Path
+import random
 import re
 import shutil
 import subprocess
@@ -438,6 +439,259 @@ class ReleasePublishTests(unittest.TestCase):
         self.assertEqual(self.plan(carrying(b'upstream@example.org\0')).refusals, [])
         self.refused('e-mail address someone@example.com', image=carrying(b'someone@example.com\0'))
 
+    def test_email_guard_ignores_random_bytes_and_refuses_c_strings(self):
+        # Seeded 4 MiB random binary plus the actual nightly 4b344fbc sequence (o@D.yq),
+        # an isolated 7-byte run below PRINTABLE_RUN (x@w1.fi), random symbol-wrapped short bytes
+        # ({[d@en.bi$y), and implausible noise must pass.
+        noise = (random.Random(169).randbytes(4 * 1024 * 1024)
+                 + b"\x0eo@D.yq\xb7'\x00x@w1.fi\x00\x85{[d@en.bi$y\xf0{[me@pm.me$y\x00.       a@b.de\x00"
+                 + b'\xb5nyy@u.su\x94\xf7Q7@3Q.RS\x94\xd9, tHXO@Z.UK"o\x8b\xdd\nA@YL.Epf\x19\xbd3@T.Gvprfw\x83'
+                 + b"  o@D.yq  \0  ab@cd.yq  \0  ab@cD.de  \0  e@wb1D.nn  \0"
+                 + b"  a@b.cd  \0  ab@pm.ME  \0  ab@PM.me  \0"
+                 + b"  foo..bar@example.com  \0  ab@bar.coM  \0  foo@bar.com@baz.org  \0"
+                 + b"Build tag user@example.com123 is not an e-mail.\0"
+                 + b"Build tag user@build.example.com123 is not an e-mail.\0"
+                 + b"Build tag user@ci.build-tools.com123 is not an e-mail.\0"
+                 + b"Build tag user@ci.build--tools.com123 is not an e-mail.\0"
+                 + b"Build tag user@ci.build--tools.api.us.east.prod.com123 is not an e-mail.\0"
+                 + b"Build tag user@ci.xn--p1ai.com123 is not an e-mail.\0")
+        self.assertEqual(self.plan(carrying(noise)).refusals, [])
+        # Real-looking addresses in C strings, printable notice lines and DER certs are still refused.
+        der_cn_utf8 = (b'\x30\x2f\x31\x1c\x30\x1a\x06\x03\x55\x04\x03\x0c\x17'
+                       + 'René alice@example.org'.encode() + b'\x31\x0f\x30\x0d\x06\x03\x55\x04\x0a\x0c\x06Issuer')
+        der_cn_48 = (b'\x30\x48\x31\x35\x30\x33\x06\x03\x55\x04\x03\x0c\x30'
+                     b'upstream@example.org (firmware support contacts)'
+                     b'\x31\x0f\x30\x0d\x06\x03\x55\x04\x0a\x0c\x06Issuer')
+        der_127 = 'a' * 62 + '@' + 'b' * 60 + '.org'
+        der_128 = 'a' * 63 + '@' + 'b' * 60 + '.org'
+        der_129 = 'alice@' + 'b' * 50 + '.' + 'c' * 33 + '.' + 'd' * 34 + '.org'
+        der_260 = 'a' * 64 + '@' + '.'.join(['b' * 48, 'c' * 48, 'd' * 48, 'e' * 44, 'org'])
+        der_278 = 'a' * 28 + '@' + '.'.join(['b' * 50, 'c' * 50, 'd' * 60, 'e' * 60, 'f' * 21, 'org'])
+        der_290 = 'a' * 64 + '@' + '.'.join(['b' * 56, 'c' * 56, 'd' * 56, 'e' * 50, 'org'])
+        for payload, address in (
+                (b'someone@example.com\0', 'someone@example.com'),
+                (b'support@example.COM\0', 'support@example.COM'),
+                (b'support@example.Com\0', 'support@example.Com'),
+                (b'Contact <support@example.Uk>\0', 'support@example.Uk'),
+                (b'Contact <support@189.cn>\0', 'support@189.cn'),
+                (b'it@x.com\0', 'it@x.com'),
+                (b'it@189.cn\0', 'it@189.cn'),
+                (b'IT@X.COM\0', 'IT@X.COM'),
+                (b'IT@189.CN\0', 'IT@189.CN'),
+                (b'Contact <it@189.cn>\0', 'it@189.cn'),
+                (b'Email: it@189.cn\0', 'it@189.cn'),
+                (b'Email: it@x.com\0', 'it@x.com'),
+                (b'Email: it@x.com\xff', 'it@x.com'),
+                (b'mailto:it@x.com\0', 'it@x.com'),
+                (b'From: a@b.de\0', 'a@b.de'),
+                (b'From: a@b.de\xff', 'a@b.de'),
+                (b'To: x@w1.fi\0', 'x@w1.fi'),
+                (b'To: x@w1.fi\xff', 'x@w1.fi'),
+                (b'To: IT@x.com\0', 'IT@x.com'),
+                (b'Cc: it@x.COM\0', 'it@x.COM'),
+                (b'https://example.org/?to=me@pm.me&subject=Hello\0', 'me@pm.me'),
+                (b'https://example.org/me@pm.me#top\0', 'me@pm.me'),
+                (b'|me@pm.me|\0', 'me@pm.me'),
+                (b'<it@x.com>\0', 'it@x.com'),
+                (b'<it@x.com>\xff', 'it@x.com'),
+                (b'Author: @me@pm.me\0', 'me@pm.me'),
+                (b'Author: @me@pm.me\xff', 'me@pm.me'),
+                (b'Contact [@me@pm.me]\0', 'me@pm.me'),
+                (b'Contact <billing@example.FR>\0', 'billing@example.FR'),
+                (b'Contact <billing@My.co.uk>\0', 'billing@My.co.uk'),
+                (b'Contact <help+@example.com>\0', 'help+@example.com'),
+                (b'support@x.com\0', 'support@x.com'),
+                (b'Contact <support@x.ai>\0', 'support@x.ai'),
+                (b'_team@example.com\0', '_team@example.com'),
+                (b'123@example.com\0', '123@example.com'),
+                (b'dev.user+tag@sub.example.co.uk\0', 'dev.user+tag@sub.example.co.uk'),
+                (b'me@pm.me\0', 'me@pm.me'),
+                (b'Contact [me@pm.me]\0', 'me@pm.me'),
+                (b'me@foo.io\0', 'me@foo.io'),
+                (b'j@example.com\0', 'j@example.com'),
+                (b'm@proton.me\0', 'm@proton.me'),
+                (b'Author <x@w1.fi>\0', 'x@w1.fi'),
+                (b'ADMIN@EXAMPLE.COM\0', 'ADMIN@EXAMPLE.COM'),
+                (b'Alice <alice@FreeBSD.org>\0', 'alice@FreeBSD.org'),
+                (b'Contact <support@Example360.com>\0', 'support@Example360.com'),
+                (b'j@FreeBSD.org\0', 'j@FreeBSD.org'),
+                (b'jD@example.com\0', 'jD@example.com'),
+                (b'user@iCloud.com\0', 'user@iCloud.com'),
+                (b'contact@163.com\0', 'contact@163.com'),
+                (b'mailto:owner@example.net\0', 'owner@example.net'),
+                (b'Contact <support@example.xn--p1ai>\0', 'support@example.xn--p1ai'),
+                (b'Contact <admin@mx.srv2--east.example.org>.\0', 'admin@mx.srv2--east.example.org'),
+                (b'Contact admin@mx.srv2--east.example.org--thanks.\0', 'admin@mx.srv2--east.example.org'),
+                (b'<!-- admin@mx.srv--east.example.org-->\0', 'admin@mx.srv--east.example.org'),
+                (b'upstream@example.org--ops.com\0', 'upstream@example.org--ops.com'),
+                (b'Contact upstream@example.org--backup@example.net for urgent requests.\0', 'backup@example.net'),
+                (b'Contact upstream@example.org--jane.doe@example.net for urgent requests.\0', 'jane.doe@example.net'),
+                (b'Contact upstream@example.org--jane.doe+tag@example.net\0', 'jane.doe+tag@example.net'),
+                (b'Contact upstream@example.org--jane.doe1@example.net\0', 'jane.doe1@example.net'),
+                (b'Contact upstream@example.org--jane.doe--ops@example.net for urgent requests.\0',
+                 'jane.doe--ops@example.net'),
+                (b'Contact upstream@example.org--it@x.com\0', 'it@x.com'),
+                (b'Contact support@example.org--thanks.\0', 'support@example.org'),
+                (b'Send reports to support@example.org--e.g., crash logs.\0', 'support@example.org'),
+                (b'Report bugs to support@example.org--v0.6.0 users should attach logs.\0', 'support@example.org'),
+                (b'<!-- Contact: owner@example.org-->\0', 'owner@example.org'),
+                (b'Contact support@example.xn--p1ai--thanks.\0', 'support@example.xn--p1ai'),
+                (b'<!-- Contact: owner@example.xn--p1ai-->\0', 'owner@example.xn--p1ai'),
+                (b'Send reports to support@example.xn--p1ai--e.g., crash logs.\0', 'support@example.xn--p1ai'),
+                (b'Report bugs to support@example.xn--p1ai--v0.6.0 users should attach logs.\0',
+                 'support@example.xn--p1ai'),
+                (b'<!-- Contact: it@x.com-->\0', 'it@x.com'),
+                (b'alice@example.org->support\0', 'alice@example.org'),
+                (b'it@x.com->support\0', 'it@x.com'),
+                (b'Contact: ...alice@example.org...\0', 'alice@example.org'),
+                (b'Contact: .alice@example.org\0', 'alice@example.org'),
+                (b'Contact: hi...alice@example.org...\0', 'alice@example.org'),
+                (b'Contact: ...it@x.com...\0', 'it@x.com'),
+                (b'Contact: .it@x.com\0', 'it@x.com'),
+                (b'Contact: it@x.com[1]\0', 'it@x.com'),
+                (b'Contact: [1]it@x.com\0', 'it@x.com'),
+                (b'Contact: it@x.com(1)\0', 'it@x.com'),
+                (b'Contact @alice@example.org\0', 'alice@example.org'),
+                (b'\x81\x07x@w1.fi\x82', 'x@w1.fi'),
+                (b'\x16\x07x@w1.fi\xff', 'x@w1.fi'),
+                (b'\x16\x06a@b.de\xff', 'a@b.de'),
+                (b'\x16\x08it@x.com', 'it@x.com'),
+                (b'\x81\x08it@x.com', 'it@x.com'),
+                (b'\x16\x08it@x.com\xff', 'it@x.com'),
+                (b'\x81\x08it@x.com\xff', 'it@x.com'),
+                (b'\x16\x08it@x.com0\x82', 'it@x.com'),
+                (b'\x81\x08it@x.com0\x82', 'it@x.com'),
+                (b'\x16\x0fcert@example.hu0\x82', 'cert@example.hu'),
+                (b'\x81\x09it@189.cn\0', 'it@189.cn'),
+                (b'\x160a48-byte-cert-email-address@embedded-example.org0\x82',
+                 'a48-byte-cert-email-address@embedded-example.org'),
+                (b'\x16@firmware-release-coordinator@embedded-platform-tools.example.org',
+                 'firmware-release-coordinator@embedded-platform-tools.example.org'),
+                (b'\x16.the-46-byte-email-address@embedded-example.org',
+                 'the-46-byte-email-address@embedded-example.org'),
+                (b'\x81.the-46-byte-email-address@embedded-example.org',
+                 'the-46-byte-email-address@embedded-example.org'),
+                (b'\x16\x7f' + der_127.encode() + b'\x30\x00', der_127),
+                (b'\x81\x7f' + der_127.encode() + b'\x30\x00', der_127),
+                (b'\x16\x81\x80' + der_128.encode() + b'\x30\x00', der_128),
+                (b'\x81\x81\x80' + der_128.encode() + b'\x30\x00', der_128),
+                (b'\x16\x81\x81' + der_129.encode() + b'\x30\x00', der_129),
+                (b'\x81\x81\x81' + der_129.encode() + b'\x30\x00', der_129),
+                (b'\x16\x82\x01\x04' + der_260.encode() + b'\x30\x00', der_260),
+                (b'\x16\x82\x01\x16' + der_278.encode() + b'\x30\x00', der_278),
+                (b'\x16\x82\x01\x22' + der_290.encode() + b'\x30\x00', der_290),
+                (bytes.fromhex(
+                    '302d311a301806035504030c11616c696365406578616d706c652e6f7267310f300d060355040a0c06497373756572'),
+                 'alice@example.org'),
+                (der_cn_utf8, 'alice@example.org'),
+                (bytes.fromhex(
+                    '0c1652656ec3a9206140622e6465e28094737570706f7274310f300d060355040a0c06497373756572'),
+                 'a@b.de'),
+                (b'\x00' + 'René a@b.de—support'.encode() + b'\x00', 'a@b.de'),
+                (b'\x00' + 'René ab@b.de—support'.encode() + b'\x00', 'ab@b.de'),
+                (b'\x00' + 'send to it@x.COM—support'.encode() + b'\x00', 'it@x.COM'),
+                (b'\x00' + ('send to it@x.COM—' + 'x' * 509).encode() + b'\x00', 'it@x.COM'),
+                (b'\x00' + ('send to it@x.COM—' + 'x' * 510).encode() + b'\x00', 'it@x.COM'),
+                (b'\x00' + ('it@x.COM—' + ' ' * 60 + 'help').encode() + b'\x00', 'it@x.COM'),
+                (b'\x00' + ('it@x.COM—' + ' ' * 61 + 'help').encode() + b'\x00', 'it@x.COM'),
+                (b'\x0c\x10' + 'a@b.de—support'.encode() + b'\x31\x0f', 'a@b.de'),
+                (b'\x0c\x19Contact alice@example.org\x31\x0f', 'alice@example.org'),
+                (b'\x0c\x06a@b.de\x31\x0f', 'a@b.de')):
+            with self.subTest(address=address):
+                self.assertEqual(
+                    self.plan(carrying(payload)).refusals,
+                    [f'newt.bin contains the e-mail address {address}'],
+                )
+        # Bracketed contact lists refuse every address inside the list.
+        list_refusals = self.plan(carrying(b'Contacts: [me@pm.me, it@x.com]\0')).refusals
+        self.assertEqual(
+            list_refusals,
+            ['newt.bin contains the e-mail address it@x.com', 'newt.bin contains the e-mail address me@pm.me'],
+        )
+        # Short, tag-colliding DER, and dash-separated addresses are allowed when credited in NOTICES.txt.
+        git = FakeGit(files={**FakeGit().files,
+                             (REVISION, NOTICES): (NOTICE_TEXT + f'Copyright <j@w1.fi>\n{der_129}\n{der_278}\n'
+                                                   'jane.doe--ops@example.net\n'
+                                                   'admin@mx.srv--east.example.org\nbackup@example.net\n')})
+        for allowed_payload in (b'Author <j@w1.fi>\0',
+                                b'\x16\x81\x81' + der_129.encode() + b'\x30\x00',
+                                b'\x81\x81\x81' + der_129.encode() + b'\x30\x00',
+                                b'\x16\x82\x01\x16' + der_278.encode() + b'\x30\x00',
+                                der_cn_48,
+                                b'Contact: ...upstream@example.org...\0',
+                                b'Contact upstream@example.org--jane.doe--ops@example.net for urgent requests.\0',
+                                b'admin@mx.srv--east.example.org--backup@example.net\0'):
+            self.assertEqual(self.plan(carrying(allowed_payload), git=git).refusals, [])
+        for allowed_note in ('Contact: ...upstream@example.org...',
+                             'Contact upstream@example.org--jane.doe--ops@example.net for urgent requests.',
+                             'admin@mx.srv--east.example.org--backup@example.net'):
+            files = {**git.files, (REVISION, WHATS_NEW): HEADER.replace('Reading is faster.', allowed_note)}
+            self.assertEqual(self.plan(git=FakeGit(files=files)).refusals, [])
+        # Crediting only the first internal-`--` address still refuses the uncredited second address cleanly.
+        one_git = FakeGit(files={**FakeGit().files,
+                                 (REVISION, NOTICES): NOTICE_TEXT + 'admin@mx.srv--east.example.org\n'})
+        self.assertEqual(
+            self.plan(carrying(b'admin@mx.srv--east.example.org--backup@example.net\0'), git=one_git).refusals,
+            ['newt.bin contains the e-mail address backup@example.net'],
+        )
+        one_files = {**one_git.files,
+                     (REVISION, WHATS_NEW): HEADER.replace('Reading is faster.',
+                                                           'admin@mx.srv--east.example.org--backup@example.net')}
+        self.assertEqual(
+            self.plan(git=FakeGit(files=one_files)).refusals,
+            ['The notes contains the e-mail address backup@example.net'],
+        )
+        # Release notes are UTF-8 prose, so they skip binary-noise filtering and catch ordinary addresses directly.
+        for note, address in (
+                ('Contact <support@example.COM>.', 'support@example.COM'),
+                ('Contact <support@example.xn--p1ai>.', 'support@example.xn--p1ai'),
+                ('Contact <admin@mx.srv2--east.example.org>.', 'admin@mx.srv2--east.example.org'),
+                ('Contact admin@mx.srv2--east.example.org--thanks.', 'admin@mx.srv2--east.example.org'),
+                ('<!-- admin@mx.srv--east.example.org-->', 'admin@mx.srv--east.example.org'),
+                ('Contact upstream@example.org--ops.com.', 'upstream@example.org--ops.com'),
+                ('Contact upstream@example.org--backup@example.net for urgent requests.', 'backup@example.net'),
+                ('Contact upstream@example.org--jane.doe@example.net for urgent requests.', 'jane.doe@example.net'),
+                ('Contact upstream@example.org--jane.doe+tag@example.net', 'jane.doe+tag@example.net'),
+                ('Contact upstream@example.org--jane.doe1@example.net', 'jane.doe1@example.net'),
+                ('Contact upstream@example.org--jane.doe--ops@example.net for urgent requests.',
+                 'jane.doe--ops@example.net'),
+                ('Reference prefix@local@example.org here.', 'local@example.org'),
+                ('Contact support@example.org--thanks.', 'support@example.org'),
+                ('Send reports to support@example.org--e.g., crash logs.', 'support@example.org'),
+                ('Report bugs to support@example.org--v0.6.0 users should attach logs.', 'support@example.org'),
+                ('<!-- Contact: owner@example.org-->', 'owner@example.org'),
+                ('Contact support@example.xn--p1ai--thanks.', 'support@example.xn--p1ai'),
+                ('Send reports to support@example.xn--p1ai--e.g., crash logs.', 'support@example.xn--p1ai'),
+                ('Report bugs to support@example.xn--p1ai--v0.6.0 users should attach logs.',
+                 'support@example.xn--p1ai'),
+                ('<!-- Contact: owner@example.xn--p1ai-->', 'owner@example.xn--p1ai'),
+                ('alice@example.org->support', 'alice@example.org'),
+                ('Contact: ...alice@example.org...', 'alice@example.org'),
+                ('Contact: .alice@example.org', 'alice@example.org'),
+                ('Contact: hi...alice@example.org...', 'alice@example.org'),
+                ('Follow @alice@example.org for updates.', 'alice@example.org'),
+                ('Contact <_team@example.com>.', '_team@example.com'),
+                ('_Contact support@example.com_', 'support@example.com'),
+                ('Mail mailto:123@example.com for help.', '123@example.com'),
+                ('Contact <ab@x.com>.', 'ab@x.com'),
+                ('a@b.cd', 'a@b.cd')):
+            with self.subTest(note=note):
+                files = {**FakeGit().files, (REVISION, WHATS_NEW): HEADER.replace('Reading is faster.', note)}
+                self.assertEqual(
+                    self.plan(git=FakeGit(files=files)).refusals,
+                    [f'The notes contains the e-mail address {address}'],
+                )
+        for non_email in (
+                'Build tag user@example.com123 is not an e-mail.',
+                'Build tag user@build.example.com123 is not an e-mail.',
+                'Build tag user@ci.build-tools.com123 is not an e-mail.',
+                'Build tag user@ci.build--tools.com123 is not an e-mail.',
+                'Build tag user@ci.build--tools.api.us.east.prod.com123 is not an e-mail.',
+                'Build tag user@ci.xn--p1ai.com123 is not an e-mail.'):
+            with self.subTest(note=non_email):
+                files = {**FakeGit().files, (REVISION, WHATS_NEW): HEADER.replace('Reading is faster.', non_email)}
+                self.assertEqual(self.plan(git=FakeGit(files=files)).refusals, [])
+
     def test_committed_notices_credit_the_pinned_certifi(self):
         # newt.bin embeds certifi's CA list (tools/crt_bundle.py pins its version); NOTICES must credit it.
         def credits(notices, pin):
@@ -678,8 +932,63 @@ CONTROLS = (
      '    return {line for release in releases', 'test_notes_list_what_this_repository_has_not_published'),
     ("            for section in re.findall(r\"^## What's new\\n(.*?)(?=^## |\\Z)\",",
      "            for section in re.findall(r'(.*)',", 'test_notes_list_what_this_repository_has_not_published'),
-    ("leaks('newt.bin', image, patterns, allowed) + ", '', 'test_refuses_a_host_path_in_the_image'),
+    ("leaks('newt.bin', image, patterns, allowed, binary=True) + ", '', 'test_refuses_a_host_path_in_the_image'),
     (" + leaks('The notes', notes.encode(), patterns, allowed)", '', 'test_refuses_a_host_detail_in_the_notes'),
+    ('for email in sorted((binary_emails if binary else text_emails)(data, allowed_emails) - allowed_emails)]',
+     'for email in []]', 'test_email_guard_ignores_random_bytes_and_refuses_c_strings'),
+    ("allowed = text_emails((notices or '').encode())", 'allowed = set()',
+     'test_allows_only_upstream_notice_addresses'),
+    ('    if angle_wrapped or (nonspace >= 12 and (terminated or cased)) or labeled:',
+     '    if False:',
+     'test_email_guard_ignores_random_bytes_and_refuses_c_strings'),
+    ('    return terminated and nonspace >= 8 and cased', '    return terminated and cased',
+     'test_email_guard_ignores_random_bytes_and_refuses_c_strings'),
+    ('    return terminated and nonspace >= 8 and cased', '    return nonspace >= 8 and cased',
+     'test_email_guard_ignores_random_bytes_and_refuses_c_strings'),
+    ('    return terminated and nonspace >= 8 and cased', '    return terminated and nonspace >= 8',
+     'test_email_guard_ignores_random_bytes_and_refuses_c_strings'),
+    ('    if not _short_boundaries_ok(run, start, end, brackets):', '    if False:',
+     'test_email_guard_ignores_random_bytes_and_refuses_c_strings'),
+    ('DER_TAGS = frozenset((0x0c, 0x13, 0x14, 0x16, 0x81))', 'DER_TAGS = frozenset((0x16, 0x81))',
+     'test_email_guard_ignores_random_bytes_and_refuses_c_strings'),
+    ('6 <= length <= 31', '8 <= length <= 31',
+     'test_email_guard_ignores_random_bytes_and_refuses_c_strings'),
+    ('    if pos >= 1 and data[pos - 1] in DER_TAGS and pos < n:', '    if False:',
+     'test_email_guard_ignores_random_bytes_and_refuses_c_strings'),
+    ('    if pos >= 2 and data[pos - 2] in DER_TAGS:', '    if False:',
+     'test_email_guard_ignores_random_bytes_and_refuses_c_strings'),
+    ('        if data[pos - 2] == 0x81 and data[pos - 1] >= 128:', '        if False:',
+     'test_email_guard_ignores_random_bytes_and_refuses_c_strings'),
+    ('        if data[pos - 2] == 0x82 and data[pos - 1] == 1 and pos < n:', '        if False:',
+     'test_email_guard_ignores_random_bytes_and_refuses_c_strings'),
+    ('    if pos >= 4 and data[pos - 4] in DER_TAGS and data[pos - 3] == 0x82:', '    if False:',
+     'test_email_guard_ignores_random_bytes_and_refuses_c_strings'),
+    ("        if b'@' in inner and _der_text_ok(inner, tag):", '        if False:',
+     'test_email_guard_ignores_random_bytes_and_refuses_c_strings'),
+    ('        if val_end is None:\n            u_start = _utf8_run_start(data, start, stop=no_der_end)',
+     '        if False:\n            u_start = _utf8_run_start(data, start, stop=no_der_end)',
+     'test_email_guard_ignores_random_bytes_and_refuses_c_strings'),
+    ("    trimmed = raw_domain.rstrip(b'.-')", '    trimmed = raw_domain',
+     'test_email_guard_ignores_random_bytes_and_refuses_c_strings'),
+    ("        while start < at and text[start] == ord('.'):", '        while False:',
+     'test_email_guard_ignores_random_bytes_and_refuses_c_strings'),
+    ('                u_end = _utf8_run_end(data, end)',
+     '                u_end = end',
+     'test_email_guard_ignores_random_bytes_and_refuses_c_strings'),
+    ('            min_nonspace = cached_u_nonspace',
+     '            min_nonspace = 0',
+     'test_email_guard_ignores_random_bytes_and_refuses_c_strings'),
+    ('        if followed_by_at:', '        if False:',
+     'test_email_guard_ignores_random_bytes_and_refuses_c_strings'),
+    ('            if len(split_ends) >= 2 and allowed_emails:', '            if False:',
+     'test_email_guard_ignores_random_bytes_and_refuses_c_strings'),
+    ('        if len(domain) < len(raw_domain):', '        if False:',
+     'test_email_guard_ignores_random_bytes_and_refuses_c_strings'),
+    ('        if _plausible_binary_email(local, domain, text, start, end, nonspace, terminated, brackets):',
+     '        if True:',
+     'test_email_guard_ignores_random_bytes_and_refuses_c_strings'),
+    ('if binary else text_emails', 'if binary else binary_emails',
+     'test_email_guard_ignores_random_bytes_and_refuses_c_strings'),
     ('        refusals += bench_refusals(bench_receipt, version, build, image, manifest)', '        pass',
      'test_refuses_without_a_matching_bench_receipt'),
     ('    elif DRAFT in notices:', '    elif False:', 'test_refuses_the_draft_marker'),

@@ -60,7 +60,34 @@ DRAFT = 'DRAFT: needs owner approval'
 WHATS_NEW = 'rust/device-ui/whats_new_notes.h'
 # Fixes-only updates reuse this line; its text alone cannot identify an old entry.
 STANDARD_NOTE = 'Various smaller enhancements.'
-EMAIL = re.compile(rb'[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}')
+# Scan binary images via `@`-anchored printable/UTF-8 runs and DER string fields; text scans skip binary heuristics.
+AT_ANCHOR = re.compile(rb'[A-Za-z0-9._%+-]@[A-Za-z0-9.-]{4}')
+NON_PRINTABLE = re.compile(rb'[^\t\x20-\x7e]')
+DOMAIN_RAW = re.compile(rb'[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+')
+TLD_PUNYCODE = rb'[Xx][Nn]--[A-Za-z0-9](?:(?:[A-Za-z0-9]|-(?!-)){0,57}[A-Za-z0-9])?'
+TLD_TEXT = re.compile(rb'(?:' + TLD_PUNYCODE + rb'|[A-Za-z]{2,})\Z')
+TLD_BINARY = re.compile(rb'(?:' + TLD_PUNYCODE + rb'|[A-Za-z]{2,24})\Z')
+BINARY_LOCAL = re.compile(rb'[A-Za-z0-9_%+-](?:[A-Za-z0-9._%+-]{0,62}[A-Za-z0-9_%+-])?\Z')
+BINARY_LABEL = re.compile(rb'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\Z')
+BUILD_TAG_SUFFIX = re.compile(rb'[A-Za-z]+[0-9]+[A-Za-z0-9-]*\Z')
+# Delegated IANA two-letter ccTLDs, used only to filter random binary two-letter suffixes like `.yq`.
+CCTLDS = frozenset((
+    'ac ad ae af ag ai al am ao aq ar as at au aw ax az ba bb bd be bf bg bh bi bj bm bn bo br bs bt bv bw by bz '
+    'ca cc cd cf cg ch ci ck cl cm cn co cr cu cv cw cx cy cz de dj dk dm do dz ec ee eg er es et eu fi fj fk fm fo fr '
+    'ga gb gd ge gf gg gh gi gl gm gn gp gq gr gs gt gu gw gy hk hm hn hr ht hu id ie il im in io iq ir is it je jm jo jp '
+    'ke kg kh ki km kn kp kr kw ky kz la lb lc li lk lr ls lt lu lv ly ma mc md me mg mh mk ml mm mn mo mp mq mr ms mt mu mv mw mx my mz '
+    'na nc ne nf ng ni nl no np nr nu nz om pa pe pf pg ph pk pl pm pn pr ps pt pw py qa '
+    're ro rs ru rw sa sb sc sd se sg sh si sj sk sl sm sn so sr ss st su sv sx sy sz '
+    'tc td tf tg th tj tk tl tm tn to tr tt tv tw tz ua ug uk us uy uz va vc ve vg vi vn vu wf ws ye yt za zm zw'
+).split())
+# Clean boundaries (plus matching brackets/braces and text terminators) used for short (< 12 byte) binary candidates.
+LOCAL_BYTES = frozenset(b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._%+-')
+BEFORE_SHORT = frozenset(b'\t <("\':,;=/_*`?|&#\\~')
+AFTER_SHORT = frozenset(b'\t >)"\',.;:/?!_*`&#|\\~')
+TEXT_END = frozenset((0x00, 0x0a, 0x0d))
+LABEL_PREFIX = re.compile(rb'(?:^|[\s,(;[<{|])(?:[a-z]{2,}|[A-Z]{2,}|[A-Z][a-z]+)[:=]\s*$')
+DER_TAGS = frozenset((0x0c, 0x13, 0x14, 0x16, 0x81))
+DER_ASCII_RUN = re.compile(rb'[\t\x20-\x7e]{6,}')
 
 
 class Git:
@@ -251,12 +278,464 @@ def host_patterns(root=ROOT):
     return found
 
 
-def leaks(name, data, patterns, allowed_emails):
+def _domain_splits(raw_domain, tld_pattern, *, binary=False):
+    """Return `(trimmed, full_valid, split_ends, labels)` for `raw_domain`; `split_ends` are `(label_idx, byte_end)` before `--`."""
+    trimmed = raw_domain.rstrip(b'.-')
+    labels = trimmed.split(b'.')
+    if len(labels) < 2:
+        return trimmed, False, (), labels
+    if binary:
+        valid_prefix = 0
+        while valid_prefix < len(labels) - 1 and BINARY_LABEL.match(labels[valid_prefix]):
+            valid_prefix += 1
+    else:
+        valid_prefix = len(labels) - 1
+    full_valid = valid_prefix == len(labels) - 1 and bool(tld_pattern.match(labels[-1]))
+    split_ends = []
+    offset = len(labels[0]) + 1
+    for i in range(1, valid_prefix + 1):
+        label = labels[i]
+        at = label.find(b'--', 4 if label[:4].lower() == b'xn--' else 0)
+        if at != -1 and tld_pattern.match(label[:at]):
+            split_ends.append((i, offset + at))
+        offset += len(label) + 1
+    return trimmed, full_valid, split_ends, labels
+
+
+def _extract_domain(raw_domain, tld_pattern, *, binary=False, followed_by_at=False):
+    """Validate greedy `raw_domain`, splitting at non-Punycode `--` when not a complete standalone domain."""
+    trimmed, full_valid, split_ends, labels = _domain_splits(raw_domain, tld_pattern, binary=binary)
+    if full_valid and not followed_by_at:
+        return trimmed
+    if split_ends:
+        i, end = split_ends[0] if followed_by_at else split_ends[-1]
+        if not followed_by_at and i < len(labels) - 1 and BUILD_TAG_SUFFIX.match(labels[-1]):
+            return None
+        return trimmed[:end]
+    return trimmed if full_valid else None
+
+
+def _allowed_index(allowed_emails):
+    """Build `--`-segment tries keyed by local part (forward) and domain (reverse) for O(N + S) scoring."""
+    by_local, by_domain = {}, {}
+    for addr in allowed_emails:
+        if b'@' not in addr:
+            continue
+        al, ad = addr.split(b'@', 1)
+        node = by_local.setdefault(al, {})
+        for seg in ad.split(b'--'):
+            node = node.setdefault(seg, {})
+        node[None] = True
+        node = by_domain.setdefault(ad, {})
+        for seg in reversed(al.split(b'--')):
+            node = node.setdefault(seg, {})
+        node[None] = True
+    return by_local, by_domain
+
+
+def _iter_emails(text, tld_pattern, *, binary=False, allowed_emails=(), allowed_cache=None):
+    """Yield `(start, end, local, domain)` for each address in `text`, in O(len(text) + sum(|allowed|)) time."""
+    if b'@' not in text:
+        return
+    if allowed_cache is None:
+        allowed_cache = [None]
+    min_start = 0
+    at = -1
+    while (at := text.find(b'@', at + 1)) != -1:
+        start = at
+        while start > min_start and text[start - 1] in LOCAL_BYTES:
+            if text[start - 1] == ord('.') and start >= min_start + 3 and text[start - 3:start] == b'...':
+                break
+            start -= 1
+        while start < at and text[start] == ord('.'):
+            start += 1
+        if start == at:
+            continue
+        dm = DOMAIN_RAW.match(text, at + 1)
+        if not dm:
+            continue
+        raw_domain = dm.group(0)
+        tail = dm.end()
+        while tail < len(text) and text[tail] in LOCAL_BYTES:
+            tail += 1
+        followed_by_at = tail < len(text) and text[tail] == ord('@')
+        local = text[start:at]
+        if followed_by_at:
+            trimmed, full_valid, split_ends, _ = _domain_splits(raw_domain, tld_pattern, binary=binary)
+            if len(split_ends) >= 2 and allowed_emails:
+                if allowed_cache[0] is None:
+                    allowed_cache[0] = _allowed_index(allowed_emails)
+                by_local, by_domain = allowed_cache[0]
+                next_at = tail
+                next_domain = None
+                if (next_dm := DOMAIN_RAW.match(text, next_at + 1)) is not None:
+                    next_tail = next_dm.end()
+                    while next_tail < len(text) and text[next_tail] in LOCAL_BYTES:
+                        next_tail += 1
+                    next_domain = _extract_domain(
+                        next_dm.group(0), tld_pattern, binary=binary,
+                        followed_by_at=next_tail < len(text) and text[next_tail] == ord('@'),
+                    )
+                matched_1 = set()
+                if (node := by_local.get(local)) is not None:
+                    pos = 0
+                    for seg in trimmed.split(b'--'):
+                        node = node.get(seg)
+                        if node is None:
+                            break
+                        pos += len(seg)
+                        if None in node:
+                            matched_1.add(pos)
+                        pos += 2
+                matched_2 = set()
+                if next_domain is not None and (node := by_domain.get(next_domain)) is not None:
+                    rsegs = text[at + 1:next_at].split(b'--')
+                    pos = next_at - (at + 1)
+                    for idx in range(len(rsegs) - 1, 0, -1):
+                        seg = rsegs[idx]
+                        pos -= len(seg)
+                        stripped = seg.lstrip(b'-')
+                        if stripped != seg and (alt := node.get(stripped)) is not None and None in alt:
+                            matched_2.add(pos - 2)
+                        node = node.get(seg)
+                        if node is None:
+                            break
+                        if None in node:
+                            matched_2.add(pos - 2)
+                        pos -= 2
+                best_end, best_score = split_ends[0][1], -1
+                for _, split_end in split_ends:
+                    score = (split_end in matched_1) + (split_end in matched_2)
+                    if score > best_score:
+                        best_end, best_score = split_end, score
+                        if best_score == 2:
+                            break
+                domain = trimmed[:best_end]
+            elif split_ends:
+                domain = trimmed[:split_ends[0][1]]
+            else:
+                domain = trimmed if full_valid else None
+        else:
+            domain = _extract_domain(raw_domain, tld_pattern, binary=binary)
+        if domain is None:
+            continue
+        end = at + 1 + len(domain)
+        if len(domain) < len(raw_domain):
+            next_start = end + 1
+            while next_start < len(text) and text[next_start] in (ord('-'), ord('.')):
+                next_start += 1
+            min_start = max(min_start, next_start)
+        else:
+            min_start = max(min_start, end)
+        yield start, end, local, domain
+
+
+def text_emails(data, allowed_emails=()):
+    """E-mail addresses in UTF-8 text (notices and release notes), without binary-noise filtering."""
+    return {local + b'@' + domain
+            for _, _, local, domain in _iter_emails(data, TLD_TEXT, allowed_emails=allowed_emails)}
+
+
+def _cased_token(token):
+    return (token == token.lower() or token == token.upper()
+            or (len(token) >= 2 and token[:1].isupper() and token[1:] == token[1:].lower()))
+
+
+def _cased_short_email(local, labels, tld):
+    tld_lower = tld.islower() or tld.lower().startswith(b'xn--')
+    tld_upper = tld.isupper()
+    tld_title = len(tld) >= 3 and tld[:1].isupper() and tld[1:].islower()
+    if not (tld_lower or tld_upper or tld_title):
+        return False
+    if not _cased_token(local) or not all(_cased_token(label) for label in labels[:-1]):
+        return False
+    if tld_upper:
+        return local == local.upper() and all(label == label.upper() for label in labels[:-1])
+    if tld_title:
+        return all(not (token == token.upper() and any(65 <= byte <= 90 for byte in token))
+                   for token in (local, *labels[:-1]))
+    return all(not (len(token) >= 2 and token == token.upper() and any(65 <= byte <= 90 for byte in token))
+               for token in (local, *labels[:-1]))
+
+
+def _bracket_bounds(run):
+    """First open and last close index for `[...]`, `{...}`, and `(...)` in `run`, computed once per run."""
+    return (run.find(b'['), run.rfind(b']'), run.find(b'{'), run.rfind(b'}'), run.find(b'('), run.rfind(b')'))
+
+
+def _short_boundaries_ok(run, start, end, brackets):
+    first_sq, last_sq, first_cu, last_cu, first_pa, last_pa = brackets
+    if start == 0:
+        before_ok = True
+    else:
+        before = run[start - 1]
+        if before in BEFORE_SHORT or (start >= 2 and run[start - 2:start] == b'--'):
+            before_ok = True
+        elif before == ord('.'):
+            prev = run[start - 2] if start >= 2 else None
+            before_ok = (start == 1 or prev in BEFORE_SHORT or prev == ord('.')
+                         or (prev == ord('[') and last_sq >= end)
+                         or (prev == ord('{') and last_cu >= end))
+        elif before == ord('['):
+            before_ok = last_sq >= end
+        elif before == ord('{'):
+            before_ok = last_cu >= end
+        elif before == ord(']'):
+            before_ok = 0 <= first_sq < start - 1
+        elif before == ord('}'):
+            before_ok = 0 <= first_cu < start - 1
+        elif before == ord(')'):
+            before_ok = 0 <= first_pa < start - 1
+        elif before == ord('@'):
+            prev = run[start - 2] if start >= 2 else None
+            before_ok = (start == 1 or prev in BEFORE_SHORT
+                         or (start >= 3 and run[start - 3:start - 1] == b'--')
+                         or (prev == ord('[') and last_sq >= end)
+                         or (prev == ord('{') and last_cu >= end))
+        else:
+            before_ok = False
+    if end == len(run):
+        after_ok = True
+    else:
+        after = run[end]
+        after_ok = (after in AFTER_SHORT or run[end:end + 2] in (b'--', b'->')
+                    or (after == ord(']') and 0 <= first_sq < start)
+                    or (after == ord('}') and 0 <= first_cu < start)
+                    or (after == ord('[') and last_sq > end)
+                    or (after == ord('{') and last_cu > end)
+                    or (after == ord('(') and last_pa > end))
+    return before_ok and after_ok
+
+
+def _plausible_binary_email(local, domain, run, start, end, nonspace, terminated, brackets):
+    """True when local@domain looks like a real address rather than stray bytes in a binary."""
+    if b'..' in local or len(domain) > 253:
+        return False
+    # Reject chained `@` tokens like `foo@bar.com@baz.org` without blocking a leading `@` (e.g. `@me@pm.me`).
+    if (start >= 2 and run[start - 1] == ord('@') and run[start - 2] in LOCAL_BYTES
+            and not (start >= 3 and run[start - 3:start - 1] == b'--')):
+        return False
+    labels = domain.split(b'.')
+    tld = labels[-1]
+    if len(tld) == 2 and tld.decode('ascii').lower() not in CCTLDS:
+        return False
+    # Long (>= 12 byte) addresses carry enough entropy on their own.
+    if end - start >= 12:
+        return True
+    if not _short_boundaries_ok(run, start, end, brackets):
+        return False
+    cased = _cased_short_email(local, labels, tld)
+    angle_wrapped = start > 0 and end < len(run) and run[start - 1] == ord('<') and run[end] == ord('>')
+    labeled = bool(LABEL_PREFIX.search(run, max(0, start - 32), start))
+    # Strong textual context: `<...>`, a longer (>= 12 non-space byte) string, or a labeled prefix (`From: `, `To: `).
+    if angle_wrapped or (nonspace >= 12 and (terminated or cased)) or labeled:
+        return True
+    # Standalone short candidates must sit in NUL/line-terminated text with >= 8 non-space bytes and sensible casing.
+    return terminated and nonspace >= 8 and cased
+
+
+def _der_email(inner, no_brackets):
+    """Return `inner` if it is a complete, plausible binary e-mail address from a DER field."""
+    if inner.count(b'@') != 1:
+        return None
+    local, raw_domain = inner.split(b'@', 1)
+    if not BINARY_LOCAL.match(local) or not DOMAIN_RAW.fullmatch(raw_domain):
+        return None
+    domain = _extract_domain(raw_domain, TLD_BINARY, binary=True)
+    if domain != raw_domain:
+        return None
+    if _plausible_binary_email(local, domain, inner, 0, len(inner), max(len(inner), 12), True, no_brackets):
+        return inner
+    return None
+
+
+def _der_after_ok(data, end):
+    return end == len(data) or data[end] in (0x30, 0x31) or not (0x20 <= data[end] <= 0x7e)
+
+
+def _der_text_ok(inner, tag):
+    if tag == 0x0c:
+        if any((b < 0x20 and b not in (9, 10, 13)) or b == 0x7f for b in inner):
+            return False
+        try:
+            inner.decode('utf-8')
+            return True
+        except UnicodeDecodeError:
+            return False
+    return all(b == 9 or 0x20 <= b <= 0x7e for b in inner)
+
+
+def _utf8_run_start(data, pos, stop=-1):
+    """Walk backward from `pos` across printable ASCII and valid multibyte UTF-8, stopping at `stop`."""
+    cur = pos
+    while cur > 0:
+        if cur == stop:
+            return None
+        byte = data[cur - 1]
+        if byte == 9 or 0x20 <= byte <= 0x7e:
+            cur -= 1
+            continue
+        if 0x80 <= byte <= 0xbf:
+            lead = cur - 2
+            while lead >= 0 and cur - lead <= 4 and 0x80 <= data[lead] <= 0xbf:
+                lead -= 1
+            if lead >= 0 and cur - lead <= 4 and 0xc2 <= data[lead] <= 0xf4:
+                try:
+                    data[lead:cur].decode('utf-8')
+                except UnicodeDecodeError:
+                    break
+                cur = lead
+                continue
+        break
+    return cur
+
+
+def _utf8_run_end(data, pos):
+    """Walk forward from `pos` across printable ASCII and valid multibyte UTF-8 to the run's true end."""
+    n = len(data)
+    cur = pos
+    while cur < n:
+        byte = data[cur]
+        if byte == 9 or 0x20 <= byte <= 0x7e:
+            cur += 1
+            continue
+        if 0xc2 <= byte <= 0xf4:
+            size = 2 if byte < 0xe0 else (3 if byte < 0xf0 else 4)
+            if cur + size <= n:
+                try:
+                    data[cur:cur + size].decode('utf-8')
+                except UnicodeDecodeError:
+                    break
+                cur += size
+                continue
+        break
+    return cur
+
+
+def _der_tlv_slices_at(data, pos):
+    """Yield `(tag, val_start, val_end)` for DER string TLVs anchored at `pos`, longest header first."""
+    n = len(data)
+    if pos >= 4 and data[pos - 4] in DER_TAGS and data[pos - 3] == 0x82:
+        length = (data[pos - 2] << 8) | data[pos - 1]
+        if 256 <= length <= 511 and pos + length <= n and _der_after_ok(data, pos + length):
+            yield data[pos - 4], pos, pos + length
+    if pos >= 3 and data[pos - 3] in DER_TAGS:
+        if data[pos - 2] == 0x81 and data[pos - 1] >= 128:
+            length = data[pos - 1]
+            if pos + length <= n and _der_after_ok(data, pos + length):
+                yield data[pos - 3], pos, pos + length
+        if data[pos - 2] == 0x82 and data[pos - 1] == 1 and pos < n:
+            length = 256 | data[pos]
+            if length <= 511 and pos + 1 + length <= n and _der_after_ok(data, pos + 1 + length):
+                yield data[pos - 3], pos + 1, pos + 1 + length
+    if pos >= 2 and data[pos - 2] in DER_TAGS:
+        length = data[pos - 1]
+        if (6 <= length <= 31 or length == 127) and pos + length <= n and _der_after_ok(data, pos + length):
+            yield data[pos - 2], pos, pos + length
+    if pos >= 1 and data[pos - 1] in DER_TAGS and pos < n:
+        length = data[pos]
+        if (length == 9 or 0x20 <= length <= 0x7e) and pos + 1 + length <= n and _der_after_ok(data, pos + 1 + length):
+            yield data[pos - 1], pos + 1, pos + 1 + length
+
+
+def _scan_binary_run(text, terminated, found, *, min_nonspace=0, allowed_emails=(), allowed_cache=None):
+    if b'@' not in text:
+        return
+    nonspace = max(len(text) - text.count(b' ') - text.count(b'\t'), min_nonspace)
+    brackets = _bracket_bounds(text)
+    for start, end, local, domain in _iter_emails(text, TLD_BINARY, binary=True,
+                                                  allowed_emails=allowed_emails, allowed_cache=allowed_cache):
+        if not BINARY_LOCAL.match(local):
+            continue
+        if end < len(text) and text[end] == ord('@'):
+            continue
+        if _plausible_binary_email(local, domain, text, start, end, nonspace, terminated, brackets):
+            found.add(local + b'@' + domain)
+
+
+def _unwrap_der_at(data, pos, found, no_brackets, allowed_emails=(), allowed_cache=None):
+    """If a DER string TLV at `pos` carries an e-mail address, record its addresses and return `val_end`."""
+    slices = tuple(_der_tlv_slices_at(data, pos))
+    for _, val_start, val_end in slices:
+        if (email := _der_email(data[val_start:val_end], no_brackets)) is not None:
+            found.add(email)
+            return val_end
+    for tag, val_start, val_end in slices:
+        inner = data[val_start:val_end]
+        if b'@' in inner and _der_text_ok(inner, tag):
+            min_nonspace = len(inner) - inner.count(b' ') - inner.count(b'\t')
+            for part in DER_ASCII_RUN.finditer(inner):
+                _scan_binary_run(part.group(0), True, found, min_nonspace=min_nonspace,
+                                 allowed_emails=allowed_emails, allowed_cache=allowed_cache)
+            return val_end
+    return None
+
+
+def binary_emails(data, allowed_emails=()):
+    """Plausible e-mail addresses inside printable/UTF-8 runs and DER string fields of binary `data`."""
+    found = set()
+    no_brackets = (-1, -1, -1, -1, -1, -1)
+    allowed_cache = [None]
+    n = len(data)
+    covered_until = 0
+    no_der_start, no_der_end = -1, -1
+    cached_u_start, cached_u_end, cached_u_nonspace = -1, -1, 0
+    for anchor in AT_ANCHOR.finditer(data):
+        if anchor.start() < covered_until:
+            continue
+        start = anchor.start()
+        while start > covered_until and (data[start - 1] == 9 or 0x20 <= data[start - 1] <= 0x7e):
+            start -= 1
+        right = NON_PRINTABLE.search(data, anchor.end())
+        end = right.start() if right else n
+        val_end = _unwrap_der_at(data, start, found, no_brackets, allowed_emails, allowed_cache)
+        u_start = start
+        if val_end is None:
+            u_start = _utf8_run_start(data, start, stop=no_der_end)
+            if u_start is None:
+                u_start = no_der_start
+                no_der_end = start
+            elif u_start < start:
+                val_end = _unwrap_der_at(data, u_start, found, no_brackets, allowed_emails, allowed_cache)
+                if val_end is None:
+                    no_der_start, no_der_end = u_start, start
+        if val_end is not None:
+            covered_until = max(covered_until, val_end)
+            if val_end >= end:
+                continue
+            start = val_end
+            u_start = start
+        if end - start < 12 or u_start < start or (end < n and 0xc2 <= data[end] <= 0xf4):
+            if end <= cached_u_end:
+                u_end = cached_u_end
+            else:
+                u_end = _utf8_run_end(data, end)
+        else:
+            u_end = end
+        if u_end - u_start < 8:
+            covered_until = max(covered_until, end)
+            continue
+        terminated = u_end == n or data[u_end] in TEXT_END
+        if u_start < start or u_end > end:
+            if u_start != cached_u_start or u_end != cached_u_end:
+                u_span = data[u_start:u_end]
+                cached_u_start, cached_u_end = u_start, u_end
+                cached_u_nonspace = len(u_span) - u_span.count(b' ') - u_span.count(b'\t')
+            min_nonspace = cached_u_nonspace
+        else:
+            min_nonspace = 0
+        _scan_binary_run(data[start:end], terminated, found, min_nonspace=min_nonspace,
+                         allowed_emails=allowed_emails, allowed_cache=allowed_cache)
+        covered_until = max(covered_until, end)
+    return found
+
+
+def leaks(name, data, patterns, allowed_emails, *, binary=False):
     """Each host detail or non-notice e-mail address in data, as a refusal."""
     found = [f'{name} contains the {label}' for label, pattern, fold in patterns
              if (pattern.lower() in data.lower() if fold else pattern in data)]
     found += [f'{name} contains the e-mail address {email.decode()}'
-              for email in sorted(set(EMAIL.findall(data)) - allowed_emails)]
+              for email in sorted((binary_emails if binary else text_emails)(data, allowed_emails) - allowed_emails)]
     return found
 
 
@@ -373,8 +852,8 @@ def plan(image, receipt, bench_receipt=None, prerelease=False, git=None, github=
     if source != SOURCE_REPOSITORY and re.search(r'VargasDevelopment/newt(?!-releases)', notes):
         refusals.append('The notes link into the private source repository')
     patterns = host_patterns(root)
-    allowed = set(EMAIL.findall((notices or '').encode()))
-    refusals += leaks('newt.bin', image, patterns, allowed) + leaks('The notes', notes.encode(), patterns, allowed)
+    allowed = text_emails((notices or '').encode())
+    refusals += leaks('newt.bin', image, patterns, allowed, binary=True) + leaks('The notes', notes.encode(), patterns, allowed)
     release = Plan(repository, version, commit, build, image, manifest, notes, notices, refusals, prerelease=night,
                    source=main)
     if hop and source == SOURCE_REPOSITORY:
