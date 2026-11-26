@@ -336,6 +336,35 @@ fn spilling_build_cuts_every_card_step_and_uses_three_files() {
     println!("SPILLING CARD cuts={steps} most_open={} work_state={work_bytes} view={view_bytes}", good.most_open);
 }
 
+/// A Contents scan reads members in order, one chunk per checked scope. The
+/// chunk must fit one scope's read allowance even at the largest index.
+#[test]
+fn one_read_scope_scans_a_contents_chunk_of_the_largest_index() {
+    use book_index::{MAX_MEMBERS, SCAN_SCOPE_MEMBERS};
+    let mut card = Card::new();
+    let mut title = [0; TITLE_BYTES]; title[0] = b'T';
+    let header = Header { stylesheets: false, navigation_declared: false, identity: BOOK, members: MAX_MEMBERS,
+        spine: 1, spine_bytes: 1, nav: NONE, ncx: NONE, cover: NONE, language: BookLanguage::Default, title };
+    with_store(&mut card, |store| {
+        let mut access = store.access();
+        let mut buffer = [0; 4096];
+        let mut writer = Writer::begin(&mut access, header, &mut buffer)?;
+        for i in 0..MAX_MEMBERS {
+            writer = writer.member(&mut access, Member { hash: u64::from(i) + 1, ..Member::default() })?;
+        }
+        writer = writer.spine(&mut access, SpineItem { member: 0, before: 0 })?;
+        writer.finish(&mut access, &mut || true)
+    }).unwrap();
+    let scan = |card: &mut Card, from: u32, count: u32| with_store(card, |store| read(store, &BOOK, |s, reader| {
+        (from..from + count).all(|i| reader.member(s, i).is_some_and(|m| m.hash == u64::from(i) + 1))
+    }));
+    for from in [0, MAX_MEMBERS - SCAN_SCOPE_MEMBERS] {
+        assert_eq!(scan(&mut card, from, SCAN_SCOPE_MEMBERS), Some(true), "chunk from {from}");
+    }
+    // The allowance is real: four chunks in one scope run out of reads.
+    assert_eq!(scan(&mut card, 0, 4 * SCAN_SCOPE_MEMBERS), Some(false));
+}
+
 #[test]
 fn a_spilled_build_at_a_full_folder_never_exceeds_the_cap() {
     let mut card = build_card();

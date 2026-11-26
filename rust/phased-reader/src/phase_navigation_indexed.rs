@@ -96,9 +96,14 @@ fn bind_indexed<C: ReadScope>(parse: &mut [u8], source: &mut dyn BookSource,
     {
         // Sorting ends before menu binding, which reuses this scratch.
         let rows = Parts(&mut *parts.0).array::<index_mapping::HashRow>(toc.len())?;
-        crate::reader::query_index_store(source, store, digest, query, |store| {
-            index_mapping::declared_spines(&book, index, store, mapping, rows).map_err(|_| Status::IoError)
-        })?;
+        // Each chunk of the member scan gets its own checked scope; keep the
+        // first scope failure's status (a stale source stays Stale).
+        let mut failed = Status::IoError;
+        index_mapping::declared_spines(&book, index, &mut |scan| {
+            crate::reader::query_index_store(source, store, digest, query, |store| {
+                scan(store).map_err(|_| Status::IoError)
+            }).map_err(|status| { failed = status; book_index::Unreadable })
+        }, mapping, rows).map_err(|_| failed)?;
     }
     book.mapping = Some(mapping);
     let bound = if let Some((current, focus)) = menu {
@@ -119,11 +124,15 @@ mod tests {
         fn size(&self) -> u64 { 1 }
         fn read_at(&mut self, _: u64, out: &mut [u8]) -> i32 { if out.is_empty() { 0 } else { -1 } }
     }
-    struct Store { bytes: Vec<u8>, scopes: usize, reads: usize, opens: usize }
+    /// Counts reads as the native scope does: one per 4 KiB window it loads.
+    struct Store { bytes: Vec<u8>, scopes: usize, reads: usize, opens: usize, window: Option<u32> }
     impl CacheStorage for Store {
         fn file_size(&mut self, _: &[u8]) -> i64 { self.bytes.len() as i64 }
         fn read_at(&mut self, _: &[u8], at: u32, out: &mut [u8]) -> i32 {
-            self.reads += 1;
+            let last = (at + (out.len() as u32).max(1) - 1) / 4096;
+            for window in at / 4096..=last {
+                if self.window != Some(window) { self.reads += 1; self.window = Some(window); }
+            }
             if at == 0 && out.len() == book_index::HEADER_BYTES as usize { self.opens += 1; }
             let Some(bytes) = self.bytes.get(at as usize..at as usize + out.len()) else { return -1; };
             out.copy_from_slice(bytes); out.len() as i32
@@ -137,6 +146,7 @@ mod tests {
         fn query<R>(&mut self, _: &[u8], _: bool, _: &mut [u8], live: &mut dyn FnMut() -> bool,
             read: impl FnOnce(&mut dyn CacheStorage) -> R) -> Result<(R, bool), Status> {
             self.scopes += 1;
+            self.window = None;
             assert!(live());
             let before = self.reads;
             let value = read(self);
@@ -153,18 +163,40 @@ mod tests {
             }
         }
     }
-    fn fixture() -> (Identity, Store, BookIndex) {
+    fn fixture() -> (Identity, Store, BookIndex) { fixture_with(1) }
+    /// `members` rows in hash order; the last one is the chapter "c".
+    fn fixture_with(members: u32) -> (Identity, Store, BookIndex) {
         let identity = Identity { digest: [1; 32], policy: crate::admission::POLICY_VERSION };
         let mut title = [0; book_index::TITLE_BYTES]; title[0] = b'T';
-        let header = Header { identity, members: 1, spine: 1, spine_bytes: 1, nav: book_index::NONE,
+        let header = Header { identity, members, spine: 1, spine_bytes: 1, nav: book_index::NONE,
             ncx: book_index::NONE, cover: book_index::NONE, language: Default::default(), stylesheets: false, navigation_declared: false, title };
-        let mut store = Store { bytes: vec![0; header.payload_bytes().unwrap() as usize], scopes: 0, reads: 0, opens: 0 };
+        let mut store = Store { bytes: vec![0; header.payload_bytes().unwrap() as usize], scopes: 0, reads: 0, opens: 0, window: None };
         header.encode((&mut store.bytes[..384]).try_into().unwrap());
-        Member { hash: book_index::name_hash(b"c"), contents_spine: 0, ..Default::default() }
-            .encode((&mut store.bytes[384..416]).try_into().unwrap());
-        SpineItem { member: 0, before: 0 }.encode((&mut store.bytes[416..]).try_into().unwrap());
+        let chapter = book_index::name_hash(b"c");
+        assert!(chapter >= u64::from(members));
+        for i in 0..members {
+            let at = 384 + 32 * i as usize;
+            Member { hash: chapter - u64::from(members - 1 - i), contents_spine: if i + 1 == members { 0 } else { book_index::NONE }, ..Default::default() }
+                .encode((&mut store.bytes[at..at + 32]).try_into().unwrap());
+        }
+        let spine = 384 + 32 * members as usize;
+        SpineItem { member: members - 1, before: 0 }.encode((&mut store.bytes[spine..]).try_into().unwrap());
         let index = BookIndex::open(&mut store, &identity).unwrap();
         (identity, store, index)
+    }
+    #[test]
+    fn a_large_book_maps_contents_across_bounded_scopes() {
+        // 20,000 members span about 157 windows, more than one scope allows.
+        let (identity, mut store, index) = fixture_with(20_000);
+        let mut bytes = [0; 32]; let mut arena = Arena::new(&mut bytes);
+        let entry = TocEntry { title: arena.copy_nul_ref(Some(b"Chapter")), href: arena.copy_nul_ref(Some(b"c")), ..Default::default() };
+        let mut bank = vec![0; BANK_BYTES];
+        let mut navigation = Navigation::default();
+        bind_indexed(&mut bank, &mut Source, &mut store, &identity.digest, &index,
+            ProgressInputs { index: 0, count: 1, total: 1, current: 1, valid: true, ..Default::default() },
+            &arena, &[entry], &mut navigation, None, None).unwrap();
+        assert_eq!(navigation.section(0).spine, 0);
+        assert_eq!(store.scopes, 3, "contents-scope-bound: 20,000 members take 3 scopes of 8,192");
     }
     #[test]
     fn chapter_bind_batches_at_bound_and_refuses_oversized_toc_without_queries() {

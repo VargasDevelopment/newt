@@ -18,13 +18,19 @@ const _: () = assert!(core::mem::size_of::<HashRow>() == 12);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MappingRoute { Batch, PerRow }
 
+/// Opens one checked read scope over the index and runs the scan inside it.
+pub type Scope<'a> = dyn FnMut(&mut dyn FnMut(&mut dyn CacheStorage) -> Result<(), Unreadable>)
+    -> Result<(), Unreadable> + 'a;
+
 /// The caller reports PerRow in its trace. A short scratch loan retains the
 /// oracle's rule rather than dropping Contents rows. Storage failure is fatal;
-/// it must never publish a partially mapped menu.
+/// it must never publish a partially mapped menu. The member scan is split
+/// into `book_index::SCAN_SCOPE_MEMBERS` chunks, each in its own scope, so a large book's scan
+/// never exhausts one scope's read allowance.
 pub fn declared_spines(
     book: &impl BookView,
     index: &Reader,
-    storage: &mut (impl CacheStorage + ?Sized),
+    scope: &mut Scope<'_>,
     mapping: &mut [u32],
     scratch: &mut [HashRow],
 ) -> Result<MappingRoute, Unreadable> {
@@ -49,15 +55,23 @@ pub fn declared_spines(
     }
     let rows = &mut scratch[..used];
     rows.sort_unstable_by_key(|row| row.key());
-    let mut cursor = 0;
-    for member in 0..index.header().members {
-        if cursor == rows.len() { break; }
-        let member = index.member(storage, member).ok_or(Unreadable)?;
-        while cursor < rows.len() && rows[cursor].key().0 < member.hash { cursor += 1; }
-        while cursor < rows.len() && rows[cursor].key().0 == member.hash {
-            mapping[rows[cursor].key().1 as usize] = member.contents_spine;
-            cursor += 1;
-        }
+    let (members, mut member, mut cursor) = (index.header().members, 0, 0);
+    while member < members && cursor < rows.len() {
+        let end = members.min(member + book_index::SCAN_SCOPE_MEMBERS);
+        scope(&mut |storage| {
+            while member < end && cursor < rows.len() {
+                let found = index.member(storage, member).ok_or(Unreadable)?;
+                while cursor < rows.len() && rows[cursor].key().0 < found.hash { cursor += 1; }
+                while cursor < rows.len() && rows[cursor].key().0 == found.hash {
+                    mapping[rows[cursor].key().1 as usize] = found.contents_spine;
+                    cursor += 1;
+                }
+                member += 1;
+            }
+            Ok(())
+        })?;
+        // A scope that returns without running the scan must not end it early.
+        if member < end && cursor < rows.len() { return Err(Unreadable); }
     }
     Ok(MappingRoute::Batch)
 }

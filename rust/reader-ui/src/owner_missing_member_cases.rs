@@ -79,7 +79,7 @@ fn missing_file_keeps_contents_rows_not_found_and_no_chapter_notice() {
     let mut mapping = [0; 2];
     let mut book = IndexedBook { header: reader.header(), arena: &arena, toc: &toc, mapping: None,
         lookup: &|_| panic!("batch must avoid per-row lookup"), progress: Default::default() };
-    index_mapping::declared_spines(&book, &reader, &mut store, &mut mapping, &mut [HashRow::default(); 2]).unwrap();
+    index_mapping::declared_spines(&book, &reader, &mut |scan| scan(&mut store), &mut mapping, &mut [HashRow::default(); 2]).unwrap();
     book.mapping = Some(&mapping);
     let (mut actual, mut expected) = (Navigation::default(), Navigation::default());
     assert!(actual.bind_menu(&book, Section::default(), 0, &mut [0; 2]));

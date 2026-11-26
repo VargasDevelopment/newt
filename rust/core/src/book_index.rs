@@ -52,6 +52,10 @@ pub const DIGEST_AT:u32=12;
 /// UTF-8 boundary, NUL-terminated (`copy_display_title`).
 pub const TITLE_BYTES: usize = 256;
 pub const MEMBER_BYTES: u32 = 32;
+/// Members one checked read scope may scan in order. A native scope allows 128
+/// reads of one 4 KiB window each; 8,192 members span about 65 windows, which
+/// leaves room for the scope's attach and header reads at any member count.
+pub const SCAN_SCOPE_MEMBERS: u32 = 8192;
 pub const SPINE_BYTES: u32 = 16;
 /// 65,535 is the classic ZIP count sentinel for ZIP64.
 pub const MAX_MEMBERS: u32 = 65_534;

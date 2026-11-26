@@ -453,7 +453,7 @@ fn batch_contents_matches_oracle_and_reads_each_member_at_most_once() {
     book.declared_spines(&mut expected);
     let mut actual = vec![0; book.toc_count()];
     let mut scratch = vec![HashRow::default(); actual.len()];
-    assert_eq!(index_mapping::declared_spines(&book, &index, &mut storage,
+    assert_eq!(index_mapping::declared_spines(&book, &index, &mut |scan| scan(&mut storage),
         &mut actual, &mut scratch), Ok(MappingRoute::Batch));
     assert_eq!(actual, expected);
     assert!(storage.reads.len() <= book.members.len());
@@ -468,7 +468,7 @@ fn batch_contents_preserves_duplicate_declarations_and_nul_terminated_hrefs() {
     let (mut storage, index) = mapping_index(&book);
     let mut mapping = vec![0; book.toc_count()];
     let mut scratch = vec![HashRow::default(); mapping.len()];
-    index_mapping::declared_spines(&book, &index, &mut storage, &mut mapping, &mut scratch).unwrap();
+    index_mapping::declared_spines(&book, &index, &mut |scan| scan(&mut storage), &mut mapping, &mut scratch).unwrap();
     assert_eq!(mapping, vec![1; book.toc_count()]);
 }
 
@@ -482,7 +482,7 @@ fn short_batch_scratch_uses_the_per_row_rule_without_index_reads() {
     let mut mapping = vec![0; book.toc_count()];
     let mut scratch = vec![HashRow::default(); mapping.len() - 1];
     storage.fail = true;
-    assert_eq!(index_mapping::declared_spines(&book, &index, &mut storage,
+    assert_eq!(index_mapping::declared_spines(&book, &index, &mut |scan| scan(&mut storage),
         &mut mapping, &mut scratch), Ok(MappingRoute::PerRow));
     assert_eq!(mapping, expected);
     assert!(storage.reads.is_empty());
@@ -496,10 +496,13 @@ fn batch_contents_reports_storage_failure_and_short_mapping() {
     let (mut storage, index) = mapping_index(&book);
     let mut mapping = vec![0; book.toc_count()];
     let mut scratch = vec![HashRow::default(); mapping.len()];
-    assert!(index_mapping::declared_spines(&book, &index, &mut storage,
+    assert!(index_mapping::declared_spines(&book, &index, &mut |scan| scan(&mut storage),
         &mut [], &mut scratch).is_err());
     storage.fail = true;
-    assert!(index_mapping::declared_spines(&book, &index, &mut storage,
+    assert!(index_mapping::declared_spines(&book, &index, &mut |scan| scan(&mut storage),
+        &mut mapping, &mut scratch).is_err());
+    // A scope that returns without running the scan must not read as a complete map.
+    assert!(index_mapping::declared_spines(&book, &index, &mut |_| Ok(()),
         &mut mapping, &mut scratch).is_err());
 }
 
@@ -538,7 +541,7 @@ fn indexed_view_matches_parser_navigation_with_batch_and_per_row_mapping() {
     let mut book = IndexedBook { header: index.header(), arena: &arena, toc: &toc,
         mapping: None, lookup: &lookup, progress: oracle.progress_inputs(1) };
     let mut mapping = vec![0; toc.len()];
-    index_mapping::declared_spines(&book, &index, &mut storage, &mut mapping,
+    index_mapping::declared_spines(&book, &index, &mut |scan| scan(&mut storage), &mut mapping,
         &mut vec![HashRow::default(); toc.len()]).unwrap();
     let mut expected = Navigation::default();
     for batch in [false, true] {
