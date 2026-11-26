@@ -117,8 +117,9 @@ def firmware_row_validation():
                 payload = f'!N1 12345 2 {identifier} {body}'.encode()
                 return payload + f' *{zlib.crc32(payload):08x}\n'.encode()
             self.pending += (b'PC target: from=8 next=1\n' + frame('ACCEPTED') + frame('CONSUMED') +
-                             # A skipped row suffix leaves its prefix glued to the next reply (#170).
-                             b'PC admission: r=1 s=3 u=0\nPC target: from=8 ne' + frame('RENDER_RETURN gen=2'))
+                             # A skipped row suffix leaves its prefix glued to the next reply (#170);
+                             # the prefix may itself hold a marker that is not a record.
+                             b'PC admission: r=1 s=3 u=0\nPC target: from=8 ne!N1 debug ' + frame('RENDER_RETURN gen=2'))
         def read_data(self, remaining):
             data, self.pending = self.pending[:13], self.pending[13:]
             if not data:

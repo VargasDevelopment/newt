@@ -49,15 +49,18 @@ def decode_record(line):
 def glued_record(line):
     """A console row cut short by a skipped write (#170) has no newline, so the
     next reply follows it on one line. Return that reply only when it is a whole
-    checksummed record; the cut prefix is dropped, never kept as a row."""
+    checksummed record; the cut prefix is dropped, never kept as a row. The
+    prefix can itself hold `!N1 `, so every marker is tried."""
+    if line.startswith(b'!N1 '):
+        return None
     start = line.find(b'!N1 ', 1)
-    if start < 0 or line.startswith(b'!N1 '):
-        return None
-    tail = line[start:]
-    match = RECORD.fullmatch(tail)
-    if not match or zlib.crc32(tail[:tail.rfind(b' *')]) != int(match[5], 16):
-        return None
-    return tail
+    while start >= 0:
+        tail = line[start:]
+        match = RECORD.fullmatch(tail)
+        if match and zlib.crc32(tail[:tail.rfind(b' *')]) == int(match[5], 16):
+            return tail
+        start = line.find(b'!N1 ', start + 1)
+    return None
 
 
 def decode_fields(body, required):
