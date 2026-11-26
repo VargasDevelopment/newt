@@ -139,6 +139,40 @@ fn an_index_round_trips_with_one_open_file() {
 }
 
 #[test]
+fn v3_book_indexes_stay_admitted_while_v1_and_v2_are_refused() {
+    use newt_core::page_envelope::{self, MANIFEST_BYTES};
+    let mut card = Card::new();
+    with_store(&mut card, |store| write(store, BOOK)).unwrap();
+    let path = format!("{ROOT}/Index/{}", leaf(&BOOK.digest));
+    let good = card.model.files[&path].clone();
+    let restamp = |version: u32| {
+        let mut stamped = good.clone();
+        let at = stamped.durable.len() - MANIFEST_BYTES as usize;
+        for buf in [&mut stamped.durable, &mut stamped.readable] {
+            buf[at + 4..at + 8].copy_from_slice(&version.to_le_bytes());
+            let checksum = page_envelope::crc(u32::MAX, &buf[at..at + 60]) ^ u32::MAX;
+            buf[at + 60..].copy_from_slice(&checksum.to_le_bytes());
+        }
+        stamped
+    };
+    for rejected in [1u32, 2, 6] {
+        card.model.files.insert(path.clone(), restamp(rejected));
+        assert_eq!(with_store(&mut card, |store| read(store, &BOOK, complete)), None);
+    }
+    for admitted in [3u32, 4, 5] {
+        card.model.files.insert(path.clone(), restamp(admitted));
+        assert_eq!(with_store(&mut card, |store| read(store, &BOOK, complete)), Some(true));
+    }
+    // Backup fallback (.BAK) under an interrupted replace also stays admitted for v3/v4.
+    let backup_path = format!("{ROOT}/Index/{}", backup(&leaf(&BOOK.digest)));
+    card.model.files.remove(&path);
+    for admitted in [3u32, 4] {
+        card.model.files.insert(backup_path.clone(), restamp(admitted));
+        assert_eq!(with_store(&mut card, |store| read(store, &BOOK, complete)), Some(true));
+    }
+}
+
+#[test]
 fn a_damaged_stale_or_foreign_index_is_refused() {
     let mut card = Card::new();
     with_store(&mut card, |store| write(store, BOOK)).unwrap();

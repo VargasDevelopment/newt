@@ -49,6 +49,10 @@ impl<'a> EngineState<'a> {
             par_link_count: 0,
             current_link: 0,
             last_shy: false,
+            word_state: case::WS_SEP,
+            par_case: false,
+            par_dir: DIR_NONE,
+            carried_margin_px: 0,
         };
         e.storage.elements[0] = Element {
             align: e.params.align,

@@ -407,7 +407,7 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
             return false;
         }
         let mut payload = 0;
-        if !envelope::inspect(&manifest, extent, &route, &mut payload) {
+        if !envelope::inspect_for(self.envelope_name(), &manifest, extent, &route, &mut payload) {
             return false;
         }
         if complete || self.file.producing() {
@@ -542,7 +542,9 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
             return false;
         }
         let mut checked = 0;
-        if !envelope::inspect(&manifest, extent, route, &mut checked) || checked != payload {
+        if !envelope::inspect_for(self.envelope_name(), &manifest, extent, route, &mut checked)
+            || checked != payload
+        {
             return false;
         }
         let (mut whole, mut directory) = (u32::MAX, u32::MAX);

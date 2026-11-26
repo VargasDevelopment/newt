@@ -149,3 +149,36 @@ fn ink_extents_matches_draw_for_every_atlas_glyph() {
         assert_eq!(bits(&edge), bits(&center), "U+{cp:04X} clipped at edge baseline {baseline}");
     }
 }
+#[test]
+fn case_tables_cover_every_atlas_bicameral_pair() {
+    use newt_core::chapter_layout::case;
+    let mut atlas = ReaderAtlas;
+    let mut checked_upper = 0usize;
+    let mut checked_lower = 0usize;
+    let all = (32u32..=126)
+        .chain(kReaderExtraCodepoints.iter().map(|&c| u32::from(c)))
+        .chain(kReaderAddedCodepoints.iter().map(|&c| u32::from(c)));
+    for cp in all {
+        let ch = char::from_u32(cp).unwrap();
+        let mut up = ch.to_uppercase();
+        if let (Some(u), None) = (up.next(), up.next()) {
+            let ucp = u as u32;
+            if ucp != cp && atlas.covers(ucp) {
+                assert_eq!(case::to_upper(cp), ucp, "missing to_upper U+{cp:04X} -> U+{ucp:04X}");
+                checked_upper += 1;
+            }
+        }
+        let mut lo = ch.to_lowercase();
+        if let (Some(l), None) = (lo.next(), lo.next()) {
+            let lcp = l as u32;
+            if lcp != cp && atlas.covers(lcp) {
+                assert_eq!(case::to_lower(cp), lcp, "missing to_lower U+{cp:04X} -> U+{lcp:04X}");
+                checked_lower += 1;
+            }
+        }
+    }
+    assert!(checked_upper >= 510, "expected >= 510 upper atlas pairs, got {checked_upper}");
+    assert!(checked_lower >= 500, "expected >= 500 lower atlas pairs, got {checked_lower}");
+    assert_eq!(case::to_lower('İ' as u32), 'i' as u32);
+    assert_eq!(case::to_upper('ß' as u32), 'ß' as u32);
+}

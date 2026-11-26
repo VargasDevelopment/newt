@@ -24,7 +24,8 @@ fn independent_every_field_and_stale_root_flag() {
             margin_bottom_pct: 1000,
             display_none: 1,
             underline: 1,
-            vert_align: 2
+            vert_align: 2,
+            text_case: 0,
         }
     );
     let mut over = got;
@@ -43,7 +44,8 @@ fn independent_every_field_and_stale_root_flag() {
             margin_bottom_pct: 0,
             display_none: 1,
             underline: 0,
-            vert_align: 0
+            vert_align: 0,
+            text_case: 0,
         }
     );
 }
@@ -184,4 +186,115 @@ fn sheet_status_precedence_and_no_partial_commit() {
         Status::Ok
     );
     assert_eq!(b.finish().rules[0].decl.size_pct, 200);
+}
+
+#[test]
+fn small_caps_and_text_transform_parse_and_cascade_independently() {
+    assert_eq!(core::mem::size_of::<CssDecl>(), 18);
+    assert_eq!(core::mem::size_of::<CssRule>(), 28);
+
+    // font-variant tokens and font-variant-caps single values.
+    for decl in [
+        b"font-variant: small-caps".as_slice(),
+        b"font-variant: all-small-caps",
+        b"font-variant: petite-caps",
+        b"font-variant: all-petite-caps",
+        b"font-variant: common-ligatures small-caps oldstyle-nums",
+        b"font-variant-caps: small-caps",
+        b"font-variant-caps: all-small-caps",
+        b"font-variant-caps: petite-caps",
+    ] {
+        let d = inline(decl);
+        assert_eq!(d.text_case & SMALL_CAPS_MASK, SMALL_CAPS_ON, "{decl:?}");
+        assert_eq!(d.text_case & TEXT_TRANSFORM_MASK, 0, "{decl:?}");
+    }
+    for decl in [
+        b"font-variant: normal".as_slice(),
+        b"font-variant-caps: normal",
+    ] {
+        assert_eq!(inline(decl).text_case & SMALL_CAPS_MASK, SMALL_CAPS_NORMAL);
+    }
+    // Invalid or unrelated values are ignored without clobbering prior state,
+    // including explicit `normal` or mutually exclusive caps tokens.
+    let invalid = inline(
+        b"font-variant:small-caps;font-variant:normal small-caps;font-variant:small-caps petite-caps;font-variant-caps:common-ligatures small-caps;font-variant:bogus",
+    );
+    assert_eq!(invalid.text_case & SMALL_CAPS_MASK, SMALL_CAPS_ON);
+    let invalid_from_normal = inline(
+        b"font-variant:normal;font-variant:small-caps petite-caps;font-variant:small-caps small-caps",
+    );
+    assert_eq!(invalid_from_normal.text_case & SMALL_CAPS_MASK, SMALL_CAPS_NORMAL);
+
+    // text-transform keywords and invalid-value preservation.
+    for (decl, expected) in [
+        (b"text-transform:none".as_slice(), TEXT_TRANSFORM_NONE),
+        (b"text-transform:uppercase", TEXT_TRANSFORM_UPPERCASE),
+        (b"text-transform:lowercase", TEXT_TRANSFORM_LOWERCASE),
+        (b"text-transform:capitalize", TEXT_TRANSFORM_CAPITALIZE),
+    ] {
+        let d = inline(decl);
+        assert_eq!(
+            (d.text_case & TEXT_TRANSFORM_MASK) >> TEXT_TRANSFORM_SHIFT,
+            expected
+        );
+        assert_eq!(d.text_case & SMALL_CAPS_MASK, SMALL_CAPS_INHERIT);
+    }
+    let preserved = inline(b"text-transform:capitalize;text-transform:full-width");
+    assert_eq!(
+        (preserved.text_case & TEXT_TRANSFORM_MASK) >> TEXT_TRANSFORM_SHIFT,
+        TEXT_TRANSFORM_CAPITALIZE
+    );
+
+    // Independent cascade: resetting one axis never clobbers the other.
+    let mut slots = vec![CssRule::default(); MAX_RULES];
+    let mut b = CssStylesheetBuilder::default();
+    assert!(b.begin(&mut slots));
+    b.add_text(
+        b"span{font-variant:small-caps;text-transform:lowercase} \
+          .up{text-transform:uppercase} \
+          span.norm{font-variant-caps:normal}",
+    );
+    let sheet = b.finish();
+    let d1 = cascade_for(&sheet, Some(b"span"), Some(b"up"), None);
+    assert_eq!(d1.text_case & SMALL_CAPS_MASK, SMALL_CAPS_ON);
+    assert_eq!(
+        (d1.text_case & TEXT_TRANSFORM_MASK) >> TEXT_TRANSFORM_SHIFT,
+        TEXT_TRANSFORM_UPPERCASE
+    );
+    let d2 = cascade_for(&sheet, Some(b"span"), Some(b"up norm"), None);
+    assert_eq!(d2.text_case & SMALL_CAPS_MASK, SMALL_CAPS_NORMAL);
+    assert_eq!(
+        (d2.text_case & TEXT_TRANSFORM_MASK) >> TEXT_TRANSFORM_SHIFT,
+        TEXT_TRANSFORM_UPPERCASE
+    );
+    let d3 = cascade_for(
+        &sheet,
+        Some(b"span"),
+        Some(b"up"),
+        Some(&inline(b"text-transform:none")),
+    );
+    assert_eq!(d3.text_case & SMALL_CAPS_MASK, SMALL_CAPS_ON);
+    assert_eq!(
+        (d3.text_case & TEXT_TRANSFORM_MASK) >> TEXT_TRANSFORM_SHIFT,
+        TEXT_TRANSFORM_NONE
+    );
+
+    // Mixed-case property names and keywords work identically in both inline
+    // styles and stylesheet rules (CSS ASCII case-insensitivity).
+    let mixed_inline = inline(b"Font-Variant: Small-Caps; Text-Transform: Uppercase");
+    assert_eq!(mixed_inline.text_case & SMALL_CAPS_MASK, SMALL_CAPS_ON);
+    assert_eq!(
+        (mixed_inline.text_case & TEXT_TRANSFORM_MASK) >> TEXT_TRANSFORM_SHIFT,
+        TEXT_TRANSFORM_UPPERCASE
+    );
+    let mut slots2 = vec![CssRule::default(); MAX_RULES];
+    let mut b2 = CssStylesheetBuilder::default();
+    assert!(b2.begin(&mut slots2));
+    b2.add_text(b".mc{FONT-VARIANT-CAPS: All-Petite-Caps; TEXT-TRANSFORM: Capitalize}");
+    let d_mc = cascade_for(&b2.finish(), Some(b"p"), Some(b"mc"), None);
+    assert_eq!(d_mc.text_case & SMALL_CAPS_MASK, SMALL_CAPS_ON);
+    assert_eq!(
+        (d_mc.text_case & TEXT_TRANSFORM_MASK) >> TEXT_TRANSFORM_SHIFT,
+        TEXT_TRANSFORM_CAPITALIZE
+    );
 }

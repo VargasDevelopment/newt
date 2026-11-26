@@ -239,6 +239,8 @@ fn link_pool_limit_moves_the_whole_line_with_its_link() {
 mod links;
 #[path = "chapter_layout/inline_ascent.rs"]
 mod inline_ascent;
+#[path = "chapter_layout/small_caps.rs"]
+mod small_caps;
 
 fn two_lines_on_separate_pages(page_cap: usize, run_cap: usize) {
     let mut sink = Capture::default();
