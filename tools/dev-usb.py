@@ -21,6 +21,8 @@ from dev_usb_put import card_target, plan, put_files
 RECORD = re.compile(rb'!N1 ([0-9]+) ([0-9]+) ([0-9]+) (.*) \*([0-9a-f]{8})\n\Z')
 MAX_AUDIT_RECORDS = 2048  # Covers both directions of 32 PRESSes and two full captures.
 RESYNC_QUIET_SECONDS = 4.1  # PUT's 3 s receive bound, 1 s statistics output, and cleanup margin.
+# The device ends a session after 60 s without a request; say HELLO again first (#170).
+SESSION_REFRESH_SECONDS = 55
 FAILURE_TAIL_SECONDS = 1.1  # Includes the firmware's bounded best-effort PUT_STATS output.
 CAPS = ('press,status,frame', 'press,status,frame,diag', 'press,status,frame,diag2',
         'press,status,frame,diag2,put')
@@ -42,6 +44,23 @@ def decode_record(line):
            for n, number in enumerate(numbers, 1)):
         raise ValueError('Malformed protocol identity')
     return numbers + (match[4].decode('ascii'),)
+
+
+def glued_record(line):
+    """A console row cut short by a skipped write (#170) has no newline, so the
+    next reply follows it on one line. Return that reply only when it is a whole
+    checksummed record; the cut prefix is dropped, never kept as a row. The
+    prefix can itself hold `!N1 `, so every marker is tried."""
+    if line.startswith(b'!N1 '):
+        return None
+    start = line.find(b'!N1 ', 1)
+    while start >= 0:
+        tail = line[start:]
+        match = RECORD.fullmatch(tail)
+        if match and zlib.crc32(tail[:tail.rfind(b' *')]) == int(match[5], 16):
+            return tail
+        start = line.find(b'!N1 ', start + 1)
+    return None
 
 
 def decode_fields(body, required):
@@ -130,6 +149,8 @@ class ProtocolClient:
         self.pre_press_buffer = 0
         self.firmware_rows = FirmwareRows()
         self.connection = {'transport': 'protocol', 'closed': False, 'events': []}
+        self.expected_build = None
+        self.last_sent = None
 
     def connection_event(self, event):
         if len(self.connection['events']) < 16:
@@ -159,7 +180,8 @@ class ProtocolClient:
                 self.buffer = bytearray(rest)
                 preexisting = self.pre_press_buffer > 0
                 self.pre_press_buffer = max(0, self.pre_press_buffer - len(line) - 1)
-                record = decode_record(bytes(line) + b'\n')
+                glued = glued_record(bytes(line) + b'\n')
+                record = decode_record(glued or bytes(line) + b'\n')
                 if record is not None:
                     if not record[3].startswith(self.untraced):
                         self.trace('response', *record[:3], record[3].partition(' ')[0], record[3])
@@ -189,6 +211,7 @@ class ProtocolClient:
         else:
             self.trace('request', *map(int, tokens[1:4]), tokens[4], text.split(' ', 4)[4])
         self.write_data(data, remaining)
+        self.last_sent = time.monotonic()
 
     def drain_responses(self, seconds):
         """Read-only error tail; records remain in the audit and authorize nothing."""
@@ -216,6 +239,7 @@ class ProtocolClient:
 
     def hello(self, expected_build=None, *, recovering=False):
         self.capabilities = frozenset()
+        self.expected_build = expected_build
         previous = None
         for _ in range(2):
             deadline = time.monotonic() + self.timeout
@@ -253,6 +277,8 @@ class ProtocolClient:
         if command not in ('STATUS', 'FRAME', 'DIAG', 'PANEL') and not re.fullmatch(
                 r'PRESS (previous|next|activate|back|sleep|purge-cache)|CHUNK [0-9]+ [0-9]+', command):
             raise ValueError('Unsupported bounded command')
+        if self.last_sent is not None and time.monotonic() - self.last_sent >= SESSION_REFRESH_SECONDS:
+            self.hello(self.expected_build)
         self.request_id += 1
         if self.request_id > 0xffffffff:
             raise ValueError('Session request IDs exhausted; request a fresh handshake')

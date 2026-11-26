@@ -48,6 +48,8 @@ pub mod app_power;
 pub mod firmware_switch;
 pub mod library_covers;
 pub mod runtime_lows;
+#[cfg(feature = "dev-usb")]
+pub mod usb_link_row;
 
 // SAFETY: IDF abort and the image-local crash-output setter use these exact ABIs.
 unsafe extern "C" {

@@ -127,6 +127,8 @@ pub struct Application<'sdk> {
     #[cfg(feature = "dev-usb")]
     pub runtime_lows: crate::runtime_lows::RuntimeLows,
     #[cfg(feature = "dev-usb")]
+    pub usb_link: crate::usb_link_row::UsbLinkRow,
+    #[cfg(feature = "dev-usb")]
     pub device_fingerprint: u64,
 }
 
@@ -169,6 +171,8 @@ impl<'sdk> Application<'sdk> {
             panels: crate::reading_storage::initialize(panels, PanelRing::default),
             #[cfg(feature = "dev-usb")]
             runtime_lows: crate::runtime_lows::RuntimeLows::default(),
+            #[cfg(feature = "dev-usb")]
+            usb_link: crate::usb_link_row::UsbLinkRow::default(),
             #[cfg(feature = "dev-usb")]
             device_fingerprint,
         })

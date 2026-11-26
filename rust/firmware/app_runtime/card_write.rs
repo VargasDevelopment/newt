@@ -15,7 +15,8 @@ mod observation;
 const MOUNT: &CStr = c"/newt-sd";
 
 /// Runs one granted lease to its end and hands the outcome to the bridge.
-pub fn lease(bridge: &mut Bridge, home: &mut Home<'_>, events: &mut Events<'_, '_>, session: Session) {
+pub fn lease(bridge: &mut Bridge, link: &mut newt_core::dev_link::LinkWatch, home: &mut Home<'_>,
+    events: &mut Events<'_, '_>, session: Session) {
     let mut block = newt_sdk_heap::Bytes::try_new(MEMORY_BYTES);
     let Some(memory) = block.as_mut().and_then(|block| <&mut [u8; MEMORY_BYTES]>::try_from(block.as_mut()).ok()) else {
         bridge.put_refused(session.request, b"ERROR no-memory");
@@ -30,14 +31,15 @@ pub fn lease(bridge: &mut Bridge, home: &mut Home<'_>, events: &mut Events<'_, '
         let _ = board.with_sha256(|hash| {
             // Acquire only after admission, memory, mount and hash succeeded,
             // before the offer lets the host send any FILE or DATA bytes.
-            let mut wire = LeaseWire { channel: log.dev_channel(clock).receive_put(), events, tx_flush_pending: false, counters: observation::Counters::default() };
-            ended = Some(dev_put::run(session, memory, &mut wire, &mut card, hash));
+            let mut wire = LeaseWire { channel: log.dev_channel(clock, link).receive_put(), events, tx_flush_pending: false, counters: observation::Counters::default() };
+            let end = dev_put::run(session, memory, &mut wire, &mut card, hash);
+            ended = Some((end, wire.counters.reason()));
             wire.report();
         });
     });
     let now = home.bus.board.monotonic_clock().millis();
     match (mounted, ended) {
-        (_, Some(end)) => bridge.put_ended(end, crate::app_dev::BUILD_ID, now),
+        (_, Some((end, exit))) => bridge.put_ended(end, exit, crate::app_dev::BUILD_ID, now),
         (Ok(()), None) => bridge.put_refused(session.request, b"ERROR hash"),
         (Err(_), None) => bridge.put_refused(session.request, b"ERROR no-card"),
     }

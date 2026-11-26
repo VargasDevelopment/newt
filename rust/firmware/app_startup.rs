@@ -130,9 +130,7 @@ unsafe fn run_update<'sdk, O: Online>(board: Board<'sdk>, pending: PendingInput<
     // the filled view never moves; every success remains in this scope until reset.
     unsafe {
         nb_withhold_console();
-        let mut ui = match ModeUi::new(board, log, &probe) {
-            Ok(ui) => ui, Err(_) => crate::stop(),
-        };
+        let mut ui = ModeUi::new(board, log, &probe);
         if ui.trace_heap("start").is_err() { crate::stop(); }
         crate::wifi_memory::run_constructors();
         let mut sdk = crate::update_native::Sdk::for_update_boot(&ui.bus.board);

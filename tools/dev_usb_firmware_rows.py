@@ -5,8 +5,8 @@ import time
 # The firmware's number-only rows the bench needs: the loop's stack and heap
 # lows, the idle page cache's census, admission and target, the CrossInk
 # import's result, the library scan's counts, the reader's heap admission
-# at an open (#325), the cover producer's step and cache census, and Home's
-# one cover read per visit (#316). Whole-line matches only; any other text,
+# at an open (#325), the cover producer's step and cache census, Home's
+# one cover read per visit (#316), and the DEV USB link totals (#170). Whole-line matches only; any other text,
 # such as a name, is never retained.
 NUMBER = rb'(0|[1-9][0-9]{0,19})'
 SIGNED = rb'(0|-?[1-9][0-9]{0,9})'
@@ -76,6 +76,9 @@ FIRMWARE_ROWS = {
     'pc_seg': re.compile(rb'PC seg: idx=(?P<idx>%s) pages=(?P<pages>%s) bytes=(?P<bytes>%s) '
                          rb'layout_us=(?P<layout_us>%s) tee_us=(?P<tee_us>%s) write_us=(?P<write_us>%s) '
                          rb'fin_us=(?P<fin_us>%s) commit_us=(?P<commit_us>%s)' % ((NUMBER,) * 8)),
+    'usb_link': re.compile(rb'USB link: blips=(?P<blips>%s) lost=(?P<lost>%s) latched=(?P<latched>%s) '
+                           rb'skipped=(?P<skipped>%s) end_link=(?P<end_link>%s) end_idle=(?P<end_idle>%s) '
+                           rb'end_tx=(?P<end_tx>%s) end_tail=(?P<end_tail>%s)' % ((NUMBER,) * 8)),
     'pc_seal': re.compile(rb'PC seal: idx=(?P<idx>%s) read=(?P<read>%s) crc=(?P<crc>%s) dir=(?P<dir>%s) '
                           rb'sync=(?P<sync>%s) verify=(?P<verify>%s) heap=(?P<heap>%s) largest=(?P<largest>%s) '
                           rb'stack=(?P<stack>%s)' % ((NUMBER,) * 9)),

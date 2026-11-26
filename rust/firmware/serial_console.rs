@@ -3,7 +3,8 @@
 //! serial_console/native. Each `write_str` is one SDK write, which holds the
 //! SDK's transmit lock for the whole call, as one pinned `printf` does; a
 //! caller stages what it writes together (write_clock_log stages each of the
-//! pinned two halves). Unsafe is confined to the bridge calls.
+//! pinned two halves). In DEV builds a row longer than the transmit ring is
+//! written in ring-sized parts. Unsafe is confined to the bridge calls.
 use core::{fmt, marker::PhantomData};
 
 unsafe extern "C" {
@@ -18,13 +19,18 @@ unsafe extern "C" {
 #[cfg(feature = "dev-usb")]
 const DEV_TX_TIMEOUT_MS: u32 = 5;
 
-/// The begun Serial. Zero-sized; only `begin` makes one, so no write through
-/// it can precede the SDK's begin. !Send and !Sync: it stays on the setup task
-/// that began it and moves into that task's BoardBus/PanelBus `log`.
+/// The begun Serial. Only `begin` makes one, so no write through it can
+/// precede the SDK's begin. !Send and !Sync: it stays on the setup task that
+/// began it and moves into that task's BoardBus/PanelBus `log`. It moves by
+/// value through startup, so each byte here costs stack many times over: its
+/// only DEV state is the 2 B skipped-row count. The link watch lives with the
+/// owner that polls the bridge (#170).
 pub struct SerialConsole {
     _task: PhantomData<*mut ()>,
     #[cfg(feature = "dev-usb")]
     receive: newt_c3_board::dev_usb::ReceiveOwner,
+    #[cfg(feature = "dev-usb")]
+    skipped: core::cell::Cell<u16>,
 }
 
 impl SerialConsole {
@@ -32,11 +38,35 @@ impl SerialConsole {
         newt_c3_board::dev_usb::available()
     }
 
-    // This UI-only ZST owns no Rust buffer; SDK writes also share its input probe.
+    // This UI-only owner holds no Rust buffer; SDK writes also share its input probe.
+    #[cfg(not(feature = "dev-usb"))]
+    pub fn write_bytes(&self, bytes: &[u8]) -> usize { sdk_write(bytes) }
+
+    /// DEV: HWCDC is never offered more than its ring has room for. A write
+    /// that waits inside HWCDC for 5 ms latches its `connected` flag false,
+    /// which ended DEV sessions while the cable stayed in (#170). Wait up to
+    /// that same 5 ms for room here instead; if none comes, skip the rest of
+    /// the row and count it. While the flag is already false, write as before.
+    #[cfg(feature = "dev-usb")]
     pub fn write_bytes(&self, bytes: &[u8]) -> usize {
-        // SAFETY: bytes stays live for this synchronous existing SDK write.
-        unsafe { nsc_write(bytes.as_ptr(), bytes.len()) }
+        use newt_c3_board::dev_usb;
+        let mut sent = 0;
+        while sent < bytes.len() {
+            let part = &bytes[sent..sent + (bytes.len() - sent).min(dev_usb::TX_RING_BYTES)];
+            if dev_usb::connected() && !dev_usb::wait_for_room(part.len(), DEV_TX_TIMEOUT_MS * 1_000) {
+                self.skipped.set(self.skipped.get().wrapping_add(1));
+                break;
+            }
+            let put = sdk_write(part);
+            sent += put;
+            if put != part.len() { break; }
+        }
+        sent
     }
+
+    /// Rows skipped for want of ring room, for the `USB link` row. It wraps.
+    #[cfg(feature = "dev-usb")]
+    pub fn skipped(&self) -> u16 { self.skipped.get() }
 
     pub fn flush(&mut self) {
         newt_c3_board::dev_usb::flush();
@@ -56,21 +86,32 @@ impl SerialConsole {
             Self { _task: PhantomData,
                 #[cfg(feature = "dev-usb")]
                 receive: newt_c3_board::dev_usb::ReceiveOwner::acquired(),
+                #[cfg(feature = "dev-usb")]
+                skipped: core::cell::Cell::new(0),
             }
         }
     }
 
     /// The same exclusive serial owner, borrowed only for this bridge poll.
     /// Logging cannot share the port while the channel's loan is active.
+    /// `link` is the caller's watch, which decides when the host is gone.
     #[cfg(feature = "dev-usb")]
-    pub fn dev_channel(&mut self, clock: newt_c3_board::MonotonicClock) -> DevChannel<'_> {
-        DevChannel { _serial: self, clock }
+    pub fn dev_channel<'a>(&'a mut self, clock: newt_c3_board::MonotonicClock,
+        link: &'a mut newt_core::dev_link::LinkWatch) -> DevChannel<'a> {
+        DevChannel { _serial: self, link, clock }
     }
+}
+
+/// One synchronous SDK write; every console write goes through it.
+fn sdk_write(bytes: &[u8]) -> usize {
+    // SAFETY: bytes stays live for this synchronous existing SDK write.
+    unsafe { nsc_write(bytes.as_ptr(), bytes.len()) }
 }
 
 #[cfg(feature = "dev-usb")]
 pub struct DevChannel<'a> {
     _serial: &'a mut SerialConsole,
+    link: &'a mut newt_core::dev_link::LinkWatch,
     clock: newt_c3_board::MonotonicClock,
 }
 
@@ -79,10 +120,11 @@ impl<'a> DevChannel<'a> {
     /// Consume the sole serial loan for a granted PUT. Other bridge commands
     /// keep the normal SDK receive path and cannot nest another RX loan.
     pub fn receive_put(self) -> PutChannel<'a> {
-        PutChannel { rx: self._serial.receive.receive(), clock: self.clock }
+        PutChannel { rx: self._serial.receive.receive(), link: self.link, clock: self.clock }
     }
+    /// Whether the host link is up: see `newt_core::dev_link` (#170).
     pub fn connected(&mut self) -> bool {
-        newt_c3_board::dev_usb::connected()
+        link_up(self.link, self.clock)
     }
     pub fn read_byte(&mut self) -> i32 {
         newt_c3_board::dev_usb::read_byte()
@@ -100,11 +142,12 @@ impl<'a> DevChannel<'a> {
 #[cfg(feature = "dev-usb")]
 pub struct PutChannel<'a> {
     rx: newt_c3_board::dev_usb::PutReceive<'a>,
+    link: &'a mut newt_core::dev_link::LinkWatch,
     clock: newt_c3_board::MonotonicClock,
 }
 #[cfg(feature = "dev-usb")]
 impl PutChannel<'_> {
-    pub fn connected(&mut self) -> bool { newt_c3_board::dev_usb::connected() }
+    pub fn connected(&mut self) -> bool { link_up(self.link, self.clock) }
     pub fn read(&mut self, out: &mut [u8]) -> usize {
         let clock = self.clock;
         self.rx.read(out, || clock.micros())
@@ -112,6 +155,14 @@ impl PutChannel<'_> {
     pub fn flush_tx_tail(&mut self) -> bool { newt_c3_board::dev_usb::flush_tx_tail() }
     pub fn write(&mut self, bytes: &[u8]) -> usize { newt_c3_board::dev_usb::write(bytes) }
     pub fn now(&mut self) -> u32 { self.clock.millis() }
+}
+
+/// One link sample. HWCDC's flag is read first: reading it while false also
+/// re-arms the interrupt that sets it true again.
+#[cfg(feature = "dev-usb")]
+fn link_up(link: &mut newt_core::dev_link::LinkWatch, clock: newt_c3_board::MonotonicClock) -> bool {
+    let latched = newt_c3_board::dev_usb::connected();
+    link.sample(newt_c3_board::dev_usb::link_present(), latched, clock.millis())
 }
 
 impl fmt::Write for SerialConsole {

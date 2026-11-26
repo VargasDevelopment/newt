@@ -22,26 +22,34 @@ pub struct ModeUi<'sdk> {
     #[cfg(feature = "dev-usb")]
     bridge: Bridge,
     #[cfg(feature = "dev-usb")]
+    link: newt_core::dev_link::LinkWatch,
+    #[cfg(feature = "dev-usb")]
     panels: PanelRing,
     #[cfg(feature = "dev-usb")]
     fingerprint: u64,
 }
 
 impl<'sdk> ModeUi<'sdk> {
-    pub fn new(board: Board<'sdk>, log: SerialConsole, probe: &Probe) -> Result<Self, HardwareError> {
+    /// Stops the image if the hardware reader fails, as its one caller did.
+    /// Returning `Self`, not a Result, lets it be built straight into
+    /// run_update's slot: unwrapping a Result kept a second ~1 KB copy in that
+    /// frame for the whole update boot (#170).
+    #[inline(never)]
+    pub fn new(board: Board<'sdk>, log: SerialConsole, probe: &Probe) -> Self {
         let mut hardware = board.hardware_reader();
         #[cfg(feature = "dev-usb")]
-        let boot = hardware.random_word()?;
+        let Ok(boot) = hardware.random_word() else { crate::stop() };
         #[cfg(feature = "dev-usb")]
         let fingerprint = crate::app_dev::fingerprint(&mut hardware);
         let mut info = DeviceInfo::default();
         info.panel = Some(if probe.verdict == 2 { b"X3 / panel probe inconclusive".as_slice() }
             else if probe.promoted != 0 { b"X3 / UC8279 detected" } else { b"X3 / UC8253 assumed" });
-        Ok(Self { bus: BoardBus { board, log }, clock: HomeClockSource::new(), info,
+        Self { bus: BoardBus { board, log }, clock: HomeClockSource::new(), info,
             displayed: DisplayReceipt::default(), budget: UiRefresh::default(), hardware,
             #[cfg(feature = "dev-usb")] bridge: Bridge::new(boot),
+            #[cfg(feature = "dev-usb")] link: newt_core::dev_link::LinkWatch::default(),
             #[cfg(feature = "dev-usb")] panels: PanelRing::default(),
-            #[cfg(feature = "dev-usb")] fingerprint })
+            #[cfg(feature = "dev-usb")] fingerprint }
     }
 
     /// After InputStart::run, before the view: one readDeviceInfo, then the
@@ -55,10 +63,12 @@ impl<'sdk> ModeUi<'sdk> {
     pub fn with_parts<R>(&mut self, work: impl FnOnce(&mut Board<'sdk>, &mut Parts<'_, 'sdk>) -> R) -> R {
         let Self { bus, clock, info, displayed, budget, hardware,
             #[cfg(feature = "dev-usb")] bridge,
+            #[cfg(feature = "dev-usb")] link,
             #[cfg(feature = "dev-usb")] panels,
             #[cfg(feature = "dev-usb")] fingerprint } = self;
         work(&mut bus.board, &mut Parts { log: &mut bus.log, clock, info, displayed, budget, hardware,
             #[cfg(feature = "dev-usb")] bridge,
+            #[cfg(feature = "dev-usb")] link,
             #[cfg(feature = "dev-usb")] panels,
             #[cfg(feature = "dev-usb")] fingerprint: *fingerprint })
     }
@@ -112,7 +122,7 @@ impl<'sdk> ModeUi<'sdk> {
                     #[cfg(feature = "dev-usb")]
                     {
                         let clock = self.bus.board.monotonic_clock();
-                        let connected = self.bus.log.dev_channel(clock).connected();
+                        let connected = self.bus.log.dev_channel(clock, &mut self.link).connected();
                         if !events.task.gate().with_pending(|pending|
                             self.bridge.consume_pending(pending, ticket, connected, clock.millis())) { continue; }
                         if !self.acknowledge(view, logical, events, ticket)? { continue; }
@@ -165,6 +175,7 @@ pub struct Parts<'a, 'sdk> {
     budget: &'a mut UiRefresh,
     hardware: &'a mut HardwareReader<'sdk>,
     #[cfg(feature = "dev-usb")] bridge: &'a mut Bridge,
+    #[cfg(feature = "dev-usb")] link: &'a mut newt_core::dev_link::LinkWatch,
     #[cfg(feature = "dev-usb")] panels: &'a mut PanelRing,
     #[cfg(feature = "dev-usb")] fingerprint: u64,
 }
@@ -262,7 +273,7 @@ impl Parts<'_, '_> {
             let frame = if private { None } else { logical };
             let mut publication = crate::app_dev::Publication { status, frame, queue: events.queue,
                 panels: self.panels, diagnostics, put: crate::app_dev::Put::Unavailable };
-            let mut channel = self.log.dev_channel(board.monotonic_clock());
+            let mut channel = self.log.dev_channel(board.monotonic_clock(), self.link);
             crate::app_dev::poll(self.bridge, &mut channel, &mut publication, crate::app_dev::BUILD_ID, true);
         }
         #[cfg(not(feature = "dev-usb"))]
@@ -270,3 +281,4 @@ impl Parts<'_, '_> {
         Ok(())
     }
 }
+

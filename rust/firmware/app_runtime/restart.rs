@@ -25,8 +25,11 @@ impl<R: Reader> Exit<'_, '_, '_, '_, R> {
         #[cfg(feature = "dev-usb")]
         {
             let started = self.home.bus.board.millis();
+            // A fresh watch: this drain lasts no longer than its 250 ms link
+            // window, and the restart drops the reader's totals anyway.
+            let mut link = newt_core::dev_link::LinkWatch::default();
             let mut published = Published { facts: self.facts, displayed: self.displayed,
-                hardware: self.hardware, bridge: self.bridge, panels: self.panels, writes: false };
+                hardware: self.hardware, bridge: self.bridge, link: &mut link, panels: self.panels, writes: false };
             while (published.bridge.output_pending() || published.bridge.request_pending())
                 && self.home.bus.board.millis().wrapping_sub(started) < 250 {
                 if published.poll(self.home, self.reader, self.logical, self.events).is_err() { crate::app_power::stop(); }

@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 4061792,
+      "flash_bytes": 4064288,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,10 +28,10 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "c75104d40048153b6bfc5238f693cda76e054627",
-      "before": 4060720,
-      "after": 4061792,
-      "reason": "+1,072 B over the 4,060,720 B ceiling recorded at 03d259f1: #168 (NEWT-212, slice 1) teaches the page-cache reader the v4 segment format with an optional resume-point range. The reader decides the point's owning page once at open (PageCacheReader::point_owner, 340 B), rejects a v4 page gap outside the page data or overlapping another gap, ends the owner at the point and makes any other page the range touches miss (page_extent, 216 B), parses the v4 footer (open_allocated 1,262 -> 1,416 B) and requires a v4 page record to fill its extent exactly (decode_page 1,592 -> 1,744 B); u32_at is no longer inlined (+140 B) and two callers grow by 12 B. An nm diff of the two clean ELFs gives +1,014 B of code; Flash Data grows 48 B. Control: a clean build of 75032428 (main without the change) measures 4,060,720 B. Clean regional DEV USB build with the pinned Python at c75104d4: 4,061,792 B. Static RAM 124,096 -> 124,096 B (+0 B), RTC 300 -> 300 B (+0 B), lent Wi-Fi RAM 22,528 -> 22,528 B (+0 B), selected stacks unchanged (open_selected_profile 480 <= 656 B). Unselected stack frames grow: PageCacheReader::open_allocated 144 -> 176 B, PhasedChapterCache::read_entry 496 -> 512 B and Resources::stored 464 -> 480 B (from each function's prologue); point_owner, page_extent and u32_at are leaves with no frame. Single frames do not establish the runtime stack peak; no stack ceiling or memory floor moves. Usable app space 7,016,448 B; headroom 2,955,728 B (42.13%) -> 2,954,656 B (42.11%). The writer still emits v3, so no card use changes.",
+      "source_revision": "e97901d3628e39171615150a76085ac2472ac141",
+      "before": 4061792,
+      "after": 4064288,
+      "reason": "+2,496 B over the 4,061,792 B ceiling recorded at c75104d4 (#168): #170 ends a DEV USB session only after the raw SOF monitor reports the host absent for 250 ms, keeps DEV console writes within HWCDC's free ring space while its link flag is up (wait up to 5 ms per ring-sized part, then skip and count), adds the DEV `USB link` row of link and session-end totals, and counts a PUT lost to the link or a transmit stall by the lease's exit reason. An nm diff of the two clean ELFs puts the .flash.text growth (+2,282 B) mainly in app_runtime::run_loop::loop_body (10,798 -> 11,452 B, the inlined row), a second home_clock::write_clock_log instance (530 -> 1,080 B over two copies), update_ui::ModeUi::new (0 -> 370 B, now out of line and built in place; run_update 468 -> 228 B), SerialConsole::write_bytes (0 -> 188 B), serial_console::link_up (0 -> 166 B, the debounce) and publication::Published::poll (1,054 -> 1,112 B, the inlined PUT end reason), plus small inlining changes; .flash.rodata grows +184 B (the row text) and 30 B is image alignment. Control: a clean build of 5c2e5dcf (main without the change) measures 4,061,792 B. Clean regional DEV USB build with the pinned Python at e97901d3: 4,064,288 B. RAM 124,096 -> 124,096 B (+0 B; the Bridge keeps a one-byte end-reason mask in its tail padding and stays 664 B), RTC 300 -> 300 B (+0 B), lent Wi-Fi RAM 22,528 -> 22,528 B (+0 B), selected stacks +0 B (open_selected_profile 480 <= 656 B). Stack: the link watch and totals (<= 28 B) live in the reader's Application and update mode's ModeUi, not in static RAM; owner OK 2026-11-26: -64 B reader stack, no static RAM. Virtual X3 evidence (simulator, not hardware), same flow on both builds: reader stack-min-free 6,756 -> 6,692 B (deferred_start::body frame 1,328 -> 1,392 B), heap-min-free unchanged (65,508 B); update mode's run_update frame 1,104 -> 1,120 B (+16 B, ModeUi's watch). Usable app space 7,016,448 B; headroom 2,954,656 B (42.11%) -> 2,952,160 B (42.07%). No memory floor or stack ceiling moves.",
       "reviewer": "cross-family review (Astra xhigh) and Codex review of #192; Lead review pending"
     },
     "ram_bytes": {

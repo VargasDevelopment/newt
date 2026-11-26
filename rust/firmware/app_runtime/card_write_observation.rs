@@ -61,6 +61,8 @@ impl Counters {
             _ => 0,
         };
     }
+    /// The lease's first exit reason, if it gave one.
+    pub fn reason(&self) -> Option<ExitReason> { self.reason }
     pub fn read_chunk(&mut self, got: usize) {
         if got == 0 { self.empty = self.empty.saturating_add(1); }
         else {

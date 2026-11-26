@@ -290,6 +290,7 @@ int32_t nsc_available_for_write(void) {
     return (int32_t)(256 - cover_usb_used);
 }
 uint8_t nsc_connected(void) { return (uint8_t)connected; }
+uint8_t nsc_link_present(void) { return (uint8_t)connected; }
 int32_t nsc_available(void) {
     if (cover_input_pending()) { cover_trace("cover-input.txt"); return 1; }
     /* Input arriving inside prepare, before any cover handle opens. */

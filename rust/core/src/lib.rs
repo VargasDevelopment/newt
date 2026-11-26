@@ -128,6 +128,7 @@ pub mod update_release;
 
 pub mod update_online;
 pub mod dev_put;
+pub mod dev_link;
 
 pub mod update_card;
 
