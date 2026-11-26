@@ -101,12 +101,13 @@ const _: () = assert!(core::mem::size_of::<ReceiveOwner>() == 0);
 ///
 /// Ordering proof for `queue_empty`: `ReceiveOwner::receive` masks
 /// `USB_SERIAL_JTAG_INTR_SERIAL_OUT_RECV_PKT` before constructing `PutReceive`
-/// with `queue_empty = 0`. Only HWCDC's masked RX ISR branch pushes into the
-/// SDK `rx_queue`, and this `!Send`/`!Sync` guard keeps RX masked until `Drop`
-/// resets `queue_empty` and destroys it (on completion, takeover, timeout, or
-/// error). Once the first drain observes `rx_queue` empty under that mask and
-/// sets `queue_empty = 1`, no byte can enter `rx_queue` for the rest of this
-/// guard's life; every new lease builds a fresh guard with `queue_empty = 0`.
+/// with a fresh `queue_empty = 0`. Only HWCDC's masked RX ISR branch pushes
+/// into the SDK `rx_queue`, and this `!Send`/`!Sync` guard keeps RX masked
+/// until `Drop` restores the mask and destroys the guard (on completion,
+/// takeover, timeout, or error). Once the first drain observes `rx_queue`
+/// empty under that mask and sets `queue_empty = 1`, no byte can enter
+/// `rx_queue` for the rest of this guard's life; cross-lease freshness comes
+/// from fresh construction (`queue_empty: 0`) plus mask restoration on drop.
 pub struct PutReceive<'owner> {
     previous: u32,
     queue_empty: u8,
@@ -138,8 +139,9 @@ impl PutReceive<'_> {
 }
 impl Drop for PutReceive<'_> {
     fn drop(&mut self) {
-        // Clear before lifting the RX mask so no dropped state can carry a
-        // stale empty flag; the next receive() also starts at 0.
+        // Defensive clear before restoring the RX mask; cross-lease freshness
+        // comes from ReceiveOwner::receive constructing a fresh queue_empty = 0
+        // plus mask restoration here.
         self.queue_empty = 0;
         // SAFETY: the guard still holds its exclusive loan. Restore only the
         // saved RX enable bit; leave pending bytes/raw status and TX untouched.
