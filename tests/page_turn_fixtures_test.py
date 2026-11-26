@@ -87,9 +87,17 @@ class PageTurnFixturesTest(unittest.TestCase):
                     self.assertTrue(png.endswith(b"IEND\xaeB`\x82"))
 
     def test_no_generated_fixtures_committed_in_repo(self):
+        import subprocess
+        tracked = subprocess.check_output(
+            ["git", "ls-files"], cwd=ROOT, text=True
+        ).splitlines()
+        tracked_names = {Path(p).name: p for p in tracked}
         for spec in fixtures.SPECS.values():
-            matches = list(ROOT.glob(f"**/{spec.filename}"))
-            self.assertEqual(matches, [], f"generated fixture must not be committed: {matches}")
+            self.assertNotIn(
+                spec.filename,
+                tracked_names,
+                f"generated fixture must not be committed: {tracked_names.get(spec.filename)}",
+            )
 
 
 if __name__ == "__main__":

@@ -492,6 +492,7 @@ impl<B: ParserBackend + ?Sized, L: BuildLoan, C: ReadScope + CachePresence>
         status
     }
     pub fn capture_chapter_owned(&mut self, spine: u32, toc: u16) -> Status {
+        self.reader.reader.reset_last_layout_pages();
         if self.revision.provisional() { return Status::Unsupported; }
         let before = session::stamp(self.revision);
         let r = &mut self.reader;

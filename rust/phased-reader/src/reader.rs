@@ -1432,6 +1432,7 @@ impl PhasedReader<'_, '_> {
         lr: &mut LayoutResources<'_>,
         lease: Option<&Lease>,
     ) -> Status {
+        self.reset_last_layout_pages();
         if toc_index != NO_TOC && self.plan.is_none() {
             return Status::Unsupported;
         }
@@ -1452,7 +1453,6 @@ impl PhasedReader<'_, '_> {
                 lease,
             );
         }
-        self.reset_last_layout_pages();
         let status = self.layout(
             source,
             spine,

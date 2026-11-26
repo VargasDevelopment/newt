@@ -481,17 +481,223 @@ fn layout_page_counter_tracks_open_early_stop_misses_and_zero_layout_cache_hits(
         assert_eq!(op.reader.total_layout_pages(), cumulative);
     }
 
-    // ReaderState/ReaderView round-trip preserves counts; close() resets them.
+    // ReaderState/ReaderView round-trip preserves counts.
     let expected_last = reader.last_layout_pages();
     let expected_total = reader.total_layout_pages();
+    assert!(expected_last >= 6);
     let state = reader.into_state();
     assert_eq!(state.last_layout_pages(), expected_last);
     assert_eq!(state.total_layout_pages(), expected_total);
     assert_eq!(state.view(&selections).last_layout_pages(), expected_last);
     assert_eq!(state.view(&selections).total_layout_pages(), expected_total);
-    let mut relended = state.lend(&mut selections, Some(&mut plan));
-    assert_eq!(relended.last_layout_pages(), expected_last);
-    assert_eq!(relended.total_layout_pages(), expected_total);
+
+    // Rejected explicit-TOC capture_chapter on a planless reader must reset last_layout_pages
+    // while preserving total_layout_pages.
+    let mut planless = state.lend(&mut selections, None);
+    assert_eq!(planless.last_layout_pages(), expected_last);
+    {
+        use newt_core::chapter_layout::types::{Element, Image, Line, Link, ParLink, Run, Span, Storage};
+        use newt_core::css::CssRule;
+        use newt_core::package_parsers::{ManifestItem, TocEntry};
+        use newt_core::zip_container::Entry;
+        use newt_core::zip_window::arena::Arena;
+        use newt_phased_reader::canonical;
+        use newt_phased_reader::styles::{Member, Slot, Sources, State};
+        use newt_phased_reader::{CataloglessImages, LayoutResources, StyleResources};
+        let mut meta_buf = [0u8; 64];
+        let mut parse_buf = [0u8; 64];
+        let mut path_buf = [0u8; 64];
+        let mut img_path = [0u8; 64];
+        let mut dir_buf = [0u8; 512];
+        let mut scan_buf = [0u8; 4099];
+        let mut seq_buf = [0u8; 1024];
+        let mut entries: [Entry; 0] = [];
+        let mut manifest: [ManifestItem; 0] = [];
+        let mut spine_hashes: [u32; 0] = [];
+        let mut spine_ids: [u16; 0] = [];
+        let mut text = [0u8; 1];
+        let mut breaks = [0u8; 1];
+        let mut levels = [0u8; 1];
+        let mut spans: [Span; 0] = [];
+        let mut lines: [Line; 0] = [];
+        let mut elements: [Element; 0] = [];
+        let mut runs: [Run; 0] = [];
+        let mut images: [Image; 0] = [];
+        let mut links: [Link; 0] = [];
+        let mut page = [0u8; 1];
+        let mut style_text = [0u8; 1];
+        let mut src_text = [0u8; 1];
+        let mut paragraph_links: [ParLink; 0] = [];
+        let mut rules = [CssRule::default(); 64];
+        let mut meta_arena = Arena::new(&mut meta_buf);
+        let mut parse_arena = Arena::new(&mut parse_buf);
+        let mut path_arena = Arena::new(&mut path_buf);
+        let mut res = canonical::Resources {
+            policy: None,
+            scan: &mut scan_buf,
+            sequential: &mut seq_buf,
+            entries: &mut entries,
+            manifest: &mut manifest,
+            spine_hashes: &mut spine_hashes,
+            spine: &mut spine_ids,
+            backend: &mut parser,
+            decoder: None,
+            chunk: None,
+            xml_buffer: None,
+            filter: None,
+        };
+        let mut toc: [TocEntry; 0] = [];
+        let mut sr = StyleResources {
+            directory: &mut dir_buf,
+            paths: &mut path_arena,
+            build: None,
+        };
+        let mut sources = Sources {
+            links: [Member::default(); 4],
+            start: [0; 8],
+            length: [0; 8],
+            issues: 0,
+            used: 0,
+            events: 0,
+            external_mask: 0,
+            text: &mut src_text,
+        };
+        let mut slot = Slot {
+            rules: &mut rules,
+            count: 0,
+            hash: 0,
+            spine: 0,
+            issues: 0,
+            state: State::Empty,
+        };
+        let mut lr = LayoutResources {
+            storage: Storage {
+                text: &mut text,
+                breaks: &mut breaks,
+                levels: &mut levels,
+                spans: &mut spans,
+                lines: &mut lines,
+                elements: &mut elements,
+                runs: &mut runs,
+                images: &mut images,
+                links: &mut links,
+                page: &mut page,
+                style_text: &mut style_text,
+                paragraph_links: &mut paragraph_links,
+            },
+            breaker: &mut breaker,
+            images: CataloglessImages {
+                directory: &[],
+                path_scratch: &mut img_path,
+            },
+        };
+        let rejected = planless.capture_chapter(
+            &mut source,
+            0,
+            0,
+            &mut meta_arena,
+            &mut parse_arena,
+            &mut res,
+            &mut toc,
+            &mut sr,
+            &mut sources,
+            &mut slot,
+            &mut lr,
+            None,
+        );
+        assert_eq!(rejected, Status::Unsupported);
+    }
+    assert_eq!(planless.last_layout_pages(), 0, "rejected capture_chapter must reset last_layout_pages");
+    assert_eq!(planless.total_layout_pages(), expected_total, "rejected capture_chapter must preserve total");
+
+    // Rejected capture_chapter_owned on a provisional revision must also reset last_layout_pages
+    // while preserving total_layout_pages.
+    let mut relended = planless.into_state().lend(&mut selections, Some(&mut plan));
+    {
+        let mut op = OperationPhased::new(&mut relended, &mut storage, &mut loan, &mut parser, &mut breaker);
+        let mut cache = PhasedChapterCache { store: &mut cache_store, hash: &mut hash, settings };
+        let shown = cache.capture(
+            &mut source,
+            &digest,
+            CacheRequest { spine: 0, target: 5, anchor: false, staged: false, cache_only: false, build_on_miss: false },
+            &mut op,
+        );
+        assert_eq!(shown.status, Status::Ok);
+        assert!(op.reader.last_layout_pages() >= 6);
+        cumulative += u64::from(op.reader.last_layout_pages());
+        assert_eq!(op.reader.total_layout_pages(), cumulative);
+    }
+    {
+        use newt_phased_reader::imported_revision::session::Session;
+        use newt_phased_reader::imported_revision::{
+            BLOCK_BYTES, Digest, ImportedRevision, RevisionHasher, RevisionStorage,
+        };
+        struct MemRevStore {
+            data: Vec<u8>,
+            generation: u64,
+        }
+        impl RevisionStorage for MemRevStore {
+            fn load(&mut self, _: &mut u32) -> bool { false }
+            fn begin(&mut self, bytes: u32) -> bool {
+                self.data.clear();
+                self.data.resize(bytes as usize, 0);
+                self.generation += 1;
+                true
+            }
+            fn read(&mut self, off: u32, out: &mut [u8]) -> bool {
+                let s = off as usize;
+                if s + out.len() > self.data.len() { return false; }
+                out.copy_from_slice(&self.data[s..s + out.len()]);
+                true
+            }
+            fn write(&mut self, off: u32, inp: &[u8]) -> bool {
+                let s = off as usize;
+                if s + inp.len() > self.data.len() { return false; }
+                self.data[s..s + inp.len()].copy_from_slice(inp);
+                true
+            }
+            fn seal(&mut self) -> bool { true }
+            fn abort(&mut self) { self.generation += 1; }
+            fn generation(&self) -> u64 { self.generation }
+            fn stable(&mut self, generation: u64) -> bool { self.generation == generation }
+        }
+        struct SimpleRevHash(u64);
+        impl RevisionHasher for SimpleRevHash {
+            fn begin(&mut self) -> bool { self.0 = 0x517cc1b727220a95; true }
+            fn update(&mut self, input: &[u8]) -> bool {
+                for &b in input {
+                    self.0 = self.0.wrapping_mul(0x100000001b3) ^ u64::from(b);
+                }
+                true
+            }
+            fn finish(&mut self, output: &mut Digest) -> bool {
+                output.fill(0);
+                output[..8].copy_from_slice(&self.0.to_le_bytes());
+                true
+            }
+            fn hash(&mut self, input: &[u8], output: &mut Digest) -> bool {
+                let mut h = 0x517cc1b727220a95u64;
+                for &b in input {
+                    h = h.wrapping_mul(0x100000001b3) ^ u64::from(b);
+                }
+                output.fill(0);
+                output[..8].copy_from_slice(&h.to_le_bytes());
+                true
+            }
+        }
+        let mut rev_store = MemRevStore { data: Vec::new(), generation: 1 };
+        let mut rev_hash = SimpleRevHash(0);
+        let mut rev_scratch = [0u8; BLOCK_BYTES];
+        let mut rev = ImportedRevision::full(&mut rev_store, &mut rev_hash, &mut rev_scratch);
+        assert!(rev.begin_import(&mut source));
+        assert!(rev.provisional());
+        let mut op = OperationPhased::new(&mut relended, &mut storage, &mut loan, &mut parser, &mut breaker);
+        let mut cache = PhasedChapterCache { store: &mut cache_store, hash: &mut hash, settings };
+        let mut session = Session { revision: &mut rev, reader: &mut op, cache: &mut cache };
+        assert_eq!(session.capture_chapter_owned(0, 0), Status::Unsupported);
+        assert_eq!(session.reader.reader.last_layout_pages(), 0, "provisional capture_chapter_owned must reset last_layout_pages");
+        assert_eq!(session.reader.reader.total_layout_pages(), cumulative, "provisional capture_chapter_owned must preserve total");
+    }
     relended.close();
     assert_eq!((relended.last_layout_pages(), relended.total_layout_pages()), (0, 0));
     let _ = PageInfo::default();
