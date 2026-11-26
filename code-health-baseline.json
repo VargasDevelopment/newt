@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3994048,
+      "flash_bytes": 3994144,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "4e8984afe26226766ccd57a0d37c3e321da74fd4",
-      "before": 3993920,
-      "after": 3994048,
-      "reason": "+128 B over the 3,993,920 B ceiling (main 0106552e; actual clean build 3,993,872 B after #155's -48 B -> 3,994,048 B, +176 B code cost): #153 (NEWT-203) configures Expat's existing entity amplification limits (16,384 B activation threshold and 8.0 maximum amplification, freeing and refusing creation if either setter fails) in rust/target-expat/native/expat_bridge.c::newt_xml_create. Expected linked cost of the refusal path is newt_xml_create (+56 B: 4 -> 60 B, 0 -> 16 B static frame) plus the two previously unlinked Expat setters XML_SetBillionLaughsAttackProtectionActivationThreshold (28 B) and XML_SetBillionLaughsAttackProtectionMaximumAmplification (80 B, using ROM __unordsf2/__ltsf2) (+164 B .text: 1,889,140 -> 1,889,304 B; +8 B .rodata: 1,986,628 -> 1,986,636 B; +4 B padding). Clean regional DEV USB build with the pinned Python: main 0106552e 3,993,872 B (3,993,920 B ceiling); 4e8984af 3,994,048 B. RAM 124,096 -> 124,096 B, RTC unchanged at 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, selected stack frames 0/16/32/48/480 B (within 0/16/32/48/656 B ceilings; 330 frames).",
-      "reviewer": "Newt Lead (2026-11-25): cross-family source review by gpt-6-astra xhigh, CLEAN; flash numbers checked against the CI clean firmware health build; no hardware test"
+      "source_revision": "217ea96857dd3ca06791fce906ba129767c129d0",
+      "before": 3994048,
+      "after": 3994144,
+      "reason": "+96 B over the 3,994,048 B ceiling (main 4cc11957; actual clean build 3,993,888 B after v0.6.0's -160 B -> 3,994,144 B, +256 B code cost): #135 (NEWT-206) Phase 1 replaces per-byte DEV PUT reception with bounded bulk reads into the existing DATA buffer (4,543 B transient heap loan, zero idle RAM/heap). Expected linked cost is nsc_put_rx_read (180 B, 32 B static frame) replacing nsc_put_rx_read_byte (68 B, 16 B static frame) (+112 B), LeaseWire::read (198 B) with deduplicated LeaseWire::read_byte (156 -> 42 B) (+84 B), inlined dev_put::run / Lease::data bulk loop and over-length guard in newt_c3_board::image::hash::receive (13,548 -> 13,602 B, +54 B), and Drop clearing queue_empty in drop_in_place<LeaseWire> (10 -> 16 B, +6 B) (+256 B .text: 1,889,256 -> 1,889,512 B; .rodata unchanged at 1,986,524 B). Clean regional DEV USB build with the pinned Python: main 4cc11957 3,993,888 B (3,994,048 B ceiling); 217ea968 3,994,144 B. RAM 124,096 -> 124,096 B, RTC unchanged at 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, selected stack frames 0/16/32/48/480 B (within 0/16/32/48/656 B ceilings; 330 frames).",
+      "reviewer": "Newt Lead (2026-11-26): cross-family source review by gpt-6-astra xhigh, no P1/P2 (two P3s fixed: preview fake, control claims); flash numbers checked against the CI clean firmware health build; no hardware test"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",

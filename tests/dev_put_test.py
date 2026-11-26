@@ -24,11 +24,23 @@ sys.path.insert(0, str(ROOT / 'tools'))
 from gate_tier import negative_controls
 
 BINARY = 'dev_put'
-TESTS = 44
+TESTS = 49
 # Recovery's one rule: a marker the next FILE finds refuses.
 MARKED = '        if self.recovery_file(MARKER, "marker")? { return Err(Refused::Recovery("commit", 0)); }\n'
 # (what breaks, its file under rust/core/src, its text there, the broken text, the test that must fail)
 CONTROLS = (
+    ('bulk read ignores over-length return', 'dev_put/lease.rs',
+     '            if got > remaining { return Err(Refused::Abandoned("line")); }\n',
+     '            let _ = remaining;\n',
+     'overlength_bulk_read_cancels_without_writing'),
+    ('fast path polls micros when bytes are ready', '../../salamander/board/dev_usb.rs',
+     '        let mut started: Option<u32> = None;\n',
+     '        let mut started: Option<u32> = Some(micros());\n',
+     'receive_owner::packet_gaps_are_polled_but_a_stalled_sender_returns_promptly'),
+    ('stale queue_empty skips queued bytes on new lease', '../../salamander/board/dev_usb.rs',
+     'PutReceive { previous, queue_empty: 0, _owner: core::marker::PhantomData }',
+     'PutReceive { previous, queue_empty: 1, _owner: core::marker::PhantomData }',
+     'receive_owner::queued_bytes_precede_fifo_and_reset_across_leases'),
     ('a partial reply swallows the undelimited exit row', '../../firmware/app_runtime/card_write_observation.rs',
      'writeln!(output, "\\nPUT_STATS', 'writeln!(output, "PUT_STATS',
      'wire_deadlines::a_partial_timeout_reply_cannot_swallow_the_exit_row'),
@@ -180,7 +192,14 @@ def native_receive(run, workspace, output, support):
          '    portENTER_CRITICAL(&lock);\n    uint32_t previous = usb_serial_jtag_ll_get_intr_ena_status() & USB_SERIAL_JTAG_INTR_SERIAL_OUT_RECV_PKT;',
          '    uint32_t previous = usb_serial_jtag_ll_get_intr_ena_status() & USB_SERIAL_JTAG_INTR_SERIAL_OUT_RECV_PKT;\n    portENTER_CRITICAL(&lock);'),
         ('restore removed', 'if (previous) usb_serial_jtag_ll_ena_intr_mask(USB_SERIAL_JTAG_INTR_SERIAL_OUT_RECV_PKT);', 'if (previous) { (void)previous; }'),
-        ('queued bytes skipped', 'if (nsc_port_available(Serial) > 0) return nsc_port_read_byte(Serial);', ''),
+        ('queued bytes skipped', 'bool drained = queue_empty && *queue_empty;', 'bool drained = true;'),
+        ('queue_empty set before queue drained', 'if (queued <= 0) {', 'if (true) {'),
+        ('begin leaves RX unmasked',
+         'usb_serial_jtag_ll_disable_intr_mask(USB_SERIAL_JTAG_INTR_SERIAL_OUT_RECV_PKT);\n    portEXIT_CRITICAL(&lock);\n    return previous;',
+         'portEXIT_CRITICAL(&lock);\n    return previous;'),
+        ('bulk read ignores max_len bound',
+         'const size_t rem = max_len - got;',
+         'const size_t rem = 64;'),
         ('begin clears BUS_RESET',
          'usb_serial_jtag_ll_disable_intr_mask(USB_SERIAL_JTAG_INTR_SERIAL_OUT_RECV_PKT);\n    portEXIT_CRITICAL(&lock);\n    return previous;',
          'usb_serial_jtag_ll_disable_intr_mask(USB_SERIAL_JTAG_INTR_SERIAL_OUT_RECV_PKT | USB_SERIAL_JTAG_INTR_BUS_RESET);\n    portEXIT_CRITICAL(&lock);\n    return previous;'),
@@ -188,7 +207,7 @@ def native_receive(run, workspace, output, support):
          '    portEXIT_CRITICAL(&lock);\n    // Do not clear RX raw status:',
          '    usb_serial_jtag_ll_disable_intr_mask(USB_SERIAL_JTAG_INTR_BUS_RESET);\n    portEXIT_CRITICAL(&lock);\n    // Do not clear RX raw status:'),
         ('ordinary reads use leased FIFO', 'int nsc_read_byte(void) { return nsc_port_read_byte(Serial); }',
-         'int nsc_read_byte(void) { return nsc_put_rx_read_byte(); }'),
+         'int nsc_read_byte(void) { uint8_t b = 0; return nsc_put_rx_read(&b, 1, nullptr) == 1 ? b : -1; }'),
     ]:
         support.require(good.count(before) == 1, f'native control anchor: {name}')
         source.write_text(good.replace(before, after))

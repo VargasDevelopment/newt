@@ -216,10 +216,11 @@ impl Lease<'_> {
         let activity = self.wire.now();
         while received < decoded {
             if let Some(reason) = self.abandoned(activity) { return Err(Refused::Abandoned(reason)); }
-            let byte = self.wire.read_byte();
-            if byte < 0 { self.wire.pause(); continue; }
-            self.line[received] = byte as u8;
-            received += 1;
+            let remaining = decoded - received;
+            let got = self.wire.read(&mut self.line[received..decoded]);
+            if got == 0 { self.wire.pause(); continue; }
+            if got > remaining { return Err(Refused::Abandoned("line")); }
+            received += got;
         }
         self.wire.observe(Observation::Writing);
         write_all(self.card, fd, &self.line[..decoded]).map_err(|code| Refused::Card("write", code))?;

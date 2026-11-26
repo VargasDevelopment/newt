@@ -296,7 +296,17 @@ int32_t nsc_available(void) {
 int32_t nsc_read_byte(void) { return request_next < request_length ? (uint8_t)request[request_next++] : -1; }
 uint32_t nsc_put_rx_begin(void) { return 1; }
 void nsc_put_rx_end(uint32_t previous) { (void)previous; }
-int32_t nsc_put_rx_read_byte(void) { return nsc_read_byte(); }
+size_t nsc_put_rx_read(uint8_t *out, size_t max_len, uint8_t *queue_empty) {
+    if (!out || max_len == 0) return 0;
+    size_t available = request_next < request_length ? request_length - request_next : 0;
+    size_t count = available < max_len ? available : max_len;
+    if (count > 0) {
+        memcpy(out, request + request_next, count);
+        request_next += count;
+    }
+    if (queue_empty && request_next >= request_length) *queue_empty = 1;
+    return count;
+}
 size_t nsc_write(const uint8_t *data, size_t length) {
     if (cover_usb_model()) {
         size_t free_bytes = (size_t)nsc_available_for_write();

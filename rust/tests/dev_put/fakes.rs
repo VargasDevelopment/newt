@@ -217,6 +217,8 @@ pub struct FakeWire {
     pub observations: Vec<newt_core::dev_put::Observation>,
     /// Bytes accepted per write call, so replies go out in pieces.
     pub write_limit: usize,
+    /// Bytes returned per bulk read call, so raw blocks arrive in bursts.
+    pub read_limit: usize,
     /// The host stops reading: every write accepts nothing.
     pub stalled: bool,
     /// A press the card made (FakeCard::press_on), taken at the next look.
@@ -228,12 +230,25 @@ pub struct FakeWire {
 impl FakeWire {
     pub fn new(script: Vec<Event>) -> Self {
         Self { script: script.into(), pending: VecDeque::new(), connected: true, clock: 1_000, sent: Vec::new(),
-            observations: Vec::new(), write_limit: usize::MAX, stalled: false, pressed: Rc::default(), late: Rc::default() }
+            observations: Vec::new(), write_limit: usize::MAX, read_limit: usize::MAX, stalled: false,
+            pressed: Rc::default(), late: Rc::default() }
     }
     fn front(&mut self, wanted: fn(&Event) -> bool) -> bool {
         if !self.pending.is_empty() || !self.script.front().is_some_and(wanted) { return false; }
         self.script.pop_front();
         true
+    }
+    fn refill_pending(&mut self) {
+        if !self.pending.is_empty() { return; }
+        match self.script.front() {
+            Some(Event::Line(_)) => { let Some(Event::Line(line)) = self.script.pop_front() else { unreachable!() }; self.pending.extend(line.into_bytes()); }
+            Some(Event::Wait(_)) => {
+                let Some(Event::Wait(ms)) = self.script.pop_front() else { unreachable!() };
+                self.clock += ms;
+            }
+            Some(Event::Bytes(_)) => { let Some(Event::Bytes(bytes)) = self.script.pop_front() else { unreachable!() }; self.pending.extend(bytes); }
+            _ => {}
+        }
     }
     /// The input the lease left unread, as the bridge would next see it.
     pub fn unread(&self) -> String {
@@ -263,18 +278,17 @@ impl Wire for FakeWire {
         self.connected
     }
     fn read_byte(&mut self) -> i32 {
-        if self.pending.is_empty() {
-            match self.script.front() {
-                Some(Event::Line(_)) => { let Some(Event::Line(line)) = self.script.pop_front() else { unreachable!() }; self.pending.extend(line.into_bytes()); }
-                Some(Event::Wait(_)) => {
-                    let Some(Event::Wait(ms)) = self.script.pop_front() else { unreachable!() };
-                    self.clock += ms;
-                }
-                Some(Event::Bytes(_)) => { let Some(Event::Bytes(bytes)) = self.script.pop_front() else { unreachable!() }; self.pending.extend(bytes); }
-                _ => {}
-            }
-        }
+        self.refill_pending();
         self.pending.pop_front().map_or(-1, i32::from)
+    }
+    fn read(&mut self, out: &mut [u8]) -> usize {
+        if out.is_empty() { return 0; }
+        self.refill_pending();
+        let take = self.pending.len().min(out.len()).min(self.read_limit);
+        for slot in &mut out[..take] {
+            *slot = self.pending.pop_front().unwrap();
+        }
+        take
     }
     fn write(&mut self, bytes: &[u8]) -> usize {
         if self.stalled { return 0; }

@@ -29,7 +29,7 @@ size_t nsc_write(const uint8_t *data, size_t len);
 #if NEWT_DEV_USB
 uint32_t nsc_put_rx_begin(void);
 void nsc_put_rx_end(uint32_t previous);
-int nsc_put_rx_read_byte(void);
+size_t nsc_put_rx_read(uint8_t *out, size_t max_len, uint8_t *queue_empty);
 uint8_t nsc_connected(void);
 int nsc_available(void);
 int nsc_read_byte(void);

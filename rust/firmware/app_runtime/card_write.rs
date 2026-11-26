@@ -52,12 +52,16 @@ struct LeaseWire<'a, 'events, 'task> {
 impl Wire for LeaseWire<'_, '_, '_> {
     fn connected(&mut self) -> bool { self.channel.connected() }
     fn read_byte(&mut self) -> i32 {
-        let byte = self.channel.read_byte();
-        self.counters.read(byte);
-        if byte < 0 && self.tx_flush_pending && self.channel.flush_tx_tail() {
+        let mut byte = [0u8; 1];
+        if self.read(&mut byte) == 1 { i32::from(byte[0]) } else { -1 }
+    }
+    fn read(&mut self, out: &mut [u8]) -> usize {
+        let got = self.channel.read(out);
+        self.counters.read_chunk(got);
+        if got == 0 && self.tx_flush_pending && self.channel.flush_tx_tail() {
             self.tx_flush_pending = false;
         }
-        byte
+        got
     }
     fn write(&mut self, bytes: &[u8]) -> usize {
         let sent = self.channel.write(bytes);
