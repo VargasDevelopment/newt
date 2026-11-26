@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 4057248,
+      "flash_bytes": 4057296,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "a04664149ab5ed6ec1d54a23765f153fc17ce133",
-      "before": 4040000,
-      "after": 4057248,
-      "reason": "+17,248 B over the 4,040,000 B ceiling (clean main b334d8c0 measures exactly 4,040,000 B): #43 slice 1 (NEWT-199) adds CSS small caps (font-variant / font-variant-caps) and text-transform (uppercase, lowercase, capitalize, none) to CSS parsing, style compaction, and chapter layout, with an explicit 444 B compact case-table set (zero core::unicode / char::to_uppercase symbols) and Pages envelope bump v4 -> v5 (while v3/v4 .IDX and legacy .fibx book indexes stay admitted). Clean regional DEV USB builds with the pinned Python: main b334d8c0 4,040,000 B (.flash.text 1,932,430 B, .flash.rodata 1,989,452 B); a0466414 4,057,248 B (.flash.text 1,948,254 B, +15,824 B; .flash.rodata 1,990,884 B, +1,432 B). Linked symbol delta by area (nm -C -S against clean b334d8c0; +16,268 B total symbol delta, remainder is unnamed .rodata literals/jump tables and image alignment): chapter_layout::engine +8,206 B (append with inlined continuation_rewind, emit_segment, flush_inner, shaped_case, measurement helpers); chapter_layout::engine::segments +4,916 B (small-caps sub-run splitting and combining-mark carry across the 64-segment cap); chapter_layout::case +1,358 B (mark_word_starts, map_case, 6 static .rodata case tables = 444 B); chapter_layout::text +584 B (continuation_rewind closure, prev_char, shared is_combining); core::css +380 B; core::page_envelope +318 B (inspect_for v3/v4 index admission); chapter_layout::other +226 B; phased_reader::styles +142 B; phased_reader::phase_storage +0 B; other +138 B. Usable app space 7,016,448 B; headroom 2,976,448 B (42.42%) -> 2,959,200 B (42.18%). RAM 124,096 -> 124,096 B (+0 B), RTC 300 -> 300 B (+0 B), lent Wi-Fi RAM 22,528 -> 22,528 B (+0 B), selected stack frames 0/16/32/48/480 B (+0 B, within 0/16/32/48/656 B ceilings; 330 frames); all compile-time struct size assertions unchanged (CssDecl 18 B, CssRule 28 B, Span 8 B, Element 8 B, Home 1812 B RV32 / 1824 B host).",
-      "reviewer": "Newt Lead flash signoff (2026-11-26: approved +17,248 B with >42% headroom and +0 RAM/RTC/lent/stack); cross-family static review by Astra (gpt-6.2-astra xhigh: R33 Approved full slice 1 at e34c86cb, R34 Approved #149 rebase integration at a0466414)"
+      "source_revision": "ae34d4d92815a1fc9fc9d95742735f519873bb53",
+      "before": 4057248,
+      "after": 4057296,
+      "reason": "+48 B over the 4,057,248 B ceiling recorded for main 3cc1f4b3 (#172): #171 (NEWT-215) opens the pending-verification branch of operate_image with the prepared route when the first-open import is provisional, so a book whose index build spills and reopens its source opens instead of failing as Stale; the prepared turn is now reachable from that branch. The same change measured +48 B on the previous main (4,040,000 -> 4,040,048 B). Clean regional DEV USB build with the pinned Python at ae34d4d9: 4,057,296 B. Usable app space 7,016,448 B; headroom 2,959,200 B (42.18%) -> 2,959,152 B (42.17%).",
+      "reviewer": "Newt Lead ruling 2026-11-26 (#171: quick firmware compile; re-record only if a clean health build moves flash); cross-family review (Astra xhigh) and Codex review of the change"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
