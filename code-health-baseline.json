@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 3994144,
+      "flash_bytes": 3997344,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "217ea96857dd3ca06791fce906ba129767c129d0",
-      "before": 3994048,
-      "after": 3994144,
-      "reason": "+96 B over the 3,994,048 B ceiling (main 4cc11957; actual clean build 3,993,888 B after v0.6.0's -160 B -> 3,994,144 B, +256 B code cost): #135 (NEWT-206) Phase 1 replaces per-byte DEV PUT reception with bounded bulk reads into the existing DATA buffer (4,543 B transient heap loan, zero idle RAM/heap). Expected linked cost is nsc_put_rx_read (180 B, 32 B static frame) replacing nsc_put_rx_read_byte (68 B, 16 B static frame) (+112 B), LeaseWire::read (198 B) with deduplicated LeaseWire::read_byte (156 -> 42 B) (+84 B), inlined dev_put::run / Lease::data bulk loop and over-length guard in newt_c3_board::image::hash::receive (13,548 -> 13,602 B, +54 B), and Drop clearing queue_empty in drop_in_place<LeaseWire> (10 -> 16 B, +6 B) (+256 B .text: 1,889,256 -> 1,889,512 B; .rodata unchanged at 1,986,524 B). Clean regional DEV USB build with the pinned Python: main 4cc11957 3,993,888 B (3,994,048 B ceiling); 217ea968 3,994,144 B. RAM 124,096 -> 124,096 B, RTC unchanged at 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, selected stack frames 0/16/32/48/480 B (within 0/16/32/48/656 B ceilings; 330 frames).",
-      "reviewer": "Newt Lead (2026-11-26): cross-family source review by gpt-6-astra xhigh, no P1/P2 (two P3s fixed: preview fake, control claims); flash numbers checked against the CI clean firmware health build; no hardware test"
+      "source_revision": "1b39423ffd1bb1d13590230b66c1a88dacc6c032",
+      "before": 3994144,
+      "after": 3997344,
+      "reason": "+3,200 B over the 3,994,144 B ceiling (main 4b344fbc / record 217ea968): adds Font::ink_extents in ReaderAtlas (forwarded through SplitBackend and SelectingSink) and per-emitted-glyph above/below baseline vertical extent accounting in core chapter_layout for #148 so oversized and shifted inline runs never overprint adjacent lines or clip at top/bottom margins, plus bumps page_envelope::VERSION 3 -> 4 to regenerate stale pages in place (.text 1,889,512 -> 1,892,366 B, +2,854 B; .rodata 1,986,524 -> 1,986,860 B, +336 B; +10 B padding). Clean regional DEV USB build of 1b39423f with the pinned Python: 3,994,144 -> 3,997,344 B. RAM 124,096 -> 124,096 B, RTC 300 -> 300 B, lent Wi-Fi RAM 22,528 -> 22,528 B, selected stack frames 0/16/32/48/480 B (within 0/16/32/48/656 B ceilings; 330 frames).",
+      "reviewer": "Astra (gpt-6.2-astra, 2026-11-25; 4-round cross-family static review approved 5e079f7d / c386f368; rebased cleanly onto 4b344fbc as 1b39423f with zero code changes beyond PORTABLE_TESTS 517->519 base shift; no independent target build or hardware test)"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
