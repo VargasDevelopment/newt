@@ -14,7 +14,7 @@
 //! header   "FIRP" u16 version u8 mode u8 0, then one u32 length per section
 //! Binding  route, positions (pages at the cut, edge, cut, fed), member
 //! Source   member position: raw bytes consumed
-//! Stream   parser input state: filtered count, decoder produced, entity filter
+//! Stream   parser input state: counters and the whole entity filter, raw buffer included
 //! Engine   layout engine state
 //! Prolog   filtered bytes before the root element
 //! Names    open element names: u8 depth, then u8 length + bytes per name
@@ -66,11 +66,14 @@ pub const SECTIONS: [Section; 7] = [
 impl Section {
     /// Largest accepted length. Prolog, names and replay match the capture
     /// limits; the engine bound covers the largest layout storage profile.
+    /// The stream holds two u64 counters and the entity filter, whose raw
+    /// buffer can keep up to 512 unread bytes of the last pull, so restore
+    /// continues from the source position after that pull: about 600 B.
     pub const fn max_bytes(self) -> u32 {
         match self {
             Self::Binding => 160,
             Self::Source => 16,
-            Self::Stream => 128,
+            Self::Stream => 640,
             Self::Engine => 24 * 1024,
             Self::Prolog => 512,
             Self::Names => 1 + 48 + 256,

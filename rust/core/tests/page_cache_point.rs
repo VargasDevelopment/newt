@@ -1,7 +1,7 @@
 //! v4 segments with a resume point, read through the verified envelope.
 //! Page extents must come from the verified index and footer alone: a bad
 //! point range costs only the pages it makes ambiguous, and a bad point
-//! record costs only the point.
+//! record costs only the point. A hit is always the page's exact record.
 use newt_core::page_cache::*;
 use newt_core::page_cache_access::VerifiedAccess;
 use newt_core::page_envelope::{self, Query, RawRead, VerifiedStore, BLOCK_BYTES};
@@ -59,18 +59,20 @@ impl Segment {
             }
         }
         let index = payload.len() as u32;
-        for (page, offset) in offsets.iter().enumerate() {
+        let mut segment = Self { payload, records, offsets, index, point: range };
+        segment.payload = segment.rebuilt(version, partial, &segment.offsets, range);
+        segment
+    }
+    /// The same page bytes with another index and footer. Checksums stay valid.
+    fn rebuilt(&self, version: u16, partial: bool, entries: &[u32], point: (u32, u32)) -> Vec<u8> {
+        let mut payload = self.payload[..self.index as usize].to_vec();
+        payload[4..6].copy_from_slice(&version.to_le_bytes());
+        for (page, offset) in entries.iter().enumerate() {
             payload.extend_from_slice(&offset.to_le_bytes());
             payload.extend_from_slice(&(100 * page as u32).to_le_bytes());
         }
-        let mut segment = Self { payload, records, offsets, index, point: range };
-        segment.footer(version, partial, range);
-        segment
-    }
-    fn footer(&mut self, version: u16, partial: bool, point: (u32, u32)) {
-        let anchors = self.payload.len() as u32;
-        let total = 100 * self.records.len() as u32;
-        let mut fields = vec![self.index, self.records.len() as u32, anchors, 0, total];
+        let total = 100 * entries.len() as u32;
+        let mut fields = vec![self.index, entries.len() as u32, payload.len() as u32, 0, total];
         if partial {
             fields.extend([total, total + 50]);
         }
@@ -78,21 +80,19 @@ impl Segment {
             fields.extend([point.0, point.1]);
         }
         for value in fields {
-            self.payload.extend_from_slice(&value.to_le_bytes());
+            payload.extend_from_slice(&value.to_le_bytes());
         }
-        self.payload.extend_from_slice(if partial { b"FIBx" } else { b"FIBX" });
+        payload.extend_from_slice(if partial { b"FIBx" } else { b"FIBX" });
+        payload
     }
-    /// The same pages with another footer range (whole v4 only).
     fn with_footer(&self, point: (u32, u32)) -> Vec<u8> {
-        let mut other = Self { payload: self.payload[..self.index as usize + 8 * self.records.len()].to_vec(),
-            records: self.records.clone(), offsets: self.offsets.clone(), index: self.index, point };
-        other.footer(VERSION_POINT, false, point);
-        other.payload
+        self.rebuilt(VERSION_POINT, false, &self.offsets, point)
     }
-    /// The bytes from a page's entry to the next entry or the index.
-    fn gap(&self, page: usize) -> &[u8] {
-        let end = self.offsets.get(page + 1).copied().unwrap_or(self.index);
-        &self.payload[self.offsets[page] as usize..end as usize]
+    fn hits(&self) -> Vec<Result<Vec<u8>, Status>> {
+        self.records.iter().cloned().map(Ok).collect()
+    }
+    fn all(&self) -> Vec<u32> {
+        (0..self.records.len() as u32).collect()
     }
 }
 
@@ -117,70 +117,72 @@ impl RawRead for Raw {
     }
 }
 
-#[derive(Debug, PartialEq)]
-struct Outcome {
-    point: Option<PointRange>,
-    /// Whether the point's bytes pass block verification, after the pages.
-    point_readable: Option<bool>,
-    pages: Vec<Result<Vec<u8>, Status>>,
-}
-
-/// Attach once and read the pages in order through the product reader.
-fn read(file: &[u8], pages: &[u32]) -> Result<Outcome, Status> {
+/// Attach the envelope and hand the verified storage to `use_it`.
+fn verified<T>(file: &[u8], use_it: impl FnOnce(&mut VerifiedAccess<'_, '_, '_, Raw>) -> T) -> T {
     let mut raw = Raw(file.to_vec());
     let (mut directory, mut window) = ([0; 4160], [0; 4096]);
     let mut store = VerifiedStore::new(Some(NAME), &mut directory, &mut window);
     store.query.extent = file.len() as u32;
     store.query.bound = true;
     assert!(store.attach(&mut raw), "envelope must attach");
-    let mut access = VerifiedAccess { store: &mut store, source: &mut raw };
-    let (mut entries, mut anchors) = ([Entry::default(); 16], [Anchor::default(); 1]);
-    let mut memory = ReaderMemory { pages: &mut entries, anchors: &mut anchors };
-    let mut name = [0; 80];
-    let mut names = Arena::new(&mut name);
-    let mut reader = PageCacheReader::default();
-    match reader.open(&mut access, NAME, HASH, &mut names, &mut memory) {
-        Status::Ok => {}
-        status => return Err(status),
-    }
-    let mut results = Vec::new();
-    for &page in pages {
-        let mut buffer = [0; 8192];
-        let mut scratch = Arena::new(&mut buffer);
-        let mut runs = [Default::default(); 2];
-        let mut out = PageMemory { runs: &mut runs, images: &mut [], links: &mut [] };
-        results.push(
-            reader
-                .read_page(&mut access, &memory, &names, page, &mut scratch, &mut out)
-                .map(|page| page.bytes.to_vec()),
-        );
-    }
-    let point = reader.point(&memory);
-    let point_readable = point.map(|p| {
-        let mut bytes = vec![0; p.length as usize];
-        access.read_at(NAME, p.offset, &mut bytes) == p.length as i32
-    });
-    Ok(Outcome { point, point_readable, pages: results })
+    use_it(&mut VerifiedAccess { store: &mut store, source: &mut raw })
 }
 
-fn all(segment: &Segment) -> Vec<u32> {
-    (0..segment.records.len() as u32).collect()
+#[derive(Debug, PartialEq)]
+struct Outcome {
+    point: Option<PointRange>,
+    /// The point's bytes through the verified store, read after the pages.
+    point_bytes: Option<Result<Vec<u8>, ()>>,
+    pages: Vec<Result<Vec<u8>, Status>>,
+}
+
+/// Attach once and read the pages in order through the product reader.
+fn read(file: &[u8], pages: &[u32]) -> Result<Outcome, Status> {
+    verified(file, |access| {
+        let (mut entries, mut anchors) = ([Entry::default(); 16], [Anchor::default(); 1]);
+        let mut memory = ReaderMemory { pages: &mut entries, anchors: &mut anchors };
+        let mut name = [0; 80];
+        let mut names = Arena::new(&mut name);
+        let mut reader = PageCacheReader::default();
+        match reader.open(access, NAME, HASH, &mut names, &mut memory) {
+            Status::Ok => {}
+            status => return Err(status),
+        }
+        let mut results = Vec::new();
+        for &page in pages {
+            let mut buffer = [0; 8192];
+            let mut scratch = Arena::new(&mut buffer);
+            let mut runs = [Default::default(); 2];
+            let mut out = PageMemory { runs: &mut runs, images: &mut [], links: &mut [] };
+            results.push(
+                reader
+                    .read_page(access, &memory, &names, page, &mut scratch, &mut out)
+                    .map(|page| page.bytes.to_vec()),
+            );
+        }
+        let point = reader.point();
+        let point_bytes = point.map(|p| {
+            let mut bytes = vec![0; p.length as usize];
+            (access.read_at(NAME, p.offset, &mut bytes) == p.length as i32).then_some(bytes).ok_or(())
+        });
+        Ok(Outcome { point, point_bytes, pages: results })
+    })
+}
+
+fn layout(bytes: &[u8]) -> Option<Layout> {
+    Layout::parse(bytes[..HEADER_BYTES].try_into().unwrap(), bytes.len() as u32)
 }
 
 #[test]
 fn a_point_between_pages_or_next_to_the_index_ends_only_its_page() {
     for (partial, after) in [(false, 1), (true, 1), (false, 3), (true, 3)] {
         let segment = Segment::new(VERSION_POINT, partial, 4, Some((after, point_record(40))));
-        let outcome = read(&envelope(&segment.payload), &all(&segment)).unwrap();
-        let expected: Vec<_> = segment.records.iter().cloned().map(Ok).collect();
-        assert_eq!(outcome.pages, expected, "partial={partial} after={after}");
+        let outcome = read(&envelope(&segment.payload), &segment.all()).unwrap();
+        assert_eq!(outcome.pages, segment.hits(), "partial={partial} after={after}");
         let (offset, length) = segment.point;
         assert_eq!(outcome.point, Some(PointRange { offset, length }));
-        assert_eq!(outcome.point_readable, Some(true));
-        // The layout check runs on the point's own bytes.
-        let at = offset as usize;
-        let header: &[u8; HEADER_BYTES] = segment.payload[at..at + HEADER_BYTES].try_into().unwrap();
-        assert!(Layout::parse(header, length).is_some());
+        let bytes = outcome.point_bytes.unwrap().unwrap();
+        assert!(layout(&bytes).is_some());
     }
 }
 
@@ -189,73 +191,82 @@ fn a_valid_range_around_a_bad_point_record_loses_only_the_point() {
     let mut bad = point_record(40);
     bad[0] = b'X';
     let segment = Segment::new(VERSION_POINT, false, 4, Some((1, bad)));
-    let outcome = read(&envelope(&segment.payload), &all(&segment)).unwrap();
-    assert_eq!(outcome.pages, segment.records.iter().cloned().map(Ok).collect::<Vec<_>>());
-    let point = outcome.point.unwrap();
-    let at = point.offset as usize;
-    let header: &[u8; HEADER_BYTES] = segment.payload[at..at + HEADER_BYTES].try_into().unwrap();
-    assert_eq!(Layout::parse(header, point.length), None);
+    let outcome = read(&envelope(&segment.payload), &segment.all()).unwrap();
+    assert_eq!(outcome.pages, segment.hits());
+    assert_eq!(layout(&outcome.point_bytes.unwrap().unwrap()), None);
 }
 
-/// Each footer range, the pages it makes ambiguous, and nothing else.
+/// Footer ranges around a point stored after page 1, and the pages that must
+/// miss. Page 1 always misses: either the range makes it ambiguous, or its
+/// extent keeps the point's bytes and so is not exactly its record.
 fn bad_ranges(segment: &Segment) -> Vec<((u32, u32), Vec<usize>)> {
     let (offset, length) = segment.point;
     let [first, second, ..] = segment.offsets[..] else { unreachable!() };
     vec![
-        ((offset, 0), vec![]),
+        ((offset, 0), vec![1]),
         ((offset - 5, length), vec![1]),
         ((offset, length + 10), vec![1, 2]),
         ((second, offset + length - second), vec![1]),
-        ((offset + length, 4), vec![2]),
-        ((segment.index - 4, 8), vec![3]),
-        ((4, first - 4), vec![]),
-        ((u32::MAX - 3, 8), vec![]),
+        ((offset + length, 4), vec![1, 2]),
+        ((segment.index - 4, 8), vec![1, 3]),
+        ((4, first - 4), vec![1]),
+        ((u32::MAX - 3, 8), vec![1]),
         ((offset + 1, u32::MAX), vec![1, 2, 3]),
     ]
 }
 
-/// Ambiguous pages miss as stale; every other page returns its whole gap.
-fn check_bad_ranges(read: impl Fn(&[u8], &[u32]) -> Result<Outcome, Status>) -> Result<(), String> {
+#[test]
+fn bad_point_ranges_miss_only_the_pages_they_affect() {
     let segment = Segment::new(VERSION_POINT, false, 4, Some((1, point_record(40))));
-    for (range, ambiguous) in bad_ranges(&segment) {
-        let outcome = read(&envelope(&segment.with_footer(range)), &all(&segment)).map_err(|s| format!("{s:?}"))?;
-        let expected: Vec<_> = (0..segment.records.len())
-            .map(|page| if ambiguous.contains(&page) { Err(Status::Stale) } else { Ok(segment.gap(page).to_vec()) })
+    for (range, misses) in bad_ranges(&segment) {
+        let outcome = read(&envelope(&segment.with_footer(range)), &segment.all()).unwrap();
+        let expected: Vec<_> = (0..4)
+            .map(|page| if misses.contains(&page) { Err(Status::Stale) } else { Ok(segment.records[page].clone()) })
             .collect();
-        if outcome.pages != expected || outcome.point.is_some() {
-            return Err(format!("range {range:?}: {:?}", outcome.pages.iter().map(|p| p.as_ref().map(Vec::len)).collect::<Vec<_>>()));
-        }
+        assert_eq!(outcome.pages, expected, "range {range:?}");
+        assert_eq!(outcome.point, None, "range {range:?}");
     }
-    Ok(())
 }
 
 #[test]
-fn bad_point_ranges_miss_only_the_pages_they_make_ambiguous() {
-    check_bad_ranges(read).unwrap();
+fn an_unordered_index_gives_the_point_no_owner() {
+    // Pages 0 and 2 share one gap that the point ends, so neither owns it.
+    // Truncating either at the point would yield page 0's exact record.
+    let segment = Segment::new(VERSION_POINT, false, 5, Some((0, point_record(40))));
+    let o = &segment.offsets;
+    let entries = [o[0], o[1], o[0], o[1], o[4]];
+    let file = envelope(&segment.rebuilt(VERSION_POINT, false, &entries, segment.point));
+    let outcome = read(&file, &[0, 1, 2, 3, 4]).unwrap();
+    let stale = Err(Status::Stale);
+    let hit = Ok(segment.records[4].clone());
+    assert_eq!(outcome.pages, vec![stale.clone(), stale.clone(), stale.clone(), stale, hit]);
+    assert_eq!(outcome.point, None);
 }
 
 /// Negative control: a reader that ends a page wherever the footer's point
-/// starts serves a truncated page instead of a miss.
+/// starts serves page 1 cut short where the product reader misses.
 #[test]
-fn a_reader_trusting_the_unverified_range_fails_the_check() {
-    let trusting = |file: &[u8], pages: &[u32]| -> Result<Outcome, Status> {
-        let mut outcome = read(file, pages)?;
-        let payload = &file[..page_envelope::payload_for_extent(file.len() as u32) as usize];
-        let field = |from_end: usize| {
-            let at = payload.len() - from_end;
-            u32::from_le_bytes(payload[at..at + 4].try_into().unwrap())
+fn a_reader_trusting_the_unverified_range_serves_a_wrong_page() {
+    let segment = Segment::new(VERSION_POINT, false, 4, Some((1, point_record(40))));
+    let (offset, length) = segment.point;
+    let file = envelope(&segment.with_footer((offset - 5, length)));
+    assert_eq!(read(&file, &[1]).unwrap().pages, vec![Err(Status::Stale)]);
+    let trusted = verified(&file, |access| {
+        let field = |access: &mut VerifiedAccess<'_, '_, '_, Raw>, at: u32| {
+            let mut b = [0; 4];
+            assert_eq!(access.read_at(NAME, at, &mut b), 4);
+            u32::from_le_bytes(b)
         };
-        let (index, point) = (field(32) as usize, field(12) as usize);
-        for (page, result) in outcome.pages.iter_mut().enumerate() {
-            let entry = |page: usize| u32::from_le_bytes(payload[index + 8 * page..][..4].try_into().unwrap()) as usize;
-            let start = entry(page);
-            let end = if page + 1 < pages.len() { entry(page + 1) } else { index };
-            let end = if (start..end).contains(&point) && point > start { point } else { end };
-            *result = Ok(payload[start..end].to_vec());
-        }
-        Ok(outcome)
-    };
-    assert!(check_bad_ranges(trusting).is_err());
+        let footer = access.file_size(NAME) as u32 - 32;
+        let (index, point) = (field(access, footer), field(access, footer + 20));
+        let (start, next) = (field(access, index + 8), field(access, index + 16));
+        let end = if (start + 1..next).contains(&point) { point } else { next };
+        let mut bytes = vec![0; (end - start) as usize];
+        assert_eq!(access.read_at(NAME, start, &mut bytes), bytes.len() as i32);
+        bytes
+    });
+    assert_eq!(trusted.len(), segment.records[1].len() - 5);
+    assert_ne!(trusted, segment.records[1]);
 }
 
 #[test]
@@ -274,7 +285,7 @@ fn a_bad_block_shared_by_the_point_and_a_page_misses_only_its_reads() {
     assert_eq!(outcome.pages, vec![hit(0), hit(2), hit(7)]);
     // The point's range is still structural; its bytes fail verification.
     assert_eq!(outcome.point, Some(PointRange { offset, length }));
-    assert_eq!(outcome.point_readable, Some(false));
+    assert_eq!(outcome.point_bytes, Some(Err(())));
     // A page in the bad block misses, and the failed attach stays failed.
     let outcome = read(&file, &[3, 0]).unwrap();
     assert_eq!(outcome.pages, vec![Err(Status::IoError), Err(Status::IoError)]);
@@ -286,9 +297,16 @@ fn a_bad_block_shared_by_the_point_and_a_page_misses_only_its_reads() {
 fn v3_segments_still_hit_and_unknown_versions_miss() {
     for partial in [false, true] {
         let segment = Segment::new(VERSION_PAGES, partial, 4, None);
-        let outcome = read(&envelope(&segment.payload), &all(&segment)).unwrap();
-        assert_eq!(outcome.pages, segment.records.iter().cloned().map(Ok).collect::<Vec<_>>());
+        let outcome = read(&envelope(&segment.payload), &segment.all()).unwrap();
+        assert_eq!(outcome.pages, segment.hits());
         assert_eq!(outcome.point, None);
+        // One index entry, so page 0's gap also holds pages 1..3. v3 keeps the
+        // SDK's tolerance of trailing bytes; v4 requires the exact record.
+        let one = &segment.offsets[..1];
+        let page = read(&envelope(&segment.rebuilt(VERSION_PAGES, partial, one, (0, 0))), &[0]).unwrap();
+        assert!(page.pages[0].as_ref().unwrap().starts_with(&segment.records[0]));
+        let page = read(&envelope(&segment.rebuilt(VERSION_POINT, partial, one, (0, 0))), &[0]).unwrap();
+        assert_eq!(page.pages, vec![Err(Status::Stale)]);
         // A v4 reader must not find point fields in a v3 footer.
         let mut v4 = segment.payload.clone();
         v4[4] = VERSION_POINT as u8;

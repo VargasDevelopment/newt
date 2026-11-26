@@ -1,4 +1,5 @@
 use newt_core::resume_point::*;
+use newt_core::xml_input::EntityFilter;
 
 fn header(mode: u8, lengths: [u32; 7]) -> [u8; HEADER_BYTES] {
     let mut h = [0; HEADER_BYTES];
@@ -57,4 +58,13 @@ fn every_header_field_and_bound_is_checked() {
             assert_eq!(Layout::parse(&header(0, empty), total(empty)), None, "{section:?} empty");
         }
     }
+}
+
+#[test]
+fn the_stream_section_holds_the_whole_entity_filter() {
+    // Host layout, usize = 8: an upper bound on any packed encoding of the
+    // filter, plus the two u64 stream counters.
+    let state = size_of::<EntityFilter>() + 2 * size_of::<u64>();
+    assert!(state >= 512 + 32 + 13, "the filter keeps its raw, pending and entity buffers");
+    assert!(state <= Section::Stream.max_bytes() as usize, "{state} B");
 }

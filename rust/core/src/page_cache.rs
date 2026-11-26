@@ -424,7 +424,7 @@ impl PageCacheWriter {
             e.offset,
             scratch.view_mut(range).ok_or(Status::OutOfMemory)?,
         )?;
-        decode_page(range, page, scratch, out)
+        decode_page(range, page, scratch, out, false)
     }
 }
 fn get_bytes(pool: &[u8], b: Bytes) -> Option<&[u8]> {
@@ -491,14 +491,15 @@ impl<'a> IndexAllocation<'a> for IndexSlices<'a> {
 ///         v4: index count anchors anchor_count total consumed all point len FIBx  (40 B)
 /// ```
 ///
-/// A point sits in the gap after a page and before the next page or the
-/// index, so that page's extent ends at the point. Its content is never
-/// trusted for page extents: see `page_extent` and `point`.
+/// A point fills the tail of one page's gap (the bytes up to the next page or
+/// the index), so that page's extent ends at the point. Its content is never
+/// trusted for page extents: see `point_owner` and `page_extent`. A v4 page
+/// must also decode to exactly its extent, so stray bytes make it miss.
 pub const VERSION_PAGES: u16 = 3;
 pub const VERSION_POINT: u16 = 4;
 
 /// A resume point's verified position in its segment payload.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PointRange {
     pub offset: u32,
     pub length: u32,
@@ -514,8 +515,12 @@ pub struct PageCacheReader {
     partial: bool,
     consumed: u32,
     build_total: u32,
-    point_offset: u32,
-    point_length: u32,
+    /// v4 pages must decode to exactly their extent.
+    exact: bool,
+    /// The footer's point range: verified structure, unchecked; length 0 is none.
+    point: PointRange,
+    /// The one page whose gap the point ends, decided once at open.
+    point_owner: Option<u32>,
 }
 impl PageCacheReader {
     pub fn page_count(&self) -> u32 {
@@ -561,8 +566,9 @@ impl PageCacheReader {
         let name = cstr(name);
         self.name = a.copy_nul(Some(name));
         self.count = 0;
-        self.point_offset = 0;
-        self.point_length = 0;
+        self.exact = false;
+        self.point = PointRange::default();
+        self.point_owner = None;
         if self.name.is_none() {
             return Err(Status::OutOfMemory);
         }
@@ -608,9 +614,10 @@ impl PageCacheReader {
             self.consumed = u32_at(&f, 20);
             self.build_total = u32_at(&f, 24);
         }
-        if version == VERSION_POINT {
+        self.exact = version == VERSION_POINT;
+        if self.exact {
             let at = fs as usize - 12;
-            (self.point_offset, self.point_length) = (u32_at(&f, at), u32_at(&f, at + 4));
+            self.point = PointRange { offset: u32_at(&f, at), length: u32_at(&f, at + 4) };
         }
         if self.index < 12
             || anchor_off as i64 + anchors as i64 * 8 + fs != size
@@ -654,6 +661,7 @@ impl PageCacheReader {
         }
         self.anchors = anchors as usize;
         self.count = count;
+        self.point_owner = self.point_owner(&pages[..count as usize]);
         Ok(ReaderMemory {
             pages,
             anchors: anchor_records,
@@ -673,58 +681,63 @@ impl PageCacheReader {
             .find(|a| a.hash == hash)
             .map(|a| a.chars)
     }
-    /// The page's bytes before any point: from its index entry to the next
-    /// page's entry, or to the index for the last page.
-    fn gap(&self, m: &ReaderMemory<'_>, page: u32) -> Result<(u32, u32), Status> {
-        if page >= self.count {
-            return Err(Status::NotFound);
-        }
-        let start = m.pages.get(page as usize).ok_or(Status::NotFound)?.offset;
+    /// The page's gap: from its index entry to the next entry, or to the index.
+    fn gap(&self, pages: &[Entry], page: u32) -> Option<(u32, u32)> {
+        let start = pages.get(page as usize)?.offset;
         let end = if page + 1 < self.count {
-            m.pages.get(page as usize + 1).ok_or(Status::NotFound)?.offset
+            pages.get(page as usize + 1)?.offset
         } else {
             self.index
         };
-        Ok((start, end))
+        Some((start, end))
     }
-    /// Page extents use only the verified index and footer. A point that fills
-    /// the tail of this page's gap ends the page. A point range overlapping the
-    /// page any other way is ambiguous, so this page misses; pages it does not
-    /// touch still hit. An overflowing range reaches the end of the address space.
-    fn page_extent(&self, m: &ReaderMemory<'_>, page: u32) -> Result<(u32, u32), Status> {
-        let (start, end) = self.gap(m, page)?;
-        let point_start = self.point_offset;
-        let point_end = point_start.saturating_add(self.point_length);
-        if self.point_length == 0 || point_end <= start || point_start >= end {
-            return Ok((start, end));
-        }
-        if point_start > start && point_end == end {
-            Ok((start, point_start))
-        } else {
-            Err(Status::Stale)
-        }
+    /// Whether the footer's point range touches the bytes `start..end`.
+    /// An overflowing range reaches the end of the address space.
+    fn point_touches(&self, start: u32, end: u32) -> bool {
+        let point_end = self.point.offset.saturating_add(self.point.length);
+        self.point.length != 0 && point_end > start && self.point.offset < end
     }
-    /// The resume point, when its range is unambiguous: it ends exactly one
-    /// page's gap, after at least one byte of that page, and touches no other
-    /// page. A bad range loses only the point; its content is checked later.
-    pub fn point(&self, m: &ReaderMemory<'_>) -> Option<PointRange> {
-        let point = PointRange { offset: self.point_offset, length: self.point_length };
-        let end = point.offset.checked_add(point.length)?;
-        if point.length == 0 || end > self.index {
+    /// The page whose gap the point ends, after at least one page byte. A
+    /// point touching any other gap, a second such gap (an unordered index)
+    /// or a range past the index leaves no owner.
+    fn point_owner(&self, pages: &[Entry]) -> Option<u32> {
+        let end = self.point.offset.checked_add(self.point.length)?;
+        if end > self.index {
             return None;
         }
-        let mut owners = 0;
+        let mut owner = None;
         for page in 0..self.count {
-            let (start, gap_end) = self.gap(m, page).ok()?;
-            if end <= start || point.offset >= gap_end {
+            let (start, gap_end) = self.gap(pages, page)?;
+            if !self.point_touches(start, gap_end) {
                 continue;
             }
-            if point.offset <= start || end != gap_end {
+            if owner.is_some() || self.point.offset <= start || end != gap_end {
                 return None;
             }
-            owners += 1;
+            owner = Some(page);
         }
-        (owners == 1).then_some(point)
+        owner
+    }
+    /// Page extents use only the verified index and footer. The owner ends at
+    /// the point. Any other page the point touches is ambiguous and misses;
+    /// pages it does not touch still hit.
+    fn page_extent(&self, m: &ReaderMemory<'_>, page: u32) -> Result<(u32, u32), Status> {
+        if page >= self.count {
+            return Err(Status::NotFound);
+        }
+        let (start, end) = self.gap(m.pages, page).ok_or(Status::NotFound)?;
+        if self.point_owner == Some(page) {
+            Ok((start, self.point.offset))
+        } else if self.point_touches(start, end) {
+            Err(Status::Stale)
+        } else {
+            Ok((start, end))
+        }
+    }
+    /// The resume point's range, when exactly one page owns it. A bad range
+    /// loses only the point; the point's reader checks its content.
+    pub fn point(&self) -> Option<PointRange> {
+        self.point_owner.map(|_| self.point)
     }
     pub fn page_for_char(&self, m: &ReaderMemory<'_>, chars: u32) -> u32 {
         if self.count == 0 {
@@ -761,7 +774,7 @@ impl PageCacheReader {
             start,
             scratch.view_mut(range).ok_or(Status::OutOfMemory)?,
         )?;
-        decode_page(range, page, scratch, out)
+        decode_page(range, page, scratch, out, self.exact)
     }
 }
 /// Independent typed storage is required because safe Arena is byte-only.
@@ -780,11 +793,14 @@ fn copy_string(a: &mut Arena<'_>, blob: ByteRange, pos: usize, len: usize) -> Re
     a.view_mut(r).ok_or(Status::OutOfMemory)?[len] = 0;
     Ok(())
 }
+/// `exact` (v4) requires the record to fill the blob; v3 keeps the SDK's
+/// tolerance of trailing bytes.
 fn decode_page<'a>(
     blob: ByteRange,
     index: u32,
     a: &'a mut Arena<'_>,
     out: &'a mut PageMemory<'_>,
+    exact: bool,
 ) -> Result<Page<'a>, Status> {
     let b = a.view(blob).ok_or(Status::Stale)?;
     if b.len() < 10 {
@@ -885,6 +901,9 @@ fn decode_page<'a>(
         pos += tl + fl;
     }
     // SDK accepts unconsumed trailing bytes and reserved bytes.
+    if exact && pos != a.view(blob).ok_or(Status::Stale)?.len() {
+        return Err(Status::Stale);
+    }
     Ok(Page {
         bytes: a.view(blob).ok_or(Status::Stale)?,
         runs: &out.runs[..nr],
@@ -906,7 +925,7 @@ pub fn decode_record<'a>(
     a.view_mut(r)
         .ok_or(Status::OutOfMemory)?
         .copy_from_slice(record);
-    decode_page(r, index, a, out)
+    decode_page(r, index, a, out, false)
 }
 /// Temporary callback adapter; retained writer state owns no parser/frame loans.
 pub struct WriterSink<'a, S: CacheStorage> {
