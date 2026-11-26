@@ -643,59 +643,31 @@ impl<'a> EngineState<'a> {
     }
     #[inline(never)]
     fn shaped_case_styled(
-        &mut self,
+        &self,
         backend: &mut dyn Backend,
-        end: usize,
-        i: &mut usize,
-        si: usize,
         pos: usize,
         mut cp: u32,
         span_flags: u8,
         prev_small_cap: bool,
-    ) -> (u32, bool) {
-        let style = span_flags & STYLE_MASK;
-        let has_transform = span_flags & TRANSFORM_MASK != 0;
-        let has_small_caps = span_flags & SMALL_CAPS != 0;
+    ) -> (u32, bool, bool) {
         if cp == 0x00ad {
-            return (cp, prev_small_cap);
+            return (cp, prev_small_cap, true);
         }
-        if has_transform {
+        if span_flags & TRANSFORM_MASK != 0 {
             cp = self.transform_codepoint(backend, cp, pos, span_flags);
         }
-        if has_small_caps {
+        if span_flags & SMALL_CAPS != 0 {
             // Inhibit lowercase ligatures (such as fi/fl) in small-caps runs.
             let up = case::to_upper(cp);
             if up != cp && backend.covers(up) {
-                return (up, true);
+                return (up, true, true);
             }
             if is_combining(cp) {
-                return (cp, prev_small_cap);
+                return (cp, prev_small_cap, true);
             }
-            return (cp, false);
+            return (cp, false, true);
         }
-        let span_end = if si + 1 < self.span_count {
-            usize::from(self.storage.spans[si + 1].start)
-        } else {
-            end
-        };
-        while *i < end && *i < span_end {
-            if self.params.focus && (self.storage.levels[pos] ^ self.storage.levels[*i]) & 64 != 0 {
-                break;
-            }
-            let next_pos = *i;
-            let mut j = next_pos;
-            let mut next = decode(&self.storage.text[..end], &mut j);
-            if has_transform {
-                next = self.transform_codepoint(backend, next, next_pos, span_flags);
-            }
-            let lig = backend.ligature(cp, next, style);
-            if lig == 0 {
-                break;
-            }
-            cp = lig;
-            *i = j
-        }
-        (cp, false)
+        (cp, false, false)
     }
     #[inline(never)]
     pub(super) fn shaped_case(
@@ -736,8 +708,15 @@ impl<'a> EngineState<'a> {
             }
         }
         let span_flags = self.storage.spans[si].flags;
+        let mut has_transform = false;
         if self.par_case && (cp == 0x00ad || span_flags & !STYLE_MASK != 0) {
-            return self.shaped_case_styled(backend, end, i, si, pos, cp, span_flags, prev_small_cap);
+            let (mapped, small_cap, done) =
+                self.shaped_case_styled(backend, pos, cp, span_flags, prev_small_cap);
+            if done {
+                return (mapped, small_cap);
+            }
+            cp = mapped;
+            has_transform = span_flags & TRANSFORM_MASK != 0;
         }
         let style = span_flags & STYLE_MASK;
         // Ordered spans make the next start the exact boundary of this span.
@@ -750,8 +729,12 @@ impl<'a> EngineState<'a> {
             if self.params.focus && (self.storage.levels[pos] ^ self.storage.levels[*i]) & 64 != 0 {
                 break;
             }
-            let mut j = *i;
-            let next = decode(&self.storage.text[..end], &mut j);
+            let next_pos = *i;
+            let mut j = next_pos;
+            let mut next = decode(&self.storage.text[..end], &mut j);
+            if has_transform {
+                next = self.transform_codepoint(backend, next, next_pos, span_flags);
+            }
             let lig = backend.ligature(cp, next, style);
             if lig == 0 {
                 break;
