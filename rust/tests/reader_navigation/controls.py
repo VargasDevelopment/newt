@@ -4,8 +4,8 @@ These are proposed controls, not observed kills. Admission is in prepare.py.
 """
 # name, source, unique old text, replacement, bounded existing witnesses
 CONTROLS = [
-    ('weights-member-admission', 'lib.rs', 'valid = false;\n                continue;',
-     'valid = true;\n                continue;', ('missing-text', 'bad-method', 'too-large')),
+    ('weights-member-admission', 'lib.rs', 'valid = false;\n            continue;',
+     'valid = true;\n            continue;', ('missing-text', 'bad-method', 'too-large')),
     ('duplicate-href', 'lib.rs', 'if found != NO_SPINE\n            || entry.is_none_or',
      'if entry.is_none_or', ('duplicate-spine',)),
     ('utf8-title-boundary', 'lib.rs', '&& at < TITLE_BYTES\n    {',

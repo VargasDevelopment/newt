@@ -82,7 +82,7 @@ def run_gate(root, output, seconds=540, only=None, source_root=None, positive_on
         target = output / 'baseline-target'
         products.append(target)
         tests = run.cargo(baseline, target, 'test', '-p', 'newt-reader-navigation', '--lib', '--target', HOST)
-        support.require('test result: ok. 15 passed; 0 failed;' in tests, 'focused tests absent')
+        support.require('test result: ok. 21 passed; 0 failed;' in tests, 'focused tests absent')
         run.cargo(baseline, target, 'build', '-p', 'newt-reader-navigation',
                   '--bin', 'reader-navigation-host', '--target', HOST)
         binary = target / HOST / 'debug/reader-navigation-host'
