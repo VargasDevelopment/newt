@@ -478,8 +478,7 @@ impl<'a> EngineState<'a> {
         }
         self.push(d);
         if d.margin_left_pct >= 0 {
-            let add = u32::from(self.state().size) * d.margin_left_pct as u32 / 100;
-            self.pending_margin = self.pending_margin.saturating_add(add).min(u32::from(u16::MAX));
+            self.pending_margin += u32::from(self.state().size) * d.margin_left_pct as u32 / 100;
             self.note()
         }
         if let Some(id) = id {

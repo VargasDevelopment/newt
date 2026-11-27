@@ -81,65 +81,6 @@ impl EntityFilter {
             && out.put(&self.raw[self.raw_pos..self.raw_len])
             && out.put(&[u8::from(self.source_done)])
     }
-    /// Restore the live filter carry from a bounded resume-point section.
-    /// Fails closed on any out-of-range length, invalid boolean, or short read.
-    #[inline(never)]
-    pub fn load_resume(&mut self, sec: &mut crate::resume_point::SectionIn<'_, '_>) -> bool {
-        self.reset();
-        self.entity.fill(0);
-        self.pending.fill(0);
-        self.raw.fill(0);
-        let mut h = [0u8; 10];
-        if !sec.read_exact(&mut h) || &h[..4] != b"FLT1" {
-            return false;
-        }
-        let entity_len = usize::from(h[4]);
-        if h[5] > 1 {
-            return false;
-        }
-        let in_entity = h[5] == 1;
-        let pending_len = usize::from(h[6]);
-        let pending_pos = usize::from(h[7]);
-        let raw_unread = usize::from(u16::from_le_bytes([h[8], h[9]]));
-        if entity_len > 10
-            || (!in_entity && entity_len != 0)
-            || pending_len > self.pending.len()
-            || (pending_len == 0 && pending_pos != 0)
-            || (pending_len > 0 && pending_pos >= pending_len)
-            || (in_entity && pending_len > 0)
-            || raw_unread > self.raw.len()
-        {
-            return false;
-        }
-        let mut done = [0u8; 1];
-        if !sec.read_exact(&mut self.entity[..entity_len])
-            || !self.entity[..entity_len]
-                .iter()
-                .all(|&b| b.is_ascii_alphanumeric() || b == b'#')
-            || !sec.read_exact(&mut self.pending[..pending_len])
-            || !sec.read_exact(&mut self.raw[..raw_unread])
-            || !sec.read_exact(&mut done)
-            || done[0] > 1
-            || (done[0] == 1 && (raw_unread > 0 || in_entity))
-        {
-            self.reset();
-            return false;
-        }
-        self.entity_len = entity_len;
-        self.in_entity = in_entity;
-        self.pending_len = pending_len;
-        self.pending_pos = pending_pos;
-        self.raw_pos = 0;
-        self.raw_len = raw_unread;
-        self.source_done = done[0] == 1;
-        true
-    }
-    pub fn source_done(&self) -> bool {
-        self.source_done
-    }
-    pub fn raw_unread(&self) -> usize {
-        self.raw_len.saturating_sub(self.raw_pos)
-    }
     fn emit(&mut self, bytes: &[u8]) {
         let n = bytes.len().min(32 - self.pending_len);
         self.pending[self.pending_len..self.pending_len + n].copy_from_slice(&bytes[..n]);

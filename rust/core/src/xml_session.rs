@@ -151,7 +151,6 @@ pub struct StreamView<'a> {
     pub finished: bool,
     pub bytes_consumed: u64,
     pub reader_produced: u32,
-    pub shift: i64,
     pub last_feed: &'a [u8],
     pub filter: Option<&'a EntityFilter>,
 }
@@ -192,9 +191,6 @@ pub struct XmlStream<
     bytes_consumed: u64,
     finished: bool,
     last_n: usize,
-    /// Original filtered stream offset minus parser byte offset after restore;
-    /// zero for an ordinary byte-0 stream.
-    shift: i64,
 }
 impl<'a, S: BookSource + ?Sized, B: ParserBackend + ?Sized> XmlStream<'a, S, B> {
     pub fn new(source: &'a mut S, decoder: Option<InflateScratch<'a>>, backend: &'a mut B) -> Self {
@@ -221,7 +217,6 @@ impl<'a, S: BookSource + ?Sized, B: ParserBackend + ?Sized, P: SessionPolicy<B>>
             bytes_consumed: 0,
             finished: false,
             last_n: 0,
-            shift: 0,
         }
     }
     pub fn open(
@@ -239,7 +234,6 @@ impl<'a, S: BookSource + ?Sized, B: ParserBackend + ?Sized, P: SessionPolicy<B>>
         self.bytes_consumed = 0;
         self.finished = false;
         self.last_n = 0;
-        self.shift = 0;
         let status = self.reader.open(entry);
         if status != Status::Ok {
             return status;
@@ -277,7 +271,6 @@ impl<'a, S: BookSource + ?Sized, B: ParserBackend + ?Sized, P: SessionPolicy<B>>
             finished: self.finished,
             bytes_consumed: self.bytes_consumed,
             reader_produced: self.reader.total_produced(),
-            shift: self.shift,
             last_feed: self
                 .buffer
                 .as_deref()
@@ -330,15 +323,10 @@ impl<'a, S: BookSource + ?Sized, B: ParserBackend + ?Sized, P: SessionPolicy<B>>
         if self.policy.cancelled() {
             return Status::IoError;
         }
-        // Translate stream offset into parser coordinates (identity when shift == 0).
-        let Some(count) = i64::try_from(self.bytes_consumed)
-            .ok()
-            .and_then(|c| c.checked_sub(self.shift))
-            .and_then(|c| u64::try_from(c).ok())
-        else {
-            return Status::Unsupported;
-        };
-        if !self.policy.permits_feed(self.backend, count, n as u64) {
+        if !self
+            .policy
+            .permits_feed(self.backend, self.bytes_consumed, n as u64)
+        {
             return Status::Unsupported;
         }
         let parsed = self.reader.with_source(|source| {
@@ -382,124 +370,22 @@ impl<'a, S: BookSource + ?Sized, B: ParserBackend + ?Sized, P: SessionPolicy<B>>
             finished: self.finished,
             bytes_consumed: self.bytes_consumed,
             reader_produced: self.reader.total_produced(),
-            shift: self.shift,
             last_feed: self.last_feed(),
             filter: self.filter.as_deref(),
         }
         .save_resume(out)
     }
-    /// Restore stream counters, inner raw reader offset and entity filter from
-    /// Section 2 (`Stream`), checking exact agreement with `Binding::fed` and
-    /// `Source::consumed`. Call only after `open`.
-    #[inline(never)]
-    pub fn load_resume(
-        &mut self,
-        sec: &mut crate::resume_point::SectionIn<'_, '_>,
-        expected_fed: u64,
-        expected_produced: u32,
-        member_uncompressed: u32,
-    ) -> bool {
-        if !self.open || self.finished {
-            return false;
-        }
-        let mut h = [0u8; 17];
-        if !sec.read_exact(&mut h) || &h[..4] != b"XST1" {
-            return false;
-        }
-        let consumed = u64::from_le_bytes([
-            h[4], h[5], h[6], h[7], h[8], h[9], h[10], h[11],
-        ]);
-        let produced = u32::from_le_bytes([h[12], h[13], h[14], h[15]]);
-        if consumed != expected_fed || produced != expected_produced || h[16] > 1 {
-            return false;
-        }
-        let has_filter = h[16] == 1;
-        if !self.reader.seek_stored(produced) {
-            return false;
-        }
-        let ok = match (has_filter, self.filter.as_mut()) {
-            (true, Some(f)) => {
-                f.load_resume(sec)
-                    && f.raw_unread() <= produced as usize
-                    && (!f.source_done() || produced == member_uncompressed)
-            }
-            (false, None) => true,
-            _ => false,
-        };
-        if !ok || !sec.finish() {
-            return false;
-        }
-        self.bytes_consumed = consumed;
-        true
-    }
-    /// Borrow the idle parse buffer directly (for loading prolog, names or replay
-    /// during restore without an extra stack buffer).
-    #[inline(never)]
-    pub fn with_buffer_mut(
-        &mut self,
-        f: &mut dyn FnMut(&mut [u8; PARSE_CHUNK]) -> bool,
-    ) -> bool {
-        self.buffer.as_deref_mut().is_some_and(f)
-    }
-    /// Feed `self.buffer[..len]` directly to the backend under the same
-    /// pre-poll -> `permits_feed` -> parse -> post-poll order as `feed_chunk_with`.
-    #[inline(never)]
-    pub fn feed_buffered_direct(
-        &mut self,
-        len: usize,
-        parser_count: u64,
-        feed: &mut dyn FnMut(&mut S, &mut B, &[u8]) -> bool,
-    ) -> Status {
-        if !self.open || self.finished || len > PARSE_CHUNK {
-            return Status::Unsupported;
-        }
-        if self.policy.cancelled() {
-            return Status::IoError;
-        }
-        if !self.policy.permits_feed(self.backend, parser_count, len as u64) {
-            return Status::Unsupported;
-        }
-        let Some(buffer) = self.buffer.as_deref() else {
-            return Status::OutOfMemory;
-        };
-        let bytes = &buffer[..len];
-        let backend = &mut *self.backend;
-        if !self.reader.with_source(|source| feed(source, backend, bytes)) {
-            return Status::ParseError;
-        }
-        if self.policy.cancelled() {
-            return Status::IoError;
-        }
-        Status::Ok
-    }
-    /// Activate the restored parser-to-stream offset translation and replay slice length.
-    pub fn set_restored(&mut self, shift: i64, last_n: usize) {
-        self.shift = shift;
-        self.last_n = last_n.min(PARSE_CHUNK);
-    }
-    pub fn shift(&self) -> i64 {
-        self.shift
-    }
     pub fn close(&mut self) {
-        let _ = self.close_returning();
-    }
-    /// Close the active parser and return caller-lent parse resources so the
-    /// same `XmlStream` can reopen cleanly without an extra stack frame.
-    pub fn close_returning(&mut self) -> Resources<'a> {
         if self.open {
             self.backend.close();
             self.open = false;
         }
         self.handler_attached = false;
-        let resources = Resources {
-            buffer: self.buffer.take(),
-            filter: self.filter.take(),
-        };
+        self.buffer = None;
+        self.filter = None;
         self.finished = false;
         self.last_n = 0;
-        self.shift = 0;
         // Count deliberately survives close, matching the source.
-        resources
     }
 }
 impl<S: BookSource + ?Sized, B: ParserBackend + ?Sized, P: SessionPolicy<B>> Drop

@@ -434,16 +434,6 @@ impl<'a, S: BookSource + ?Sized> Reader<'a, S> {
     pub fn total_produced(&self) -> u32 {
         self.produced
     }
-    /// Position an open stored member without reading bytes.
-    pub fn seek_stored(&mut self, produced: u32) -> bool {
-        match self.entry {
-            Some(e) if e.method == 0 && produced <= e.uncompressed_size => {
-                self.produced = produced;
-                true
-            }
-            _ => false,
-        }
-    }
     pub fn entry(&self) -> Option<&Entry> {
         self.entry
     }

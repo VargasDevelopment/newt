@@ -72,71 +72,6 @@ impl<'a> Tap<'a> {
         }
     }
 
-    pub(crate) fn reset(&mut self) {
-        self.leading = [0; 4];
-        self.leading_len = 0;
-        self.prolog_len = 0;
-        self.prolog_over = false;
-        self.root_seen = false;
-        self.root = 0;
-        self.depth = 0;
-        self.used = 0;
-        self.omitted = 0;
-        self.edge_done = 0;
-    }
-
-    pub(crate) fn depth(&self) -> u8 {
-        self.depth
-    }
-
-    pub(crate) fn prolog_slice_mut(&mut self, len: usize) -> &mut [u8] {
-        &mut self.prolog[..len]
-    }
-
-    /// Finish seeding the tap after the caller already copied `prolog_len` bytes
-    /// into `self.prolog[..prolog_len]`, avoiding any stack copy of the prolog.
-    pub(crate) fn finish_restore_prolog(
-        &mut self,
-        prolog_len: usize,
-        root_name: &[u8],
-        edge_done: u32,
-    ) -> bool {
-        if prolog_len > PROLOG_MAX {
-            return false;
-        }
-        self.reset();
-        self.prolog_len = prolog_len as u16;
-        self.root_seen = true;
-        self.root = prolog_len as u64;
-        self.edge_done = edge_done;
-        let mut n = 0usize;
-        for &b in self.prolog[..prolog_len].iter().take(4) {
-            self.leading[n] = b;
-            n += 1;
-        }
-        if n < 4 {
-            self.leading[n] = b'<';
-            n += 1;
-        }
-        for &b in root_name.iter().take(4 - n) {
-            self.leading[n] = b;
-            n += 1;
-        }
-        while n < 4 {
-            self.leading[n] = b'>';
-            n += 1;
-        }
-        self.leading_len = n as u8;
-        true
-    }
-
-    pub(crate) fn push_restored(&mut self, name: &[u8]) -> bool {
-        let before_depth = self.depth;
-        let before_omitted = self.omitted;
-        self.push(name);
-        self.omitted == before_omitted && self.depth == before_depth + 1
-    }
-
     /// Observe filtered bytes before feeding them to the parser.
     pub fn observe(&mut self, bytes: &[u8]) {
         if (self.leading_len as usize) < self.leading.len() {
@@ -268,10 +203,6 @@ impl<'a> CaptureState<'a> {
             tap: Tap::new(prolog, names, lens),
             live_bits,
         }
-    }
-    pub(crate) fn reset(&mut self) {
-        self.obs = ParseObservation::new();
-        self.tap.reset();
     }
 }
 
@@ -443,13 +374,7 @@ fn attempt_capture(
     if input.parser_index < 0 {
         return CaptureOutcome::Declined(edge, Decline::Backlog);
     }
-    let Some(cut) = input
-        .parser_index
-        .checked_add(input.stream.shift)
-        .and_then(|v| u64::try_from(v).ok())
-    else {
-        return CaptureOutcome::Declined(edge, Decline::Backlog);
-    };
+    let cut = input.parser_index as u64;
     let fed = input.stream.bytes_consumed;
     let Some(backlog) = fed.checked_sub(cut) else {
         return CaptureOutcome::Declined(edge, Decline::Backlog);

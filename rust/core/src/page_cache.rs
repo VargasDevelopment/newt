@@ -532,12 +532,8 @@ fn read_fully(
     }
     Ok(())
 }
-/// Largest decoded page record extent accepted by `PageCacheReader` and
-/// segment-map start certification.
-pub const MAX_PAGE_BYTES: u32 = 128 * 1024;
-
 fn allocate_blob(a: &mut Arena<'_>, start: u32, end: u32) -> Result<ByteRange, Status> {
-    if end <= start || end - start > MAX_PAGE_BYTES {
+    if end <= start || end - start > 128 * 1024 {
         return Err(Status::Stale);
     }
     a.alloc((end - start) as usize, 4)
@@ -583,104 +579,6 @@ impl<'a> IndexAllocation<'a> for IndexSlices<'a> {
 /// must also decode to exactly its extent, so stray bytes make it miss.
 pub const VERSION_PAGES: u16 = 3;
 pub const VERSION_POINT: u16 = 4;
-
-/// Gap `[start, end)` of `page` inside an index table ending at `index`.
-fn page_gap(pages: &[Entry], index: u32, page: u32) -> Option<(u32, u32)> {
-    let start = pages.get(page as usize)?.offset;
-    let end = if (page as usize) + 1 < pages.len() {
-        pages.get(page as usize + 1)?.offset
-    } else {
-        index
-    };
-    Some((start, end))
-}
-
-/// Whether `point` shares at least one byte with nonempty gap `[start, end)`.
-fn point_touches_gap(point: PointRange, start: u32, end: u32) -> bool {
-    let point_end = point.offset.saturating_add(point.length);
-    point.length != 0 && start < end && point_end > start && point.offset < end
-}
-
-/// Whether `page`'s v4 gap is nonempty, inside `12..=index`, and disjoint from
-/// every other nonempty gap in `pages`.
-fn v4_gap_valid(pages: &[Entry], index: u32, page: u32) -> bool {
-    let Some((start, end)) = page_gap(pages, index, page) else {
-        return false;
-    };
-    start >= 12
-        && start < end
-        && end <= index
-        && (0..pages.len() as u32).all(|other| {
-            other == page
-                || page_gap(pages, index, other)
-                    .is_none_or(|(s, e)| s >= e || e <= start || s >= end)
-        })
-}
-
-/// The unique page whose valid v4 gap `point` fills to the end after at least
-/// one page byte. Shared by `PageCacheReader` and the streaming restore loader
-/// so point ownership uses one structural rule.
-#[inline(never)]
-pub fn verified_point_owner(index: u32, point: PointRange, pages: &[Entry]) -> Option<u32> {
-    if point.length == 0 {
-        return None;
-    }
-    let end = point.offset.checked_add(point.length)?;
-    if end > index {
-        return None;
-    }
-    let mut owner = None;
-    for page in 0..pages.len() as u32 {
-        let (start, gap_end) = page_gap(pages, index, page)?;
-        if !point_touches_gap(point, start, gap_end) {
-            continue;
-        }
-        if owner.is_some()
-            || point.offset <= start
-            || end != gap_end
-            || !v4_gap_valid(pages, index, page)
-        {
-            return None;
-        }
-        owner = Some(page);
-    }
-    owner
-}
-
-/// Verified v4 byte extent `[start, end)` for `page`, applying the exact same
-/// non-overlapping gap and unique point-ownership rule used by `PageCacheReader`.
-fn verified_v4_page_extent_with_owner(
-    index: u32,
-    point: PointRange,
-    owner: Option<u32>,
-    pages: &[Entry],
-    page: u32,
-) -> Option<(u32, u32)> {
-    let (start, end) = page_gap(pages, index, page)?;
-    if !v4_gap_valid(pages, index, page) {
-        return None;
-    }
-    if owner == Some(page) {
-        Some((start, point.offset))
-    } else if point_touches_gap(point, start, end) {
-        None
-    } else {
-        Some((start, end))
-    }
-}
-
-/// Verified v4 byte extent `[start, end)` for `page` when the caller has not
-/// cached `verified_point_owner`.
-#[inline(never)]
-pub fn verified_v4_page_extent(
-    index: u32,
-    point: PointRange,
-    pages: &[Entry],
-    page: u32,
-) -> Option<(u32, u32)> {
-    let owner = verified_point_owner(index, point, pages);
-    verified_v4_page_extent_with_owner(index, point, owner, pages, page)
-}
 
 /// A resume point's verified position in its segment payload.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -865,11 +763,67 @@ impl PageCacheReader {
             .find(|a| a.hash == hash)
             .map(|a| a.chars)
     }
+    /// The page's gap: from its index entry to the next entry, or to the index.
+    fn gap(&self, pages: &[Entry], page: u32) -> Option<(u32, u32)> {
+        let start = pages.get(page as usize)?.offset;
+        let end = if page + 1 < self.count {
+            pages.get(page as usize + 1)?.offset
+        } else {
+            self.index
+        };
+        Some((start, end))
+    }
+    /// Whether the footer's point range shares a byte with `start..end`. An
+    /// empty or backwards gap has no bytes, so it touches nothing. An
+    /// overflowing range reaches the end of the address space.
+    fn point_touches(&self, start: u32, end: u32) -> bool {
+        let point_end = self.point.offset.saturating_add(self.point.length);
+        self.point.length != 0 && start < end && point_end > start && self.point.offset < end
+    }
+    /// A v4 gap must be nonempty, lie between the header and the index, and
+    /// share no byte with another nonempty gap. A v3 index is not checked.
+    fn gap_valid(&self, pages: &[Entry], page: u32) -> bool {
+        let Some((start, end)) = self.gap(pages, page) else {
+            return false;
+        };
+        if !self.exact {
+            return true;
+        }
+        start >= 12
+            && start < end
+            && end <= self.index
+            && (0..self.count).all(|other| {
+                other == page
+                    || self.gap(pages, other).is_none_or(|(s, e)| s >= e || e <= start || s >= end)
+            })
+    }
     /// The page whose valid gap the point ends, after at least one page byte.
     /// A point touching any other gap, a second such gap or a range past the
     /// index leaves no owner.
     fn point_owner(&self, pages: &[Entry]) -> Option<u32> {
-        verified_point_owner(self.index, self.point, pages.get(..self.count as usize)?)
+        if self.point.length == 0 {
+            return None;
+        }
+        let end = self.point.offset.checked_add(self.point.length)?;
+        if end > self.index {
+            return None;
+        }
+        let mut owner = None;
+        for page in 0..self.count {
+            let (start, gap_end) = self.gap(pages, page)?;
+            if !self.point_touches(start, gap_end) {
+                continue;
+            }
+            if owner.is_some()
+                || self.point.offset <= start
+                || end != gap_end
+                || !self.gap_valid(pages, page)
+            {
+                return None;
+            }
+            owner = Some(page);
+        }
+        owner
     }
     /// Page extents use only the verified index and footer. An invalid v4
     /// gap misses. The owner ends at the point. Any other page the point
@@ -878,12 +832,16 @@ impl PageCacheReader {
         if page >= self.count {
             return Err(Status::NotFound);
         }
-        let slice = m.pages.get(..self.count as usize).ok_or(Status::NotFound)?;
-        if !self.exact {
-            return page_gap(slice, self.index, page).ok_or(Status::NotFound);
+        let (start, end) = self.gap(m.pages, page).ok_or(Status::NotFound)?;
+        if !self.gap_valid(m.pages, page) {
+            Err(Status::Stale)
+        } else if self.point_owner == Some(page) {
+            Ok((start, self.point.offset))
+        } else if self.point_touches(start, end) {
+            Err(Status::Stale)
+        } else {
+            Ok((start, end))
         }
-        verified_v4_page_extent_with_owner(self.index, self.point, self.point_owner, slice, page)
-            .ok_or(Status::Stale)
     }
     /// The resume point's range, when exactly one page owns it. A bad range
     /// loses only the point; the point's reader checks its content.

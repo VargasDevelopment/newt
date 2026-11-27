@@ -86,12 +86,9 @@ impl<S: Native> Drop for ProducerAttempt<'_, '_, S> {
 }
 
 impl<S: Native> ChapterCacheAccess<'_, '_, S> {
-    /// Same transient allocation at the validation and finalization sites:
-    /// `FilePort` already reads in 1 KiB chunks outside immutable foreground
-    /// queries, so 1 KiB matches both the read and CRC chunk sizes without a
-    /// 4 KiB heap spike while the chapter parser is live.
+    /// Same transient allocation at the frozen validation/finalization sites.
     fn scratch() -> Option<Bytes> {
-        Bytes::try_new(1024)
+        Bytes::try_new(BLOCK_BYTES as usize)
     }
 
     /// Presence hint only. A retained page descriptor answers from its
@@ -255,7 +252,6 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
     pub fn suspend_producer_write(&mut self) -> bool {
         if self.state.read_active && !self.file.writing() {
             self.close();
-            self.file.mark_read_suspended();
         }
         self.file.suspend_producer_write()
     }
@@ -378,7 +374,7 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
                 self.state.lookup = Lookup::Unknown;
                 return false;
             }
-            let take = (bytes - at).min(scratch.as_mut().len() as u32);
+            let take = (bytes - at).min(BLOCK_BYTES);
             let batch = &mut scratch.as_mut()[..take as usize];
             if !self.file.read(at, batch) {
                 self.state.lookup = Lookup::Unknown;
@@ -458,20 +454,38 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
         let mut at = 0;
         for block in 0..count {
             let take = BLOCK_BYTES.min(payload - at);
-            let Some(checked) = self.read_block_crc(
-                &route,
-                block,
-                at,
-                take,
-                scratch.as_mut(),
-                &mut whole,
-                None,
-                true,
-            ) else {
+            let data = &mut scratch.as_mut()[..take as usize];
+            #[cfg(feature = "page-turn-trace")]
+            let read_started = self.file.trace_micros();
+            let read_ok = self.file.read(at, data);
+            #[cfg(feature = "page-turn-trace")]
+            {
+                self.state.trace.seal.read_us = self
+                    .state
+                    .trace
+                    .seal
+                    .read_us
+                    .wrapping_add(self.file.trace_micros().wrapping_sub(read_started));
+            }
+            if !read_ok || !self.file.allowed() {
+                return false;
+            }
+            #[cfg(feature = "page-turn-trace")]
+            let crc_started = self.file.trace_micros();
+            let Some(checked) = self.readback_crc(&route, block, data, &mut whole, None) else {
                 return false;
             };
             let entry = checked.to_le_bytes();
             directory = envelope::crc(directory, &entry);
+            #[cfg(feature = "page-turn-trace")]
+            {
+                self.state.trace.seal.crc_us = self
+                    .state
+                    .trace
+                    .seal
+                    .crc_us
+                    .wrapping_add(self.file.trace_micros().wrapping_sub(crc_started));
+            }
             #[cfg(feature = "page-turn-trace")]
             let dir_started = self.file.trace_micros();
             let dir_ok = self.file.write(payload + 4 * block, &entry, self.file.bytes() == payload + 4 * block);
@@ -618,17 +632,17 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
         let mut at = 0;
         for block in 0..envelope::blocks(payload) {
             let take = BLOCK_BYTES.min(payload - at);
-            let Some(checked_block) =
-                self.read_block_crc(route, block, at, take, scratch, &mut whole, cancel, false)
+            let data = &mut scratch.as_mut()[..take as usize];
+            let mut entry = [0; 4];
+            if !self.file.read(at, data) || !self.file.read(payload + 4 * block, &mut entry) {
+                self.state.lookup = Lookup::Unknown;
+                return false;
+            }
+            let Some(checked_block) = self.readback_crc(route, block, data, &mut whole, cancel)
             else {
                 self.state.lookup = Lookup::Unknown;
                 return false;
             };
-            let mut entry = [0; 4];
-            if !self.file.read(payload + 4 * block, &mut entry) {
-                self.state.lookup = Lookup::Unknown;
-                return false;
-            }
             if u32::from_le_bytes(entry) != checked_block {
                 return false;
             }
@@ -651,67 +665,28 @@ impl<S: Native> ChapterCacheAccess<'_, '_, S> {
         }
         true
     }
-    /// Read one 4 KiB envelope block in `scratch.len()` pieces and compute its
-    /// checked CRC while advancing `whole`. None is I/O error or interrupted work.
-    fn read_block_crc(
+    /// One block's checked CRC, advancing `whole`. None is interrupted work.
+    fn readback_crc(
         &mut self,
         route: &envelope::Route,
         block: u32,
-        at: u32,
-        take: u32,
-        scratch: &mut [u8],
+        data: &[u8],
         whole: &mut u32,
         cancel: Option<&dyn Authority>,
-        _trace_seal: bool,
     ) -> Option<u32> {
-        if scratch.is_empty() {
-            return None;
-        }
-        let mut hash = envelope::block_seed(route, block, take);
-        let mut done = 0u32;
-        while done < take {
-            let n = (take - done).min(scratch.len() as u32) as usize;
-            let buf = &mut scratch[..n];
-            #[cfg(feature = "page-turn-trace")]
-            let read_started = if _trace_seal { self.file.trace_micros() } else { 0 };
-            let read_ok = self.file.read(at + done, buf);
-            #[cfg(feature = "page-turn-trace")]
-            if _trace_seal {
-                self.state.trace.seal.read_us = self
-                    .state
-                    .trace
-                    .seal
-                    .read_us
-                    .wrapping_add(self.file.trace_micros().wrapping_sub(read_started));
-            }
-            if !read_ok || self.interrupted(cancel) {
+        let mut hash = envelope::block_seed(route, block, data.len() as u32);
+        for chunk in data.chunks(1024) {
+            if self.interrupted(cancel) {
                 return None;
             }
-            #[cfg(feature = "page-turn-trace")]
-            let crc_started = if _trace_seal { self.file.trace_micros() } else { 0 };
-            for chunk in buf.chunks(1024) {
-                if self.interrupted(cancel) {
-                    return None;
-                }
-                *whole = envelope::crc(*whole, chunk);
-                if self.interrupted(cancel) {
-                    return None;
-                }
-                hash = envelope::crc(hash, chunk);
-                if self.interrupted(cancel) {
-                    return None;
-                }
+            *whole = envelope::crc(*whole, chunk);
+            if self.interrupted(cancel) {
+                return None;
             }
-            #[cfg(feature = "page-turn-trace")]
-            if _trace_seal {
-                self.state.trace.seal.crc_us = self
-                    .state
-                    .trace
-                    .seal
-                    .crc_us
-                    .wrapping_add(self.file.trace_micros().wrapping_sub(crc_started));
+            hash = envelope::crc(hash, chunk);
+            if self.interrupted(cancel) {
+                return None;
             }
-            done += n as u32;
         }
         Some(hash ^ u32::MAX)
     }
@@ -1028,74 +1003,6 @@ impl<S: Native> CacheStorage for ChapterCacheAccess<'_, '_, S> {
     }
     fn producer_remaining_credit(&self) -> Option<u64> {
         self.file.producing().then(|| self.file.write_credit())
-    }
-    fn supports_envelope_read(&self) -> bool {
-        true
-    }
-    fn envelope_read_suspended(&self) -> bool {
-        self.file.read_suspended()
-    }
-    fn begin_envelope_read(&mut self, name: &[u8], query: &mut Query<'_>) -> bool {
-        self.file.clear_read_suspended();
-        query.finish();
-        if self.file.writing() {
-            return false;
-        }
-        let Some(text) = valid_name(name) else {
-            return false;
-        };
-        if text.len() != 69 || !hex(&text.as_bytes()[..64]) || !text.ends_with(".fibp") {
-            return false;
-        }
-        let mut route = [0u8; 32];
-        if !envelope::route(Some(name), &mut route, true) {
-            return false;
-        }
-        let lease = self.reset();
-        if self.file.generation() != lease {
-            return false;
-        }
-        if !self.file.name(text, false, cache_folder(Some(name)))
-            || !self.file.open_read_optional(MAX_EXTENT)
-        {
-            self.reset();
-            return false;
-        }
-        self.state.read_active = true;
-        self.state.legacy = false;
-        self.state.payload = 0;
-        query.route = route;
-        query.generation = self.file.generation();
-        query.extent = self.file.bytes();
-        query.payload = 0;
-        query.active = true;
-        query.bound = true;
-        true
-    }
-    fn read_envelope_raw(&mut self, query: &Query<'_>, offset: u32, out: &mut [u8]) -> bool {
-        query.active
-            && query.bound
-            && self.state.read_active
-            && self.file.envelope_read()
-            && self.file.generation() == query.generation
-            && self.same(query.name.unwrap_or_default())
-            && self.file.read_raw_optional(query.generation, offset, out)
-            && self.file.generation() == query.generation
-    }
-    fn finish_envelope_read(&mut self, query: &mut Query<'_>) -> bool {
-        let same_lease = query.active
-            && query.bound
-            && self.state.read_active
-            && self.file.envelope_read()
-            && self.file.generation() == query.generation
-            && self.same(query.name.unwrap_or_default());
-        let fresh = same_lease && self.file.fresh_optional(query.generation);
-        query.finish();
-        if !same_lease {
-            return false;
-        }
-        let closed = self.reset();
-        fresh && self.file.released_cleanly(closed) && self.file.allowed()
     }
 }
 

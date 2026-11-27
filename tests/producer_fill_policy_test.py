@@ -67,7 +67,7 @@ CONTROLS = (
      'post_rename_interrupt_on_third_try_completes_whole_and_map_chapters',
      'post-rename interrupt on published segment map must complete and advance to prefetch'),
     ('suspend-keeps-held-read', 'native-storage/src/chapter_cache.rs',
-     '        if self.state.read_active && !self.file.writing() {\n            self.close();\n            self.file.mark_read_suspended();\n        }\n',
+     '        if self.state.read_active && !self.file.writing() {\n            self.close();\n        }\n',
      '',
      'duty_due_while_read_held_completes',
      'a duty due while a read is held must not end the fill'),
@@ -243,7 +243,7 @@ def main():
         workspace = output / 'rust'
         shutil.copytree(ROOT / 'rust', workspace, ignore=shutil.ignore_patterns('target', '__pycache__'))
         (output / 'logs').mkdir()
-        run = support.Run(output / 'logs', support.verify_tools(), time.monotonic() + 480)
+        run = support.Run(output / 'logs', support.verify_tools(), time.monotonic() + 300)
         # Keep RUSTFLAGS constant across positive and mutated builds so Cargo
         # never invalidates untouched crate fingerprints; rust/check.py --landing
         # already compiles the workspace with -Dwarnings.
