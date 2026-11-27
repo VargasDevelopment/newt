@@ -1,7 +1,5 @@
 //! Short work observations share the existing scheduler callback pointer.
-use super::{WorkEvent, Yield};
-#[cfg(feature = "dev-usb")]
-use super::WorkKind;
+use super::{WorkEvent, WorkKind, Yield};
 use crate::{reader_action_profile::{ActionStage, CacheMissReason},
     reader_work_profile::ReaderOpenRoute};
 
@@ -40,6 +38,10 @@ pub fn layout_end(hook: Yield<'_>, pages: u32) {
     if let Some(hook) = hook { hook.observe(WorkEvent::new(super::WorkKind::LayoutEnd, pages as i32)); }
     #[cfg(not(feature = "page-turn-trace"))]
     let _ = (hook, pages);
+}
+#[inline]
+pub fn layout_progress(hook: Yield<'_>, pages: u32) {
+    if let Some(hook) = hook { hook.observe(WorkEvent::new(WorkKind::LayoutProgress, pages as i32)); }
 }
 
 /// Restores the suspended stage on every return, using the same short hook.

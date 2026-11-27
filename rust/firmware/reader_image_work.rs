@@ -114,7 +114,9 @@ impl Runtime {
         self.selection.begin_selection();
         let work = if self.receipt_present_image(home, filename) { newt_reader_ui::SlowWork::Opening }
             else { newt_reader_ui::SlowWork::FirstOpen };
-        self.acknowledge_work_image(home, ui, logical, work, events.control, events.action);
+        if self.acknowledge_work_image(home, ui, logical, work, events.control, events.action) {
+            events.control.restart(millis());
+        }
         super::profile::with_profile(|profile| {
             let selected = self.prepare_image(home, ui, logical, events, filename, None, profile).is_ok_and(|digest| {
                 self.selection.publish_candidate(filename, digest, &mut || {}, &mut || {})

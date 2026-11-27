@@ -171,6 +171,19 @@ impl<'a> ImportedRevision<'a> {
     pub fn load(&mut self, source: &'a mut dyn BookSource) -> bool {
         self.core.load(source, self.scratch)
     }
+    /// Reopen the stored receipt for the retained source after an interrupted
+    /// action closed the receipt handle. Fails closed on any digest or check mismatch.
+    pub fn reload_held_receipt(&mut self, expected: Digest) -> bool {
+        let Some(source) = self.core.source.take() else {
+            return false;
+        };
+        if self.load(source) && self.core.digest == expected && self.good() {
+            true
+        } else {
+            self.core.reset();
+            false
+        }
+    }
     /// Retain the source handle across a closed receipt for reopen. This confers
     /// no receipt or page authority: reopen must reselect and compare the full digest.
     pub fn retain_source_for_reopen(&mut self, retain: bool) {
@@ -560,6 +573,7 @@ impl<'a> Core<'a> {
         }
         self.block.as_deref_mut().is_some_and(|h| h.finish(hash))
     }
+    #[inline(never)]
     fn load(&mut self, source: &'a mut dyn BookSource, scratch: &mut [u8]) -> bool {
         self.reset();
         self.source = Some(source);

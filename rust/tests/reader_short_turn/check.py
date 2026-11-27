@@ -141,7 +141,9 @@ def check_recovery(run, command, workspace, out, positive, *, controls):
     write_pictures(pictures)
     restore = run([positive, pictures, '--picture-restore'])
     assert 'PASS picture pages reopen' in restore, restore
-    print(policy + upgrade + resume + restore, end='')
+    cache_cancel = run([positive, '--cache-only-cancel'])
+    assert 'PASS cache_only cold-miss/hit and cancelled live exit save/reload' in cache_cancel, cache_cancel
+    print(policy + upgrade + resume + restore + cache_cancel, end='')
     if controls:
         recovery_controls(run, command, dense, workspace, out)
 
@@ -292,7 +294,24 @@ def recovery_controls(run, command, dense, workspace, out):
         host.write_text(paths((HERE / 'host.rs').read_text(), HERE, {target: replacement}))
         run([*command, host, '-o', child / 'program'])
         run([child / 'program', *arguments], witness=witness)
-    print('PASS compiled restore policy, boot resume, wake orientation and old Pages producer controls rejected')
+    # #103: dropping allow_cancelled in reader_book_exit refuses cancelled live exit saves.
+    book = workspace / 'firmware/reader_book.rs'
+    exit_src = workspace / 'firmware/reader_book_exit.rs'
+    exit_text = exit_src.read_text()
+    needle = '(owner.state.opened() || allow_cancelled)'
+    assert exit_text.count(needle) == 1
+    child = out / 'no-allow-cancelled-exit'
+    child.mkdir()
+    replacement = child / 'reader_book_exit.rs'
+    replacement.write_text(exit_text.replace(needle, 'owner.state.opened()', 1))
+    generated_book = child / 'book.rs'
+    generated_book.write_text(paths(book.read_text(), book.parent, {exit_src: replacement}))
+    host = child / 'host.rs'
+    host.write_text(paths((HERE / 'host.rs').read_text(), HERE, {book: generated_book}))
+    run([*command, host, '-o', child / 'program'])
+    run([child / 'program', '--cache-only-cancel'],
+        witness='cancelled live exit must verify and commit unsaved progress')
+    print('PASS compiled restore policy, boot resume, wake orientation, old Pages producer and cancelled-exit controls rejected')
 
 
 if __name__ == '__main__':

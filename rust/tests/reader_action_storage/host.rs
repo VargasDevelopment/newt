@@ -72,6 +72,7 @@ mod app_image {
 }
 mod reader_duty {
     use super::*;
+    thread_local! { pub static LAST_RENEW: Cell<Option<bool>> = const { Cell::new(None) }; }
     pub struct ReaderDuty<'a, 'task>(PhantomData<(&'a (), &'task ())>);
     impl<'a, 'task> ReaderDuty<'a, 'task> {
         pub fn new(_: &'a (), _: &'a newt_core::reader_scheduler::YieldCadence,
@@ -82,8 +83,10 @@ mod reader_duty {
         pub fn cache_miss(&self, _: u8) {}
         pub fn yield_now(&self) {}
         pub fn event(&self, _: &newt_core::admission::WorkEvent) {}
-        // These cases never activate a Contents anchor entry (#188).
-        pub fn renewing(self, renew: bool) -> Self { assert!(!renew); self }
+        pub fn renewing(self, renew: bool) -> Self {
+            LAST_RENEW.with(|slot| slot.set(Some(renew)));
+            self
+        }
     }
 }
 mod reader_hash {
@@ -228,7 +231,6 @@ mod image {
     impl Runtime {
         pub fn book(&self) -> Option<&newt_c3_board::reader_memory::Runtime<'static,'static>> { Some(&self.memory.runtime) }
         pub fn restore_policy_image(&self) -> newt_reader_ui::RestorePolicy { newt_reader_ui::RestorePolicy::ExactPage }
-        pub fn starts_anchor_jump(&self, _: newt_core::app::Action) -> bool { false }
         pub fn refuse_checkpoint_image(&mut self, _: u32, _: bool) { panic!("no requested save in source-loan fixture") }
     }
     #[path = "../../firmware/reader_standalone_open.rs"] pub(crate) mod standalone_open;
@@ -239,7 +241,7 @@ mod image {
         pub struct Opening { pub accepted_save: bool, pub at: u32, pub indexed: newt_phased_reader::index_build::Indexed }
         // Whether the last turn opened through the prepared import route.
         thread_local! { pub static PREPARED: Cell<Option<bool>> = const { Cell::new(None) }; }
-        #[derive(Clone, Copy)] pub struct Turn<'a> { pub indexed: Option<&'a newt_phased_reader::index_build::Indexed>, pub paint_first: bool, pub accepted_save: bool, pub step: Option<reader_book::BookStep>, pub settings: ViewSettings, pub open: newt_reader_ui::PhysicalOpen }
+        #[derive(Clone, Copy)] pub struct Turn<'a> { pub indexed: Option<&'a newt_phased_reader::index_build::Indexed>, pub paint_first: bool, pub accepted_save: bool, pub step: Option<reader_book::BookStep>, pub settings: ViewSettings, pub cache_only: bool, pub open: newt_reader_ui::PhysicalOpen }
         pub struct Ports<'a,'io,'scope,'sdk> {
             pub io: &'io newt_native_io::UiIo, pub panel: &'a mut newt_c3_board::ReaderPanel<'scope,'sdk>,
             pub card: &'a mut card::Card, pub preferences: &'a mut home_startup::preferences::ReaderPreferences,
@@ -368,6 +370,7 @@ fn main() {
     logical.fill(0xa5);
     reads.borrow_mut().clear();
     image::execute(&mut runtime,&mut home,&mut ui,&mut logical,&mut events,reader_book::BookStep::Action(newt_core::app::Action::Next));
+    assert_eq!(reader_duty::LAST_RENEW.with(Cell::get), Some(true), "foreground actions must allow long-chapter budget renewal");
     assert_eq!(&*reads.borrow(),&[4096],"real operate_image must lend whole-block action scratch exactly once");
     let retained_at = newt_phased_reader::imported_revision::BLOCK_BYTES
         + newt_phased_reader::imported_revision::RETAINED_HEADER_BYTES;
@@ -387,6 +390,7 @@ fn main() {
     reads.borrow_mut().clear();
     image::execute(&mut runtime,&mut home,&mut ui,&mut logical,&mut events,
         reader_book::BookStep::Idle { checkpoint:false, admitted:false });
+    assert_eq!(reader_duty::LAST_RENEW.with(Cell::get), Some(false), "idle passes must never renew foreground open budgets");
     assert_eq!(reads.borrow().as_slice(),&[256;32],"idle keeps compact scratch");
     assert!(logical.iter().all(|b|*b==0x7d),"idle must preserve the published logical frame");
     image::index_loans::failed_verification_revokes_index(&mut runtime,&mut home,&digest);
@@ -402,6 +406,7 @@ fn main() {
     logical.fill(0xa5);
     reads.borrow_mut().clear();
     image::execute_open(&mut runtime,&mut home,&mut ui,&mut logical,&mut events,indexed);
+    assert_eq!(reader_duty::LAST_RENEW.with(Cell::get), Some(true), "foreground opens must allow long-chapter budget renewal");
     assert_eq!(reads.borrow().as_slice(),&[4096,4096],"standalone operation uses the source seen by the index pass");
     println!("PASS whole actual operate_image: caller frame loan, whole-block retention and original-scratch withdrawal; RunLoan is a typed host consumer");
     spill_reopened_first_open(&mut runtime,&mut home,&mut ui,&mut logical,&mut events,&filename_for_spill,&digest);

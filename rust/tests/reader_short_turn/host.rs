@@ -23,6 +23,7 @@ mod reader_action { pub use newt_core::reader_action_profile::ActionStage; }
 #[path = "boot_policy.rs"] mod boot_policy;
 #[path = "boot_resume.rs"] mod boot_resume;
 #[path = "picture_restore.rs"] mod picture_restore;
+#[path = "cache_only_cancel.rs"] mod cache_only_cancel;
 
 use core::ffi::CStr;
 use newt_core::{progress::Progress, producer_policy::Stop, zip_window::source::BookSource};
@@ -91,7 +92,7 @@ fn scenario(bytes: Vec<u8>, finished: bool) {
         let settings = ViewSettings::default();
         let mut resources = Resources { panel, pages: &mut pages, storage: &mut Storage::new(&mut bank),
             parser: newt_target_expat::Expat::default(), breaker: &mut linebreak::NativeBreak,
-            hash: &mut Hash, settings, open: PhysicalOpen::Import, recovery: None };
+            hash: &mut Hash, settings, open: PhysicalOpen::Import, cache_only: false, recovery: None };
         let mut raw = Source(bytes); let mut digest = [0; 32]; assert!(hash(&raw.0, &mut digest));
         let mut authorize = |raw: &mut dyn BookSource, expected: &[u8;32], _: &mut [u8], allowed: &dyn Fn() -> bool| {
             let mut bytes = vec![0; raw.size() as usize]; let mut actual = [0;32];
@@ -208,6 +209,10 @@ fn main() {
     if path == "--restore-policy" {
         retained_clockwise();
         boot_policy::check();
+        return;
+    }
+    if path == "--cache-only-cancel" {
+        cache_only_cancel::check();
         return;
     }
     let bytes = std::fs::read(path).unwrap();

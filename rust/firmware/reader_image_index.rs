@@ -27,7 +27,7 @@ impl Runtime {
         let digest = self.selection.digest();
         let name = &self.selection.identity().filename;
         let clock = home.bus.board.monotonic_clock();
-        let duty = ReaderDuty::new(events.control, &self.cadence, &clock, profile, events.action);
+        let duty = ReaderDuty::new(events.control, &self.cadence, &clock, profile, events.action).renewing(true);
         let cancel = Cancel(&duty);
         let yielded = || duty.yield_now();
         #[cfg(feature = "dev-usb")]

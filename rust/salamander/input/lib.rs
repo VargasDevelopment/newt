@@ -274,8 +274,12 @@ impl UiControl<'_> {
         state & OPENING != 0 && state & TIMED_OUT != 0
     }
     pub fn restart(&self, now: u32) {
-        if self.active() && !self.timed_out() {
-            self.started.set(now);
+        if self.active() && !self.cancelled() {
+            if self.elapsed(now) >= OPEN_BUDGET_MS {
+                self.shared.state.fetch_or(TIMED_OUT, SeqCst);
+            } else {
+                self.started.set(now);
+            }
         }
     }
     pub fn elapsed(&self, now: u32) -> u32 {
@@ -305,7 +309,7 @@ impl UiControl<'_> {
         state & OPENING != 0 && state & !(OPENING | CLOCKWISE) != 0
     }
     pub fn cancelled_at(&self, now: u32) -> bool {
-        if self.active() && self.elapsed(now) >= OPEN_BUDGET_MS {
+        if self.active() && !self.cancelled() && self.elapsed(now) >= OPEN_BUDGET_MS {
             self.shared.state.fetch_or(TIMED_OUT, SeqCst);
         }
         self.cancelled()
@@ -513,6 +517,13 @@ mod clockwise_back_tests {
             assert!(control.cancelled_at(45_000 + super::OPEN_BUDGET_MS) && control.timed_out());
             control.restart(70_000);
             assert!(control.cancelled_at(70_001) && control.timed_out(), "a stuck pass stays timed out");
+        });
+        // An unpolled expired budget latches TIMED_OUT on restart instead of resetting started.
+        control.with_open(0, |control, _| {
+            control.restart(super::OPEN_BUDGET_MS);
+            assert!(control.cancelled() && control.timed_out(), "expired unpolled budget must latch TIMED_OUT");
+            control.restart(super::OPEN_BUDGET_MS + 1_000);
+            assert!(control.cancelled_at(super::OPEN_BUDGET_MS + 1_001) && control.timed_out());
         });
         // Back in any pass ends the jump, whatever restarts follow.
         for back_in in 0..3 {

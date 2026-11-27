@@ -860,3 +860,101 @@ fn anchor_jump_reads_the_book_only_inside_work_phases() {
     assert!(reader.info().page > 0, "the jump must land past the first page");
     assert_eq!(READS_OUTSIDE_PHASE.get(), 0, "every chapter pass of the jump must run inside a work phase");
 }
+
+/// Long-chapter opens emit `WorkKind::LayoutProgress` at each 128-page segment
+/// boundary up to `MAX_PAGES` (4,096), always after yielding first so a stalled
+/// chunk or Back press cancels before any budget renewal (#103).
+#[test]
+fn layout_progress_emits_segment_milestones_up_to_max_pages_after_yield() {
+    use core::cell::{Cell, RefCell};
+    use newt_core::{
+        admission::{WorkEvent, WorkKind},
+        cache_names::segment::{MAX_PAGES, MAX_SEGMENTS, PAGES},
+    };
+    // Keep XML tiny per page (~50 chars of text per <p>, ~24 <p>/page) so a
+    // >4,096-page chapter still stays under EPUB_MAX_MEMBER_BYTES (4 MiB) and
+    // finishes quickly on host.
+    let mut chapter = String::from(
+        "<?xml version=\"1.0\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>Long</title></head><body><h1>Long</h1>",
+    );
+    let block = "<p>A quiet lane ran along the ridge past pines and moss.</p>\n";
+    // Produces >4,096 pages so the test exercises every milestone up to MAX_PAGES
+    // and proves renewal stops beyond MAX_PAGES.
+    for _ in 0..3_000 {
+        chapter.push_str(block);
+    }
+    chapter.push_str("</body></html>");
+    let container = b"<?xml version=\"1.0\"?><container version=\"1.0\" xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\"><rootfiles><rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/></rootfiles></container>";
+    let opf = b"<?xml version=\"1.0\"?><package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\" unique-identifier=\"u\"><metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:identifier id=\"u\">urn:test:103</dc:identifier><dc:title>Long</dc:title><dc:language>en</dc:language></metadata><manifest><item id=\"c0\" href=\"c0.xhtml\" media-type=\"application/xhtml+xml\"/></manifest><spine><itemref idref=\"c0\"/></spine></package>";
+    let epub = stored_zip(&[
+        ("mimetype", b"application/epub+zip"),
+        ("META-INF/container.xml", container),
+        ("OEBPS/content.opf", opf),
+        ("OEBPS/c0.xhtml", chapter.as_bytes()),
+    ]);
+    let mut source = VecSource(epub);
+    let mut shared = Box::new(Bank([0; BANK_BYTES]));
+    let mut parse = vec![0u8; FRAME_BYTES];
+    let mut storage = PhaseStorage::new(&mut shared.0);
+    let mut loan = HostLoan(&mut parse);
+    let mut parser = MiniXml::default();
+    let mut breaker = SimpleBreak;
+    let mut runs = Box::new([Run::default(); RUNS]);
+    let mut text = Box::new(PlanText([0; TEXT]));
+    let mut plan = Plan::new(&mut *runs, &mut text.0);
+    let mut selections = [Selection::default(), Selection::default()];
+    let mut frame: Box<Frame> = Box::new([0u8; FRAME_BYTES]);
+    let settings = ViewSettings { orientation: Orientation::Portrait, ..ViewSettings::default() };
+    let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), settings.page_layout());
+    assert_eq!(reader.open_phased(&mut source, &mut storage, &mut loan, &mut parser), Status::Ok);
+
+    let yields = Cell::new(0u64);
+    let last_yield_at_progress = Cell::new(0u64);
+    let milestones = RefCell::new(Vec::<u32>::new());
+    let yield_hook = || yields.set(yields.get() + 1);
+    let observe = |event: WorkEvent| {
+        if event.kind == WorkKind::LayoutProgress {
+            let now_yields = yields.get();
+            assert!(
+                now_yields > last_yield_at_progress.get(),
+                "yield_now must run before LayoutProgress({})",
+                event.result
+            );
+            last_yield_at_progress.set(now_yields);
+            milestones.borrow_mut().push(event.result as u32);
+        }
+    };
+    let status = reader.with_scoped_work(&yield_hook, Some(&observe), |reader| {
+        reader.capture_phased(
+            &mut source, 0, 0, Target::Page, &mut storage, &mut loan, &mut parser, &mut breaker,
+        )
+    });
+    assert_eq!(status, Status::Ok);
+    assert_eq!(reader.publish(&mut source, &mut frame), Status::Ok);
+    assert!(
+        reader.info().page_count > MAX_PAGES,
+        "test fixture must exceed MAX_PAGES ({MAX_PAGES}), got {}",
+        reader.info().page_count
+    );
+    let expected: Vec<u32> = (1..=MAX_SEGMENTS as u32).map(|step| step * PAGES).collect();
+    assert_eq!(
+        *milestones.borrow(),
+        expected,
+        "milestones must be 128..=4096 and stop past MAX_PAGES"
+    );
+
+    // Control: a short chapter (< 128 pages) emits no LayoutProgress events.
+    let mut short_source = VecSource(synthetic_epub(10));
+    let mut short_reader = PhasedReader::new(&mut selections, Some(&mut plan), settings.page_layout());
+    assert_eq!(short_reader.open_phased(&mut short_source, &mut storage, &mut loan, &mut parser), Status::Ok);
+    milestones.borrow_mut().clear();
+    let status = short_reader.with_scoped_work(&yield_hook, Some(&observe), |reader| {
+        reader.capture_phased(
+            &mut short_source, 0, 0, Target::Page, &mut storage, &mut loan, &mut parser, &mut breaker,
+        )
+    });
+    assert_eq!(status, Status::Ok);
+    assert_eq!(short_reader.publish(&mut short_source, &mut frame), Status::Ok);
+    assert!(short_reader.info().page_count < PAGES, "short chapter has {} pages", short_reader.info().page_count);
+    assert!(milestones.borrow().is_empty(), "short chapter ({} pp) must emit no LayoutProgress, got {:?}", short_reader.info().page_count, *milestones.borrow());
+}

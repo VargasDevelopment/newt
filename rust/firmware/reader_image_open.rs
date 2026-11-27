@@ -228,6 +228,7 @@ impl Runtime {
         prepared: Option<[u8; 32]>, session_checkpoint: bool, at: u32, owned: bool,
     ) -> bool {
         if !session_checkpoint { self.reflow_anchor = None; }
+        self.cancelled_action_exit = false;
         let recovery_open = self.recovery.is_some();
         // This open answers an interrupted one's owed reopen.
         if matches!(self.memory, ReaderBacking::Interrupted) { self.memory = ReaderBacking::Closed; }
@@ -242,8 +243,9 @@ impl Runtime {
                 if self.receipt_present_image(home, name) { newt_reader_ui::SlowWork::Opening }
                 else { newt_reader_ui::SlowWork::FirstOpen }
             } else { newt_reader_ui::SlowWork::Opening };
-            self.acknowledge_work_image(home, ui, logical, work, events.control, events.action);
-            events.control.restart(millis());
+            if self.acknowledge_work_image(home, ui, logical, work, events.control, events.action) {
+                events.control.restart(millis());
+            }
         }
         if !was_active {
             if self.selection.flags() & flag::CARD_MISSING != 0 && !recovery_open {

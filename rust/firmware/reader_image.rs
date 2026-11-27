@@ -181,6 +181,7 @@ pub struct Runtime {
     restore_failure: newt_reader_ui::RestoreFailure,
     progress_ready: bool,
     index_trim_owed: bool,
+    cancelled_action_exit: bool,
     exit_metadata: Option<Fixed<crate::reader_exit_metadata::ExitMetadata>>,
     settings: newt_reader_ui::ViewSettings,
     last_progress: core::cell::Cell<u32>,
@@ -216,6 +217,7 @@ impl Runtime {
             cover_generation: 0, reading_refresh: newt_core::refresh::ReadingRefresh::default(),
             standalone_status: newt_core::zip_container::Status::NotFound,
             restore_failure: newt_reader_ui::RestoreFailure::None, progress_ready: false, index_trim_owed: false,
+            cancelled_action_exit: false,
             exit_metadata: None, settings: newt_reader_ui::ViewSettings::default(),
             last_progress: core::cell::Cell::new(0),
             #[cfg(feature="dev-usb")]

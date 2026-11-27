@@ -63,7 +63,8 @@ def main():
             raise RuntimeError(result.stderr[-6000:])
         return result
     run([cargo, 'build', '--lib', '-p', 'newt-c3-board', '-p', 'newt-device-ui',
-         '-p', 'newt-library-current', '--features', 'newt-phased-reader/dev-usb', '--target', HOST, '--manifest-path', ROOT / 'rust/Cargo.toml',
+         '-p', 'newt-library-current', '-p', 'newt-input-policy', '-p', 'newt-core',
+         '--features', 'newt-phased-reader/dev-usb', '--target', HOST, '--manifest-path', ROOT / 'rust/Cargo.toml',
          '--offline', '--frozen', '--locked', '--jobs', '2', '--target-dir', target,
          '--message-format=json'])
     libraries = {}
@@ -158,6 +159,9 @@ def main():
         ('selected-after-spill-reopen', operation,
          'None, run_turn(prepared), &yielded', 'None, run_turn(false), &yielded',
          'a spill-reopened first open must finish the prepared import'),
+        ('no-renew-on-foreground', operation,
+         'let renew = initialize || matches!(step, Some(BookStep::Action(_)));', 'let renew = false;',
+         'foreground actions must allow long-chapter budget renewal'),
         ('stale-published-digest', ROOT / 'rust/phased-reader/src/index_build.rs',
          'Identity { digest: *digest, policy:', 'Identity { digest: [0;32], policy:',
          'publication must bind the bytes digest'),
@@ -174,7 +178,8 @@ def main():
             # target dir would feed them to the next run's positive build.
             mutant_target = target / 'stale-digest-mutant'
             wire = run([cargo, 'build', '--lib', '-p', 'newt-c3-board', '-p', 'newt-device-ui',
-                        '-p', 'newt-library-current', '--features', 'newt-phased-reader/dev-usb',
+                        '-p', 'newt-library-current', '-p', 'newt-input-policy', '-p', 'newt-core',
+                        '--features', 'newt-phased-reader/dev-usb',
                         '--target', HOST, '--manifest-path', mutant / 'Cargo.toml',
                         '--offline', '--frozen', '--locked', '--jobs', '2', '--target-dir', mutant_target,
                         '--message-format=json'])
@@ -205,6 +210,43 @@ def main():
     print('PASS changed reopened bytes, byte-digest publication and missing-source revocation; skip-verification, stale-digest and trusted-orphan controls rejected')
     print('PASS actual operation/index loans, physical spill release/reopen, reopen refusal, power-cut cold reads and verification revocation; compact, idle-lending, route-drift and retained-index controls rejected')
     print('PASS spill-reopened first open opens Prepared; selected-after-spill-reopen control rejected')
+    # Real ReaderDuty progress-renewal proof and its negative controls (#103).
+    duty_src = ROOT / 'rust/firmware/reader_duty.rs'
+    duty_fixture = (HERE / 'duty_cases.rs').read_text()
+    duty_positive = out / 'duty_cases.rs'
+    duty_positive.write_text(paths(duty_fixture, HERE))
+    run([*command, duty_positive, '-o', out / 'duty-positive'])
+    duty_result = run([out / 'duty-positive'])
+    assert duty_result.stdout.startswith('PASS real ReaderDuty renewal:')
+    duty_text = duty_src.read_text()
+    duty_controls = [
+        ('duty-no-progress-renewal',
+         'self.progress_step.set(step as u8);',
+         'self.progress_step.set(step as u8); return;',
+         'long chapter up to 4096 pages must renew across milestones'),
+        ('duty-uncapped-pages',
+         'if pages <= MAX_PAGES',
+         'if true',
+         'milestones past MAX_PAGES must not renew the open budget'),
+        ('duty-stalled-renews',
+         'if pages <= MAX_PAGES && (step as u8) > self.progress_step.get()',
+         'if pages <= MAX_PAGES && step > 0',
+         'duplicate, regressive or invalid milestones must not renew'),
+        ('duty-phase-cap-progress-reset',
+         '                    let count = self.phase_renewals.get();\n                    if count < MAX_PHASE_RENEWALS {\n                        self.phase_renewals.set(count + 1);\n                        self.progress_step.set(0);',
+         '                    self.progress_step.set(0);\n                    let count = self.phase_renewals.get();\n                    if count < MAX_PHASE_RENEWALS {\n                        self.phase_renewals.set(count + 1);',
+         'phase renewals must be bounded even with repeated milestones'),
+    ]
+    for name, before_s, after_s, witness in duty_controls:
+        assert duty_text.count(before_s) == 1, f'expected unique {name} needle'
+        replacement = out / (name + '.rs')
+        replacement.write_text(paths(duty_text.replace(before_s, after_s, 1), duty_src.parent))
+        control = out / (name + '-host.rs')
+        control.write_text(paths(duty_fixture, HERE, {duty_src: replacement}))
+        run([*command, control, '-o', out / name])
+        rejected = run([out / name], succeeds=False)
+        assert rejected.returncode == 101 and witness in rejected.stderr, rejected.stderr
+    print('PASS real ReaderDuty renewal and negative controls (no-progress-renewal, uncapped-pages, stalled-renews)')
     common = [cargo, 'test', '--offline', '--frozen', '--locked',
               '--manifest-path', ROOT / 'rust/Cargo.toml', '--target', HOST,
               '--target-dir', target, '--jobs', '2']

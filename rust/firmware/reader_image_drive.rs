@@ -33,6 +33,7 @@ pub(super) struct Turn<'a> {
     pub(super) accepted_save: bool,
     pub(super) step: Option<BookStep>,
     pub(super) open: PhysicalOpen,
+    pub(super) cache_only: bool,
     pub(super) settings: ViewSettings,
 }
 /// Deliberately excludes the console and clock. The producer's real input
@@ -49,7 +50,7 @@ impl RunLoan<'_, '_, '_> {
     pub(super) fn finish<'io>(self, scope: Ports<'_, 'io, '_, '_>,
         pages: &mut ReaderPages<'_, OsNative<'io>>, source: &impl SourceOperations,
         digest: [u8; 32], zone: newt_core::time_zone::TimeZone, now: u32, sleeping: bool,
-        trace: crate::reader_action::Trace<'_>,
+        allow_cancelled: bool, trace: crate::reader_action::Trace<'_>,
     ) -> Progress {
         let book = &mut *self.memory.runtime;
         let mut breaker = NativeBreak;
@@ -58,13 +59,13 @@ impl RunLoan<'_, '_, '_> {
             storage: &mut self.memory.storage, parser: newt_target_expat::Expat::default(),
             breaker: &mut breaker, hash: &mut hash, settings: *self.settings,
             open: PhysicalOpen::Selected { digest, spine: book.owner.tracker.snapshot(now).locator.spine },
-            recovery: *self.recovery };
+            cache_only: false, recovery: *self.recovery };
         let cancel = crate::reader_action::ObservedAuthority { original: &boot::NoCancel, trace };
         let request = reader_book::ExitRequest { zone, cancel: &cancel };
         let mut mounted = MountedCheckpoint::new(self.checkpoint, scope.nvs, scope.facts);
         mounted.finish_exit_captured(scope.io, scope.card, &mut resources, &book.reader, source,
             &mut book.owner, self.ui, digest, &request, &crate::reader_hash::package_hash,
-            self.statistics, now, self.accepted, sleeping,
+            self.statistics, now, self.accepted, sleeping, allow_cancelled,
             if sleeping { None } else { self.metadata.as_deref_mut() });
         *self.recovery = resources.recovery;
         *book.owner.tracker.snapshot(now)
@@ -86,7 +87,7 @@ impl RunLoan<'_, '_, '_> {
         let mut resources = Resources { panel: scope.panel, pages,
             storage: &mut self.memory.storage, parser: newt_target_expat::Expat::default(),
             breaker: &mut breaker, hash: &mut hash, settings: turn.settings,
-            open: turn.open, recovery: *self.recovery };
+            open: turn.open, cache_only: turn.cache_only, recovery: *self.recovery };
         let book = &mut *self.memory.runtime;
         let mut mounted = MountedCheckpoint::new(self.checkpoint, scope.nvs, scope.facts);
         let mut next = turn.step;

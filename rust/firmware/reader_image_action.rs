@@ -18,21 +18,86 @@ impl Runtime {
         })
     }
 
-    /// Activating a Contents entry with a fragment must find its anchor by laying
-    /// the chapter out (#188), unlike a page turn or a chapter-start entry.
-    pub(super) fn starts_anchor_jump(&self, action: Action) -> bool {
-        action == Action::Activate && self.book().is_some_and(|book| {
-            let menu = book.reader.chapter_menu();
-            let count = menu.info().count;
-            book.ui.panel == ReaderPanel::Chapters && count > 0
-                && menu.row(book.ui.selected.min(count - 1)).fragment
-        })
+    /// Actions that never consult the page cache (Contents jumps and failed-chapter
+    /// recovery turns) show "Loading page…" before entering layout (#103).
+    fn needs_pre_loading_image(&self, action: Action) -> bool {
+        let Some(book) = self.book() else { return false; };
+        if action == Action::Activate && book.ui.panel == ReaderPanel::Chapters {
+            return book.reader.chapter_menu().info().count > 0;
+        }
+        if matches!(action, Action::Previous | Action::Next)
+            && book.ui.panel == ReaderPanel::Page
+            && let Some(failed) = book.owner.chapter_failure()
+        {
+            let spines = book.reader.selection().spines;
+            return if action == Action::Next {
+                failed.spine.saturating_add(1) < spines
+            } else {
+                failed.spine > 0
+            };
+        }
+        false
+    }
+
+    /// Multi-segment chapters, cross-chapter turns and pending-verification turns
+    /// probe the actual page cache first so cache hits never flash Loading or add
+    /// extra SD probes, while real cache misses show Loading before full layout (#103).
+    fn turn_tries_cache_first(&self, action: Action) -> bool {
+        if !matches!(action, Action::Previous | Action::Next) { return false; }
+        let Some(book) = self.book() else { return false; };
+        if book.ui.panel != ReaderPanel::Page || book.owner.chapter_failure().is_some()
+            || !book.owner.state.opened() { return false; }
+        let old = book.reader.info();
+        let same_chapter = if action == Action::Next {
+            old.page + 1 < old.page_count
+        } else {
+            old.page > 0
+        };
+        !same_chapter
+            || old.page_count >= newt_core::cache_names::segment::PAGES
+            || self.session.as_ref().is_some_and(|session| session.verification.state()
+                == crate::reader_verification::Verification::Pending)
+    }
+
+    fn cancel_live_action_image(&mut self, ui: &mut Application<'_>, action_at: u32) {
+        // End the reading interval at action_at (excluding layout time) while
+        // keeping memory/session/tracker alive so the queued Back or Power
+        // press runs the normal verified Home/Sleep exit path (#103).
+        self.leave_for_exit_image(action_at);
+        if let Some(memory) = self.memory.external_mut() {
+            memory.lend(|memory| {
+                let owner = &mut memory.runtime.owner;
+                owner.state = newt_reader_ui::ReaderOwnerState::from_open(
+                    owner.state.has_progress(),
+                    newt_core::zip_container::Status::IoError,
+                    owner.state.readable_spines(),
+                );
+            });
+        }
+        self.cancelled_action_exit = true;
+        self.saves.set_reader(newt_core::save_notice::ReaderIssue::None);
+        self.reader_ui.panel = ReaderPanel::Page;
+        self.reader_ui.selected = 0;
+        self.reader_ui.notice = ReaderUiNotice::None;
+        self.publish_notice_image(ui);
+    }
+
+    fn finish_cancelled_action_image(&mut self, home: &mut Home<'_>, ui: &mut Application<'_>,
+        events: &Events<'_, '_>, had_progress: bool, action_at: u32,
+    ) {
+        if had_progress {
+            self.cancel_live_action_image(ui, action_at);
+        } else {
+            self.interrupted_open(home, events);
+        }
     }
 
     fn reader_action_armed(&mut self, home: &mut Home<'_>, ui: &mut Application<'_>,
         logical: &mut Frame, events: &mut Events<'_, '_>, action: Action,
     ) -> bool {
+        let action_at = millis();
         let before = self.book().map(|book| book.reader.info());
+        let had_progress = self.has_progress();
         #[cfg(feature = "embedded-sample")]
         let sample_result = self.memory.has_sample().then(|| self.sample_action_image(home, ui, logical, action));
         #[cfg(not(feature = "embedded-sample"))]
@@ -40,22 +105,37 @@ impl Runtime {
         let (intent, at) = if let Some(result) = sample_result {
             if result.0 == Some(ReaderUiIntent::None) { return false; }
             result
+        } else if self.cancelled_action_exit {
+            // A live turn/jump was cancelled by Back or Power. Ignore any older
+            // queued presses until that Back or Power triggers the normal exit.
+            let intent = match action {
+                Action::Back => ReaderUiIntent::Home,
+                Action::Sleep => ReaderUiIntent::Sleep,
+                _ => ReaderUiIntent::None,
+            };
+            (Some(intent), action_at)
         } else if self.memory.is_closed() {
             // SampleReader has no storage after failed admission, but main's
             // real menu/draft and Back/Sleep intents still exist.
-            let at = millis();
             (Some(newt_reader_ui::dispatch_unavailable_reader_ui(&mut self.reader_ui,
-                self.settings, action)), at)
+                self.settings, action)), action_at)
         } else {
-            if self.starts_anchor_jump(action) {
-                // The jump may lay a long chapter out twice; say so before it starts.
-                self.acknowledge_work_image(home, ui, logical, newt_reader_ui::SlowWork::Loading,
-                    events.control, events.action);
+            if self.needs_pre_loading_image(action)
+                && self.acknowledge_work_image(home, ui, logical, newt_reader_ui::SlowWork::Loading,
+                    events.control, events.action)
+            {
+                events.control.restart(millis());
             }
-            match self.operate_image(home, ui, logical, events, None,
-                Some(BookStep::Action(action)), false, None, None) {
+            let cache_first = self.turn_tries_cache_first(action);
+            match self.operate_action_image(home, ui, logical, events, action, cache_first) {
                 Ok(mut exit) => {
-                    self.finish_pending_turn_image(home, ui, logical, events, action, before, &mut exit);
+                    self.finish_slow_turn_image(home, ui, logical, events, action, before, cache_first, &mut exit);
+                    let after = self.book().map(|book| book.reader.info());
+                    if events.control.cancelled() && !events.control.timed_out()
+                        && (!self.opened() || before == after) {
+                        self.finish_cancelled_action_image(home, ui, events, had_progress, action_at);
+                        return true;
+                    }
                     self.finish_pending_mark_image(home, ui, logical, events, &mut exit);
                     self.observe_operation(&exit);
                     self.update_home_image(home, events.action);
@@ -69,6 +149,10 @@ impl Runtime {
                     (exit.intent, exit.action_at)
                 }
                 Err(error) => {
+                    if events.control.cancelled() && !events.control.timed_out() {
+                        self.finish_cancelled_action_image(home, ui, events, had_progress, action_at);
+                        return true;
+                    }
                     self.open_failed(error);
                     self.publish_notice_image(ui);
                     return true;
@@ -81,6 +165,7 @@ impl Runtime {
             }
             Some(ReaderUiIntent::Home) => {
                 self.reflow_anchor = None;
+                self.cancelled_action_exit = false;
                 events.action.boundary(crate::reader_action::ActionStage::MarkClose as u8);
                 let _exit = events.action.scope(crate::reader_action::ActionStage::READER_EXIT);
                 self.defer_exit_metadata();
@@ -123,33 +208,40 @@ impl Runtime {
         true
     }
 
-    fn finish_pending_turn_image(&mut self, home: &mut Home<'_>, ui: &mut Application<'_>,
+    fn finish_slow_turn_image(&mut self, home: &mut Home<'_>, ui: &mut Application<'_>,
         logical: &mut Frame, events: &mut Events<'_, '_>, action: Action,
-        before: Option<newt_phased_reader::PageInfo>, exit: &mut BookExit,
+        before: Option<newt_phased_reader::PageInfo>, cache_first: bool, exit: &mut BookExit,
     ) {
+        let pending = self.session.as_ref().is_some_and(|session| session.verification.state()
+            == crate::reader_verification::Verification::Pending);
         if exit.intent.is_some() || !matches!(action, Action::Previous | Action::Next)
-            || !self.session.as_ref().is_some_and(|session| session.verification.state()
-                == crate::reader_verification::Verification::Pending) { return; }
+            || (!cache_first && !pending) || events.control.cancelled() { return; }
         let Some(book) = self.book() else { return; };
         if !book.owner.state.opened() || book.ui.panel != ReaderPanel::Page { return; }
         if before != Some(book.reader.info()) { return; }
         let page = book.owner.state.position_info(book.reader.info(), book.reader.selection().spines).page;
+        let spines = book.reader.selection().spines.min(book.owner.state.readable_spines());
         let boundary = if action == Action::Next {
             page.page.wrapping_add(1) >= page.page_count
-                && page.spine.wrapping_add(1) >= book.owner.state.readable_spines()
+                && page.spine.wrapping_add(1) >= spines
         } else { page.page == 0 && page.spine == 0 };
         if boundary { return; }
-        {
+        if self.acknowledge_work_image(home, ui, logical, newt_reader_ui::SlowWork::Loading,
+            events.control, events.action) {
+            events.control.restart(millis());
+        }
+        if pending {
             let _verification = events.action.scope(crate::reader_action::ActionStage::SourceSelect);
-            self.acknowledge_work_image(home, ui, logical, newt_reader_ui::SlowWork::Loading, events.control, events.action);
             if !self.finish_verification_image(home, ui, logical, events, true) {
                 self.publish_notice_image(ui);
                 return;
             }
         }
-        match self.operate_image(home, ui, logical, events, None, Some(BookStep::Action(action)), false, None, None) {
+        match self.operate_action_image(home, ui, logical, events, action, false) {
             Ok(retried) => *exit = retried,
-            Err(error) => self.open_failed(error),
+            Err(error) => if !events.control.cancelled() || events.control.timed_out() {
+                self.open_failed(error);
+            },
         }
     }
 

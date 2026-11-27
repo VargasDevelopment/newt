@@ -26,6 +26,22 @@ impl Runtime {
         paint_first: bool, profile: Option<&ReaderWorkProfile>,
         sleep_extras: Option<&newt_device_ui::SleepExtras>,
     ) -> Result<BookExit, BookFailure> {
+        self.operate_image_core(home, ui, logical, events, opening, step, paint_first, profile, sleep_extras, false)
+    }
+
+    pub(super) fn operate_action_image(&mut self, home: &mut Home<'_>, ui: &mut Application<'_>,
+        logical: &mut Frame, events: &mut Events<'_, '_>, action: newt_core::app::Action,
+        cache_only: bool,
+    ) -> Result<BookExit, BookFailure> {
+        self.operate_image_core(home, ui, logical, events, None, Some(BookStep::Action(action)),
+            false, None, None, cache_only)
+    }
+
+    fn operate_image_core(&mut self, home: &mut Home<'_>, ui: &mut Application<'_>,
+        logical: &mut Frame, events: &mut Events<'_, '_>, opening: Option<super::drive::Opening>, step: Option<BookStep>,
+        paint_first: bool, profile: Option<&ReaderWorkProfile>,
+        sleep_extras: Option<&newt_device_ui::SleepExtras>, cache_only: bool,
+    ) -> Result<BookExit, BookFailure> {
         let indexed = opening.as_ref().map(|opening| &opening.indexed);
         let initialize = indexed.is_some();
         let opened_at = opening.as_ref().map(|opening| opening.at);
@@ -88,7 +104,7 @@ impl Runtime {
             core::ffi::CStr::from_bytes_until_nul(&path).ok()
                 .and_then(|path| path.to_str().ok()).ok_or(BookFailure::Source)?
         };
-        let anchor_jump = matches!(step, Some(BookStep::Action(action)) if self.starts_anchor_jump(action));
+        let renew = initialize || matches!(step, Some(BookStep::Action(_)));
         let saved = self.recovery.as_ref().map_or(self.saved, |pending| *pending.progress());
         let policy = self.restore_policy_image();
         let settings = self.recovery.as_ref().map_or(self.settings, |pending| pending.settings);
@@ -106,7 +122,7 @@ impl Runtime {
             };
         let control = &*events.control;
         let queue = &*events.queue;
-        let duty = ReaderDuty::new(control, cadence, &clock, profile, events.action).renewing(anchor_jump);
+        let duty = ReaderDuty::new(control, cadence, &clock, profile, events.action).renewing(renew);
         let cancel = Cancel(&duty, None);
         let yielded = || duty.yield_now();
         let observed = |event: WorkEvent| duty.event(&event);
@@ -171,7 +187,7 @@ impl Runtime {
                 identity: book_identity, saved, policy, info: &info, cancel: &idle_cancel,
                 now: millis, sleep: scene.as_ref(), zone: scope.clock.zone() };
             let run_turn = |prepared| super::drive::Turn { indexed, paint_first, accepted_save,
-                step, settings, open: if initialize && prepared { PhysicalOpen::Prepared }
+                step, settings, cache_only, open: if initialize && prepared { PhysicalOpen::Prepared }
                     else { PhysicalOpen::Selected { digest, spine: saved.locator.spine } } };
             let Some(context) = context.as_mut() else {
                 let mut key = [0; 64];

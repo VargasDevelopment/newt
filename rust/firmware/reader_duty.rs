@@ -3,13 +3,18 @@
 //! The runtime owns the one cadence; the open scope owns its optional profile.
 #![forbid(unsafe_code)]
 
+use core::cell::Cell;
 use newt_c3_board::MonotonicClock;
 use newt_core::{
     admission::{WorkEvent, WorkKind, WorkPhase},
+    cache_names::segment::{MAX_PAGES, PAGES},
     reader_scheduler::YieldCadence,
     reader_work_profile::ReaderWorkProfile,
 };
 use newt_input_policy::{Snapshot, UiControl};
+
+/// Maximum phase-start renewals allowed per foreground operation.
+const MAX_PHASE_RENEWALS: u8 = 32;
 
 /// Short UI-only scheduling view. Shared references preserve the existing
 /// cancellation/profile hooks without a second counter or a retained callback.
@@ -21,6 +26,8 @@ pub struct ReaderDuty<'loan, 'task> {
     profile: Option<&'loan ReaderWorkProfile>,
     action: crate::reader_action::Trace<'loan>,
     renew: bool,
+    phase_renewals: Cell<u8>,
+    progress_step: Cell<u8>,
 }
 
 impl<'loan, 'task> ReaderDuty<'loan, 'task> {
@@ -31,13 +38,22 @@ impl<'loan, 'task> ReaderDuty<'loan, 'task> {
         profile: Option<&'loan ReaderWorkProfile>,
         action: crate::reader_action::Trace<'loan>,
     ) -> Self {
-        Self { control, cadence, clock, profile, action, renew: false }
+        Self {
+            control,
+            cadence,
+            clock,
+            profile,
+            action,
+            renew: false,
+            phase_renewals: Cell::new(0),
+            progress_step: Cell::new(0),
+        }
     }
 
-    /// A Contents jump to an anchor lays its chapter out twice, which can need
-    /// more than one open budget in a long chapter (#188). With `renew`, each
-    /// work phase that begins gets a fresh budget: it begins only after the last
-    /// one ended, so a stuck pass still times out and a Back press stays latched.
+    /// Foreground opens, turns and Contents jumps can lay out chapters up to
+    /// `MAX_PAGES` (4,096 pages, #103). With `renew`, each bounded work phase
+    /// and each monotonic 128-page milestone up to `MAX_PAGES` gets a fresh
+    /// 20 s budget: a stalled pass still times out, and Back/Power stays latched.
     pub fn renewing(self, renew: bool) -> Self {
         Self { renew, ..self }
     }
@@ -76,8 +92,31 @@ impl<'loan, 'task> ReaderDuty<'loan, 'task> {
     /// Event timestamps come from the same live SDK clock, only while the
     /// actual open scope lent its profile. No profile means no event clocks.
     pub fn event(&self, event: &WorkEvent) {
-        if self.renew && event.kind == WorkKind::Phase && event.phase != WorkPhase::Idle {
-            self.control.restart(self.clock.millis());
+        if self.renew {
+            match event.kind {
+                WorkKind::Phase if event.phase != WorkPhase::Idle => {
+                    let count = self.phase_renewals.get();
+                    if count < MAX_PHASE_RENEWALS {
+                        self.phase_renewals.set(count + 1);
+                        self.progress_step.set(0);
+                        self.control.restart(self.clock.millis());
+                    }
+                }
+                WorkKind::LayoutProgress => {
+                    if event.result > 0 {
+                        let pages = event.result as u32;
+                        let step = pages / PAGES;
+                        if pages <= MAX_PAGES && (step as u8) > self.progress_step.get() {
+                            self.progress_step.set(step as u8);
+                            self.control.restart(self.clock.millis());
+                        }
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        } else if event.kind == WorkKind::LayoutProgress {
+            return;
         }
         if self.action.event(event) {
             if event.kind == newt_core::admission::WorkKind::OpenRoute {
@@ -100,3 +139,17 @@ impl<'loan, 'task> ReaderDuty<'loan, 'task> {
     }
     pub fn cache_miss(&self, reason: u8) { self.action.cache_miss(reason); }
 }
+
+// Two u8 counters sit inside `renew`'s tail padding, adding zero bytes.
+const _: () = {
+    type WithoutCounters<'loan, 'task> = (
+        &'loan UiControl<'task>,
+        &'loan YieldCadence,
+        &'loan MonotonicClock,
+        Option<&'loan ReaderWorkProfile>,
+        crate::reader_action::Trace<'loan>,
+        bool,
+    );
+    assert!(MAX_PAGES / PAGES <= u8::MAX as u32);
+    assert!(size_of::<ReaderDuty<'static, 'static>>() == size_of::<WithoutCounters<'static, 'static>>());
+};

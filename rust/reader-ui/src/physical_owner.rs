@@ -309,6 +309,12 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
             ReaderSourceMode::Strict if request == PageRequest::Open => {
                 self.open_strict(reader, revision, mode, *digest)
             }
+            ReaderSourceMode::Strict
+                if self.cache_only
+                    && matches!(request, PageRequest::Page(..) | PageRequest::Anchor(..)) =>
+            {
+                PageWork::VERIFICATION_PENDING
+            }
             ReaderSourceMode::Strict => revision
                 .with_held_source(|raw| self.execute_raw(reader, raw, digest, request))
                 .unwrap_or_else(|| PageWork::failed(Status::IoError)),

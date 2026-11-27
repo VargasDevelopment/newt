@@ -335,7 +335,7 @@ where
                             checkpoint.finish_exit_captured(io, card, &mut resources, &reader, &*revision,
                                 &mut owner, &mut ui, opened_digest, request, stats_sha256,
                                 &mut statistics, at, &mut accepted_open_owed,
-                                intent == ReaderUiIntent::Sleep, capture);
+                                intent == ReaderUiIntent::Sleep, false, capture);
                             break Some(intent);
                         }
                     }

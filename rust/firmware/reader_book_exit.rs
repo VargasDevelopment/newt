@@ -10,7 +10,7 @@ impl<N: nvs::Native> MountedCheckpoint<'_, N> {
         mut owner: &mut ExternalOwner, mut ui: &mut ReaderUiState,
         opened_digest: Digest, request: &impl StatsRequest, stats_sha256: Sha256<'_>,
         mut statistics: &mut ReadingStatsRuntime, at: u32,
-        accepted_open_owed: &mut bool, sleeping: bool,
+        accepted_open_owed: &mut bool, sleeping: bool, allow_cancelled: bool,
         mut capture: Option<&mut crate::reader_exit_metadata::ExitMetadata>,
     ) where P::Port<'io>: Directory {
         let settings = resources.settings;
@@ -39,7 +39,9 @@ impl<N: nvs::Native> MountedCheckpoint<'_, N> {
             candidate,
             false,
             *accepted_open_owed,
-            owner.state.opened() && revision.source_verified() && revision.digest() == opened_digest,
+            (owner.state.opened() || allow_cancelled)
+                && revision.source_verified()
+                && revision.digest() == opened_digest,
             capture.as_ref().map(|_| &mut peers),
             request,
         );
