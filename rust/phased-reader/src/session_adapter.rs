@@ -7,9 +7,17 @@ use newt_core::{
     preferences::ViewSettings,
 };
 
-// Use the envelope version for pagination changes that replace Pages in place.
-// Bumping this revision changes the filenames and leaves the old files behind.
-const CACHE_ENGINE_REVISION: u32 = 4;
+// Pages files are named by this revision. A Pages envelope version change must
+// also bump it: v0.7.0 moved the envelope from 3 to 6 under revision 4, so
+// upgraded cards kept unreadable v3 files under the current names. Bumping
+// this revision changes the filenames and leaves the old files behind.
+const CACHE_ENGINE_REVISION: u32 = 5;
+// Change these two together: a new envelope version under the old revision
+// would reuse the old filenames.
+const _: () = assert!(
+    newt_core::page_envelope::VERSION == 6 && CACHE_ENGINE_REVISION == 5,
+    "a Pages envelope version change needs a CACHE_ENGINE_REVISION bump"
+);
 
 /// Borrow this view for one Session operation, then return every resource loan.
 /// The actual reader (including both selections and its plan) survives the view.

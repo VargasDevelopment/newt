@@ -8,7 +8,7 @@
 // predates CSS small-caps and text-transform layout; v5 skips pictures with no
 // note. Book indexes (.IDX and legacy .fibx) carry no rendered page layout and
 // stay valid from v3 onward.
-const VERSION: u32 = 6;
+pub const VERSION: u32 = 6;
 const INDEX_MIN_VERSION: u32 = 3;
 
 pub fn is_index_name(name: Option<&[u8]>) -> bool {
