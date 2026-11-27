@@ -360,8 +360,8 @@ def main():
             positive = output / 'positive'
             compile_host(run, workspace, target, libraries, list(objects.values()), positive, opt_level=1)
             stdout = run.run([positive, fixtures], workspace)
-            support.require('PASS resume capture (10 cases)' in stdout,
-                            f'all 10 resume capture cases must pass:\n{stdout}')
+            support.require('PASS resume capture (11 cases)' in stdout,
+                            f'all 11 resume capture cases must pass:\n{stdout}')
             print(stdout, end='', flush=True)
 
             if negative_controls(__file__):

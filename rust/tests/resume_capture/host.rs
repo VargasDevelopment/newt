@@ -577,6 +577,31 @@ fn run_producer_chapter(
     enforced_seg0_credit: Option<u64>,
     fault_target_seg: Option<usize>,
 ) -> RunResult {
+    run_producer_chapter_seeded(
+        epub,
+        spine,
+        start_page,
+        landscape,
+        capture_points,
+        bank_fill,
+        enforced_seg0_credit,
+        fault_target_seg,
+        &BTreeMap::new(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_producer_chapter_seeded(
+    epub: &[u8],
+    spine: u32,
+    start_page: u32,
+    landscape: bool,
+    capture_points: bool,
+    bank_fill: u8,
+    enforced_seg0_credit: Option<u64>,
+    fault_target_seg: Option<usize>,
+    seed_files: &BTreeMap<String, Vec<u8>>,
+) -> RunResult {
     let mut digest = [0u8; 32];
     assert!(sha256(epub, &mut digest));
     let mut tokens = [0u8; 2];
@@ -590,6 +615,18 @@ fn run_producer_chapter(
     .unwrap();
     drop(pending);
     let mut card = card::Card::default();
+    if !seed_files.is_empty() {
+        let mut st = card.0.borrow_mut();
+        for dir in ["/Newt", "/Newt/Cache", "/Newt/Cache/Pages"] {
+            st.model.dirs.insert(dir.to_string());
+        }
+        for (path, bytes) in seed_files {
+            st.model.files.insert(
+                path.clone(),
+                model::File { durable: bytes.clone(), readable: bytes.clone() },
+            );
+        }
+    }
     let mut out = None;
     board
         .with_reader_io(|panel, io| {
@@ -1697,6 +1734,101 @@ fn case_decline_reasons_and_backlog_recovery(dir: &Path) {
     );
 }
 
+/// Upgrade compatibility from a v0.7.1-format v3 cache:
+/// 1) A complete v3 cache (all segments v3 + NTSM map) stays readable page-for-page
+///    and untouched when opened/revisited by the v4-capable producer.
+/// 2) A partial v3 cache (some interior v3 segments already written before upgrade)
+///    keeps those v3 segments byte-for-byte intact while capturing v4 resume points
+///    for newly written interior segments and keeping the final segment v3.
+fn case_v3_upgrade_compatibility_and_mixed_fill(dir: &Path) {
+    let epub = std::fs::read(dir.join("stored.epub")).unwrap();
+    // Generate an authentic pre-upgrade v3 cache (v0.7.1 segment format).
+    let v3_full = run_producer_chapter(&epub, 0, 0, false, false, 0, None, None);
+    assert_eq!(v3_full.outcome, CurrentOutcome::Done);
+    assert!(v3_full.seg_names.len() >= 4);
+    for (idx, name) in v3_full.seg_names.iter().enumerate() {
+        let bytes = find_file(&v3_full.files, name).expect("v3 seed segment");
+        let seg = inspect_segment_file(name, bytes, v3_full.generation);
+        assert_eq!(seg.version, VERSION_PAGES, "pre-upgrade seed seg {idx} must be v3");
+        assert!(seg.point_range.is_none());
+    }
+
+    // Part A: complete pre-upgrade v3 cache stays Done and byte-for-byte untouched.
+    let after_full = run_producer_chapter_seeded(
+        &epub, 0, 42, false, true, 0, None, None, &v3_full.files,
+    );
+    assert_eq!(after_full.outcome, CurrentOutcome::Done);
+    assert_eq!(
+        after_full.files, v3_full.files,
+        "complete pre-upgrade v3 cache must stay byte-for-byte untouched"
+    );
+
+    // Part B: partial pre-upgrade v3 cache (segs 0 and 2 present, segs 1 and final missing)
+    // preserves v3 segs 0 & 2 verbatim while writing newly produced interior seg 1 as v4
+    // (with a verified FIRP v1 point) and the final segment as v3.
+    let seg0_suffix = core::str::from_utf8(&v3_full.seg_names[0]).unwrap();
+    let seg2_suffix = core::str::from_utf8(&v3_full.seg_names[2]).unwrap();
+    let partial_v3: BTreeMap<String, Vec<u8>> = v3_full
+        .files
+        .iter()
+        .filter(|(k, _)| k.ends_with(seg0_suffix) || k.ends_with(seg2_suffix))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    assert_eq!(partial_v3.len(), 2, "must seed exactly v3 segs 0 and 2");
+
+    let mixed = run_producer_chapter_seeded(
+        &epub, 0, 42, false, true, 0, None, None, &partial_v3,
+    );
+    let mixed_v3_ref = run_producer_chapter_seeded(
+        &epub, 0, 42, false, false, 0, None, None, &partial_v3,
+    );
+    assert_eq!(mixed.outcome, CurrentOutcome::Done);
+    assert_eq!(mixed_v3_ref.outcome, CurrentOutcome::Done);
+    assert_eq!(
+        find_file(&mixed.files, &mixed.map_file.unwrap()).expect("mixed map"),
+        find_file(&v3_full.files, &v3_full.map_file.unwrap()).expect("v3 ref map"),
+        "mixed v3/v4 upgrade must publish the exact same segment map"
+    );
+
+    let last_idx = mixed.seg_names.len() - 1;
+    for (idx, name) in mixed.seg_names.iter().enumerate() {
+        let got_bytes = find_file(&mixed.files, name).expect("segment after mixed fill");
+        let ref_bytes = find_file(&v3_full.files, name).expect("v3 ref segment");
+        let same_start_bytes =
+            find_file(&mixed_v3_ref.files, name).expect("same-start v3 ref segment");
+        let got_seg = inspect_segment_file(name, got_bytes, mixed.generation);
+        let ref_seg = inspect_segment_file(name, ref_bytes, v3_full.generation);
+        let same_start_seg =
+            inspect_segment_file(name, same_start_bytes, mixed_v3_ref.generation);
+        assert_eq!(got_seg.pages, ref_seg.pages, "seg {idx} decoded pages must match full v3 ref");
+        assert_eq!(
+            got_seg.anchors, same_start_seg.anchors,
+            "seg {idx} anchors must match same-starting-card v3 ref"
+        );
+        if idx == 0 || idx == 2 {
+            assert_eq!(got_seg.version, VERSION_PAGES, "pre-existing v3 seg {idx} must stay v3");
+            assert_eq!(got_bytes, ref_bytes, "pre-existing v3 seg {idx} bytes must be untouched");
+        } else if idx < last_idx {
+            assert_eq!(got_seg.version, VERSION_POINT, "newly filled interior seg {idx} must be v4");
+            let pt = got_seg.point_bytes.as_ref().expect("newly filled interior v4 point");
+            verify_and_parse_point(
+                pt,
+                Mode::Seek,
+                &mixed.digest,
+                0,
+                mixed.generation,
+                (idx as u32 + 1) * PAGES,
+                mixed.info.page_count,
+                mixed.info.total_chars,
+                epub.len() as u64,
+            );
+        } else {
+            assert_eq!(got_seg.version, VERSION_PAGES, "final seg {idx} must stay v3");
+            assert!(got_seg.point_range.is_none());
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let dir = Path::new(args.get(1).expect("fixture directory argument required"));
@@ -1712,6 +1844,7 @@ fn main() {
         ("canonical_pool_bytes_under_poisoned_bank", case_canonical_pool_bytes_under_poisoned_bank),
         ("nonempty_replay_exact_filtered_bytes", case_nonempty_replay_exact_filtered_bytes),
         ("decline_reasons_and_backlog_recovery", case_decline_reasons_and_backlog_recovery),
+        ("v3_upgrade_compatibility_and_mixed_fill", case_v3_upgrade_compatibility_and_mixed_fill),
     ];
     let mut ran = 0usize;
     for &(name, func) in cases {
