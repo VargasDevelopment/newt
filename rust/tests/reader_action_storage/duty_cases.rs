@@ -261,7 +261,41 @@ fn main() {
         });
     }
 
-    // 6. Back and Power cancel immediately across renewals and never report timed_out.
+    // 6. Phase starts reset the per-pass milestone, but page renewals stop after
+    //    two full MAX_PAGES passes, so total renewed layout work stays bounded.
+    {
+        let mut shared = Shared::new();
+        let (_, mut control) = shared.split();
+        set_clock(0);
+        control.with_open(0, |control, _| {
+            let duty = ReaderDuty::new(control, &cadence, &clock, None, trace).renewing(true);
+            let mut now = 0u32;
+            for pass in 0..2u32 {
+                now += 1_000;
+                set_clock(now);
+                duty.event(&phase(WorkPhase::Layout));
+                for step in 1..=MAX_SEGMENTS as u32 {
+                    now += 10_000;
+                    set_clock(now);
+                    duty.event(&progress((step * PAGES) as i32));
+                    assert!(!duty.cancelled(), "pass {pass} milestone {step} should renew");
+                }
+            }
+            now += 1_000;
+            set_clock(now);
+            duty.event(&phase(WorkPhase::Layout)); // third pass start still renews
+            let third = now;
+            set_clock(third + 10_000);
+            duty.event(&progress(PAGES as i32)); // past two passes -> ignored
+            set_clock(third + OPEN_BUDGET_MS);
+            assert!(
+                duty.cancelled() && control.timed_out(),
+                "page-milestone renewals must be bounded across passes"
+            );
+        });
+    }
+
+    // 7. Back and Power cancel immediately across renewals and never report timed_out.
     for button in [Button::Back, Button::Power] {
         let mut shared = Shared::new();
         let (mut producer, mut control) = shared.split();
@@ -290,5 +324,5 @@ fn main() {
         });
     }
 
-    println!("PASS real ReaderDuty renewal: 4096-page ceiling, stall timeout, renewal-off control, phase cap, Back/Power cancel");
+    println!("PASS real ReaderDuty renewal: 4096-page ceiling, stall timeout, renewal-off control, phase cap, two-pass total cap, Back/Power cancel");
 }

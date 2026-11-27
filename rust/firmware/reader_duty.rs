@@ -7,7 +7,7 @@ use core::cell::Cell;
 use newt_c3_board::MonotonicClock;
 use newt_core::{
     admission::{WorkEvent, WorkKind, WorkPhase},
-    cache_names::segment::{MAX_PAGES, PAGES},
+    cache_names::segment::{MAX_PAGES, MAX_SEGMENTS, PAGES},
     reader_scheduler::YieldCadence,
     reader_work_profile::ReaderWorkProfile,
 };
@@ -15,6 +15,10 @@ use newt_input_policy::{Snapshot, UiControl};
 
 /// Maximum phase-start renewals allowed per foreground operation.
 const MAX_PHASE_RENEWALS: u8 = 32;
+/// Maximum page-milestone renewals per foreground operation: two full
+/// `MAX_PAGES` passes, since an anchor jump can lay a chapter out twice (#188).
+/// A phase start resets the per-pass milestone, so this caps total work.
+const MAX_PROGRESS_RENEWALS: u8 = 2 * MAX_SEGMENTS as u8;
 
 /// Short UI-only scheduling view. Shared references preserve the existing
 /// cancellation/profile hooks without a second counter or a retained callback.
@@ -28,6 +32,7 @@ pub struct ReaderDuty<'loan, 'task> {
     renew: bool,
     phase_renewals: Cell<u8>,
     progress_step: Cell<u8>,
+    progress_renewals: Cell<u8>,
 }
 
 impl<'loan, 'task> ReaderDuty<'loan, 'task> {
@@ -47,13 +52,15 @@ impl<'loan, 'task> ReaderDuty<'loan, 'task> {
             renew: false,
             phase_renewals: Cell::new(0),
             progress_step: Cell::new(0),
+            progress_renewals: Cell::new(0),
         }
     }
 
     /// Foreground opens, turns and Contents jumps can lay out chapters up to
     /// `MAX_PAGES` (4,096 pages, #103). With `renew`, each bounded work phase
     /// and each monotonic 128-page milestone up to `MAX_PAGES` gets a fresh
-    /// 20 s budget: a stalled pass still times out, and Back/Power stays latched.
+    /// 20 s budget, up to two full passes in total: a stalled pass still times
+    /// out, and Back/Power stays latched.
     pub fn renewing(self, renew: bool) -> Self {
         Self { renew, ..self }
     }
@@ -106,7 +113,10 @@ impl<'loan, 'task> ReaderDuty<'loan, 'task> {
                     if event.result > 0 {
                         let pages = event.result as u32;
                         let step = pages / PAGES;
-                        if pages <= MAX_PAGES && (step as u8) > self.progress_step.get() {
+                        let renewals = self.progress_renewals.get();
+                        if pages <= MAX_PAGES && (step as u8) > self.progress_step.get()
+                            && renewals < MAX_PROGRESS_RENEWALS {
+                            self.progress_renewals.set(renewals + 1);
                             self.progress_step.set(step as u8);
                             self.control.restart(self.clock.millis());
                         }

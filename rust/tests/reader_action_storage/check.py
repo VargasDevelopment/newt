@@ -236,6 +236,10 @@ def main():
          '                    let count = self.phase_renewals.get();\n                    if count < MAX_PHASE_RENEWALS {\n                        self.phase_renewals.set(count + 1);\n                        self.progress_step.set(0);',
          '                    self.progress_step.set(0);\n                    let count = self.phase_renewals.get();\n                    if count < MAX_PHASE_RENEWALS {\n                        self.phase_renewals.set(count + 1);',
          'phase renewals must be bounded even with repeated milestones'),
+        ('duty-uncapped-total',
+         '&& renewals < MAX_PROGRESS_RENEWALS',
+         '&& renewals < u8::MAX',
+         'page-milestone renewals must be bounded across passes'),
     ]
     for name, before_s, after_s, witness in duty_controls:
         assert duty_text.count(before_s) == 1, f'expected unique {name} needle'
@@ -246,7 +250,7 @@ def main():
         run([*command, control, '-o', out / name])
         rejected = run([out / name], succeeds=False)
         assert rejected.returncode == 101 and witness in rejected.stderr, rejected.stderr
-    print('PASS real ReaderDuty renewal and negative controls (no-progress-renewal, uncapped-pages, stalled-renews)')
+    print('PASS real ReaderDuty renewal and negative controls (no-progress-renewal, uncapped-pages, stalled-renews, phase-cap, uncapped-total)')
     common = [cargo, 'test', '--offline', '--frozen', '--locked',
               '--manifest-path', ROOT / 'rust/Cargo.toml', '--target', HOST,
               '--target-dir', target, '--jobs', '2']
