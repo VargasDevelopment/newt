@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 4098176,
+      "flash_bytes": 4069328,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,10 +28,10 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "1b7ad79f92d7d5e8ca31aa307376cead4bc8915d",
-      "before": 4074400,
-      "after": 4098176,
-      "reason": "+23,776 B (+23.22 KiB) over the 4,074,400 B ceiling on origin/main (4b2aff61, #202): adds verified two-pass resume-point restore for interrupted background current-chapter fills, streaming page-record verification and prefix start certification before NTSM map publication, raw envelope-read support with zero-heap missing/backup lookups and unified 1 KiB validation/finalization scratch, EngineState/EntityFilter restore loaders, and compressed/stored stream discard with duty/cancel polling (#168). Clean regional DEV USB build (dirty=false) with pinned Python at 1b7ad79f measures 4,098,176 B (.flash.text 1,964,206 -> 1,987,180 B, +22,974 B; .flash.rodata 1,992,052 -> 1,992,868 B, +816 B; image padding -14 B). Exact per-part .flash.text ELF symbol diff vs origin/main (sums to +22,974 B): resume_restore two-pass verifier/replayer/streaming page verifier/map certifier +8,062 B; producer current/stream/writer restore integration (try_restore_candidate, run_layout_loop, prepare_targeted, open_named_segment, map handoff) +5,628 B; chapter_layout EngineState::load_resume_inner (+2,750 B) & ChapterSession::begin_state (+560 B) & helpers (+394 B) = +3,704 B; storage/cache raw envelope reads, FilePort optional/freshness split & unified 1 KiB scratch +2,984 B; resume_point PointIn/Layout::parse/Binding::decode +1,814 B; xml_input EntityFilter::load_resume & xml_session shift translation +1,170 B; zip_container discard_to & byte cursor +364 B; resume_capture updates +52 B; shared/inlining delta -804 B. Reuses existing page_envelope::crc, resume_point::Layout/Binding codecs, and FilePort read leases. RAM 124,096 -> 124,096 B (+0 B), RTC 300 -> 300 B (+0 B), lent Wi-Fi RAM 22,528 -> 22,528 B (+0 B), selected stacks +0 B (0/16/32/48/480 <= 656 B). Usable app space 7,016,448 B; headroom 2,942,048 B (41.93%) -> 2,918,272 B (41.59%). No memory floor or stack ceiling moves.",
+      "source_revision": "d50e60be5e7beef13acf1483a351de6024d5c0da",
+      "before": 4098176,
+      "after": 4069328,
+      "reason": "Revert #168 resume-point capture and restore (R2 #202, R3 #208): owner decision, cost not justified by a user-facing outcome. Clean regional DEV USB build saves 28,848 B. RAM 124,096 to 124,096 B, RTC 300 to 300 B, lent Wi-Fi RAM 22,528 to 22,528 B.",
       "reviewer": "Lead"
     },
     "ram_bytes": {
