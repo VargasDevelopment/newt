@@ -352,9 +352,12 @@ below and publishes the release there; only the Lead runs it with `--publish`.
    name, the host name, `.build/private`, `private-books` and e-mail addresses
    that are not in `NOTICES.txt`. It builds these patterns when it runs, so no
    private string is committed.
-9. Before publishing, the Lead installs the exact pair on the bench X3 and sees
-   a VALID boot and Home. A public release reaches devices we cannot reach;
-   ours goes first.
+9. Before publishing, check an update from the last official release with a
+   book in progress: Home still shows that book's title, progress and cover,
+   and Read lands on the saved page. Then the Lead installs the exact pair on
+   the bench X3 over the last official release (never an RC or nightly), with a
+   book in progress, and sees a VALID boot, Home, and Read landing on the saved
+   page. A public release reaches devices we cannot reach; ours goes first.
 
 ### Steps
 
@@ -368,13 +371,18 @@ python3 -B tools/release_publish.py --bench-receipt .build/release/bench-VERSION
 python3 -B tools/release_publish.py --bench-receipt .build/release/bench-VERSION.json --publish
 ```
 
-The bench install check: install `newt.bin` and `newt.manifest` from
-`.build/release/bench-VERSION` on the bench X3 (from the card, over Wi-Fi
-once it can, or with `tools/bench_flash.py`, which writes the exact `newt.bin`;
-Wi-Fi needs a published release), let it boot, and see the running slot's
-state is VALID and Home is on the screen. For the card install, the running
-build's bridge can put the pair into `Newt/Update` (docs/dev-usb-bridge.md,
-"Card write"), with Home open and no book open:
+Before the bench install, check an update from the last official release with a
+book in progress so Home still shows that book's title, progress and cover and
+Read lands on the saved page. For the bench install check, start from the last
+official release running on the bench X3 with a book in progress (never from a
+release candidate or a nightly), then install `newt.bin` and `newt.manifest`
+from `.build/release/bench-VERSION` (from the card, over Wi-Fi once it can, or
+with `tools/bench_flash.py`, which writes the exact `newt.bin`; Wi-Fi needs a
+published release). Let it boot, see that the running slot's state is VALID and
+Home is on the screen, then open Read and confirm it lands on the saved page.
+For the card install, the running build's bridge can put the pair into
+`Newt/Update` (docs/dev-usb-bridge.md, "Card write"), with Home open and no
+book open:
 
 ```sh
 .toolchain/platformio/penv/bin/python tools/dev-usb.py put \
