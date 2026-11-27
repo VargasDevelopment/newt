@@ -88,6 +88,7 @@ impl Runtime {
             core::ffi::CStr::from_bytes_until_nul(&path).ok()
                 .and_then(|path| path.to_str().ok()).ok_or(BookFailure::Source)?
         };
+        let anchor_jump = matches!(step, Some(BookStep::Action(action)) if self.starts_anchor_jump(action));
         let saved = self.recovery.as_ref().map_or(self.saved, |pending| *pending.progress());
         let policy = self.restore_policy_image();
         let settings = self.recovery.as_ref().map_or(self.settings, |pending| pending.settings);
@@ -105,7 +106,7 @@ impl Runtime {
             };
         let control = &*events.control;
         let queue = &*events.queue;
-        let duty = ReaderDuty::new(control, cadence, &clock, profile, events.action);
+        let duty = ReaderDuty::new(control, cadence, &clock, profile, events.action).renewing(anchor_jump);
         let cancel = Cancel(&duty, None);
         let yielded = || duty.yield_now();
         let observed = |event: WorkEvent| duty.event(&event);

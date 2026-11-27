@@ -18,6 +18,17 @@ impl Runtime {
         })
     }
 
+    /// Activating a Contents entry with a fragment must find its anchor by laying
+    /// the chapter out (#188), unlike a page turn or a chapter-start entry.
+    pub(super) fn starts_anchor_jump(&self, action: Action) -> bool {
+        action == Action::Activate && self.book().is_some_and(|book| {
+            let menu = book.reader.chapter_menu();
+            let count = menu.info().count;
+            book.ui.panel == ReaderPanel::Chapters && count > 0
+                && menu.row(book.ui.selected.min(count - 1)).fragment
+        })
+    }
+
     fn reader_action_armed(&mut self, home: &mut Home<'_>, ui: &mut Application<'_>,
         logical: &mut Frame, events: &mut Events<'_, '_>, action: Action,
     ) -> bool {
@@ -36,6 +47,11 @@ impl Runtime {
             (Some(newt_reader_ui::dispatch_unavailable_reader_ui(&mut self.reader_ui,
                 self.settings, action)), at)
         } else {
+            if self.starts_anchor_jump(action) {
+                // The jump may lay a long chapter out twice; say so before it starts.
+                self.acknowledge_work_image(home, ui, logical, newt_reader_ui::SlowWork::Loading,
+                    events.control, events.action);
+            }
             match self.operate_image(home, ui, logical, events, None,
                 Some(BookStep::Action(action)), false, None, None) {
                 Ok(mut exit) => {

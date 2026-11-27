@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //! Retain scalar reader state between operation-scoped backing loans.
-use super::{Observer, PageInfo, PhasedReader, Proofs, Section, Selection};
+use super::{ChapterMenuView, Observer, PageInfo, PhasedReader, Proofs, Section, Selection};
 use newt_core::preferences::PageLayout;
 use newt_phased_sink::Plan;
 
@@ -145,6 +145,11 @@ impl ReaderView<'_> {
 
     pub fn current_section(&self) -> Section<'_> {
         super::projection::current_section(self.has_page(), self.info(), self.selection())
+    }
+
+    /// The Contents menu, staged like `PhasedReader::chapter_menu`.
+    pub fn chapter_menu(&self) -> ChapterMenuView<'_> {
+        ChapterMenuView::from_navigation(&self.selections[self.state.active ^ 1].navigation)
     }
 
     pub fn malformed_utf8(&self) -> bool {

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! Focused host test for PhasedReader's layout-page counter across open,
 //! early-stop miss passes, cache hits, and ReaderState round-trips (#168),
-//! and the page cache with non-default display preferences (#187).
+//! the page cache with non-default display preferences (#187), and the work
+//! phases a Contents anchor jump reads the book in (#188).
 use newt_core::{
     chapter_layout::types::LineBreak,
     page_cache::CacheStorage,
@@ -770,4 +771,92 @@ fn display_preferences_still_produce_and_hit_the_page_cache() {
         let mut cache = PhasedChapterCache { store: &mut cache_store, hash: &mut hash, settings: other };
         assert!(!cache.capture(&mut source, &digest, request, &mut op).hit, "{case}: other layout must miss");
     }
+}
+
+thread_local! {
+    static PHASE: core::cell::Cell<newt_core::admission::WorkPhase> =
+        const { core::cell::Cell::new(newt_core::admission::WorkPhase::Idle) };
+    static READS_OUTSIDE_PHASE: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
+}
+fn track_phase(event: newt_core::admission::WorkEvent) {
+    if event.kind == newt_core::admission::WorkKind::Phase {
+        PHASE.set(event.phase);
+    }
+}
+/// Counts book reads made while no work phase is open.
+struct PhaseSource(VecSource);
+impl newt_core::producer_policy::ProducerReceipt for PhaseSource {
+    fn producer_receipt_live(&mut self) -> bool {
+        true
+    }
+}
+impl BookSource for PhaseSource {
+    fn size(&self) -> u64 {
+        self.0.size()
+    }
+    fn read_at(&mut self, at: u64, out: &mut [u8]) -> i32 {
+        if !out.is_empty() && PHASE.get() == newt_core::admission::WorkPhase::Idle {
+            READS_OUTSIDE_PHASE.set(READS_OUTSIDE_PHASE.get() + 1);
+        }
+        self.0.read_at(at, out)
+    }
+}
+
+/// The firmware gives each work phase of a Contents jump a fresh open budget
+/// (#188), so every chapter pass of an anchor jump must run inside a phase,
+/// including the exact-anchor scan between the two layout passes.
+#[test]
+fn anchor_jump_reads_the_book_only_inside_work_phases() {
+    let mut chapter = String::from(
+        "<?xml version=\"1.0\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>C</title></head><body><h1>Chapter</h1>",
+    );
+    for i in 0..60 {
+        if i == 40 {
+            chapter.push_str("<h2 id=\"mid\">Middle</h2>");
+        }
+        chapter.push_str(&format!("<p>Paragraph {i}: the river path bent past the mill toward the old stone bridge.</p>"));
+    }
+    chapter.push_str("</body></html>");
+    let container = b"<?xml version=\"1.0\"?><container version=\"1.0\" xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\"><rootfiles><rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/></rootfiles></container>";
+    let opf = b"<?xml version=\"1.0\"?><package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\" unique-identifier=\"u\"><metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:identifier id=\"u\">urn:test:188</dc:identifier><dc:title>Test</dc:title><dc:language>en</dc:language></metadata><manifest><item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/><item id=\"c0\" href=\"c0.xhtml\" media-type=\"application/xhtml+xml\"/></manifest><spine><itemref idref=\"c0\"/></spine></package>";
+    let nav = b"<?xml version=\"1.0\"?><html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\"><head><title>N</title></head><body><nav epub:type=\"toc\"><ol><li><a href=\"c0.xhtml\">Chapter</a></li><li><a href=\"c0.xhtml#mid\">Middle</a></li></ol></nav></body></html>";
+    let epub = stored_zip(&[
+        ("mimetype", b"application/epub+zip"),
+        ("META-INF/container.xml", container),
+        ("OEBPS/content.opf", opf),
+        ("OEBPS/nav.xhtml", nav),
+        ("OEBPS/c0.xhtml", chapter.as_bytes()),
+    ]);
+    let mut source = PhaseSource(VecSource(epub));
+    let mut shared = Box::new(Bank([0; BANK_BYTES]));
+    let mut parse = vec![0u8; FRAME_BYTES];
+    let mut storage = PhaseStorage::new(&mut shared.0);
+    let mut loan = HostLoan(&mut parse);
+    let mut parser = MiniXml::default();
+    let mut breaker = SimpleBreak;
+    let mut runs = Box::new([Run::default(); RUNS]);
+    let mut text = Box::new(PlanText([0; TEXT]));
+    let mut plan = Plan::new(&mut *runs, &mut text.0);
+    let mut selections = [Selection::default(), Selection::default()];
+    let mut frame: Box<Frame> = Box::new([0u8; FRAME_BYTES]);
+    let settings = ViewSettings { orientation: Orientation::Portrait, ..ViewSettings::default() };
+    let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), settings.page_layout());
+    assert_eq!(reader.open_phased(&mut source, &mut storage, &mut loan, &mut parser), Status::Ok);
+    assert_eq!(
+        reader.capture_phased(&mut source, 0, 0, Target::Page, &mut storage, &mut loan, &mut parser, &mut breaker),
+        Status::Ok
+    );
+    assert_eq!(reader.publish(&mut source, &mut frame), Status::Ok);
+    assert_eq!(reader.prepare_chapter_menu_phased(&mut source, 0, &mut storage, &mut loan, &mut parser), Status::Ok);
+    assert!(reader.chapter_menu().row(1).fragment, "row 1 must be the anchor entry");
+
+    reader.work = Some(track_phase);
+    READS_OUTSIDE_PHASE.set(0);
+    assert_eq!(
+        reader.capture_chapter_phased(&mut source, 0, 1, &mut storage, &mut loan, &mut parser, &mut breaker),
+        Status::Ok
+    );
+    assert_eq!(reader.publish(&mut source, &mut frame), Status::Ok);
+    assert!(reader.info().page > 0, "the jump must land past the first page");
+    assert_eq!(READS_OUTSIDE_PHASE.get(), 0, "every chapter pass of the jump must run inside a work phase");
 }

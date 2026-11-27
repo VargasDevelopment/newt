@@ -497,4 +497,38 @@ mod clockwise_back_tests {
             Consumption::Action(Action::Back)
         );
     }
+    /// Contents jumps restart the budget as each pass begins (#188). A restart
+    /// gives a working pass a fresh budget; it never ends a timeout or undoes Back.
+    #[test]
+    fn a_restart_renews_working_passes_but_not_back_or_a_stuck_pass() {
+        let mut shared = Shared::new();
+        let (_, mut control) = shared.split();
+        // Passes of 15 s each finish only because each one restarts the budget.
+        control.with_open(0, |control, _| {
+            for begun in [15_000, 30_000, 45_000] {
+                assert!(!control.cancelled_at(begun));
+                control.restart(begun);
+            }
+            assert!(!control.cancelled_at(45_000 + super::OPEN_BUDGET_MS - 1));
+            assert!(control.cancelled_at(45_000 + super::OPEN_BUDGET_MS) && control.timed_out());
+            control.restart(70_000);
+            assert!(control.cancelled_at(70_001) && control.timed_out(), "a stuck pass stays timed out");
+        });
+        // Back in any pass ends the jump, whatever restarts follow.
+        for back_in in 0..3 {
+            let mut shared = Shared::new();
+            let (mut producer, mut control) = shared.split();
+            control.with_open(0, |control, _| {
+                for pass in 0..3u32 {
+                    let begun = pass * 15_000;
+                    control.restart(begun);
+                    if pass == back_in {
+                        producer.poll_once(&mut FakeIo::new(Button::Back, false));
+                    }
+                    assert_eq!(control.cancelled_at(begun + 1), pass >= back_in, "pass {pass}, Back in {back_in}");
+                }
+                assert!(!control.timed_out());
+            });
+        }
+    }
 }

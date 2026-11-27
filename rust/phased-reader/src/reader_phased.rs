@@ -611,6 +611,9 @@ impl PhasedReader<'_, '_> {
             let selected = &self.selections[self.active ^ 1];
             let page = selected.navigation.staged_resolved_page();
             let target = selected.navigation.target_by_toc(toc_index);
+            // The anchor scan streams the whole chapter like a layout pass, so it
+            // is its own phase: the firmware renews a jump's budget per phase (#188).
+            let _work = WorkScope::new_scoped(self.on_yield, self.work, WorkPhase::Layout);
             let status = phase.stream(backend, |io| {
                 validate_exact_anchor_stream(
                     source,
