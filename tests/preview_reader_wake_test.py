@@ -617,10 +617,16 @@ def home_from_pre_picture_metadata(binary):
         estimate.unlink()
         if home() != expected:
             return 'Home lost its estimated progress from complete policy-1 counts'
+        old_counts = bytearray(current_title) + struct.pack('<I', chapter_chars)
+        struct.pack_into('<I', old_counts, 12, 1)
+        cache(legacy, old_counts, 1)
+        old_frame = home()
+        if old_frame == expected:
+            return 'Different policy-1 counts did not change Home progress'
         cache(current, counts, 2)
         current_frame = home()
         legacy.unlink()
-        if home() != current_frame:
+        if current_frame != expected or home() != current_frame:
             return 'Home let policy-1 metadata override complete current metadata'
 
         current.unlink()
@@ -677,7 +683,10 @@ CASES = [
     (home_from_pre_picture_metadata, [
         ('reader_image_boot.rs',
          '    for policy in [POLICY_VERSION, PRE_PICTURE_POLICY_VERSION] {',
-         '    let _ = PRE_PICTURE_POLICY_VERSION;\n    for policy in [POLICY_VERSION] {')]),
+         '    let _ = PRE_PICTURE_POLICY_VERSION;\n    for policy in [POLICY_VERSION] {'),
+        ('reader_image_boot.rs',
+         '    for policy in [POLICY_VERSION, PRE_PICTURE_POLICY_VERSION] {',
+         '    for policy in [PRE_PICTURE_POLICY_VERSION, POLICY_VERSION] {')]),
     (cold_power_on_at_old_boundary, [
         # Boot asks a durable reopen for its exact page.
         ('reader_image_boot.rs',
