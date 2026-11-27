@@ -8,11 +8,11 @@
 namespace newt {
 inline constexpr WhatsNewUpdate kWhatsNew[] = {
     {"Nov 27, 2026",
-     {"Skipped pictures now show a note and alt text.",
-      "Small caps and text styles now show in books.",
-      "Long books with over 1,000 files now open and show covers.",
-      "Faster page turns work with any progress bar or refresh.",
-      "Oversized or shifted words no longer clip.",
-      "Various smaller enhancements."}},
+     {"Pictures Newt can't show now leave a note in their place.",
+      "Small caps and all-caps styles now show in books.",
+      "Very large books that wouldn't open now open, with covers.",
+      "Faster page turns now work with every progress bar and refresh setting.",
+      "Large, raised or lowered text is no longer cut off.",
+      "Other small fixes and improvements."}},
 };
 }  // namespace newt
