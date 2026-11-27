@@ -42,44 +42,6 @@ pub trait CacheStorage {
     fn producer_can_begin(&self) -> bool {
         true
     }
-    /// Remaining byte credit for the active producer attempt, or `None` when unbounded.
-    fn producer_remaining_credit(&self) -> Option<u64> {
-        None
-    }
-    /// Whether this storage implements `begin_envelope_read` / `read_envelope_raw`
-    /// / `finish_envelope_read` over real block-envelope files.
-    fn supports_envelope_read(&self) -> bool {
-        false
-    }
-    /// Whether the most recent envelope read lease was intentionally closed to
-    /// lend the descriptor to producer duty (distinct from file corruption).
-    fn envelope_read_suspended(&self) -> bool {
-        false
-    }
-    /// Open an optional generation-bound read lease on a canonical `.fibp`
-    /// block-envelope file without allocating scratch or latching terminal
-    /// producer failure on local file errors.
-    fn begin_envelope_read(
-        &mut self,
-        _name: &[u8],
-        _query: &mut crate::page_envelope::Query<'_>,
-    ) -> bool {
-        false
-    }
-    /// Read raw bytes from the open generation-bound envelope lease.
-    fn read_envelope_raw(
-        &mut self,
-        _query: &crate::page_envelope::Query<'_>,
-        _offset: u32,
-        _out: &mut [u8],
-    ) -> bool {
-        false
-    }
-    /// Check freshness of the open envelope lease and unconditionally release it.
-    fn finish_envelope_read(&mut self, query: &mut crate::page_envelope::Query<'_>) -> bool {
-        query.finish();
-        false
-    }
 }
 /// One checked cache read, as pinned ChapterPageCache readEntry/locate:
 /// beginRead(query), attach, the SDK read, query.finish, finishRead.

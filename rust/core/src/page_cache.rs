@@ -139,11 +139,8 @@ pub struct PageCacheWriter {
     offset: u32,
     anchors: usize,
     total: u32,
-    point: PointRange,
-    point_owner: u16,
     failed: bool,
     open: bool,
-    version4: bool,
 }
 impl PageCacheWriter {
     pub fn new(profile: Profile) -> Self {
@@ -153,11 +150,8 @@ impl PageCacheWriter {
             offset: 0,
             anchors: 0,
             total: 0,
-            point: PointRange::default(),
-            point_owner: u16::MAX,
             failed: false,
             open: false,
-            version4: false,
         }
     }
     pub fn failed(&self) -> bool {
@@ -165,15 +159,6 @@ impl PageCacheWriter {
     }
     pub fn page_count(&self) -> u32 {
         self.count
-    }
-    pub fn offset(&self) -> u32 {
-        self.offset
-    }
-    pub fn is_v4(&self) -> bool {
-        self.version4
-    }
-    pub fn has_point(&self) -> bool {
-        self.point.length != 0
     }
     pub fn set_total_chars(&mut self, total: u32) {
         self.total = total;
@@ -187,34 +172,11 @@ impl PageCacheWriter {
         hash: u32,
         m: &WriterMemory<'_>,
     ) -> bool {
-        self.begin_version(s, name, hash, m, VERSION_PAGES)
-    }
-    /// Begins a v4 segment payload that may embed one resume-point section.
-    pub fn begin_v4(
-        &mut self,
-        s: &mut impl CacheStorage,
-        name: &[u8],
-        hash: u32,
-        m: &WriterMemory<'_>,
-    ) -> bool {
-        self.begin_version(s, name, hash, m, VERSION_POINT)
-    }
-    pub fn begin_version(
-        &mut self,
-        s: &mut impl CacheStorage,
-        name: &[u8],
-        hash: u32,
-        m: &WriterMemory<'_>,
-        version: u16,
-    ) -> bool {
         self.count = 0;
         self.offset = 0;
         self.failed = false;
         self.open = false;
         self.anchors = 0;
-        self.point = PointRange::default();
-        self.point_owner = u16::MAX;
-        self.version4 = version == VERSION_POINT;
         if m.anchors.len() < self.profile.max_anchors() {
             self.failed = true;
             return false;
@@ -224,42 +186,9 @@ impl PageCacheWriter {
             return false;
         }
         self.open = true;
-        let mut h = *b"FIBP\x00\x00\x00\x00\x00\x00\x00\x00";
-        put16(&mut h, 4, version);
+        let mut h = *b"FIBP\x03\x00\x00\x00\x00\x00\x00\x00";
         put32(&mut h, 8, hash);
         self.raw(s, &h)
-    }
-    /// Streams one resume point into the open v4 segment after the latest page
-    /// through a single raw write callback (avoids instantiating a `dyn CacheStorage`
-    /// vtable on generic producer store adapters). A short or failing write latches
-    /// `failed` so the caller aborts the temp.
-    #[inline(never)]
-    pub fn write_point(
-        &mut self,
-        expected_len: u32,
-        write: &mut dyn FnMut(&[u8]) -> bool,
-        emit: &mut dyn FnMut(&mut crate::resume_point::CrcOut<'_>) -> bool,
-    ) -> bool {
-        if self.failed
-            || !self.open
-            || !self.version4
-            || self.has_point()
-            || self.count == 0
-            || expected_len == 0
-        {
-            return false;
-        }
-        let start = self.offset;
-        let mut crc_out = crate::resume_point::CrcOut::new(expected_len, write);
-        let ok = emit(&mut crc_out);
-        self.offset = self.offset.wrapping_add(crc_out.bytes);
-        if !ok || crc_out.failed || crc_out.bytes != expected_len {
-            self.failed = true;
-            return false;
-        }
-        self.point = PointRange { offset: start, length: expected_len };
-        self.point_owner = (self.count - 1) as u16;
-        true
     }
     fn raw(&mut self, s: &mut impl CacheStorage, b: &[u8]) -> bool {
         if self.failed || !self.open {
@@ -412,12 +341,7 @@ impl PageCacheWriter {
     ) -> bool {
         if self.failed || !self.open {
             if self.open {
-                // Failed v4/point writers stay strictly abort-only so a native
-                // store's end_write cannot finalize and promote an incomplete
-                // temp; v3 keeps legacy SDK call ordering.
-                if !self.version4 {
-                    s.end_write();
-                }
+                s.end_write();
                 s.remove(cstr(name));
                 self.open = false;
             }
@@ -451,25 +375,21 @@ impl PageCacheWriter {
             put32(&mut b, 4, a.chars);
             self.raw(s, &b);
         }
-        let mut f = [0; 40];
+        let mut f = [0; 32];
         put32(&mut f, 0, index);
         put32(&mut f, 4, self.count);
         put32(&mut f, 8, anchors);
         put32(&mut f, 12, self.anchors as u32);
         put32(&mut f, 16, self.total);
-        let mut pos = 20;
-        if let Some((consumed, total)) = progress {
-            put32(&mut f, pos, consumed);
-            put32(&mut f, pos + 4, total);
-            pos += 8;
-        }
-        if self.version4 {
-            put32(&mut f, pos, self.point.offset);
-            put32(&mut f, pos + 4, self.point.length);
-            pos += 8;
-        }
-        f[pos..pos + 4].copy_from_slice(if progress.is_some() { b"FIBx" } else { b"FIBX" });
-        let len = pos + 4;
+        let len = if let Some((consumed, total)) = progress {
+            put32(&mut f, 20, consumed);
+            put32(&mut f, 24, total);
+            f[28..].copy_from_slice(b"FIBx");
+            32
+        } else {
+            f[20..24].copy_from_slice(b"FIBX");
+            24
+        };
         self.raw(s, &f[..len]);
         // Preserve short circuit: stream failure here skips endWrite, unlike entry failure.
         let committed = !self.failed && s.end_write();
@@ -492,9 +412,7 @@ impl PageCacheWriter {
             return Err(Status::NotFound);
         }
         let e = entry(m, page).ok_or(Status::NotFound)?;
-        let end = if self.has_point() && page == u32::from(self.point_owner) {
-            self.point.offset
-        } else if page + 1 < self.count {
+        let end = if page + 1 < self.count {
             entry(m, page + 1).ok_or(Status::NotFound)?.offset
         } else {
             self.offset
@@ -506,7 +424,7 @@ impl PageCacheWriter {
             e.offset,
             scratch.view_mut(range).ok_or(Status::OutOfMemory)?,
         )?;
-        decode_page(range, page, scratch, out, self.version4)
+        decode_page(range, page, scratch, out, false)
     }
 }
 fn get_bytes(pool: &[u8], b: Bytes) -> Option<&[u8]> {
@@ -532,12 +450,8 @@ fn read_fully(
     }
     Ok(())
 }
-/// Largest decoded page record extent accepted by `PageCacheReader` and
-/// segment-map start certification.
-pub const MAX_PAGE_BYTES: u32 = 128 * 1024;
-
 fn allocate_blob(a: &mut Arena<'_>, start: u32, end: u32) -> Result<ByteRange, Status> {
-    if end <= start || end - start > MAX_PAGE_BYTES {
+    if end <= start || end - start > 128 * 1024 {
         return Err(Status::Stale);
     }
     a.alloc((end - start) as usize, 4)
@@ -583,104 +497,6 @@ impl<'a> IndexAllocation<'a> for IndexSlices<'a> {
 /// must also decode to exactly its extent, so stray bytes make it miss.
 pub const VERSION_PAGES: u16 = 3;
 pub const VERSION_POINT: u16 = 4;
-
-/// Gap `[start, end)` of `page` inside an index table ending at `index`.
-fn page_gap(pages: &[Entry], index: u32, page: u32) -> Option<(u32, u32)> {
-    let start = pages.get(page as usize)?.offset;
-    let end = if (page as usize) + 1 < pages.len() {
-        pages.get(page as usize + 1)?.offset
-    } else {
-        index
-    };
-    Some((start, end))
-}
-
-/// Whether `point` shares at least one byte with nonempty gap `[start, end)`.
-fn point_touches_gap(point: PointRange, start: u32, end: u32) -> bool {
-    let point_end = point.offset.saturating_add(point.length);
-    point.length != 0 && start < end && point_end > start && point.offset < end
-}
-
-/// Whether `page`'s v4 gap is nonempty, inside `12..=index`, and disjoint from
-/// every other nonempty gap in `pages`.
-fn v4_gap_valid(pages: &[Entry], index: u32, page: u32) -> bool {
-    let Some((start, end)) = page_gap(pages, index, page) else {
-        return false;
-    };
-    start >= 12
-        && start < end
-        && end <= index
-        && (0..pages.len() as u32).all(|other| {
-            other == page
-                || page_gap(pages, index, other)
-                    .is_none_or(|(s, e)| s >= e || e <= start || s >= end)
-        })
-}
-
-/// The unique page whose valid v4 gap `point` fills to the end after at least
-/// one page byte. Shared by `PageCacheReader` and the streaming restore loader
-/// so point ownership uses one structural rule.
-#[inline(never)]
-pub fn verified_point_owner(index: u32, point: PointRange, pages: &[Entry]) -> Option<u32> {
-    if point.length == 0 {
-        return None;
-    }
-    let end = point.offset.checked_add(point.length)?;
-    if end > index {
-        return None;
-    }
-    let mut owner = None;
-    for page in 0..pages.len() as u32 {
-        let (start, gap_end) = page_gap(pages, index, page)?;
-        if !point_touches_gap(point, start, gap_end) {
-            continue;
-        }
-        if owner.is_some()
-            || point.offset <= start
-            || end != gap_end
-            || !v4_gap_valid(pages, index, page)
-        {
-            return None;
-        }
-        owner = Some(page);
-    }
-    owner
-}
-
-/// Verified v4 byte extent `[start, end)` for `page`, applying the exact same
-/// non-overlapping gap and unique point-ownership rule used by `PageCacheReader`.
-fn verified_v4_page_extent_with_owner(
-    index: u32,
-    point: PointRange,
-    owner: Option<u32>,
-    pages: &[Entry],
-    page: u32,
-) -> Option<(u32, u32)> {
-    let (start, end) = page_gap(pages, index, page)?;
-    if !v4_gap_valid(pages, index, page) {
-        return None;
-    }
-    if owner == Some(page) {
-        Some((start, point.offset))
-    } else if point_touches_gap(point, start, end) {
-        None
-    } else {
-        Some((start, end))
-    }
-}
-
-/// Verified v4 byte extent `[start, end)` for `page` when the caller has not
-/// cached `verified_point_owner`.
-#[inline(never)]
-pub fn verified_v4_page_extent(
-    index: u32,
-    point: PointRange,
-    pages: &[Entry],
-    page: u32,
-) -> Option<(u32, u32)> {
-    let owner = verified_point_owner(index, point, pages);
-    verified_v4_page_extent_with_owner(index, point, owner, pages, page)
-}
 
 /// A resume point's verified position in its segment payload.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -865,11 +681,67 @@ impl PageCacheReader {
             .find(|a| a.hash == hash)
             .map(|a| a.chars)
     }
+    /// The page's gap: from its index entry to the next entry, or to the index.
+    fn gap(&self, pages: &[Entry], page: u32) -> Option<(u32, u32)> {
+        let start = pages.get(page as usize)?.offset;
+        let end = if page + 1 < self.count {
+            pages.get(page as usize + 1)?.offset
+        } else {
+            self.index
+        };
+        Some((start, end))
+    }
+    /// Whether the footer's point range shares a byte with `start..end`. An
+    /// empty or backwards gap has no bytes, so it touches nothing. An
+    /// overflowing range reaches the end of the address space.
+    fn point_touches(&self, start: u32, end: u32) -> bool {
+        let point_end = self.point.offset.saturating_add(self.point.length);
+        self.point.length != 0 && start < end && point_end > start && self.point.offset < end
+    }
+    /// A v4 gap must be nonempty, lie between the header and the index, and
+    /// share no byte with another nonempty gap. A v3 index is not checked.
+    fn gap_valid(&self, pages: &[Entry], page: u32) -> bool {
+        let Some((start, end)) = self.gap(pages, page) else {
+            return false;
+        };
+        if !self.exact {
+            return true;
+        }
+        start >= 12
+            && start < end
+            && end <= self.index
+            && (0..self.count).all(|other| {
+                other == page
+                    || self.gap(pages, other).is_none_or(|(s, e)| s >= e || e <= start || s >= end)
+            })
+    }
     /// The page whose valid gap the point ends, after at least one page byte.
     /// A point touching any other gap, a second such gap or a range past the
     /// index leaves no owner.
     fn point_owner(&self, pages: &[Entry]) -> Option<u32> {
-        verified_point_owner(self.index, self.point, pages.get(..self.count as usize)?)
+        if self.point.length == 0 {
+            return None;
+        }
+        let end = self.point.offset.checked_add(self.point.length)?;
+        if end > self.index {
+            return None;
+        }
+        let mut owner = None;
+        for page in 0..self.count {
+            let (start, gap_end) = self.gap(pages, page)?;
+            if !self.point_touches(start, gap_end) {
+                continue;
+            }
+            if owner.is_some()
+                || self.point.offset <= start
+                || end != gap_end
+                || !self.gap_valid(pages, page)
+            {
+                return None;
+            }
+            owner = Some(page);
+        }
+        owner
     }
     /// Page extents use only the verified index and footer. An invalid v4
     /// gap misses. The owner ends at the point. Any other page the point
@@ -878,12 +750,16 @@ impl PageCacheReader {
         if page >= self.count {
             return Err(Status::NotFound);
         }
-        let slice = m.pages.get(..self.count as usize).ok_or(Status::NotFound)?;
-        if !self.exact {
-            return page_gap(slice, self.index, page).ok_or(Status::NotFound);
+        let (start, end) = self.gap(m.pages, page).ok_or(Status::NotFound)?;
+        if !self.gap_valid(m.pages, page) {
+            Err(Status::Stale)
+        } else if self.point_owner == Some(page) {
+            Ok((start, self.point.offset))
+        } else if self.point_touches(start, end) {
+            Err(Status::Stale)
+        } else {
+            Ok((start, end))
         }
-        verified_v4_page_extent_with_owner(self.index, self.point, self.point_owner, slice, page)
-            .ok_or(Status::Stale)
     }
     /// The resume point's range, when exactly one page owns it. A bad range
     /// loses only the point; the point's reader checks its content.

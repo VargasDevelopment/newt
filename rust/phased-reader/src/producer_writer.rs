@@ -13,16 +13,12 @@ pub struct CappedWriter<'loan, 'ctx, C: ?Sized> {
     pub cache: PageCacheWriter,
     cancellation: &'loan Cancellation<'ctx, C>,
     pub starts: &'loan mut [u32; MAX_SEGMENTS],
-    /// Bitmask of verified segment start slots in `starts` (bit `k` = slot `k`).
-    pub starts_mask: u32,
     pub seen: u32,
     pub first: u32,
     pub refused: bool,
     pub segmented: bool,
     pub open: bool,
     pub mapping: bool,
-    pub capture_points: bool,
-    pub restore_points: bool,
 }
 impl<'loan, 'ctx, 'pause, C: ?Sized> CappedWriter<'loan, 'ctx, C> {
     pub fn new(
@@ -32,30 +28,8 @@ impl<'loan, 'ctx, 'pause, C: ?Sized> CappedWriter<'loan, 'ctx, C> {
         starts.fill(0);
         Self {
             cache: PageCacheWriter::new(Profile::Small), cancellation, starts,
-            starts_mask: 0, seen: 0, first: 0, refused: false, segmented: false, open: false,
-            mapping: false, capture_points: false, restore_points: false,
+            seen: 0, first: 0, refused: false, segmented: false, open: false, mapping: false,
         }
-    }
-    pub fn clear_starts(&mut self) {
-        self.starts.fill(0);
-        self.starts_mask = 0;
-    }
-    pub fn record_start(&mut self, slot: usize, char_start: u32) {
-        if slot < MAX_SEGMENTS {
-            self.starts[slot] = char_start;
-            self.starts_mask |= 1u32 << slot;
-        }
-    }
-    pub fn starts_complete(&self, count: u32) -> bool {
-        if count == 0 || count > MAX_SEGMENTS as u32 {
-            return false;
-        }
-        let need = if count == MAX_SEGMENTS as u32 {
-            u32::MAX
-        } else {
-            (1u32 << count) - 1
-        };
-        (self.starts_mask & need) == need
     }
     pub(crate) fn cancellation(&self) -> &'loan Cancellation<'ctx, C> { self.cancellation }
     pub fn receiving(&self, page: u32) -> bool {
@@ -72,12 +46,8 @@ impl<'loan, 'ctx, 'pause, C: ?Sized> CappedWriter<'loan, 'ctx, C> {
             self.cancellation.fail_terminal();
             return false;
         }
-        if self.segmented
-            && !self.restore_points
-            && self.seen % PAGES == 0
-            && (self.seen / PAGES) < MAX_SEGMENTS as u32
-        {
-            self.record_start((self.seen / PAGES) as usize, page.char_start);
+        if self.segmented && self.seen % PAGES == 0 && (self.seen / PAGES) < MAX_SEGMENTS as u32 {
+            self.starts[(self.seen / PAGES) as usize] = page.char_start;
         }
         let skip = if self.segmented {
             let skip = !self.receiving(self.seen);

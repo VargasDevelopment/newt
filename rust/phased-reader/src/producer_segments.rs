@@ -31,9 +31,6 @@ impl Segments {
             skipped: u32::MAX, staged: false,
             language: None, start: 0, sealed: 0 }
     }
-    pub fn set_language(&mut self, language: Option<BookLanguage>) {
-        self.language = language;
-    }
     pub(crate) fn set_start(&mut self, segment: u32) {
         self.start = if self.count == 0 {
             0
@@ -61,93 +58,6 @@ impl Segments {
         self.name[69] = 0;
         true
     }
-    pub(crate) fn name_segment(&mut self, route: &mut Route<'_>, index: u32) -> bool {
-        let segment = ChapterSegment {
-            index,
-            pages: route.info.page_count,
-            chars: route.info.total_chars,
-        };
-        self.identify(route, route.info.spine)
-            && segment::segment_name(segment, &mut self.name, &mut |b, d| route.hash.hash(b, d))
-    }
-    /// Select the first missing segment in D3 order that can open under the
-    /// active grant, without calling `begin_version` yet so restore can open
-    /// and close its predecessor read lease before opening the target temp.
-    #[inline(never)]
-    pub(crate) fn select_target<C: ?Sized, S: CacheStorage + ?Sized>(
-        &mut self,
-        store: &mut ProducerStore<'_, '_, '_, '_, C, S>,
-        route: &mut Route<'_>,
-    ) -> Result<Option<u32>, Status> {
-        while self.next < self.count {
-            let step = self.next;
-            self.next = self.next.wrapping_add(1);
-            let index = self.segment_index(step);
-            if !self.name_segment(route, index) {
-                return Err(Status::IoError);
-            }
-            if store.exists(&self.name[..69]) {
-                continue;
-            }
-            if !store.checkpoint() {
-                return Err(Status::IoError);
-            }
-            if !store.producer_can_begin() {
-                self.skipped = self.skipped.min(step);
-                continue;
-            }
-            return Ok(Some(index));
-        }
-        Ok(None)
-    }
-    /// Open the temp writer for an already selected target segment `index`,
-    /// recomputing `self.name` first (for callers after restore candidate scans
-    /// that may have overwritten `self.name`).
-    #[inline(never)]
-    pub(crate) fn open_segment<C: ?Sized, S: CacheStorage + ?Sized>(
-        &mut self,
-        writer: &mut CappedWriter<'_, '_, C>,
-        store: &mut ProducerStore<'_, '_, '_, '_, C, S>,
-        memory: &mut WriterMemory<'_>,
-        route: &mut Route<'_>,
-        index: u32,
-    ) -> Status {
-        if !self.name_segment(route, index) {
-            return Status::IoError;
-        }
-        self.open_named_segment(writer, store, memory, route, index)
-    }
-    /// Open the temp writer for `index` when `self.name` and `self.generation`
-    /// already identify `index` (avoids re-hashing on ordinary segment boundaries).
-    fn open_named_segment<C: ?Sized, S: CacheStorage + ?Sized>(
-        &mut self,
-        writer: &mut CappedWriter<'_, '_, C>,
-        store: &mut ProducerStore<'_, '_, '_, '_, C, S>,
-        memory: &mut WriterMemory<'_>,
-        route: &mut Route<'_>,
-        index: u32,
-    ) -> Status {
-        let segment = ChapterSegment {
-            index,
-            pages: route.info.page_count,
-            chars: route.info.total_chars,
-        };
-        let version = if writer.capture_points
-            && segment.first().wrapping_add(PAGES) < route.info.page_count
-        {
-            newt_core::page_cache::VERSION_POINT
-        } else {
-            newt_core::page_cache::VERSION_PAGES
-        };
-        if !writer.cache.begin_version(store, &self.name[..69], self.generation, memory, version) {
-            return Status::OutOfMemory;
-        }
-        #[cfg(feature = "page-turn-trace")]
-        store.trace_segment_begin(index);
-        writer.first = segment.first();
-        writer.open = true;
-        Status::Ok
-    }
     /// Call between parser steps. Index backing is already lent; begin resets
     /// its active counters in place.
     pub fn boundary<C: ?Sized, S: CacheStorage + ?Sized>(
@@ -168,12 +78,6 @@ impl Segments {
             let committed = finished || (!was_failed && store.end_committed());
             if committed {
                 self.sealed = self.sealed.saturating_add(1);
-                if finished && writer.segmented && writer.restore_points && writer.cache.page_count() > 0 {
-                    writer.record_start(
-                        (writer.first / PAGES) as usize,
-                        writer.cache.char_start(memory, 0),
-                    );
-                }
                 #[cfg(feature = "page-turn-trace")]
                 store.trace_segment_end(writer.cache.page_count());
             }
@@ -184,14 +88,20 @@ impl Segments {
             self.next = self.next.wrapping_add(1);
             let index = self.segment_index(step);
             let segment = ChapterSegment { index, pages: route.info.page_count, chars: route.info.total_chars };
-            if !self.name_segment(route, index) {
+            let spine = route.info.spine;
+            if !self.identify(route, spine) || !segment::segment_name(segment, &mut self.name, &mut |b, d| route.hash.hash(b, d)) {
                 return Status::IoError;
             }
             if store.exists(&self.name[..69]) { continue; }
             if !store.checkpoint() { return Status::IoError; }
             if segment.first() < writer.seen { self.skipped = self.skipped.min(step); continue; }
             if !store.producer_can_begin() { self.skipped = self.skipped.min(step); continue; }
-            return self.open_named_segment(writer, store, memory, route, index);
+            if !writer.cache.begin(store, &self.name[..69], self.generation, memory) { return Status::OutOfMemory; }
+            #[cfg(feature = "page-turn-trace")]
+            store.trace_segment_begin(index);
+            writer.first = segment.first();
+            writer.open = true;
+            return Status::Ok;
         }
         Status::Ok
     }
@@ -223,10 +133,6 @@ impl Segments {
         record: Option<&mut [u8; segment::MAX_BYTES]>, route: &mut Route<'_>, spine: u32,
     ) -> Status {
         let Some(record) = record else { return Status::IoError; };
-        let count = ChapterSegment::count(route.info.page_count);
-        if !writer.starts_complete(count) {
-            return Status::Unsupported;
-        }
         if !self.identify(route, spine) || !segment::map_name(&mut self.name, &mut |b, d| route.hash.hash(b, d)) {
             return Status::IoError;
         }

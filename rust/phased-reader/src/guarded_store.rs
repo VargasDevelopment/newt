@@ -82,43 +82,4 @@ impl<C: CacheStorage + ?Sized> CacheStorage for GuardedStore<'_, '_, C> {
     fn producer_can_begin(&self) -> bool {
         self.inner.producer_can_begin()
     }
-    fn producer_remaining_credit(&self) -> Option<u64> {
-        self.inner.producer_remaining_credit()
-    }
-    fn supports_envelope_read(&self) -> bool {
-        self.inner.supports_envelope_read()
-    }
-    fn envelope_read_suspended(&self) -> bool {
-        self.inner.envelope_read_suspended()
-    }
-    fn begin_envelope_read(
-        &mut self,
-        name: &[u8],
-        query: &mut newt_core::page_envelope::Query<'_>,
-    ) -> bool {
-        if !self.good() {
-            return false;
-        }
-        let ok = self.inner.begin_envelope_read(name, query);
-        if !ok {
-            return false;
-        }
-        if !self.good() {
-            let _ = self.inner.finish_envelope_read(query);
-            return false;
-        }
-        true
-    }
-    fn read_envelope_raw(
-        &mut self,
-        query: &newt_core::page_envelope::Query<'_>,
-        offset: u32,
-        out: &mut [u8],
-    ) -> bool {
-        self.good() && self.inner.read_envelope_raw(query, offset, out) && self.good()
-    }
-    fn finish_envelope_read(&mut self, query: &mut newt_core::page_envelope::Query<'_>) -> bool {
-        let ok = self.inner.finish_envelope_read(query);
-        ok && self.good()
-    }
 }

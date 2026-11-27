@@ -42,9 +42,7 @@ RUST_PACKETS = {'slot_vectors_test.py': 'rust/tests/slot_vectors/',
                 'dev_put_test.py': 'rust/tests/dev_put/',
                 'dev_usb_live_capture_test.py': 'rust/tests/dev_usb_live_capture/',
                 'large_epub_corpus_test.py': 'rust/tests/large_epub_corpus/',
-                'producer_fill_policy_test.py': 'rust/tests/producer_fill_policy/',
-                'resume_capture_test.py': 'rust/tests/resume_capture/',
-                'resume_restore_test.py': 'rust/tests/resume_restore/'}
+                'producer_fill_policy_test.py': 'rust/tests/producer_fill_policy/'}
 # Extra non-tests/ files owned by a specific test packet (not shared by all rust:* families).
 PACKET_INPUTS = {'large_epub_corpus_test.py': ('tools/large_epub_corpus.py',)}
 EXTRA_TEST_INPUTS = tuple(path for paths in PACKET_INPUTS.values() for path in paths)

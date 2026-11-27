@@ -37,12 +37,6 @@ pub mod producer_store;
 /// Segmented producer callbacks over the existing cache serializer.
 pub mod producer_writer;
 
-/// Observational resume-point capture carved from the shared bank remainder.
-pub mod resume_capture;
-
-/// Verified idle-producer resume-point restore and prefix-start collection.
-pub mod resume_restore;
-
 pub mod producer_probe;
 
 pub mod index_build;
