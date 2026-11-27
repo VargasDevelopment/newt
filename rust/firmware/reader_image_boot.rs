@@ -254,7 +254,8 @@ impl Runtime {
 }
 
 /// Frozen loadSdHomeProgress without its cancel hook: boot runs before input.
-/// Exact counts when complete, else the chapter weights saved at exit.
+/// Tries current-policy records first (exact counts when complete, else exit
+/// chapter weights), then falls back to pre-picture policy records as estimates.
 fn load_sd_home<S: crate::reader_metadata::IdentityStorage>(pages: &mut S, digest: &[u8; 32],
     saved: &Progress, present: bool, title: &mut [u8; 256], home: &mut HomeData<'_>,
 ) {
