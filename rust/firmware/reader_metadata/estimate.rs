@@ -14,26 +14,28 @@ pub fn make_key(digest: &[u8; 32], key: &mut Key) {
     }
     key[67..].copy_from_slice(b".ntpe\0");
 }
-pub fn load<S: CacheStorage>(store: &mut S, digest: &[u8; 32]) -> Option<Estimate> {
+fn load<S: CacheStorage>(store: &mut S, digest: &[u8; 32], policy: u32) -> Option<Estimate> {
     let mut key = [0; 73];
     let mut record = [0; BYTES];
     make_key(digest, &mut key);
     if store.file_size(&key) != BYTES as i64
         || store.read_at(&key, 0, &mut record) != BYTES as i32
-        || &record[..8] != b"NTPE0001" || get32(&record, 8) != POLICY_VERSION
+        || &record[..8] != b"NTPE0001" || get32(&record, 8) != policy
         || get32(&record, 20) != 0 || &record[24..56] != digest { return None; }
     let decoded = Estimate { before: get64(&record, 56), current: get64(&record, 64),
         total: get64(&record, 72), spine: get32(&record, 12), chapter_chars: get32(&record, 16) };
     decoded.valid().then_some(decoded)
 }
-pub fn load_for<S: CacheStorage>(store: &mut S, digest: &[u8; 32], spine: u32, character: u32) -> Option<Estimate> {
-    load(store, digest).filter(|estimate| estimate.spine == spine && character <= estimate.chapter_chars)
+pub fn load_for_home<S: CacheStorage>(store: &mut S, digest: &[u8; 32], spine: u32,
+    character: u32, policy: u32,
+) -> Option<Estimate> {
+    load(store, digest, policy).filter(|estimate| estimate.spine == spine && character <= estimate.chapter_chars)
 }
 pub fn save<S: CacheStorage>(store: &mut S, digest: &[u8; 32], estimate: Estimate,
     stop: &dyn Fn() -> bool,
 ) -> bool {
     if !estimate.valid() { return false; }
-    if load(store, digest) == Some(estimate) { return true; }
+    if load(store, digest, POLICY_VERSION) == Some(estimate) { return true; }
     let mut key = [0; 73];
     let mut record = [0; BYTES];
     make_key(digest, &mut key);

@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 4068736,
+      "flash_bytes": 4068912,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "786fe050e7be02451cb68fbf809f075372adf1e7",
-      "before": 4068688,
-      "after": 4068736,
-      "reason": "What's new wording for v0.7.1 (owner-approved text, +45 B of strings). The linked six notes grow from 276 to 321 B. nm shows the 56 B notes table and 362 B draw function hold their sizes. objdump shows .flash.rodata grows 48 B and .flash.text grows 4 B (nm: finish_first_paint 1,542 to 1,546 B). The padded image grows 48 B and leaves 2,947,712 B of the 7,016,448 B usable limit. RAM 124,096 to 124,096 B, RTC 300 to 300 B, lent Wi-Fi RAM 22,528 to 22,528 B. All selected stack measurements match v0.7.0.",
-      "reviewer": "Lead"
+      "source_revision": "7d9810289a0c924167f1c812720d620072507174",
+      "before": 4068736,
+      "after": 4068912,
+      "reason": "Home checks the previous semantic position policy when the current cache lacks a title or a percentage (#204). The 176 B of image growth comes from the read-only fallback and sharing the policy-aware metadata readers. Clean pinned regional DEV USB builds: 4,068,736 B at 328dcf8e to 4,068,912 B at 7d981028. Usable app space 7,016,448 B, with 2,947,536 B remaining. RAM 124,096 to 124,096 B, RTC 300 to 300 B, Wi-Fi lent RAM 22,528 to 22,528 B. Selected stack measurements are identical.",
+      "reviewer": "Lead review pending"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",

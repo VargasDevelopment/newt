@@ -40,7 +40,7 @@ fn unknown() -> SemanticProjection {
         total: 0,
     }
 }
-pub fn make_key(digest: &Digest, key: &mut Key) -> bool {
+fn make_key(digest: &Digest, key: &mut Key, policy: u32) {
     let hex = b"0123456789abcdef";
     key[..3].copy_from_slice(b"sm-");
     for (i, b) in digest.iter().enumerate() {
@@ -51,10 +51,9 @@ pub fn make_key(digest: &Digest, key: &mut Key) -> bool {
     key[68..108].copy_from_slice(SDK_COMMIT);
     key[108] = b'-';
     for i in 0..8 {
-        key[109 + i] = hex[((POLICY_VERSION >> (28 - 4 * i)) & 15) as usize];
+        key[109 + i] = hex[((policy >> (28 - 4 * i)) & 15) as usize];
     }
     key[117..].copy_from_slice(b".ntsm\0");
-    true
 }
 pub fn invalidate(title: &mut Title, index: &mut Index) {
     title.fill(0);
@@ -82,8 +81,9 @@ fn binding(
     k: &Key,
     h: &mut Header,
     b: &mut [u8; 32],
+    policy: u32,
 ) -> bool {
-    if !read(s, k, 0, &mut b[..16]) || &b[..8] != b"NTSM0001" || get32(&b[8..]) != POLICY_VERSION {
+    if !read(s, k, 0, &mut b[..16]) || &b[..8] != b"NTSM0001" || get32(&b[8..]) != policy {
         return false;
     }
     h.spines = get32(&b[12..]);
@@ -110,12 +110,13 @@ fn begin(
     h: &mut Header,
     b: &mut [u8; 32],
     preserve: bool,
+    policy: u32,
 ) -> bool {
-    make_key(d, k);
+    make_key(d, k, policy);
     let bytes = s.file_size(&k[..122]);
     if bytes < i64::from(HEADER_BYTES)
         || bytes > i64::from(HEADER_BYTES) + 4 * MAX_SPINE_ITEMS as i64
-        || !binding(s, d, k, h, b)
+        || !binding(s, d, k, h, b, policy)
     {
         return false;
     }
@@ -156,9 +157,9 @@ fn count(
     }
     Some(get32(&b[(spine % 8) as usize * 4..]))
 }
-fn finish(s: &mut impl CacheStorage, d: &Digest, k: &Key, h: &Header, b: &mut [u8; 32]) -> bool {
+fn finish(s: &mut impl CacheStorage, d: &Digest, k: &Key, h: &Header, b: &mut [u8; 32], policy: u32) -> bool {
     let mut checked = Header::default();
-    if !binding(s, d, k, &mut checked, b)
+    if !binding(s, d, k, &mut checked, b, policy)
         || checked.spines != h.spines
         || checked.title_length != h.title_length
     {
@@ -201,7 +202,7 @@ impl ReaderSemanticMetadata {
             spines = canonical;
         }
         let mut key = [0; 123];
-        make_key(d, &mut key);
+        make_key(d, &mut key, POLICY_VERSION);
         let mut prefix = [0; 72];
         prefix[..8].copy_from_slice(b"NTSM0001");
         prefix[8..12].copy_from_slice(&POLICY_VERSION.to_le_bytes());
@@ -252,7 +253,7 @@ impl ReaderSemanticMetadata {
         let mut key = [0; 123];
         let mut h = Header::default();
         let mut b = [0; 32];
-        let mut good = begin(s, d, canonical, t, &mut key, &mut h, &mut b, false);
+        let mut good = begin(s, d, canonical, t, &mut key, &mut h, &mut b, false, POLICY_VERSION);
         if good && h.spines != 0 {
             good = index.bind(d, POLICY_VERSION, h.spines);
         }
@@ -265,7 +266,7 @@ impl ReaderSemanticMetadata {
         }
         good = good
             && (h.spines == 0 || index.complete(d, POLICY_VERSION))
-            && finish(s, d, &key, &h, &mut b);
+            && finish(s, d, &key, &h, &mut b, POLICY_VERSION);
         if !good {
             invalidate(t, index);
         }
@@ -283,7 +284,7 @@ impl ReaderSemanticMetadata {
         t.fill(0);
         *p = unknown();
         let mut position = PositionProjection::default();
-        if !Self::projection_record(s, d, canonical, selected, t, &mut position, false) {
+        if !Self::projection_record(s, d, canonical, selected, t, &mut position, false, POLICY_VERSION) {
             t.fill(0);
             return false;
         }
@@ -307,9 +308,22 @@ impl ReaderSemanticMetadata {
         t: &mut Title,
         p: &mut PositionProjection,
     ) -> bool {
+        Self::load_display_position(s, d, canonical, selected, t, p, POLICY_VERSION)
+    }
+
+    /// Home can display counts produced by an earlier policy as an estimate.
+    pub fn load_display_position(
+        s: &mut impl CacheStorage,
+        d: &Digest,
+        canonical: u32,
+        selected: u32,
+        t: &mut Title,
+        p: &mut PositionProjection,
+        policy: u32,
+    ) -> bool {
         let had_title = t[0] != 0;
         *p = PositionProjection::default();
-        if !Self::projection_record(s, d, canonical, selected, t, p, had_title) {
+        if !Self::projection_record(s, d, canonical, selected, t, p, had_title, policy) {
             if !had_title {
                 t.fill(0);
             }
@@ -326,11 +340,12 @@ impl ReaderSemanticMetadata {
         t: &mut Title,
         p: &mut PositionProjection,
         preserve: bool,
+        policy: u32,
     ) -> bool {
         let mut key = [0; 123];
         let mut h = Header::default();
         let mut b = [0; 32];
-        if !begin(s, d, canonical, t, &mut key, &mut h, &mut b, preserve)
+        if !begin(s, d, canonical, t, &mut key, &mut h, &mut b, preserve, policy)
             || (h.spines != 0 && selected >= h.spines)
         {
             return false;
@@ -348,6 +363,6 @@ impl ReaderSemanticMetadata {
             }
             p.total += u64::from(chars);
         }
-        finish(s, d, &key, &h, &mut b)
+        finish(s, d, &key, &h, &mut b, policy)
     }
 }

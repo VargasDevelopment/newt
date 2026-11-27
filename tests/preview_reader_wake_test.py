@@ -566,6 +566,77 @@ def sample_durable_beats_stale_rtc(binary):
             return f'sample cold power-on did not restore newer NVS progress ({diag_fields(log)})'
 
 
+def home_from_pre_picture_metadata(binary):
+    """Cold boot with released policy-1 Home records and a real SD checkpoint."""
+    with tempfile.TemporaryDirectory(prefix='newt-home-metadata-') as scratch:
+        d = Path(scratch)
+        preview_driver.world(binary, d, preview_driver.parse(['--library-fixture', 'healthy']))
+        rust_preview.run(binary, d, (CONFIRM, CONFIRM, RIGHT, RIGHT, BACK))
+        card = d / 'card/Newt'
+        meta = card / 'Cache/Meta'
+        (current,) = meta.glob('*-00000002.ntsm')
+        (estimate,) = meta.glob('*.ntpe')
+        legacy = current.with_name(current.name.replace('-00000002.ntsm', '-00000001.ntsm'))
+        current_title = bytearray(current.read_bytes()[:328])
+        current_estimate = bytearray(estimate.read_bytes()[:-12])
+        assert current_title[:12] == b'NTSM0001\x02\0\0\0'
+        assert current_estimate[:12] == b'NTPE0001\x02\0\0\0'
+
+        def cache(path, payload, policy):
+            content = bytearray(payload)
+            struct.pack_into('<I', content, 8, policy)
+            path.write_bytes(content + struct.pack('<II4s', binascii.crc32(content), len(content), b'NTCC'))
+
+        def home():
+            preview_driver.fresh(d)
+            (d / 'retained.bin').unlink(missing_ok=True)
+            return rust_preview.run(binary, d, ())[0][-1]
+
+        # Make exact counts and weights describe the same percent. A title-only
+        # current record plus weights is the reference estimated Home frame.
+        struct.pack_into('<I', current_title, 12, 0)
+        chapter_chars = u32(current_estimate, 16)
+        assert chapter_chars > 0 and u32(current_estimate, 12) == 0
+        struct.pack_into('<QQQ', current_estimate, 56, 0, chapter_chars, 2 * chapter_chars)
+        cache(current, current_title, 2)
+        cache(estimate, current_estimate, 2)
+        expected = home()
+        state = {p: p.read_bytes() for p in (card / 'State').glob('*.nrs')
+                 if p.name.startswith(('nb', 'newt-selected.', 'newt-resume.'))}
+        assert len(state) == 3, list(state)
+
+        cache(legacy, current_title, 1)
+        current.unlink()
+        cache(estimate, current_estimate, 1)
+        if home() != expected:
+            return 'Home lost its title or estimate when only policy-1 records exist'
+
+        counts = bytearray(current_title) + struct.pack('<II', chapter_chars, chapter_chars)
+        struct.pack_into('<I', counts, 12, 2)
+        cache(legacy, counts, 1)
+        estimate.unlink()
+        if home() != expected:
+            return 'Home lost its estimated progress from complete policy-1 counts'
+        cache(current, counts, 2)
+        current_frame = home()
+        legacy.unlink()
+        if home() != current_frame:
+            return 'Home let policy-1 metadata override complete current metadata'
+
+        current.unlink()
+        missing = home()
+        if missing == expected:
+            return 'Home failed to distinguish missing progress from a valid estimate'
+        counts[16] ^= 1
+        current_estimate[24] ^= 1
+        cache(legacy, counts, 1)
+        cache(estimate, current_estimate, 1)
+        if home() != missing:
+            return 'Home used cached metadata bound to another book'
+        if any(path.read_bytes() != data for path, data in state.items()):
+            return 'Home rewrote a durable reading record while loading display metadata'
+
+
 # The reader trusts any shown picture without comparing it with the real page.
 UNCHECKED = ('reader_image_paint.rs',
              '        let covered = check == newt_core::resume_picture::Check::Covered;',
@@ -603,6 +674,10 @@ CASES = [
          '        if !events.control.cancelled() || events.control.timed_out() { return false; }',
          '        if !events.control.cancelled() { return false; }')]),
     (read_after_cancel, []),
+    (home_from_pre_picture_metadata, [
+        ('reader_image_boot.rs',
+         '    for policy in [POLICY_VERSION, PRE_PICTURE_POLICY_VERSION] {',
+         '    let _ = PRE_PICTURE_POLICY_VERSION;\n    for policy in [POLICY_VERSION] {')]),
     (cold_power_on_at_old_boundary, [
         # Boot asks a durable reopen for its exact page.
         ('reader_image_boot.rs',
