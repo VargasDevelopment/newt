@@ -5,7 +5,7 @@
 
 use newt_c3_board::MonotonicClock;
 use newt_core::{
-    admission::WorkEvent,
+    admission::{WorkEvent, WorkKind, WorkPhase},
     reader_scheduler::YieldCadence,
     reader_work_profile::ReaderWorkProfile,
 };
@@ -20,6 +20,7 @@ pub struct ReaderDuty<'loan, 'task> {
     clock: &'loan MonotonicClock,
     profile: Option<&'loan ReaderWorkProfile>,
     action: crate::reader_action::Trace<'loan>,
+    renew: bool,
 }
 
 impl<'loan, 'task> ReaderDuty<'loan, 'task> {
@@ -30,7 +31,15 @@ impl<'loan, 'task> ReaderDuty<'loan, 'task> {
         profile: Option<&'loan ReaderWorkProfile>,
         action: crate::reader_action::Trace<'loan>,
     ) -> Self {
-        Self { control, cadence, clock, profile, action }
+        Self { control, cadence, clock, profile, action, renew: false }
+    }
+
+    /// A Contents jump to an anchor lays its chapter out twice, which can need
+    /// more than one open budget in a long chapter (#188). With `renew`, each
+    /// work phase that begins gets a fresh budget: it begins only after the last
+    /// one ended, so a stuck pass still times out and a Back press stays latched.
+    pub fn renewing(self, renew: bool) -> Self {
+        Self { renew, ..self }
     }
 
     /// Cancellation is checked even when the shared five-ms cadence skips
@@ -67,6 +76,9 @@ impl<'loan, 'task> ReaderDuty<'loan, 'task> {
     /// Event timestamps come from the same live SDK clock, only while the
     /// actual open scope lent its profile. No profile means no event clocks.
     pub fn event(&self, event: &WorkEvent) {
+        if self.renew && event.kind == WorkKind::Phase && event.phase != WorkPhase::Idle {
+            self.control.restart(self.clock.millis());
+        }
         if self.action.event(event) {
             if event.kind == newt_core::admission::WorkKind::OpenRoute {
                 if let Some(profile) = self.profile {
