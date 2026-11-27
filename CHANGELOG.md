@@ -15,6 +15,11 @@ Source-import closure for PR #16: immutable checkpoint
 authorship and subjects through an explicit bounded frozen-source import exception. New integration commits remain strictly conventional;
 no firmware version, tag or installed image is changed by that closure.
 
+## v0.7.1
+
+### Fix
+- **about**: say what's new in plain words
+
 ## v0.7.0
 
 ### Feat
