@@ -82,6 +82,8 @@ mod reader_duty {
         pub fn cache_miss(&self, _: u8) {}
         pub fn yield_now(&self) {}
         pub fn event(&self, _: &newt_core::admission::WorkEvent) {}
+        // These cases never activate a Contents anchor entry (#188).
+        pub fn renewing(self, renew: bool) -> Self { assert!(!renew); self }
     }
 }
 mod reader_hash {
@@ -226,6 +228,7 @@ mod image {
     impl Runtime {
         pub fn book(&self) -> Option<&newt_c3_board::reader_memory::Runtime<'static,'static>> { Some(&self.memory.runtime) }
         pub fn restore_policy_image(&self) -> newt_reader_ui::RestorePolicy { newt_reader_ui::RestorePolicy::ExactPage }
+        pub fn starts_anchor_jump(&self, _: newt_core::app::Action) -> bool { false }
         pub fn refuse_checkpoint_image(&mut self, _: u32, _: bool) { panic!("no requested save in source-loan fixture") }
     }
     #[path = "../../firmware/reader_standalone_open.rs"] pub(crate) mod standalone_open;
