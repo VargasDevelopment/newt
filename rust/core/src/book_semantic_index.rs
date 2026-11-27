@@ -3,6 +3,8 @@
 pub const MAX_SPINE_ITEMS: usize = 1024;
 /// 2: each non-decorative picture counts one position (#179).
 pub const POLICY_VERSION: u32 = 2;
+/// The last policy before pictures contributed a reading position.
+pub const PRE_PICTURE_POLICY_VERSION: u32 = 1;
 pub type Digest = [u8; 32];
 use crate::chapter_layout::types::PictureNote;
 

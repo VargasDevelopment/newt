@@ -258,25 +258,33 @@ impl Runtime {
 fn load_sd_home<S: crate::reader_metadata::IdentityStorage>(pages: &mut S, digest: &[u8; 32],
     saved: &Progress, present: bool, title: &mut [u8; 256], home: &mut HomeData<'_>,
 ) {
+    use newt_core::book_semantic_index::{POLICY_VERSION, PRE_PICTURE_POLICY_VERSION};
     use newt_phased_reader::semantic_metadata::{PositionProjection, ReaderSemanticMetadata};
     let at = saved.locator;
     let mut label = [0; newt_reader_navigation::TITLE_BYTES];
     let identified = crate::reader_metadata::load_identity(pages, digest, at, &mut label)
         && home.set_chapter(Some(&label));
     if !identified && present { home.set_generic_chapter(at.spine); }
-    let mut position = PositionProjection::default();
-    let counted = ReaderSemanticMetadata::load_position(pages, digest, 0, at.spine, title, &mut position);
-    pages.close_checkpoint_storage();
-    if counted && present && position.total != 0 && at.character <= position.chapter_chars {
-        let percent = 100 * (position.prefix + u64::from(at.character)) / position.total;
-        home.set_percent(percent as i32, false);
-        return;
-    }
-    if present {
-        let estimate = crate::reader_metadata::estimate::load_for(pages, digest, at.spine, at.character);
+    let mut needs_percent = present;
+    for policy in [POLICY_VERSION, PRE_PICTURE_POLICY_VERSION] {
+        let mut position = PositionProjection::default();
+        let counted = ReaderSemanticMetadata::load_display_position(
+            pages, digest, 0, at.spine, title, &mut position, policy);
         pages.close_checkpoint_storage();
-        if let Some(percent) = estimate.and_then(|estimate| estimate.percent(at.character)) {
-            home.set_percent(i32::from(percent), true);
+        if needs_percent {
+            let percent = if counted && position.total != 0 && at.character <= position.chapter_chars {
+                let percent = 100 * (position.prefix + u64::from(at.character)) / position.total;
+                Some((percent as i32, policy != POLICY_VERSION))
+            } else {
+                let estimate = crate::reader_metadata::estimate::load_for_home(
+                    pages, digest, at.spine, at.character, policy);
+                pages.close_checkpoint_storage();
+                estimate.and_then(|estimate| estimate.percent(at.character)).map(|p| (i32::from(p), true))
+            };
+            if let Some((percent, estimated)) = percent {
+                needs_percent = !home.set_percent(percent, estimated);
+            }
         }
+        if title[0] != 0 && !needs_percent { break; }
     }
 }
