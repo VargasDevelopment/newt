@@ -53,6 +53,8 @@ struct CancelSource<'a> {
     cancel: &'a core::cell::Cell<bool>,
     cancel_after: &'a core::cell::Cell<u32>,
     reads: &'a core::cell::Cell<u32>,
+    /// A source offset whose byte reads back flipped, as a corrupt SD block.
+    corrupt_at: &'a core::cell::Cell<Option<usize>>,
 }
 impl BookSource for CancelSource<'_> {
     fn size(&self) -> u64 {
@@ -78,6 +80,11 @@ impl BookSource for CancelSource<'_> {
         let Some(bytes) = self.bytes.get(at..) else { return -1 };
         let count = bytes.len().min(out.len());
         out[..count].copy_from_slice(&bytes[..count]);
+        if let Some(byte) = self.corrupt_at.get().and_then(|bad| bad.checked_sub(at))
+            .and_then(|offset| out[..count].get_mut(offset))
+        {
+            *byte ^= 0x20;
+        }
         count as i32
     }
 }
@@ -252,6 +259,7 @@ pub fn check() {
             let cancel_flag = core::cell::Cell::new(false);
             let cancel_after = core::cell::Cell::new(0u32);
             let reads = core::cell::Cell::new(0u32);
+            let corrupt_at = core::cell::Cell::new(None);
             let cancel_auth = FlagCancel(&cancel_flag);
             let route_state = RouteState::new(
                 reader_book::CACHE_ROOT,
@@ -276,7 +284,7 @@ pub fn check() {
 
             let mut rev_hash = ShaHasher::default();
             let mut rev_scratch = [0u8; BLOCK_BYTES];
-            let mut raw = CancelSource { bytes: epub.clone(), cancel: &cancel_flag, cancel_after: &cancel_after, reads: &reads };
+            let mut raw = CancelSource { bytes: epub.clone(), cancel: &cancel_flag, cancel_after: &cancel_after, reads: &reads, corrupt_at: &corrupt_at };
             let mut revision = ImportedRevision::full(&mut receipt, &mut rev_hash, &mut rev_scratch);
             assert!(revision.begin_import(&mut raw));
             let mut source = ReaderSource::new(revision);
@@ -625,13 +633,15 @@ pub fn check() {
         .unwrap();
 
     // A short cached chapter turns at once; a long one defers to Loading.
-    check_cross_chapter_cache_only(16);
-    check_cross_chapter_cache_only(1_600);
+    // About 57 KB: many blocks, still under QUICK_VERIFY_BYTES.
+    check_cross_chapter_cache_only(600, false);
+    check_cross_chapter_cache_only(600, true);
+    check_cross_chapter_cache_only(1_600, false);
 
     println!("PASS cache_only cold-miss/hit and cancelled live exit save/reload");
 }
 
-fn check_cross_chapter_cache_only(paragraphs: usize) {
+fn check_cross_chapter_cache_only(paragraphs: usize, corrupt: bool) {
     let epub = synthetic_epub(Some(paragraphs));
     // About 100 stored bytes a paragraph.
     let long = paragraphs * 100 > newt_phased_reader::QUICK_VERIFY_BYTES as usize;
@@ -656,6 +666,7 @@ fn check_cross_chapter_cache_only(paragraphs: usize) {
             let cancel_flag = core::cell::Cell::new(false);
             let cancel_after = core::cell::Cell::new(0u32);
             let reads = core::cell::Cell::new(0u32);
+            let corrupt_at = core::cell::Cell::new(None);
             let cancel_auth = FlagCancel(&cancel_flag);
             let route_state = RouteState::new(
                 reader_book::CACHE_ROOT,
@@ -680,7 +691,7 @@ fn check_cross_chapter_cache_only(paragraphs: usize) {
 
             let mut rev_hash = ShaHasher::default();
             let mut rev_scratch = [0u8; BLOCK_BYTES];
-            let mut raw = CancelSource { bytes: epub.clone(), cancel: &cancel_flag, cancel_after: &cancel_after, reads: &reads };
+            let mut raw = CancelSource { bytes: epub.clone(), cancel: &cancel_flag, cancel_after: &cancel_after, reads: &reads, corrupt_at: &corrupt_at };
             let mut revision = ImportedRevision::full(&mut receipt, &mut rev_hash, &mut rev_scratch);
             assert!(revision.begin_import(&mut raw));
             let mut source = ReaderSource::new(revision);
@@ -767,44 +778,62 @@ fn check_cross_chapter_cache_only(paragraphs: usize) {
             // A cache_only probe turns into a short cached chapter at once, and
             // defers a long one before verifying its range, until Loading shows.
             ports.cache_only = true;
-            reads.set(0);
-            reader.reset_layout_pages();
-            let h = owner.handle_ui_physical(
-                &mut reader, &mut source, &mut ui, settings, Action::Next, 1_300, &mut ports,
-            );
-            let probed = owner.complete_ui_physical(
-                &mut reader, &mut source, &mut ui, h, 1_300, &mut ports,
-            );
-            assert_eq!(reader.last_layout_pages(), 0, "a cache_only probe never lays out");
-            if !long {
-                assert_eq!(probed.work, ReaderUiWork::Intent(ReaderUiIntent::Repaint),
-                    "a short cached chapter must turn without deferring to Loading");
-                assert_eq!((reader.info().spine, reader.info().page), (1, 0));
-                assert!(reads.get() > 0, "the short chapter's range is verified before it publishes");
-            } else {
-                assert_eq!(probed.work, ReaderUiWork::Intent(ReaderUiIntent::None),
-                    "a long cross-chapter cache_only probe must defer until Loading is shown");
-                assert_eq!(reader.info(), last_ch0, "a deferred probe keeps chapter 0 shown");
-                let chapter_blocks = (paragraphs * 100 / BLOCK_BYTES) as u32;
-                assert!(reads.get() < chapter_blocks / 4,
-                    "a deferred probe must not verify the long chapter's range ({} reads)", reads.get());
-
-                // After Loading is acknowledged (cache_only = false), the range IS
-                // verified before the cached page publishes (still 0 layout pages).
-                ports.cache_only = false;
-                reads.set(0);
+            if corrupt {
+                // The quick path still verifies the whole range: a corrupt
+                // block mid-chapter, which publishing page 0 never reads,
+                // keeps chapter 0 shown.
+                let interior = epub.windows(29).position(|w| w == b"Second chapter paragraph 300:")
+                    .expect("chapter 2 is stored");
+                corrupt_at.set(Some(interior));
                 let h = owner.handle_ui_physical(
-                    &mut reader, &mut source, &mut ui, settings, Action::Next, 1_400, &mut ports,
+                    &mut reader, &mut source, &mut ui, settings, Action::Next, 1_250, &mut ports,
                 );
-                let published = owner.complete_ui_physical(
-                    &mut reader, &mut source, &mut ui, h, 1_400, &mut ports,
+                let refused = owner.complete_ui_physical(
+                    &mut reader, &mut source, &mut ui, h, 1_250, &mut ports,
                 );
-                assert_eq!(published.work, ReaderUiWork::Intent(ReaderUiIntent::Repaint),
-                    "cross-chapter retry after Loading must publish chapter 1");
-                assert_eq!((reader.info().spine, reader.info().page), (1, 0));
-                assert!(reads.get() >= chapter_blocks,
-                    "cross-chapter retry must verify the target chapter range before publishing");
-                assert_eq!(reader.last_layout_pages(), 0, "verified cross-chapter retry must hit page cache");
+                assert_ne!(refused.work, ReaderUiWork::Intent(ReaderUiIntent::Repaint),
+                    "a corrupt short chapter must not publish from the probe");
+                assert_eq!(reader.info(), last_ch0, "a corrupt short chapter keeps chapter 0 shown");
+            } else {
+                reads.set(0);
+                reader.reset_layout_pages();
+                let h = owner.handle_ui_physical(
+                    &mut reader, &mut source, &mut ui, settings, Action::Next, 1_300, &mut ports,
+                );
+                let probed = owner.complete_ui_physical(
+                    &mut reader, &mut source, &mut ui, h, 1_300, &mut ports,
+                );
+                assert_eq!(reader.last_layout_pages(), 0, "a cache_only probe never lays out");
+                if !long {
+                    assert_eq!(probed.work, ReaderUiWork::Intent(ReaderUiIntent::Repaint),
+                        "a short cached chapter must turn without deferring to Loading");
+                    assert_eq!((reader.info().spine, reader.info().page), (1, 0));
+                    assert!(reads.get() > 0, "the short chapter's range is verified before it publishes");
+                } else {
+                    assert_eq!(probed.work, ReaderUiWork::Intent(ReaderUiIntent::None),
+                        "a long cross-chapter cache_only probe must defer until Loading is shown");
+                    assert_eq!(reader.info(), last_ch0, "a deferred probe keeps chapter 0 shown");
+                    let chapter_blocks = (paragraphs * 100 / BLOCK_BYTES) as u32;
+                    assert!(reads.get() < chapter_blocks / 4,
+                        "a deferred probe must not verify the long chapter's range ({} reads)", reads.get());
+
+                    // After Loading is acknowledged (cache_only = false), the range IS
+                    // verified before the cached page publishes (still 0 layout pages).
+                    ports.cache_only = false;
+                    reads.set(0);
+                    let h = owner.handle_ui_physical(
+                        &mut reader, &mut source, &mut ui, settings, Action::Next, 1_400, &mut ports,
+                    );
+                    let published = owner.complete_ui_physical(
+                        &mut reader, &mut source, &mut ui, h, 1_400, &mut ports,
+                    );
+                    assert_eq!(published.work, ReaderUiWork::Intent(ReaderUiIntent::Repaint),
+                        "cross-chapter retry after Loading must publish chapter 1");
+                    assert_eq!((reader.info().spine, reader.info().page), (1, 0));
+                    assert!(reads.get() >= chapter_blocks,
+                        "cross-chapter retry must verify the target chapter range before publishing");
+                    assert_eq!(reader.last_layout_pages(), 0, "verified cross-chapter retry must hit page cache");
+                }
             }
 
             drop(ports);

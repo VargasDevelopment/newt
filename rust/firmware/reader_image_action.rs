@@ -94,13 +94,15 @@ impl Runtime {
         }
     }
 
-    /// A timeout that closed an owner which still holds progress keeps that
-    /// progress savable on exit; any later action that reopens it clears this.
+    /// A timeout that stopped an owner which still holds progress keeps that
+    /// progress savable on exit, whether the owner closed (a strict source) or
+    /// stayed open (a session whose probe stalled). A later action that ends
+    /// with the owner open and no timeout clears this.
     fn note_closed_exit_image(&mut self, events: &Events<'_, '_>, had_progress: bool) {
-        if self.opened() {
-            self.closed_exit = ClosedExit::None;
-        } else if had_progress && events.control.timed_out() && self.has_progress() {
+        if had_progress && events.control.timed_out() && self.has_progress() {
             self.closed_exit = ClosedExit::TimedOut;
+        } else if self.opened() {
+            self.closed_exit = ClosedExit::None;
         }
     }
 

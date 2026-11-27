@@ -129,8 +129,9 @@ def back_cancels_live_turn_and_saves(binary):
             return f'cold reload after a cancelled turn restored {got[1:]} instead of the shown page {want}'
 
 
-def stalled_strict_turn_exits_and_saves(binary):
-    """A strict-source turn that times out still lets Back and Power exit and save."""
+def stalled_turn_exits_and_saves(binary):
+    """A turn that times out on a stalled card read still lets Back and Power
+    exit and save the shown page, with or without a reader session."""
     for name, exit_key in (('Back', BACK), ('Power', POWER)):
         with tempfile.TemporaryDirectory(prefix=f'newt-stall-{name.lower()}-') as td:
             d = Path(td)
@@ -143,12 +144,12 @@ def stalled_strict_turn_exits_and_saves(binary):
                       {'card.slow': '/Books/', 'card.after_refresh': after})
             exit_kind = (d / 'exit.txt').read_text().strip() if (d / 'exit.txt').exists() else ''
             if exit_key == BACK and screen_of(log) != HOME:
-                return f'Back after a stalled strict turn did not go Home (screen={screen_of(log)})'
+                return f'Back after a stalled turn did not go Home (screen={screen_of(log)})'
             if exit_key == POWER and exit_kind != 'sleep':
-                return f'Power after a stalled strict turn did not sleep (exit={exit_kind!r}, screen={screen_of(log)})'
+                return f'Power after a stalled turn did not sleep (exit={exit_kind!r}, screen={screen_of(log)})'
             got = reopened(binary, d)
             if list(got[1:]) != want:
-                return f'{name} after a stalled strict turn: cold reload restored {got[1:]} instead of {want}'
+                return f'{name} after a stalled turn: cold reload restored {got[1:]} instead of {want}'
 
 
 def library_cancel_goes_home_and_keeps_book(binary):
@@ -214,6 +215,19 @@ TIMED_OUT_EXIT_TAKES_LOAN = (
     '|| (self.closed_exit == ClosedExit::TimedOut && matches!(action, Action::Back | Action::Sleep)) {',
     '|| false {',
 )
+# An open owner's timeout clears the exit state, as before the fix.
+TIMED_OUT_CLEARED_WHILE_OPEN = (
+    'reader_image_action.rs',
+    'if had_progress && events.control.timed_out() && self.has_progress() {',
+    'if !self.opened() && had_progress && events.control.timed_out() && self.has_progress() {',
+)
+# The exit after a stopped action skips its checkpoint.
+STOPPED_EXIT_SKIPS_CHECKPOINT = (
+    'reader_image_exit.rs',
+    'core::mem::replace(&mut self.closed_exit, ClosedExit::None) != ClosedExit::None;',
+    'core::mem::replace(&mut self.closed_exit, ClosedExit::None) != ClosedExit::None;\n'
+    '        if allow_cancelled { return Ok(()); }',
+)
 TIMED_OUT_EXIT_REFUSED = (
     'reader_image_exit.rs',
     'core::mem::replace(&mut self.closed_exit, ClosedExit::None) != ClosedExit::None;',
@@ -253,13 +267,17 @@ def main():
     check(library_cancel_goes_home_and_keeps_book, binary)
     check(library_cancel_queue_keeps_later_screen, binary)
     check(short_cached_chapter_turns_without_loading, binary)
-    check(stalled_strict_turn_exits_and_saves, rust_preview.control([NO_SESSION], optimize=False))
+    check(stalled_turn_exits_and_saves, binary)
+    check(stalled_turn_exits_and_saves, rust_preview.control([NO_SESSION], optimize=False))
     if not negative_controls(__file__):
         return
     for case, edits, label in (
         (back_cancels_live_turn_and_saves, [EARLY_CLEARED_CANCEL], 'early-cleared-cancel'),
-        (stalled_strict_turn_exits_and_saves, [NO_SESSION, TIMED_OUT_EXIT_TAKES_LOAN], 'timed-out-exit-takes-loan'),
-        (stalled_strict_turn_exits_and_saves, [NO_SESSION, TIMED_OUT_EXIT_REFUSED], 'timed-out-exit-refused'),
+        (stalled_turn_exits_and_saves, [NO_SESSION, TIMED_OUT_EXIT_TAKES_LOAN], 'timed-out-exit-takes-loan'),
+        (stalled_turn_exits_and_saves, [NO_SESSION, TIMED_OUT_EXIT_REFUSED], 'timed-out-exit-refused'),
+        (stalled_turn_exits_and_saves, [STOPPED_EXIT_SKIPS_CHECKPOINT], 'session-exit-skips-checkpoint'),
+        (stalled_turn_exits_and_saves, [NO_SESSION, STOPPED_EXIT_SKIPS_CHECKPOINT], 'strict-exit-skips-checkpoint'),
+        (stalled_turn_exits_and_saves, [TIMED_OUT_CLEARED_WHILE_OPEN], 'timed-out-cleared-while-open'),
         (library_cancel_goes_home_and_keeps_book, [LIBRARY_KEEPS_CANCEL_BACK], 'library-keeps-cancel-back'),
         (library_cancel_queue_keeps_later_screen, [CANCEL_BACK_EVERYWHERE], 'cancel-back-everywhere'),
         (short_cached_chapter_turns_without_loading, [LOADING_EVERY_CROSS_CHAPTER_TURN],
