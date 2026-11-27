@@ -564,6 +564,21 @@ impl<S: CacheStorage> CacheStorage for StoreOverride<'_, S> {
     fn last_write_published(&self) -> bool {
         self.inner.last_write_published()
     }
+    fn supports_envelope_read(&self) -> bool {
+        self.inner.supports_envelope_read()
+    }
+    fn envelope_read_suspended(&self) -> bool {
+        self.inner.envelope_read_suspended()
+    }
+    fn begin_envelope_read(&mut self, name: &[u8], query: &mut Query<'_>) -> bool {
+        self.inner.begin_envelope_read(name, query)
+    }
+    fn read_envelope_raw(&mut self, query: &Query<'_>, offset: u32, out: &mut [u8]) -> bool {
+        self.inner.read_envelope_raw(query, offset, out)
+    }
+    fn finish_envelope_read(&mut self, query: &mut Query<'_>) -> bool {
+        self.inner.finish_envelope_read(query)
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1663,6 +1678,7 @@ fn probe_backlog_decline_and_recovery(epub: &[u8], spine: u32) -> (PageInfo, Dig
                             finished: false,
                             bytes_consumed,
                             reader_produced: zip_reader.total_produced(),
+                            shift: 0,
                             last_feed: fed_slice,
                             filter: Some(&filter),
                         },

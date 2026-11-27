@@ -41,7 +41,7 @@ pub struct WriterView<'write, 'pass, 'loan, 'ctx, 'pause, C: ?Sized, S: ?Sized, 
     pub store: &'write mut ProducerStore<'pass, 'pass, 'ctx, 'pause, C, S>,
     pub source: &'write mut ProducerBookSource<'loan, 'ctx, C, F>,
     pub memory: WriterMemory<'write>,
-    stream_buffer: &'write mut Option<&'pass mut [u8; BUFFER_BYTES]>,
+    pub(crate) stream_buffer: &'write mut Option<&'pass mut [u8; BUFFER_BYTES]>,
     pub(crate) guard_attempted: Option<&'write mut bool>,
 }
 impl<'loan, 'ctx, 'pause, C: ?Sized, S: CacheStorage + ?Sized, F: BookSource + newt_core::producer_policy::ProducerReceipt + ?Sized> Producer<'loan, 'ctx, 'pause, C, S, F> {
@@ -114,6 +114,52 @@ impl<'pass, 'loan, 'ctx, 'pause, C: ?Sized, S: CacheStorage + ?Sized, F: BookSou
     /// Frozen writeMap resets only the index; Store's window stays attached.
     pub fn publish_map(&mut self, route: &mut Route<'_>, spine: u32) -> Status where S: Sized {
         self.publish_map_checked(route, spine, false)
+    }
+    /// Reclaim the idle 1 KiB store window if currently attached to `self.store`
+    /// with zero buffered bytes, returning it to `self.stream_buffer`.
+    pub(crate) fn reclaim_window(&mut self) -> bool {
+        if self.store.buffered_bytes() != 0 {
+            return false;
+        }
+        if self.stream_buffer.is_none() {
+            if let Some(buf) = self.store.return_stream_buffer() {
+                self.stream_buffer = Some(buf);
+            }
+        }
+        self.stream_buffer.is_some()
+    }
+    /// Borrow `self.stream_buffer` and the idle 128-entry index chunk alongside
+    /// the attempt fields for verified prefix-start collection while no writer is open.
+    pub(crate) fn with_idle_window<R>(
+        &mut self,
+        f: impl FnOnce(
+            &mut Segments,
+            &mut CappedWriter<'loan, 'ctx, C>,
+            &mut ProducerStore<'pass, 'pass, 'ctx, 'pause, C, S>,
+            &mut ProducerBookSource<'loan, 'ctx, C, F>,
+            &mut [u8; BUFFER_BYTES],
+            &mut [newt_core::page_cache::Entry; 128],
+            bool,
+        ) -> R,
+    ) -> Option<R> {
+        if !self.reclaim_window() {
+            return None;
+        }
+        let window = self.stream_buffer.as_deref_mut()?;
+        let mut parts = Parts(&mut *self.index);
+        let _anchors = parts.array::<Anchor>(192).ok()?;
+        let chunks = parts.array::<IndexChunk>(1).ok()?;
+        let entries = &mut chunks.get_mut(0)?.entries;
+        let guarded = self.guard_attempted.is_some();
+        Some(f(
+            &mut *self.state,
+            &mut *self.writer,
+            &mut *self.store,
+            &mut *self.source,
+            window,
+            entries,
+            guarded,
+        ))
     }
     pub(crate) fn publish_map_checked(&mut self, route: &mut Route<'_>, spine: u32, wrapped: bool) -> Status where S: Sized {
         let record = self.index.get_mut(..MAX_BYTES).and_then(|bytes| bytes.try_into().ok());

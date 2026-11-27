@@ -43,6 +43,12 @@ impl<'ctx, C: ?Sized> Cancellation<'ctx, C> {
     pub fn fail_terminal(&self) {
         self.reason.set(Stop::Terminal);
     }
+    /// Latch a retryable interruption unless a stop reason is already latched.
+    pub fn interrupt(&self) {
+        if self.reason.get() == Stop::None {
+            self.reason.set(Stop::Interrupted);
+        }
+    }
     pub fn stopped(&self) -> bool {
         if self.reason.get() == Stop::None {
             self.reason.set(self.hooks.stop.map_or(Stop::Terminal,

@@ -37,8 +37,8 @@
   {
     "id": "pending-disabled",
     "path": "core/src/xml_session.rs",
-    "before": "if !self\n            .policy\n            .permits_feed(self.backend, self.bytes_consumed, n as u64)",
-    "after": "if n < 0 && !self\n            .policy\n            .permits_feed(self.backend, self.bytes_consumed, n as u64)",
+    "before": "if !self.policy.permits_feed(self.backend, count, n as u64)",
+    "after": "if n < 0 && !self.policy.permits_feed(self.backend, count, n as u64)",
     "witness": "pending-attribute"
   },
   {

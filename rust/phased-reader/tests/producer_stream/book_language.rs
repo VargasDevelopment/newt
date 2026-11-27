@@ -175,8 +175,9 @@ fn segment_map_requires_a_book_language() {
     let mut store_state = StoreState::new(None);
     let mut store = ProducerStore::new(&mut files, &cancel, &mut store_state, None);
     let mut starts = [0; segment::MAX_SEGMENTS];
-    let writer = CappedWriter::new(&cancel, &mut starts);
-    writer.starts[1] = PAGES;
+    let mut writer = CappedWriter::new(&cancel, &mut starts);
+    writer.record_start(0, 0);
+    writer.record_start(1, PAGES);
     let mut bytes = [0; segment::MAX_BYTES];
     let trace = Trace::new(0);
     let mut route = Route { settings: ViewSettings::default(), digest: &[0; 32],

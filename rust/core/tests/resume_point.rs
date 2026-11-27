@@ -433,3 +433,214 @@ fn page_cache_writer_v4_point_roundtrip_read_back_and_fault_abort() {
     assert!(store4.published.is_none(), "short-emitter v4 finish must never promote temp");
     assert!(store4.aborted);
 }
+
+#[test]
+fn point_cursor_binding_source_names_and_streaming_envelope_verify_and_reject_faults() {
+    use newt_core::page_envelope::EnvelopeIo;
+
+    // 1. Binding & Source decode roundtrip + exact length & bad magic rejection.
+    let binding = Binding {
+        book_digest: [0x5a; 32],
+        spine: 7,
+        generation: 0x0102_0304,
+        segment_index: 4,
+        page_count: 800,
+        total_chars: 123_456,
+        style_hash: 0xfeed_face,
+        style_count: 9,
+        style_issues: 1,
+        style_state: 2,
+        profile: 0,
+        member_method: 8,
+        member_offset: 4096,
+        member_compressed: 22_000,
+        member_uncompressed: 65_000,
+        source_bytes: 999_999,
+        pages_at: 510,
+        cut: 32_100,
+        fed: 32_240,
+    };
+    let mut raw_point = Vec::new();
+    let payload_len = (BINDING_BYTES + SOURCE_BYTES + 1500) as u32;
+    let crc = {
+        let mut sink = |b: &[u8]| {
+            raw_point.extend_from_slice(b);
+            true
+        };
+        let mut out = CrcOut::new(payload_len, &mut sink);
+        assert!(binding.encode(&mut out));
+        assert!(encode_source(54_321, &mut out));
+        assert!(out.put(&vec![0xab; 1500]));
+        out.finish_crc()
+    };
+    raw_point.extend_from_slice(&crc.to_le_bytes());
+
+    // Multi-window Stage 1 -> Stage 2 roundtrip across 1 KiB window boundary.
+    let mut cursor = PointCursor::new(0, raw_point.len() as u32).unwrap();
+    let mut win = [0u8; 1024];
+    let (dec_binding, dec_src) = {
+        let mut read = |off: u32, dst: &mut [u8]| {
+            let at = off as usize;
+            raw_point.get(at..at + dst.len()).map(|s| dst.copy_from_slice(s)).is_some()
+        };
+        let mut pin = cursor.bind(&mut win, &mut read);
+        let b = Binding::decode(&mut pin.section(BINDING_BYTES as u32)).unwrap();
+        let s = decode_source(&mut pin.section(SOURCE_BYTES as u32)).unwrap();
+        (b, s)
+    };
+    assert_eq!(dec_binding, binding);
+    assert_eq!(dec_src, 54_321);
+    {
+        let mut read = |off: u32, dst: &mut [u8]| {
+            let at = off as usize;
+            raw_point.get(at..at + dst.len()).map(|s| dst.copy_from_slice(s)).is_some()
+        };
+        let mut pin = cursor.bind(&mut win, &mut read);
+        let mut tail = vec![0u8; 1500];
+        let mut sec = pin.section(1500);
+        assert!(sec.read_exact(&mut tail));
+        assert!(sec.finish());
+        assert!(tail.iter().all(|&b| b == 0xab));
+        assert!(pin.finish_crc(crc));
+    }
+
+    // Pass B byte flip between Pass A and Pass B fails finish_crc.
+    let mut mutated = raw_point.clone();
+    mutated[BINDING_BYTES + SOURCE_BYTES + 1200] ^= 0x01;
+    let mut cursor2 = PointCursor::new(0, mutated.len() as u32).unwrap();
+    let mut read_mut = |off: u32, dst: &mut [u8]| {
+        let at = off as usize;
+        mutated.get(at..at + dst.len()).map(|s| dst.copy_from_slice(s)).is_some()
+    };
+    let mut pin2 = cursor2.bind(&mut win, &mut read_mut);
+    assert!(Binding::decode(&mut pin2.section(BINDING_BYTES as u32)).is_some());
+    assert!(decode_source(&mut pin2.section(SOURCE_BYTES as u32)).is_some());
+    let mut tail2 = vec![0u8; 1500];
+    assert!(pin2.section(1500).read_exact(&mut tail2));
+    assert!(!pin2.finish_crc(crc), "Pass B CRC must detect a flipped byte");
+
+    // 2. validate_xml_name accepts UTF-8 XML names and rejects injection/control bytes.
+    assert!(validate_xml_name(b"html"));
+    assert!(validate_xml_name("café".as_bytes()));
+    assert!(validate_xml_name(b"svg:path"));
+    for bad in [
+        &b""[..],
+        b"a>b",
+        b"a<b",
+        b"a b",
+        b"a/b",
+        b"a=b",
+        b"a&b",
+        b"a\0b",
+        b"a\nb",
+        &[0xff, 0xfe],
+    ] {
+        assert!(!validate_xml_name(bad), "name {bad:?} must be rejected");
+    }
+
+    // 3. Streaming 1 KiB envelope attach/range/exact verification and fault handling.
+    const NAME: &[u8; 69] =
+        b"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff.fibp";
+    let payload: Vec<u8> = (0..(BLOCK_BYTES as usize * 2 + 777))
+        .map(|i| ((i * 31 + 17) & 0xff) as u8)
+        .collect();
+    let route = Query::new(Some(NAME)).route;
+    let mut dir = Vec::new();
+    for (block, bytes) in payload.chunks(BLOCK_BYTES as usize).enumerate() {
+        dir.extend_from_slice(&page_envelope::block_crc(&route, block as u32, bytes).to_le_bytes());
+    }
+    let dir_crc = page_envelope::crc(u32::MAX, &dir) ^ u32::MAX;
+    let mut manifest = [0u8; 64];
+    page_envelope::manifest(&mut manifest, payload.len() as u32, &route, dir_crc, 0);
+    let env_bytes = [payload.as_slice(), &dir, &manifest].concat();
+
+    struct MockIo {
+        bytes: Vec<u8>,
+        fail_poll_after: Option<usize>,
+        polls: usize,
+    }
+    impl EnvelopeIo for MockIo {
+        fn read(&mut self, _: &Query<'_>, off: u32, out: &mut [u8]) -> bool {
+            let at = off as usize;
+            self.bytes.get(at..at + out.len()).map(|s| out.copy_from_slice(s)).is_some()
+        }
+        fn poll(&mut self) -> bool {
+            self.polls += 1;
+            self.fail_poll_after.is_none_or(|limit| self.polls <= limit)
+        }
+    }
+
+    let mut q = Query::new(Some(NAME));
+    q.extent = env_bytes.len() as u32;
+    q.bound = true;
+    let mut io = MockIo { bytes: env_bytes.clone(), fail_poll_after: None, polls: 0 };
+    assert!(page_envelope::stream_attach(&mut q, &mut win, &mut io));
+    assert_eq!(q.payload, payload.len() as u32);
+    // Cross-block verified exact read spanning blocks 0, 1, and 2.
+    let start = BLOCK_BYTES - 123;
+    let mut got = vec![0u8; BLOCK_BYTES as usize + 300];
+    assert!(page_envelope::stream_verified_exact(&q, &mut win, start, &mut got, &mut io));
+    assert_eq!(got, payload[start as usize..start as usize + got.len()]);
+
+    // Corrupt byte in block 1 must fail stream_verified_exact.
+    let mut bad_blk = env_bytes.clone();
+    bad_blk[BLOCK_BYTES as usize + 50] ^= 0x80;
+    let mut io_bad = MockIo { bytes: bad_blk, fail_poll_after: None, polls: 0 };
+    assert!(!page_envelope::stream_verified_exact(&q, &mut win, start, &mut got, &mut io_bad));
+
+    // Corrupt directory byte must fail stream_attach.
+    let mut bad_dir = env_bytes.clone();
+    bad_dir[payload.len()] ^= 1;
+    let mut q_bad = Query::new(Some(NAME));
+    q_bad.extent = bad_dir.len() as u32;
+    q_bad.bound = true;
+    let mut io_dir = MockIo { bytes: bad_dir, fail_poll_after: None, polls: 0 };
+    assert!(!page_envelope::stream_attach(&mut q_bad, &mut win, &mut io_dir));
+
+    // Poll cancellation stops immediately.
+    let mut io_stop = MockIo { bytes: env_bytes, fail_poll_after: Some(2), polls: 0 };
+    assert!(!page_envelope::stream_verified_exact(&q, &mut win, start, &mut got, &mut io_stop));
+
+    // 4. EntityFilter::load_resume rejects impossible saved states:
+    //    (a) source_done == 1 with unread raw tail,
+    //    (b) source_done == 1 with in_entity == 1,
+    //    (c) in_entity == 1 with non-empty pending bytes.
+    let bad_filters: &[(&str, Vec<u8>)] = &[
+        (
+            "source_done with unread raw tail",
+            vec![b'F', b'L', b'T', b'1', 0, 0, 0, 0, 1, 0, b'x', 1],
+        ),
+        (
+            "source_done with in_entity",
+            vec![b'F', b'L', b'T', b'1', 2, 1, 0, 0, 0, 0, b'n', b'b', 1],
+        ),
+        (
+            "in_entity with pending bytes",
+            vec![b'F', b'L', b'T', b'1', 1, 1, 1, 0, 0, 0, b'a', b'&', 0],
+        ),
+        (
+            "empty pending with nonzero pending_pos",
+            vec![b'F', b'L', b'T', b'1', 0, 0, 0, 1, 0, 0, 0],
+        ),
+        (
+            "nonempty pending with exhausted pending_pos",
+            vec![b'F', b'L', b'T', b'1', 0, 0, 1, 1, 0, 0, b'&', 0],
+        ),
+    ];
+    for (label, bad_flt) in bad_filters {
+        let flt_crc = page_envelope::crc(u32::MAX, bad_flt) ^ u32::MAX;
+        let mut flt_framed = bad_flt.clone();
+        flt_framed.extend_from_slice(&flt_crc.to_le_bytes());
+        let mut fcur = PointCursor::new(0, flt_framed.len() as u32).unwrap();
+        let mut fread = |off: u32, dst: &mut [u8]| {
+            let at = off as usize;
+            flt_framed.get(at..at + dst.len()).map(|s| dst.copy_from_slice(s)).is_some()
+        };
+        let mut fpin = fcur.bind(&mut win, &mut fread);
+        let mut ef = newt_core::xml_input::EntityFilter::new();
+        assert!(
+            !ef.load_resume(&mut fpin.section(bad_flt.len() as u32)),
+            "EntityFilter must reject {label}"
+        );
+    }
+}
