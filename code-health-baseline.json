@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 4068912,
+      "flash_bytes": 4068944,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "7d9810289a0c924167f1c812720d620072507174",
-      "before": 4068736,
-      "after": 4068912,
-      "reason": "Home checks the previous semantic position policy when the current cache lacks a title or a percentage (#204). The 176 B of image growth comes from the read-only fallback and sharing the policy-aware metadata readers. Clean pinned regional DEV USB builds: 4,068,736 B at 328dcf8e to 4,068,912 B at 7d981028. Usable app space 7,016,448 B, with 2,947,536 B remaining. RAM 124,096 to 124,096 B, RTC 300 to 300 B, Wi-Fi lent RAM 22,528 to 22,528 B. Selected stack measurements are identical.",
-      "reviewer": "Lead review pending"
+      "source_revision": "196ba320cec15d4c6abb294daaf3552636728d1f",
+      "before": 4068912,
+      "after": 4068944,
+      "reason": "Owner-approved What's new line for the v0.7.2 Home fix (#204) replaces a 35 B string with a 64 B string (+29 B). Against the clean #205 build e1b631b8, the linked .flash.rodata grows 24 B and .flash.text holds its size. nm shows the 56 B notes table and 362 B draw function hold their sizes. The padded image grows 32 B and leaves 2,947,504 B of the 7,016,448 B usable limit. RAM 124,096 to 124,096 B, RTC 300 to 300 B, lent Wi-Fi RAM 22,528 to 22,528 B. All selected stack measurements match.",
+      "reviewer": "Lead"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",

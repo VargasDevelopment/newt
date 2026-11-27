@@ -13,6 +13,6 @@ inline constexpr WhatsNewUpdate kWhatsNew[] = {
       "Very large books that wouldn't open now open, with covers.",
       "Faster page turns now work with every progress bar and refresh setting.",
       "Large, raised or lowered text is no longer cut off.",
-      "Other small fixes and improvements."}},
+      "Home shows your book's title and progress again after an update."}},
 };
 }  // namespace newt
