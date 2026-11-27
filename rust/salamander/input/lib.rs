@@ -503,7 +503,7 @@ mod clockwise_back_tests {
         // A cancelled Library open queues Back, Next, Confirm, Back. The first
         // Back unwinds to Library and goes Home; Next and Confirm then open
         // another screen, where the second tagged Back must not close it.
-        let queued = control.with_open(400, |control, _| {
+        let queued = control.with_open(400, |_, _| {
             [Button::Back, Button::Right, Button::Confirm, Button::Back].map(|button| {
                 let mut io = FakeIo::new(button, false);
                 producer.poll_once(&mut io);
