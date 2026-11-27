@@ -162,11 +162,6 @@ impl<C: ?Sized, S: CacheStorage + ?Sized> CacheStorage for ProducerStore<'_, '_,
     fn producer_can_begin(&self) -> bool {
         self.base.producer_can_begin()
     }
-    fn producer_remaining_credit(&self) -> Option<u64> {
-        self.base
-            .producer_remaining_credit()
-            .map(|credit| credit.saturating_sub(self.buffered_bytes() as u64))
-    }
     #[cfg(feature = "page-turn-trace")]
     fn trace_micros(&self) -> u32 {
         self.base.trace_micros()

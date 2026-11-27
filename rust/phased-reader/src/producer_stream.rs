@@ -196,162 +196,83 @@ impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::Pro
         &mut self, reader: &PhasedReader<'_, '_>, phase: &mut Phase<'_>,
         backend: &mut B, breaker: &mut dyn LineBreak, route: &mut Route<'_>,
     ) -> Status {
-        let with_capture = self.writer.segmented && self.writer.capture_points;
-        phase.layout_with_capture(backend, breaker, with_capture, |slot, lr, io, capture| {
-            self.stream_current_in_layout(reader, slot, lr, io, route, capture)
-        }).unwrap_or_else(|status| status)
-    }
-
-    fn stream_current_in_layout<B: ProducerBackend + ?Sized>(
-        &mut self,
-        reader: &PhasedReader<'_, '_>,
-        slot: &mut crate::styles::Slot<'_>,
-        lr: &mut crate::resources::LayoutResources<'_>,
-        io: &mut crate::phase_storage::ParseResources<'_, B>,
-        route: &mut Route<'_>,
-        mut capture: Option<&mut crate::resume_capture::CaptureState<'_>>,
-    ) -> Status {
         let cancellation = self.writer.cancellation();
         let selected = if self.state.staged { &reader.selections[reader.active ^ 1] }
             else { reader.selection() };
-        let _work = WorkScope::new_scoped(reader.on_yield, reader.work, WorkPhase::Layout);
-        let params = reader_parameters(reader.page_layout, Some(slot), selected.language);
-        self.begin_stream();
-        let mut scheduled = ScheduledSource::new(&mut *self.source, reader.on_yield, Some(cancellation));
-        let mut chapter = match ChapterSource::open(&mut scheduled, &selected.entry,
-            resources::decoder(&mut io.decoder), reader.on_yield,
-            Some(cancellation),
-            ) {
-            Ok(chapter) => chapter,
-            Err(status) => { cancellation.result(false); return status; }
-        };
-        let raw = Checked::raw(selected.entry.uncompressed_size);
-        let mut images = lr.images.for_chapter(&selected.href);
-        let mut engine = match EngineState::new(params, resources::storage(&mut lr.storage),
-            lr.breaker, &mut images, None, CssStylesheetBuilder::default()) {
-            Ok(engine) => engine,
-            Err(_) => { cancellation.result(false); return Status::OutOfMemory; }
-        };
-        let mut policy = cancellation;
-        let stream = XmlStream::with_policy(&mut chapter, None, io.backend, BorrowedPolicy(&mut policy));
-        let mut session = ChapterSession::new(stream);
-        let mut status = session.begin_state(&raw, xml_session::Resources {
-            buffer: io.xml_buffer.as_deref_mut(), filter: io.filter.as_deref_mut(),
-        }, &engine);
-        while status == Status::Ok && !session.done() && !self.writer.refused {
-            status = session.step_with(&mut engine, 1, 1, |chapter, parser, engine, operation| {
-                chapter.with_source(|scheduled| {
-                    crate::producer_store::with_source_store(self.store, &mut *scheduled.source,
-                        reader.source_bytes, false, self.guard_attempted.as_deref_mut(), |store| {
-                            let mut sink = Writing { writer: self.writer, store, memory: &mut self.memory, counted: None };
-                            let mut font = ReaderAtlas;
-                            let mut backend = SplitBackend { font: &mut font, sink: &mut sink };
-                            match operation {
-                                LayoutOperation::Feed { bytes, last } => {
-                                    if let Some(cap) = capture.as_deref_mut() {
-                                        cap.tap.observe(bytes);
-                                        let mut op = OperationHandler { engine, backend: &mut backend };
-                                        let mut tap = cap.tap.wrap(&mut op);
-                                        let ok = match parser.feed_observed(bytes, last, &mut tap, &mut cap.obs) {
-                                            Some(ok) => ok,
-                                            None => parser.feed(bytes, last, &mut tap),
-                                        };
-                                        cap.tap.finish_root(cap.obs.root_index);
-                                        ok
-                                    } else {
-                                        parser.feed(bytes, last,
-                                            &mut OperationHandler { engine, backend: &mut backend })
-                                    }
+        phase.layout(backend, breaker, |slot, lr, io| {
+            let _work = WorkScope::new_scoped(reader.on_yield, reader.work, WorkPhase::Layout);
+            let params = reader_parameters(reader.page_layout, Some(slot), selected.language);
+            self.begin_stream();
+            let mut scheduled = ScheduledSource::new(&mut *self.source, reader.on_yield, Some(cancellation));
+            let mut chapter = match ChapterSource::open(&mut scheduled, &selected.entry,
+                resources::decoder(&mut io.decoder), reader.on_yield,
+                Some(cancellation),
+                ) {
+                Ok(chapter) => chapter,
+                Err(status) => { cancellation.result(false); return status; }
+            };
+            let raw = Checked::raw(selected.entry.uncompressed_size);
+            let mut images = lr.images.for_chapter(&selected.href);
+            let mut engine = match EngineState::new(params, resources::storage(&mut lr.storage),
+                lr.breaker, &mut images, None, CssStylesheetBuilder::default()) {
+                Ok(engine) => engine,
+                Err(_) => { cancellation.result(false); return Status::OutOfMemory; }
+            };
+            let mut policy = cancellation;
+            let stream = XmlStream::with_policy(&mut chapter, None, io.backend, BorrowedPolicy(&mut policy));
+            let mut session = ChapterSession::new(stream);
+            let mut status = session.begin_state(&raw, xml_session::Resources {
+                buffer: io.xml_buffer.as_deref_mut(), filter: io.filter.as_deref_mut(),
+            }, &engine);
+            while status == Status::Ok && !session.done() && !self.writer.refused {
+                status = session.step_with(&mut engine, 1, 1, |chapter, parser, engine, operation| {
+                    chapter.with_source(|scheduled| {
+                        crate::producer_store::with_source_store(self.store, &mut *scheduled.source,
+                            reader.source_bytes, false, self.guard_attempted.as_deref_mut(), |store| {
+                                let mut sink = Writing { writer: self.writer, store, memory: &mut self.memory, counted: None };
+                                let mut font = ReaderAtlas;
+                                let mut backend = SplitBackend { font: &mut font, sink: &mut sink };
+                                match operation {
+                                    LayoutOperation::Feed { bytes, last } => parser.feed(bytes, last,
+                                        &mut OperationHandler { engine, backend: &mut backend }),
+                                    LayoutOperation::Finish => engine.finish(&mut backend),
                                 }
-                                LayoutOperation::Finish => engine.finish(&mut backend),
-                            }
-                        })
-                })
-            });
-            if !cancellation.result(status == Status::Ok) { break; }
-            if !self.store.pause_point() { status = Status::IoError; break; }
-            if let Some(cap) = capture.as_deref_mut() {
-                if !session.done() && !self.writer.refused && self.writer.open {
-                    let writer = &mut *self.writer;
-                    let store = &mut *self.store;
-                    let guard_attempted = &mut self.guard_attempted;
-                    let capture_route = crate::resume_capture::CaptureRoute {
-                        digest: route.digest,
-                        spine: route.info.spine,
-                        generation: self.state.generation,
-                        page_count: route.info.page_count,
-                        total_chars: route.info.total_chars,
-                    };
-                    let outcome = session.stream.with_source_and_view(|chapter, parser, stream| {
-                        let input = crate::resume_capture::BoundaryInput {
-                            entry: &selected.entry,
-                            source_bytes: reader.source_bytes,
-                            source_consumed: chapter.consumed(),
-                            source_method: chapter.method(),
-                            parser_index: parser.current_byte_index(),
-                            stream,
-                        };
-                        let cw = crate::resume_capture::CaptureWriter {
-                            cache: &mut writer.cache,
-                            first: writer.first,
-                            seen: writer.seen,
-                            open: writer.open,
-                            refused: &mut writer.refused,
-                        };
-                        chapter.with_source(|scheduled| {
-                            crate::producer_store::with_source_store(
-                                store,
-                                &mut *scheduled.source,
-                                reader.source_bytes,
-                                false,
-                                guard_attempted.as_deref_mut(),
-                                |guarded| {
-                                    let credit = guarded.producer_remaining_credit();
-                                    let mut write = |bytes: &[u8]| guarded.write(bytes);
-                                    crate::resume_capture::maybe_capture(
-                                        cap, &engine, slot, cw, credit, &mut write, &capture_route,
-                                        &input,
-                                    )
-                                },
-                            )
-                        })
-                    });
-                    if outcome == crate::resume_capture::CaptureOutcome::WriteFailed {
-                        status = Status::IoError;
-                        break;
-                    }
+                            })
+                    })
+                });
+                if !cancellation.result(status == Status::Ok) { break; }
+                if !self.store.pause_point() { status = Status::IoError; break; }
+                if self.writer.segmented {
+                    status = if self.guard_attempted.is_some() {
+                        session.stream.with_source(|chapter, _| chapter.with_source(|scheduled| {
+                            crate::producer_store::with_source_store(self.store, &mut *scheduled.source,
+                                reader.source_bytes, false, self.guard_attempted.as_deref_mut(), |store|
+                                    self.state.boundary(self.writer, store, &mut self.memory, route))
+                        }))
+                    } else { self.state.boundary(self.writer, self.store, &mut self.memory, route) };
+                    if !self.writer.open && !self.writer.mapping { break; }
                 }
             }
-            if self.writer.segmented {
-                status = if self.guard_attempted.is_some() {
-                    session.stream.with_source(|chapter, _| chapter.with_source(|scheduled| {
-                        crate::producer_store::with_source_store(self.store, &mut *scheduled.source,
-                            reader.source_bytes, false, self.guard_attempted.as_deref_mut(), |store|
-                                self.state.boundary(self.writer, store, &mut self.memory, route))
-                    }))
-                } else { self.state.boundary(self.writer, self.store, &mut self.memory, route) };
-                if !self.writer.open && !self.writer.mapping { break; }
+            let whole = !self.writer.segmented || self.writer.open || self.writer.mapping;
+            let mut eof_verified = false;
+            if status == Status::Ok && whole && !self.writer.refused {
+                let (finished, ended) = session.stream.with_source(|chapter, _| chapter.finish_checked());
+                eof_verified = ended;
+                if !finished {
+                    status = Status::Truncated;
+                }
             }
-        }
-        let whole = !self.writer.segmented || self.writer.open || self.writer.mapping;
-        let mut eof_verified = false;
-        if status == Status::Ok && whole && !self.writer.refused {
-            let (finished, ended) = session.stream.with_source(|chapter, _| chapter.finish_checked());
-            eof_verified = ended;
-            if !finished {
-                status = Status::Truncated;
+            if whole && (status == Status::Ok || eof_verified) && (self.writer.refused
+                || engine.pages != reader.info.page_count || engine.chars != reader.info.total_chars) {
+                if !self.writer.refused {
+                    cancellation.fail_terminal();
+                }
+                status = Status::Unsupported;
             }
-        }
-        if whole && (status == Status::Ok || eof_verified) && (self.writer.refused
-            || engine.pages != reader.info.page_count || engine.chars != reader.info.total_chars) {
-            if !self.writer.refused {
-                cancellation.fail_terminal();
-            }
-            status = Status::Unsupported;
-        }
-        cancellation.result(status == Status::Ok);
-        session.abort();
-        status
+            cancellation.result(status == Status::Ok);
+            session.abort();
+            status
+        }).unwrap_or_else(|status| status)
     }
 }
 

@@ -42,10 +42,6 @@ pub trait CacheStorage {
     fn producer_can_begin(&self) -> bool {
         true
     }
-    /// Remaining byte credit for the active producer attempt, or `None` when unbounded.
-    fn producer_remaining_credit(&self) -> Option<u64> {
-        None
-    }
 }
 /// One checked cache read, as pinned ChapterPageCache readEntry/locate:
 /// beginRead(query), attach, the SDK read, query.finish, finishRead.

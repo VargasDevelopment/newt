@@ -19,7 +19,6 @@ pub struct CappedWriter<'loan, 'ctx, C: ?Sized> {
     pub segmented: bool,
     pub open: bool,
     pub mapping: bool,
-    pub capture_points: bool,
 }
 impl<'loan, 'ctx, 'pause, C: ?Sized> CappedWriter<'loan, 'ctx, C> {
     pub fn new(
@@ -30,7 +29,6 @@ impl<'loan, 'ctx, 'pause, C: ?Sized> CappedWriter<'loan, 'ctx, C> {
         Self {
             cache: PageCacheWriter::new(Profile::Small), cancellation, starts,
             seen: 0, first: 0, refused: false, segmented: false, open: false, mapping: false,
-            capture_points: false,
         }
     }
     pub(crate) fn cancellation(&self) -> &'loan Cancellation<'ctx, C> { self.cancellation }

@@ -57,30 +57,6 @@ impl EntityFilter {
         self.raw_len = 0;
         self.source_done = false;
     }
-    /// Serialize the live filter carry (entity, pending and unread raw tail).
-    pub fn save_resume(&self, out: &mut dyn crate::resume_point::PointOut) -> bool {
-        if self.entity_len > self.entity.len()
-            || self.pending_len > self.pending.len()
-            || self.pending_pos > self.pending_len
-            || self.raw_pos > self.raw_len
-            || self.raw_len > self.raw.len()
-        {
-            return false;
-        }
-        let raw_unread = (self.raw_len - self.raw_pos) as u16;
-        let mut h = [0u8; 10];
-        h[..4].copy_from_slice(b"FLT1");
-        h[4] = self.entity_len as u8;
-        h[5] = u8::from(self.in_entity);
-        h[6] = self.pending_len as u8;
-        h[7] = self.pending_pos as u8;
-        h[8..10].copy_from_slice(&raw_unread.to_le_bytes());
-        out.put(&h)
-            && out.put(&self.entity[..self.entity_len])
-            && out.put(&self.pending[..self.pending_len])
-            && out.put(&self.raw[self.raw_pos..self.raw_len])
-            && out.put(&[u8::from(self.source_done)])
-    }
     fn emit(&mut self, bytes: &[u8]) {
         let n = bytes.len().min(32 - self.pending_len);
         self.pending[self.pending_len..self.pending_len + n].copy_from_slice(&bytes[..n]);

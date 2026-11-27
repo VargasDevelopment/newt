@@ -31,9 +31,6 @@ impl Segments {
             skipped: u32::MAX, staged: false,
             language: None, start: 0, sealed: 0 }
     }
-    pub fn set_language(&mut self, language: Option<BookLanguage>) {
-        self.language = language;
-    }
     pub(crate) fn set_start(&mut self, segment: u32) {
         self.start = if self.count == 0 {
             0
@@ -99,16 +96,7 @@ impl Segments {
             if !store.checkpoint() { return Status::IoError; }
             if segment.first() < writer.seen { self.skipped = self.skipped.min(step); continue; }
             if !store.producer_can_begin() { self.skipped = self.skipped.min(step); continue; }
-            let version = if writer.capture_points
-                && segment.first().wrapping_add(PAGES) < route.info.page_count
-            {
-                newt_core::page_cache::VERSION_POINT
-            } else {
-                newt_core::page_cache::VERSION_PAGES
-            };
-            if !writer.cache.begin_version(store, &self.name[..69], self.generation, memory, version) {
-                return Status::OutOfMemory;
-            }
+            if !writer.cache.begin(store, &self.name[..69], self.generation, memory) { return Status::OutOfMemory; }
             #[cfg(feature = "page-turn-trace")]
             store.trace_segment_begin(index);
             writer.first = segment.first();

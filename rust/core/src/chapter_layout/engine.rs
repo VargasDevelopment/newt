@@ -3,7 +3,6 @@
 use super::{arabic, case, style, text::*, types::*};
 mod links;
 mod initialization;
-mod resume;
 mod segments;
 use segments::{
     LineSegments, MAX_SEGMENTS, SEG_COMPRESS, SEG_GAP, SEG_SCRIPT, SEG_SMALL_CAP, SEG_SPACE,

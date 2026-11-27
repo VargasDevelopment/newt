@@ -1001,9 +1001,6 @@ impl<S: Native> CacheStorage for ChapterCacheAccess<'_, '_, S> {
             || (self.state.entries > 0
                 && self.file.write_credit() >= u64::from(newt_core::cache_names::namespace::PAGE_CANDIDATE))
     }
-    fn producer_remaining_credit(&self) -> Option<u64> {
-        self.file.producing().then(|| self.file.write_credit())
-    }
 }
 
 /// The original's query read callback: the retained descriptor, its
