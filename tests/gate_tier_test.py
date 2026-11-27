@@ -85,6 +85,7 @@ class ControlSelectionTests(unittest.TestCase):
             ('rust/tests/dev_put/lease.rs', ('dev_put_test.py',)),
             ('rust/tests/large_epub_corpus/corpus.rs', ('large_epub_corpus_test.py',)),
             ('rust/tests/producer_fill_policy/host.rs', ('producer_fill_policy_test.py',)),
+            ('rust/tests/resume_capture/host.rs', ('resume_capture_test.py',)),
             ('tools/large_epub_corpus.py', ('large_epub_corpus_test.py',)),
             ('rust/tests/family_dispatch_test.py', tuple(sorted({
                 'family_dispatch_test.py', 'rust:foundation',

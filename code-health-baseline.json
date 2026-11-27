@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 4069328,
+      "flash_bytes": 4074400,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "7e4b327bd20f1c36613bdb0e52b3393fd39573a3",
-      "before": 4068944,
-      "after": 4069328,
-      "reason": "Contents jumps to an anchor paint Loading page... and give each work phase, including the exact-anchor scan, its own 20 s open budget (#188). Clean regional DEV USB health builds measure 4,068,944 B on v0.7.2 (99aec6ad) and 4,069,328 B with the fix (+384 B), leaving 2,947,120 B of the 7,016,448 B usable limit. RAM 124,096 to 124,096 B, RTC 300 to 300 B, lent Wi-Fi RAM 22,528 to 22,528 B. All selected stack measurements match.",
-      "reviewer": "Lead"
+      "source_revision": "18adc44a917d20f03186cff1542609547a797e95",
+      "before": 4069328,
+      "after": 4074400,
+      "reason": "+5,072 B (+4.95 KiB) over the 4,069,328 B ceiling on origin/main (fc5dd378, v0.7.2 + #201): adds interior v4 resume-point capture in restore consumption order, temporary shared-bank capture state (0 B at rest), zero-heap UTF-8/XMLDecl prolog gate, proven-bound 4 MiB/credit preflight, abort-only failed v4 writer seal, transient picture-note guard, and linear live-byte bitset canonical pool (#168). Clean regional DEV USB build with pinned Python at 18adc44a measures 4,074,400 B (.flash.text 1,964,206 B, .flash.rodata 2,026,696 B). Incremental .flash.text breakdown: tap + Expat observation +602 B, zero-heap XMLDecl/leading-byte UTF-8 gate +1,100 B (kept in Rust rather than Expat XmlDeclHandler because Expat allocates its 1 KiB m_temp2Pool on every UTF-8 XML declaration and lowers heap-min-free by 1,156 B), v4 writer/CrcOut/preflight +1,054 B, engine + canonical pool +2,058 B, capture orchestration + Binding/Layout/packers +2,828 B, envelope/index callers after outlining page_envelope::crc -3,664 B, Phase::carve_layout/other +490 B. Reuses page_envelope::crc, existing resume_point::Layout/bounds, and the existing 1 KiB store window. RAM 124,096 -> 124,096 B (+0 B), RTC 300 -> 300 B (+0 B), lent Wi-Fi RAM 22,528 -> 22,528 B (+0 B), selected stacks +0 B (0/16/32/48/480 <= 656 B). Usable app space 7,016,448 B; headroom 2,947,120 B (42.00%) -> 2,942,048 B (41.93%). No memory floor or stack ceiling moves.",
+      "reviewer": "Independent static review and clean regional-dev-usb health measurement (2026-11-27, #168)"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",

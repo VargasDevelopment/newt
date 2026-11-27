@@ -70,6 +70,50 @@ void newt_xml_producer(void *p) {
 }
 int64_t newt_xml_index(void *p) { return (int64_t)XML_GetCurrentByteIndex((XML_Parser)p); }
 
+/* Per-parser capture feed: no static globals; all pointers live on this stack
+ * frame and every handler is cleared before returning. `base` is first so
+ * bridge_end / bridge_text can read it cleanly under C11 6.7.2.1p15.
+ * Deliberately does NOT install XML_SetXmlDeclHandler: Expat grows its
+ * otherwise-unused 1 KiB m_temp2Pool whenever a declaration handler is set,
+ * lowering heap-min-free on every UTF-8 chapter; Rust checks the bounded prolog
+ * directly without heap allocation. */
+struct obs_callbacks {
+  struct callbacks base;
+  int64_t *root_index;
+  uint32_t *cdata_depth;
+};
+static void XMLCALL obs_start(void *p, const char *n, const char **a) {
+  struct obs_callbacks *c = XML_GetUserData((XML_Parser)p);
+  if (*c->root_index < 0) *c->root_index = (int64_t)XML_GetCurrentByteIndex((XML_Parser)p);
+  c->base.start(c->base.rust, n, a);
+}
+static void XMLCALL obs_cdata_start(void *p) {
+  struct obs_callbacks *c = XML_GetUserData((XML_Parser)p);
+  if (*c->cdata_depth < UINT32_MAX) (*c->cdata_depth)++;
+}
+static void XMLCALL obs_cdata_end(void *p) {
+  struct obs_callbacks *c = XML_GetUserData((XML_Parser)p);
+  if (*c->cdata_depth > 0) (*c->cdata_depth)--;
+}
+int newt_xml_feed_observed(void *p, const char *bytes, int n, int final_chunk,
+                           void *context, start_fn start, end_fn end, text_fn text,
+                           int64_t *root_index, uint32_t *cdata_depth) {
+  XML_Parser parser = (XML_Parser)p;
+  struct obs_callbacks callbacks = {{context, start, end, text}, root_index, cdata_depth};
+  XML_UseParserAsHandlerArg(parser);
+  XML_SetUserData(parser, &callbacks);
+  XML_SetElementHandler(parser, obs_start, bridge_end);
+  XML_SetCharacterDataHandler(parser, bridge_text);
+  XML_SetCdataSectionHandler(parser, obs_cdata_start, obs_cdata_end);
+  int ok = XML_Parse(parser, bytes, n, final_chunk) != XML_STATUS_ERROR;
+  /* No pointer into a Rust stack frame remains installed after return. */
+  XML_SetUserData(parser, NULL);
+  XML_SetElementHandler(parser, NULL, NULL);
+  XML_SetCharacterDataHandler(parser, NULL);
+  XML_SetCdataSectionHandler(parser, NULL, NULL);
+  return ok;
+}
+
 /* Per-call allocator suite: no global allocator mode or inter-test state. */
 static void *fail_malloc(size_t n) { (void)n; return NULL; }
 static void *fail_realloc(void *p, size_t n) { (void)p; (void)n; return NULL; }

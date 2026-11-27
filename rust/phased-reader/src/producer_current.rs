@@ -83,6 +83,7 @@ impl<C: ?Sized, S: CacheStorage, F: BookSource + newt_core::producer_policy::Pro
             self.with_buffered(|phase, mut attempt| {
                 if attempt.state.count != 0 {
                     attempt.writer.segmented = true;
+                    attempt.writer.capture_points = true;
                     let named = attempt.state.identify(route, reader.info.spine)
                         && newt_core::cache_names::segment::map_name(&mut attempt.state.name,
                             &mut |b, d| route.hash.hash(b, d));

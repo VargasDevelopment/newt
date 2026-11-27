@@ -23,6 +23,11 @@ pub mod bounded_chapters;
 
 pub const BANK_BYTES: usize = 48 * 1024;
 pub const INDEX_BYTES: usize = 8 * 1024;
+/// Producer layout storage capacities carved in `Phase::carve_layout`.
+pub(crate) const LAYOUT_RUNS: usize = 304;
+pub(crate) const LAYOUT_IMAGES: usize = 8;
+pub(crate) const LAYOUT_LINKS: usize = 16;
+pub(crate) const LAYOUT_PAGE_POOL: usize = 7168;
 /// Actual SDK lend/return, enclosing all parse views. The result cannot borrow
 /// parse. Implementations must return/clear the native owner before returning R.
 /// Panic=abort is required, as for Board::with_build_storage.
@@ -663,6 +668,34 @@ impl Phase<'_> {
         *self.held = status == Status::Ok;
         Ok(status)
     }
+    fn carve_layout<'a>(
+        shared: &mut Parts<'a>,
+        breaker: &'a mut dyn LineBreak,
+    ) -> Result<LayoutResources<'a>, Status> {
+        let storage = layout::Storage {
+            text: shared.fixed::<3072>()?,
+            breaks: shared.fixed::<3072>()?,
+            levels: shared.fixed::<3072>()?,
+            spans: shared.array::<layout::Span>(96)?,
+            lines: shared.array::<layout::Line>(176)?,
+            elements: shared.array::<layout::Element>(16)?,
+            runs: shared.array::<layout::Run>(LAYOUT_RUNS)?,
+            images: shared.array::<layout::Image>(LAYOUT_IMAGES)?,
+            links: shared.array::<layout::Link>(LAYOUT_LINKS)?,
+            page: shared.fixed::<LAYOUT_PAGE_POOL>()?,
+            style_text: shared.fixed::<3072>()?,
+            paragraph_links: shared.array::<layout::ParLink>(6)?,
+        };
+        let path_scratch = shared.bytes(1024, 1)?;
+        Ok(LayoutResources {
+            storage,
+            breaker,
+            images: CataloglessImages {
+                directory: &[],
+                path_scratch,
+            },
+        })
+    }
     pub(crate) fn layout<B: ParserBackend + ?Sized, R>(
         &mut self,
         backend: &mut B,
@@ -671,6 +704,37 @@ impl Phase<'_> {
             &mut styles::Slot<'_>,
             &mut LayoutResources<'_>,
             &mut ParseResources<'_, B>,
+        ) -> R,
+    ) -> Result<R, Status> {
+        self.layout_core(backend, breaker, false, |slot, lr, io, _| operation(slot, lr, io))
+    }
+    /// Producer-only layout loan that optionally carves `CaptureState` in place
+    /// from the remaining tail of `self.shared` (15,424 B host / 17,584 B RV32
+    /// free after `LayoutResources`). Both views drop before `Home` copies back.
+    pub(crate) fn layout_with_capture<B: ParserBackend + ?Sized, R>(
+        &mut self,
+        backend: &mut B,
+        breaker: &mut dyn LineBreak,
+        with_capture: bool,
+        operation: impl FnOnce(
+            &mut styles::Slot<'_>,
+            &mut LayoutResources<'_>,
+            &mut ParseResources<'_, B>,
+            Option<&mut crate::resume_capture::CaptureState<'_>>,
+        ) -> R,
+    ) -> Result<R, Status> {
+        self.layout_core(backend, breaker, with_capture, operation)
+    }
+    fn layout_core<B: ParserBackend + ?Sized, R>(
+        &mut self,
+        backend: &mut B,
+        breaker: &mut dyn LineBreak,
+        with_capture: bool,
+        operation: impl FnOnce(
+            &mut styles::Slot<'_>,
+            &mut LayoutResources<'_>,
+            &mut ParseResources<'_, B>,
+            Option<&mut crate::resume_capture::CaptureState<'_>>,
         ) -> R,
     ) -> Result<R, Status> {
         if !*self.held {
@@ -689,33 +753,24 @@ impl Phase<'_> {
         }
         *self.held = false;
         let mut shared = Parts(self.shared);
-        let storage = layout::Storage {
-            text: shared.fixed::<3072>()?,
-            breaks: shared.fixed::<3072>()?,
-            levels: shared.fixed::<3072>()?,
-            spans: shared.array::<layout::Span>(96)?,
-            lines: shared.array::<layout::Line>(176)?,
-            elements: shared.array::<layout::Element>(16)?,
-            runs: shared.array::<layout::Run>(304)?,
-            images: shared.array::<layout::Image>(8)?,
-            links: shared.array::<layout::Link>(16)?,
-            page: shared.fixed::<7168>()?,
-            style_text: shared.fixed::<3072>()?,
-            paragraph_links: shared.array::<layout::ParLink>(6)?,
-        };
-        let path_scratch = shared.bytes(1024, 1)?;
-        let mut lr = LayoutResources {
-            storage,
-            breaker,
-            images: CataloglessImages {
-                directory: &[],
-                path_scratch,
-            },
+        let mut lr = Self::carve_layout(&mut shared, breaker)?;
+        let mut capture = if with_capture {
+            let prolog = shared.fixed::<{ newt_core::resume_point::PROLOG_MAX }>()?;
+            let names = shared.fixed::<{ newt_core::resume_point::NAMES_MAX }>()?;
+            let lens = shared.fixed::<{ newt_core::resume_point::DEPTH_MAX }>()?;
+            let live_bits = shared.fixed::<{ crate::resume_capture::LIVE_BITS_BYTES }>()?;
+            Some(shared.one(crate::resume_capture::CaptureState::new(
+                prolog, names, lens, live_bits,
+            ))?)
+        } else {
+            None
         };
         let mut parse = Parts(parse);
         let mut io = io(&mut parse, backend)?;
-        let result = initialized::<Home>(loan_bytes).with_slot(|slot| operation(slot, &mut lr, &mut io));
-        // End every layout/shared view BEFORE reconstructing the home there.
+        let result = initialized::<Home>(loan_bytes)
+            .with_slot(|slot| operation(slot, &mut lr, &mut io, capture.as_deref_mut()));
+        // End every layout and capture view BEFORE reconstructing Home in shared.
+        drop(capture);
         drop(lr);
         let (_, destination) = top::<Home>(self.shared)?;
         unsafe {

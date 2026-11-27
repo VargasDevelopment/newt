@@ -5,7 +5,12 @@
 //! See SAFETY.md for the synchronous callback and manual ABI contract.
 //! Expat allocates internally. This adapter is NOT an allocation-free XML parser.
 use core::ffi::{CStr, c_char, c_int, c_void};
-use newt_core::xml_session::{Attributes, Handler, ParserBackend, ProducerBackend};
+use newt_core::xml_session::{
+    Attributes, Handler, ParseObservation, ParserBackend, ProducerBackend,
+};
+type StartFn = unsafe extern "C" fn(*mut c_void, *const c_char, *const *const c_char);
+type EndFn = unsafe extern "C" fn(*mut c_void, *const c_char);
+type TextFn = unsafe extern "C" fn(*mut c_void, *const c_char, c_int);
 unsafe extern "C" {
     fn newt_xml_create_fail() -> *mut c_void;
     fn newt_xml_create() -> *mut c_void;
@@ -18,9 +23,21 @@ unsafe extern "C" {
         len: c_int,
         final_chunk: c_int,
         context: *mut c_void,
-        start: unsafe extern "C" fn(*mut c_void, *const c_char, *const *const c_char),
-        end: unsafe extern "C" fn(*mut c_void, *const c_char),
-        text: unsafe extern "C" fn(*mut c_void, *const c_char, c_int),
+        start: StartFn,
+        end: EndFn,
+        text: TextFn,
+    ) -> c_int;
+    fn newt_xml_feed_observed(
+        parser: *mut c_void,
+        bytes: *const c_char,
+        len: c_int,
+        final_chunk: c_int,
+        context: *mut c_void,
+        start: StartFn,
+        end: EndFn,
+        text: TextFn,
+        root_index: *mut i64,
+        cdata_depth: *mut u32,
     ) -> c_int;
 }
 #[derive(Default)]
@@ -106,6 +123,53 @@ unsafe extern "C" fn text(ctx: *mut c_void, bytes: *const c_char, len: c_int) {
     ctx.handler
         .text(unsafe { core::slice::from_raw_parts(bytes.cast::<u8>(), len as usize) });
 }
+impl Expat {
+    fn feed_with(
+        &mut self,
+        bytes: &[u8],
+        final_chunk: bool,
+        handler: &mut dyn Handler,
+        obs: Option<&mut ParseObservation>,
+    ) -> bool {
+        let Some(parser) = self.parser else {
+            return false;
+        };
+        let Ok(len) = c_int::try_from(bytes.len()) else {
+            return false;
+        };
+        let mut context = Context { handler };
+        // SAFETY: Parser is uniquely owned and non-reentrant. Expat callbacks
+        // are synchronous, cannot retain the handler or any borrowed byte view,
+        // and all callback/observation pointers are cleared before return.
+        unsafe {
+            let ok = match obs {
+                None => newt_xml_feed(
+                    parser.as_ptr(),
+                    bytes.as_ptr().cast(),
+                    len,
+                    c_int::from(final_chunk),
+                    (&mut context as *mut Context<'_>).cast(),
+                    start,
+                    end,
+                    text,
+                ),
+                Some(observation) => newt_xml_feed_observed(
+                    parser.as_ptr(),
+                    bytes.as_ptr().cast(),
+                    len,
+                    c_int::from(final_chunk),
+                    (&mut context as *mut Context<'_>).cast(),
+                    start,
+                    end,
+                    text,
+                    &mut observation.root_index,
+                    &mut observation.cdata_depth,
+                ),
+            };
+            ok != 0
+        }
+    }
+}
 impl ParserBackend for Expat {
     fn producer_backend(&mut self) -> Option<&mut dyn ProducerBackend> { Some(self) }
     fn create(&mut self) -> bool {
@@ -124,27 +188,7 @@ impl ParserBackend for Expat {
         self.parser.is_some()
     }
     fn feed(&mut self, bytes: &[u8], final_chunk: bool, handler: &mut dyn Handler) -> bool {
-        let Some(parser) = self.parser else {
-            return false;
-        };
-        let Ok(len) = c_int::try_from(bytes.len()) else {
-            return false;
-        };
-        let mut context = Context { handler };
-        // Parser is uniquely owned and non-reentrant. Expat callbacks are
-        // synchronous and cannot retain the handler or any borrowed byte view.
-        unsafe {
-            newt_xml_feed(
-                parser.as_ptr(),
-                bytes.as_ptr().cast(),
-                len,
-                c_int::from(final_chunk),
-                (&mut context as *mut Context<'_>).cast(),
-                start,
-                end,
-                text,
-            ) != 0
-        }
+        self.feed_with(bytes, final_chunk, handler, None)
     }
     fn close(&mut self) {
         if let Some(parser) = self.parser.take() {
@@ -173,6 +217,15 @@ impl ProducerBackend for Expat {
     fn current_byte_index(&self) -> i64 {
         self.parser
             .map_or(-1, |p| unsafe { newt_xml_index(p.as_ptr()) })
+    }
+    fn feed_observed(
+        &mut self,
+        bytes: &[u8],
+        final_chunk: bool,
+        handler: &mut dyn Handler,
+        observation: &mut ParseObservation,
+    ) -> Option<bool> {
+        Some(self.feed_with(bytes, final_chunk, handler, Some(observation)))
     }
 }
 
