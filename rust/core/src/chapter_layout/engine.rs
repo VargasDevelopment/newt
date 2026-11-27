@@ -1945,7 +1945,10 @@ impl<'a> EngineState<'a> {
             let sp0 = self.storage.spans[segs[0].span];
             self.apply_seg_gap_case(&segs[0], sp0, justify, per, &mut remainder, &mut x);
         }
-        if before.0 == 0 {
+        // With picture notes a placed image owns a position, so a page it opens
+        // keeps the image's start; parity keeps the SDK's text-line start.
+        let image_opened_page = self.params.picture_notes && self.image_count > 0;
+        if before.0 == 0 && !image_opened_page {
             self.page_chars = match self.picture_note_at {
                 Some(at) => at,
                 None => self.chars.wrapping_add(count(&self.storage.text[..r.start])),

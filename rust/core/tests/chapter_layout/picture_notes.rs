@@ -226,9 +226,43 @@ fn the_note_is_italic_at_the_element_stack_limit() {
     assert!(lines[1].2.iter().all(|f| f & ITALIC == 0), "italic leaks past the note");
 }
 
+/// Finds every picture, 8 px square, so `<img>` is placed instead of noted.
+struct Placed;
+impl Images for Placed {
+    fn resolve(&mut self, src: &[u8], path: &mut [u8], _: &mut [u8]) -> Option<(usize, usize)> {
+        path[..src.len()].copy_from_slice(src);
+        Some((src.len(), 0))
+    }
+    fn probe(&mut self, _: &[u8]) -> Option<(u32, u32)> {
+        Some((8, 8))
+    }
+}
+
+#[test]
+fn a_placed_picture_keeps_the_start_of_the_page_it_opens() {
+    // Page 0 is full of text, so the picture opens page 1. The page must start
+    // at the picture's position, not at the text after it, or a place saved
+    // at the picture opens page 0.
+    let book = |e: &mut Engine<'_>| {
+        e.image_source = Box::leak(Box::new(Placed));
+        para(e, b"aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll mmmm nnnn oooo pppp qqqq rrrr ssss tttt");
+        img(e, None);
+        para(e, b"after");
+    };
+    let starts = |sink: &Capture| sink.pages.iter().map(|p| p.1).collect::<Vec<_>>();
+    let (off, _) = layout_in(false, 40, book);
+    let (on, on_chars) = layout_in(true, 40, book);
+    assert_eq!(starts(&off).len(), 2, "the picture should open page 1: {:?}", starts(&off));
+    assert_eq!(starts(&on), starts(&off));
+    assert_eq!(on.images, [1]);
+    assert!(lines(&on).iter().all(|(_, t, _)| !t.contains("Picture")), "a placed picture gets no note");
+    assert_eq!(on_chars, starts(&on)[1] + 1 + 5, "the picture takes one position before \"after\"");
+}
+
 #[test]
 fn a_long_alt_is_cut_on_a_character_boundary() {
-    let long = "é".repeat(100);
+    // The leading ASCII byte puts byte 160 inside an "é", so the cut must step back.
+    let long = format!("a{}", "é".repeat(100));
     let PictureNote::Alt { text, cut: true } = PictureNote::of(Some(long.as_bytes())) else { panic!() };
     assert!(text.len() <= PictureNote::MAX_ALT && core::str::from_utf8(text).is_ok());
     let short = "a".repeat(PictureNote::MAX_ALT);
