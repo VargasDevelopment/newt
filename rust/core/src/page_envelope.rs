@@ -5,9 +5,10 @@
 // Pages (.fibp) written under v1 can contain split lines and duplicate
 // character starts; v2 can drop links past a page's link slots; v3 can place
 // oversized inline runs over the previous line or past the top margin; v4
-// predates CSS small-caps and text-transform layout. Book indexes (.IDX and
-// legacy .fibx) carry no rendered page layout and stay valid from v3 onward.
-const VERSION: u32 = 5;
+// predates CSS small-caps and text-transform layout; v5 skips pictures with no
+// note. Book indexes (.IDX and legacy .fibx) carry no rendered page layout and
+// stay valid from v3 onward.
+const VERSION: u32 = 6;
 const INDEX_MIN_VERSION: u32 = 3;
 
 pub fn is_index_name(name: Option<&[u8]>) -> bool {

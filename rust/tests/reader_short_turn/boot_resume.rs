@@ -18,6 +18,13 @@ use upgrade::{with_pages, with_router};
 fn open(panel: &mut newt_c3_board::ReaderPanel<'_, '_>, io: &UiIo, card: &mut card::Card, bytes: &[u8],
     settings: ViewSettings, saved: Progress, policy: RestorePolicy,
 ) -> Option<u32> {
+    open_page(panel, io, card, bytes, settings, saved, policy).map(|page| page.char_start)
+}
+
+/// The page the real opener shows for `saved` under `settings`, or None when it refuses.
+pub(super) fn open_page(panel: &mut newt_c3_board::ReaderPanel<'_, '_>, io: &UiIo, card: &mut card::Card,
+    bytes: &[u8], settings: ViewSettings, saved: Progress, policy: RestorePolicy,
+) -> Option<newt_phased_reader::PageInfo> {
     let mut raw = Source(bytes.to_vec());
     let mut digest = [0; 32];
     assert!(hash(&raw.0, &mut digest));
@@ -49,7 +56,7 @@ fn open(panel: &mut newt_c3_board::ReaderPanel<'_, '_>, io: &UiIo, card: &mut ca
             ports.panel, ports.backend, ports.cache.store, None,
             newt_phased_reader::index_build::Verification::Verified).unwrap();
         if owner.open_physical(&indexed, &mut reader, &mut source, saved.book, saved, policy, now(), &mut ports) {
-            shown = Some(reader.info().char_start);
+            shown = Some(reader.info());
         }
         reader.close();
     });

@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 use crate::member_check::Checked;
-use super::{engine::{Engine, EngineState}, types::Backend};
+use super::{engine::{Engine, EngineState, StartAttrs}, text::local, types::Backend};
 use crate::{
     xml_session::{
         Attributes, Handler, NoPolicy, ParserBackend, Resources, SessionPolicy, XmlStream,
@@ -24,8 +24,15 @@ pub struct OperationHandler<'e, 'a, 'b> {
 }
 impl Handler for OperationHandler<'_, '_, '_> {
     fn start_element(&mut self, n: &[u8], atts: &mut dyn Attributes) {
-        self.engine.start(self.backend, n, atts.local(b"class"), atts.local(b"style"),
-            atts.local(b"id"), atts.local(b"href"), atts.local(b"src"))
+        self.engine.start_tag(self.backend, n, StartAttrs {
+            class: atts.local(b"class"),
+            inline: atts.local(b"style"),
+            id: atts.local(b"id"),
+            href: atts.local(b"href"),
+            src: atts.local(b"src"),
+            // Only <img> carries alt; skip the scan on every other tag.
+            alt: if local(n) == b"img" { atts.local(b"alt") } else { None },
+        })
     }
     fn end_element(&mut self, n: &[u8]) { self.engine.end(self.backend, n) }
     fn text(&mut self, t: &[u8]) { self.engine.text(self.backend, t) }

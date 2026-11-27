@@ -172,9 +172,12 @@ fn agreement_variant(source: &mut impl BookSource, name: &str, buffer_bytes: usi
                 assert_eq!(semantic_builder::build(parts.workflow.source, bytes, h.spine, &identity.digest,
                     &mut store, &mut indexed_counts, metadata, parse, resources, None, None, || {}, || {}), Status::Ok);
             });
+            let policy = newt_core::book_semantic_index::POLICY_VERSION;
             for spine in 0..h.spine {
-                assert_eq!(indexed_counts.chapter_count(&identity.digest, 1, spine),
-                    oracle_counts.chapter_count(&identity.digest, 1, spine), "{name}: indexed semantic counts");
+                let oracle = oracle_counts.chapter_count(&identity.digest, policy, spine);
+                assert!(oracle.is_some(), "{name}: no semantic count for spine {spine}");
+                assert_eq!(indexed_counts.chapter_count(&identity.digest, policy, spine), oracle,
+                    "{name}: indexed semantic counts");
             }
             let style_book = styles::Book { manifest: &parts.manifest[..parts.result.manifest_count],
                 arena: parts.arena, catalog: Some(view) };

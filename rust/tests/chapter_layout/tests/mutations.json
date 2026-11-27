@@ -34,8 +34,8 @@
   {
     "id": "attribute-copy-budget",
     "path": "core/session.rs",
-    "old": "impl Handler for OperationHandler<'_, '_, '_> {\n    fn start_element(&mut self, n: &[u8], atts: &mut dyn Attributes) {\n        self.engine.start(self.backend, n,",
-    "new": "impl Handler for OperationHandler<'_, '_, '_> {\n    fn start_element(&mut self, n: &[u8], atts: &mut dyn Attributes) {\n        while let Some((_, value)) = atts.next() {\n            if value.len() > 65536 { self.engine.failed = true; return; }\n        }\n        self.engine.start(self.backend, n,",
+    "old": "impl Handler for OperationHandler<'_, '_, '_> {\n    fn start_element(&mut self, n: &[u8], atts: &mut dyn Attributes) {\n        self.engine.start_tag(self.backend, n,",
+    "new": "impl Handler for OperationHandler<'_, '_, '_> {\n    fn start_element(&mut self, n: &[u8], atts: &mut dyn Attributes) {\n        while let Some((_, value)) = atts.next() {\n            if value.len() > 65536 { self.engine.failed = true; return; }\n        }\n        self.engine.start_tag(self.backend, n,",
     "witness": "large-suppressed-attribute",
     "family": "layout"
   },

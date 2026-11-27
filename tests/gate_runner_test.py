@@ -420,6 +420,7 @@ class PlanTests(unittest.TestCase):
                                'preview_reader_reflow_test.py',
                                'preview_reader_inline_ascent_test.py',
                                'preview_reader_small_caps_test.py',
+                               'preview_reader_picture_notes_test.py',
                                'preview_holiday_outfits_test.py',
                                'preview_card_app_test.py', 'preview_cover_test.py', 'preview_cover_status_test.py',
                                'gate_previews.py')]

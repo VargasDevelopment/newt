@@ -136,9 +136,57 @@ def check_recovery(run, command, workspace, out, positive, *, controls):
     assert 'PASS old Pages data misses, saved content resumes, and only Pages rebuilds' in upgrade
     resume = run([positive, dense, '--boot-resume'])
     assert 'PASS boot restore policy reopens sleep and power-on pages under the durable settings' in resume
-    print(policy + upgrade + resume, end='')
+    pictures = out / 'fixtures/pictures.epub'
+    write_pictures(pictures)
+    restore = run([positive, pictures, '--picture-restore'])
+    assert 'PASS picture pages reopen' in restore, restore
+    print(policy + upgrade + resume + restore, end='')
     if controls:
         recovery_controls(run, command, dense, workspace, out)
+
+
+def write_pictures(path):
+    """Generated CC0 EPUB for #179's restore checks; see picture_restore.rs.
+
+    Spine 0 holds only pictures, spine 1 opens with more than a page of them,
+    spine 2 has three pictures (one decorative, alt="", which takes no
+    position) before long text.
+    """
+    import zipfile
+    words = ' '.join(f'word{n}' for n in range(600))
+    chapters = [
+        ''.join(f'<p><img src="p.png" alt="Plate {n}, the harbor at dusk"/></p>' for n in range(40)),
+        ''.join(f'<img src="p.png" alt="Chart {n}"/>' for n in range(40)) + '<p>The survey ends here.</p>',
+        '<p>Before the pictures.</p><img src="p.png"/><img src="p.png" alt=""/>'
+        '<img src="p.png" alt="Pier"/><img src="p.png" alt="Lamp"/>'
+        + ''.join(f'<p>{words}</p>' for _ in range(3)),
+    ]
+    with zipfile.ZipFile(path, 'w') as zf:
+        zf.writestr('mimetype', 'application/epub+zip', compress_type=zipfile.ZIP_STORED)
+        zf.writestr('META-INF/container.xml',
+                    '<?xml version="1.0"?><container version="1.0" '
+                    'xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>'
+                    '<rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>'
+                    '</rootfiles></container>')
+        items, spine = [], []
+        for n, body in enumerate(chapters):
+            zf.writestr(f'OEBPS/c{n}.xhtml', '<?xml version="1.0" encoding="UTF-8"?>'
+                        '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>c</title></head>'
+                        f'<body>{body}</body></html>')
+            items.append(f'<item id="c{n}" href="c{n}.xhtml" media-type="application/xhtml+xml"/>')
+            spine.append(f'<itemref idref="c{n}"/>')
+        zf.writestr('OEBPS/nav.xhtml', '<?xml version="1.0" encoding="UTF-8"?>'
+                    '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">'
+                    '<head><title>Contents</title></head><body><nav epub:type="toc"><ol>'
+                    + ''.join(f'<li><a href="c{n}.xhtml">Part {n}</a></li>' for n in range(len(chapters)))
+                    + '</ol></nav></body></html>')
+        zf.writestr('OEBPS/content.opf', '<?xml version="1.0" encoding="UTF-8"?>'
+                    '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">'
+                    '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                    '<dc:identifier id="id">urn:newt-test:picture-restore-cc0</dc:identifier>'
+                    '<dc:title>Harbor Plates</dc:title><dc:language>en</dc:language></metadata><manifest>'
+                    '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>'
+                    + ''.join(items) + '</manifest><spine>' + ''.join(spine) + '</spine></package>')
 
 
 def composition_controls(run, command, epub, workspace, out):

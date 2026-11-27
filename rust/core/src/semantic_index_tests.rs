@@ -1,7 +1,8 @@
 use super::*;
+const P: u32 = POLICY_VERSION;
 
 fn start(c: &mut Counter, name: &[u8]) {
-    c.start_element(name, false, false);
+    c.start_element(name, false, false, None);
 }
 #[test]
 fn extraction_events_and_finish() {
@@ -16,7 +17,7 @@ fn extraction_events_and_finish() {
     c.end_element(b"title");
     c.end_element(b"script");
     c.text(b"\xc3\xa9");
-    c.start_element(b"span", true, false);
+    c.start_element(b"span", true, false, None);
     c.text(b"hidden");
     start(&mut c, b"br");
     c.end_element(b"br");
@@ -67,15 +68,18 @@ fn every_boundary_tag_and_image_presence() {
         c.text(b" c");
         assert_eq!(c.finish(), Some(if name == b"hr" { 4 } else { 3 }));
     }
+    // A picture with a source breaks the text and, unless its alt marks it
+    // decorative, takes one position (#179); "a b" without a source is 3.
     for name in [b"img".as_slice(), b"image"] {
-        for source in [false, true] {
+        for (source, alt, chars) in [(false, None, 3), (true, None, 3), (true, Some(&b"Map"[..]), 3),
+            (true, Some(&b""[..]), 2), (true, Some(&b" \t "[..]), 2)] {
             let mut c = Counter::default();
             start(&mut c, b"body");
             c.text(b"a ");
-            c.start_element(name, false, source);
+            c.start_element(name, false, source, alt);
             c.end_element(name);
             c.text(b" b");
-            assert_eq!(c.finish(), Some(if source { 2 } else { 3 }));
+            assert_eq!(c.finish(), Some(chars), "{name:?} source={source} alt={alt:?}");
         }
     }
 }
@@ -87,8 +91,8 @@ fn depth_fifteen_and_overflow_inherit() {
         for _ in 0..14 {
             start(&mut c, b"span");
         }
-        c.start_element(b"span", hidden_top, false);
-        c.start_element(b"span", !hidden_top, false);
+        c.start_element(b"span", hidden_top, false, None);
+        c.start_element(b"span", !hidden_top, false, None);
         c.text(b"x");
         c.end_element(b"span");
         c.text(b"y");
@@ -155,64 +159,64 @@ fn all_digest_bytes_and_policy_are_binding() {
     let digest = [0x5a; 32];
     for byte in 0..32 {
         let mut i = Index::default();
-        assert!(i.bind(&digest, 1, 1));
-        assert!(i.record(&digest, 1, 0, 9));
+        assert!(i.bind(&digest, P, 1));
+        assert!(i.record(&digest, P, 0, 9));
         let mut other = digest;
         other[byte] ^= 1;
-        assert!(!i.complete(&other, 1));
-        assert_eq!(i.spine_count(&other, 1), 0);
-        assert_eq!(i.chapter_count(&other, 1, 0), None);
-        assert_eq!(i.project(&other, 1, 0, 0), None);
-        assert!(i.complete(&digest, 1));
-        assert!(!i.record(&other, 1, 0, 9));
-        assert!(!i.complete(&digest, 1));
+        assert!(!i.complete(&other, P));
+        assert_eq!(i.spine_count(&other, P), 0);
+        assert_eq!(i.chapter_count(&other, P, 0), None);
+        assert_eq!(i.project(&other, P, 0, 0), None);
+        assert!(i.complete(&digest, P));
+        assert!(!i.record(&other, P, 0, 9));
+        assert!(!i.complete(&digest, P));
     }
     let mut i = Index::default();
-    i.bind(&digest, 1, 1);
-    i.record(&digest, 1, 0, 9);
-    assert!(!i.complete(&digest, 2));
-    assert_eq!(i.spine_count(&digest, 2), 0);
-    assert_eq!(i.chapter_count(&digest, 2, 0), None);
-    assert_eq!(i.project(&digest, 2, 0, 0), None);
-    assert!(!i.record(&digest, 2, 0, 9));
-    assert_eq!(i.spine_count(&digest, 1), 0);
+    i.bind(&digest, P, 1);
+    i.record(&digest, P, 0, 9);
+    assert!(!i.complete(&digest, P + 1));
+    assert_eq!(i.spine_count(&digest, P + 1), 0);
+    assert_eq!(i.chapter_count(&digest, P + 1, 0), None);
+    assert_eq!(i.project(&digest, P + 1, 0, 0), None);
+    assert!(!i.record(&digest, P + 1, 0, 9));
+    assert_eq!(i.spine_count(&digest, P), 0);
 }
 #[test]
 fn canonical_cap_holes_conflicts_and_wide_sum() {
     let d = [7; 32];
     let mut i = Index::default();
-    assert!(!i.bind(&d, 1, 0));
-    assert!(!i.bind(&d, 2, 1));
-    assert!(!i.bind(&d, 1, 1025));
-    assert!(i.bind(&d, 1, 1024));
-    assert!(i.record(&d, 1, 1023, u32::MAX));
-    assert_eq!(i.chapter_count(&d, 1, 0), None);
-    assert_eq!(i.chapter_count(&d, 1, 1023), Some(u32::MAX));
-    assert_eq!(i.project(&d, 1, 1023, 0), None);
+    assert!(!i.bind(&d, P, 0));
+    assert!(!i.bind(&d, P + 1, 1));
+    assert!(!i.bind(&d, P, 1025));
+    assert!(i.bind(&d, P, 1024));
+    assert!(i.record(&d, P, 1023, u32::MAX));
+    assert_eq!(i.chapter_count(&d, P, 0), None);
+    assert_eq!(i.chapter_count(&d, P, 1023), Some(u32::MAX));
+    assert_eq!(i.project(&d, P, 1023, 0), None);
     for spine in 0..1023 {
-        assert!(i.record(&d, 1, spine, u32::MAX));
+        assert!(i.record(&d, P, spine, u32::MAX));
     }
-    assert!(i.complete(&d, 1));
-    assert!(i.record(&d, 1, 0, u32::MAX));
+    assert!(i.complete(&d, P));
+    assert!(i.record(&d, P, 0, u32::MAX));
     let total = 1024 * u64::from(u32::MAX);
-    assert_eq!(i.project(&d, 1, 1023, u32::MAX), Some((total, total)));
-    assert_eq!(i.project(&d, 1, 1024, 0), None);
-    assert!(!i.record(&d, 1, 0, 0));
-    assert_eq!(i.spine_count(&d, 1), 0);
-    i.bind(&d, 1, 1);
-    assert!(!i.record(&d, 1, 1, 0));
-    assert_eq!(i.spine_count(&d, 1), 0);
-    i.bind(&d, 1, 1);
-    i.record(&d, 1, 0, 0);
-    assert!(i.complete(&d, 1));
-    assert_eq!(i.project(&d, 1, 0, 0), None);
-    i.bind(&d, 1, 2);
-    i.record(&d, 1, 1, 3);
-    i.record(&d, 1, 0, 0);
-    assert_eq!(i.project(&d, 1, 1, 3), Some((3, 3)));
-    assert_eq!(i.project(&d, 1, 1, 4), None);
+    assert_eq!(i.project(&d, P, 1023, u32::MAX), Some((total, total)));
+    assert_eq!(i.project(&d, P, 1024, 0), None);
+    assert!(!i.record(&d, P, 0, 0));
+    assert_eq!(i.spine_count(&d, P), 0);
+    i.bind(&d, P, 1);
+    assert!(!i.record(&d, P, 1, 0));
+    assert_eq!(i.spine_count(&d, P), 0);
+    i.bind(&d, P, 1);
+    i.record(&d, P, 0, 0);
+    assert!(i.complete(&d, P));
+    assert_eq!(i.project(&d, P, 0, 0), None);
+    i.bind(&d, P, 2);
+    i.record(&d, P, 1, 3);
+    i.record(&d, P, 0, 0);
+    assert_eq!(i.project(&d, P, 1, 3), Some((3, 3)));
+    assert_eq!(i.project(&d, P, 1, 4), None);
     assert!(!i.bind(&d, 0, 1));
-    assert_eq!(i.chapter_count(&d, 1, 1), None);
+    assert_eq!(i.chapter_count(&d, P, 1), None);
 }
 #[test]
 fn c_string_local_name_and_unsigned_depth_wrap() {

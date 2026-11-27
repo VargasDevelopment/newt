@@ -56,11 +56,13 @@ struct Capture {
     page_byte_counts: Vec<usize>,
     links: Vec<(u32, Vec<u8>, Vec<u8>)>,
     link_rects: Vec<(u32, i16, i16, u16, u16)>,
+    /// The page index of each placed image.
+    images: Vec<u32>,
     stop: bool,
 }
 impl Sink for Capture {
     fn page(&mut self, p: Page<'_>) -> bool {
-        assert!(p.images.is_empty());
+        self.images.extend(p.images.iter().map(|_| p.index));
         self.links.extend(p.links.iter().map(|link| (
             p.index,
             link.target.get(p.bytes).to_vec(),
@@ -241,6 +243,8 @@ mod links;
 mod inline_ascent;
 #[path = "chapter_layout/small_caps.rs"]
 mod small_caps;
+#[path = "chapter_layout/picture_notes.rs"]
+mod picture_notes;
 
 fn two_lines_on_separate_pages(page_cap: usize, run_cap: usize) {
     let mut sink = Capture::default();

@@ -4,7 +4,8 @@ impl Handler for SemanticHandler {
     fn start_element(&mut self, name: &[u8], attributes: &mut dyn Attributes) {
         let hidden = crate::css::parse_inline_style(attributes.local(b"style")).display_none == 1;
         let image = attributes.local(b"src").is_some() || attributes.local(b"href").is_some();
-        self.0.start_element(name, hidden, image);
+        let alt = if crate::chapter_layout::text::local(name) == b"img" { attributes.local(b"alt") } else { None };
+        self.0.start_element(name, hidden, image, alt);
     }
     fn end_element(&mut self, name: &[u8]) {
         self.0.end_element(name);
