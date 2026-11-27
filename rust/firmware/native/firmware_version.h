@@ -1,3 +1,3 @@
 #pragma once
 // Firmware release label only. App/package/protocol versions are independent.
-#define NEWT_FIRMWARE_VERSION "0.7.1"
+#define NEWT_FIRMWARE_VERSION "0.7.2-dev.2611270625"
