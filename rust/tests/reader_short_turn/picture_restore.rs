@@ -25,14 +25,22 @@ pub fn check(bytes: Vec<u8>) {
         let mut card = card::Card::default();
         let mut open = |saved, policy| open_page(panel, io, &mut card, &bytes, settings, saved, policy);
         // Each page's start, found by opening every position (short chapters).
+        // A new start must be the next physical page, and the walk must reach
+        // every page, so no page hides behind a shared start.
         let mut starts = |spine| {
             let mut starts: Vec<u32> = Vec::new();
             let mut character = 0;
+            let mut count = 0;
             while let Some(page) = open(at(spine, character), RestorePolicy::Validated) {
-                if starts.last() != Some(&page.char_start) { starts.push(page.char_start); }
+                if starts.last() != Some(&page.char_start) {
+                    assert_eq!(page.page as usize, starts.len(), "spine {spine}: page {} unreachable", starts.len());
+                    starts.push(page.char_start);
+                }
+                count = page.page_count;
                 character += 1;
                 if character >= page.total_chars { break; }
             }
+            assert_eq!(starts.len(), count as usize, "spine {spine}: pages share a start: {starts:?}");
             starts
         };
         let only = starts(0);

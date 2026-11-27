@@ -177,6 +177,37 @@ fn a_picture_only_chapter_has_positions_to_restore() {
 }
 
 #[test]
+fn a_note_longer_than_a_page_never_starts_two_pages() {
+    // Pages hold 5 lines of 20; this note needs 9. Opening a page, it is cut
+    // at that page's end, or the next page would share its start. Starting
+    // mid-page, it may run onto one more page.
+    let alt = [b'w'; PictureNote::MAX_ALT];
+    for lead in [None, Some(&b"aaaa bbbb cccc dddd"[..])] {
+        let (sink, chars) = layout_in(true, 40, |e| {
+            if let Some(lead) = lead {
+                para(e, lead);
+            }
+            img(e, Some(&alt));
+            para(e, b"after");
+        });
+        let starts: Vec<_> = sink.pages.iter().map(|p| p.1).collect();
+        assert!(starts.windows(2).all(|w| w[0] < w[1]), "pages share a locator: {starts:?} (lead {lead:?})");
+        let lines = lines(&sink);
+        assert_eq!(lines.last().unwrap().1, "after");
+        let note: Vec<_> = lines.iter().filter(|(_, _, flags)| flags[0] & ITALIC != 0).collect();
+        assert!(note.len() < 9, "the note was not cut (lead {lead:?})");
+        // Opening page 0, the note keeps exactly that page; after the lead it
+        // spans two pages at most.
+        let pages = note.last().unwrap().0 - note[0].0 + 1;
+        assert_eq!(pages, if lead.is_some() { 2 } else { 1 }, "lead {lead:?}");
+        if lead.is_none() {
+            assert_eq!(note.len(), 5);
+        }
+        assert!(starts.iter().all(|&s| s < chars));
+    }
+}
+
+#[test]
 fn the_note_is_italic_at_the_element_stack_limit() {
     // 16 element slots: body's 15 spans fill them, so the <img> overflows.
     let (sink, _) = layout(true, |e| {

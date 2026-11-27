@@ -301,8 +301,8 @@ pub enum PictureNote<'x> {
     Alt { text: &'x [u8], cut: bool },
 }
 impl<'x> PictureNote<'x> {
-    /// Keeps a note well inside one page at every text size, so a page can
-    /// start inside a note but never two pages in a row.
+    /// Keeps a note short; layout still stops a note that would start a
+    /// second page (engine `note_fills_its_page`).
     pub const MAX_ALT: usize = 160;
     pub fn of(alt: Option<&'x [u8]>) -> Self {
         let Some(alt) = alt.map(<[u8]>::trim_ascii) else { return Self::Plain };

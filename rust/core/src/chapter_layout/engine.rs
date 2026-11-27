@@ -1647,7 +1647,7 @@ impl<'a> EngineState<'a> {
             };
             let remain = self.line_count - idx;
             if avail == 0 {
-                if !content {
+                if !content || self.note_fills_its_page() {
                     break;
                 }
                 self.emit_page(backend);
@@ -1660,6 +1660,9 @@ impl<'a> EngineState<'a> {
             if idx == 0 && continuation.is_none() && take < remain
                 && take < usize::from(self.params.orphan) && content
             {
+                if self.note_fills_its_page() {
+                    break;
+                }
                 self.emit_page(backend);
                 continue;
             }
@@ -1691,6 +1694,9 @@ impl<'a> EngineState<'a> {
                 }
             }
             if idx < self.line_count && !self.failed {
+                if self.note_fills_its_page() {
+                    break;
+                }
                 self.emit_page(backend)
             }
         }
@@ -1714,6 +1720,12 @@ impl<'a> EngineState<'a> {
             self.carried_margin_px = 0;
         }
         carry_from
+    }
+    /// Newt (#179): the open page starts at the note being laid out, so
+    /// another page would share its start and one of the two could never be
+    /// reopened. The note stops here; its remaining lines are dropped.
+    fn note_fills_its_page(&self) -> bool {
+        matches!(self.picture_note_at, Some(at) if self.run_count > 0 && self.page_chars == at)
     }
     fn refused_line(&self) -> LinePlacement {
         if self.run_count > 0 || self.image_count > 0 {
@@ -2136,8 +2148,9 @@ impl<'a> EngineState<'a> {
     }
     /// Newt (#179): a non-decorative picture takes one chapter position, drawn
     /// or not, matching the index counter. One the reader can't draw is shown
-    /// as an italic note at text size; every note line sits at the picture's
-    /// position, so a page starting inside a note still has its own locator.
+    /// as an italic note at text size. Every note line sits at the picture's
+    /// position, and a note runs onto at most one more page
+    /// (`note_fills_its_page`), so every page has its own locator.
     fn take_picture_position(&mut self, backend: &mut dyn Backend, placed: bool, note: PictureNote<'_>) {
         if note == PictureNote::Decorative {
             return;
@@ -2146,9 +2159,11 @@ impl<'a> EngineState<'a> {
         if !placed {
             self.picture_note_at = Some(at);
             // Set the style in place: a push at the element-stack limit only
-            // counts overflow and would lose it.
-            let element = self.storage.elements[self.top];
+            // counts overflow and would lose it. Line height follows the
+            // paragraph, so it goes to text size too.
+            let (element, paragraph) = (self.storage.elements[self.top], self.paragraph);
             self.storage.elements[self.top] = Element { size: 100, flags: element.flags | ITALIC, ..element };
+            self.paragraph.size = 100;
             match note {
                 PictureNote::Alt { text, cut } => {
                     self.text(backend, b"[Picture: ");
@@ -2158,7 +2173,7 @@ impl<'a> EngineState<'a> {
                 _ => self.text(backend, b"[Picture]"),
             }
             self.flush(backend);
-            self.storage.elements[self.top] = element;
+            (self.storage.elements[self.top], self.paragraph) = (element, paragraph);
             self.picture_note_at = None;
         }
         self.chars = at.wrapping_add(1);
