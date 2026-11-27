@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 4068288,
+      "flash_bytes": 4068528,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "026b9827a5fe050f59bad06d6985e46b3795c124",
+      "source_revision": "8adb9b6c651427d1736083bd7747948df813139e",
       "before": 4067648,
-      "after": 4068288,
-      "reason": "+640 B over the 4,067,648 B ceiling recorded at 4d8b19dd (#194): #179 lays out an italic note where the reader skips a picture (\"[Picture: <alt>]\", or \"[Picture]\"), taking no chapter positions, and passes <img> alt through a StartAttrs carrier. An nm diff of the two clean ELFs gives +628 B of code: EngineState::note_skipped_picture +338; EngineState::text outlined (+568) now that the note calls it too, while OperationHandler::text shrinks 576 -> 26 B (net +18); OperationHandler::start_element 3,248 -> 3,364 B (+116, the alt lookup on <img>); EngineState::new +50 and Engine::new +44 (the new field); place_line +34 (page starts inside a note); small inlining shifts elsewhere; and 12 B of image alignment. Control: a clean build of 2e04ddc6 (main without the change) measures 4,067,648 B. Clean regional DEV USB build with the pinned Python at 026b9827: 4,068,288 B. RAM 124,096 -> 124,096 B (+0 B), RTC 300 -> 300 B (+0 B), lent Wi-Fi RAM 22,528 -> 22,528 B (+0 B), every compiler stack frame in the report unchanged (open_selected_profile stays 656 B). Usable app space 7,016,448 B; headroom 2,948,800 B (42.03%) -> 2,948,160 B (42.02%). No memory floor or stack ceiling moves.",
-      "reviewer": "cross-family review (Astra xhigh) and Codex review of the #179 PR; Lead review pending"
+      "after": 4068528,
+      "reason": "+880 B over the 4,067,648 B ceiling recorded at 4d8b19dd (#194), for all of PR #198 (#179). The reader lays out an italic note where it skips a picture (\"[Picture: <alt>]\", or \"[Picture]\" with no alt; alt=\"\" is decorative and shows nothing), and each non-decorative picture takes one chapter position, counted the same way by the index counter. First commit 026b9827 measured 4,068,288 B (+640): the note (+338), EngineState::text outlined (net +18), the <img> alt lookup in OperationHandler::start_element (+116), new field init in EngineState::new/Engine::new (+94), place_line +34. Review fix 8adb9b6c measures 4,068,528 B (+240 more); nm diff against the 21fce47b ELF gives +178 B of code: EngineState::take_picture_position +384 replaces note_skipped_picture -338 (one position per picture, in-place note style at the element-stack limit), PictureNote::of +186 (shared alt decision and 160 B cap), OperationHandler::start_element -32, finish_first_paint -22; the rest is rodata and alignment. Control: a clean build of 2e04ddc6 (main without the change) measures 4,067,648 B. Clean regional DEV USB build with the pinned Python at 8adb9b6c: 4,068,528 B. RAM 124,096 -> 124,096 B (+0 B), RTC 300 -> 300 B (+0 B), lent Wi-Fi RAM 22,528 -> 22,528 B (+0 B). Usable app space 7,016,448 B; headroom 2,948,800 B (42.03%) -> 2,947,920 B (42.01%). No memory floor or stack ceiling moves.",
+      "reviewer": "PR #198: first Astra xhigh review found 2 blockers, fixed in 8adb9b6c; fresh Astra xhigh review, Codex bot review and Lead review pending"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",
