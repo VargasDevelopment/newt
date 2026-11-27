@@ -35,8 +35,9 @@ pub struct Params<'a> {
     pub embedded_styles: bool,
     pub focus: bool,
     pub inline_ascent: bool,
-    /// Newt: lay out a short italic note where a picture can't be placed
-    /// (#179). Off keeps FreeInk's silent skip for the parity traces.
+    /// Newt (#179): lay out a short italic note where a picture can't be
+    /// placed, and give every non-decorative picture one chapter position.
+    /// Off keeps FreeInk's silent skip for the parity traces.
     pub picture_notes: bool,
     pub stylesheet: Option<CssStylesheet<'a>>,
 }
@@ -284,5 +285,35 @@ impl Storage<'_> {
             }
         }
         Ok(())
+    }
+}
+
+/// Newt (#179): what stands in for a picture the reader can't draw. Layout and
+/// the chapter character counter both decide through `of`, so a picture takes
+/// a position in one exactly when it does in the other.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PictureNote<'x> {
+    /// alt="" (or blank) marks a decorative picture: no note, no position.
+    Decorative,
+    /// No alt at all: "[Picture]".
+    Plain,
+    /// Trimmed alt, at most `MAX_ALT` bytes; `cut` when it was longer.
+    Alt { text: &'x [u8], cut: bool },
+}
+impl<'x> PictureNote<'x> {
+    /// Keeps a note well inside one page at every text size, so a page can
+    /// start inside a note but never two pages in a row.
+    pub const MAX_ALT: usize = 160;
+    pub fn of(alt: Option<&'x [u8]>) -> Self {
+        let Some(alt) = alt.map(<[u8]>::trim_ascii) else { return Self::Plain };
+        if alt.is_empty() {
+            return Self::Decorative;
+        }
+        if alt.len() <= Self::MAX_ALT {
+            return Self::Alt { text: alt, cut: false };
+        }
+        // Back off to a UTF-8 boundary so the cut never splits a character.
+        let end = (0..=Self::MAX_ALT).rev().find(|&i| alt[i] & 0xc0 != 0x80).unwrap_or(0);
+        Self::Alt { text: alt[..end].trim_ascii_end(), cut: true }
     }
 }

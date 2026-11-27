@@ -3,8 +3,9 @@
 
 The reader does not draw pictures inside chapters yet. Where it skips one, it
 shows the picture's alt text in italics ("[Picture: ...]"), or "[Picture]" when
-there is none. Rendered through the real host-built firmware (`newt-preview`)
-and the SD book path, which never finds picture sizes.
+there is none. alt="" marks a decorative picture, which shows nothing.
+Rendered through the real host-built firmware (`newt-preview`) and the SD book
+path, which never finds picture sizes.
 """
 import hashlib
 import os
@@ -23,13 +24,13 @@ import rust_preview  # noqa: E402
 CONFIRM = 1
 
 # Visually inspected real host-preview PBM hash for the synthetic CC0 EPUB below.
-GOLDEN = '135f548e1c37078f56fd51482ca9077d1fbaa383c75f1a4eca5501cac20c190e'
+GOLDEN = '8ed50d83274e145d4033f268f2e2b2414b984fd7e64ae9dfabf87f4664c7697f'
 
 PICTURES = (
     '<p>The keeper climbed the stairs at dusk.</p>\n'
     '<p><img src="lamp.png" alt="A lighthouse lamp &amp; its lens"/></p>\n'
-    '<p>Two plain pictures follow.</p>\n'
-    '<img src="lamp.png" alt=""/><img src="lamp.png"/>\n'
+    '<p>One plain picture follows, between two decorative ones.</p>\n'
+    '<img src="lamp.png" alt=""/><img src="lamp.png"/><img src="lamp.png" alt=""/>\n'
     '<p><a href="#chart"><img src="lamp.png" alt="Harbor chart"/></a></p>\n'
     '<figure><img src="lamp.png" alt="The north pier"/>'
     '<figcaption>Figure 1. The pier at low tide.</figcaption></figure>\n'

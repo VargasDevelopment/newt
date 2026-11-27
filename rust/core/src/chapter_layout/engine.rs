@@ -505,8 +505,9 @@ impl<'a> EngineState<'a> {
             if let Some(s) = src.or(href) {
                 if !self.state().hidden {
                     self.flush(backend);
-                    if !self.place_image(backend, s) && self.params.picture_notes {
-                        self.note_skipped_picture(backend, alt)
+                    let placed = self.place_image(backend, s);
+                    if self.params.picture_notes {
+                        self.take_picture_position(backend, placed, PictureNote::of(alt))
                     }
                 }
             }
@@ -2133,26 +2134,34 @@ impl<'a> EngineState<'a> {
         self.y = (i32::from(self.y) + h + i32::from(self.params.base_size / 2)) as i16;
         true
     }
-    /// Newt (#179): the reader can't draw this picture, so say so in italics,
-    /// with its alt text when it has some, instead of letting the text around
-    /// it join up. Like a placed picture, the note takes no chapter positions,
-    /// so saved places, anchors and progress totals don't move.
-    fn note_skipped_picture(&mut self, backend: &mut dyn Backend, alt: Option<&[u8]>) {
-        let at = self.chars;
-        self.picture_note_at = Some(at);
-        self.push(CssDecl { style_italic: 1, ..CssDecl::default() });
-        match alt.map(<[u8]>::trim_ascii).filter(|alt| !alt.is_empty()) {
-            Some(alt) => {
-                self.text(backend, b"[Picture: ");
-                self.text(backend, alt);
-                self.text(backend, b"]");
-            }
-            None => self.text(backend, b"[Picture]"),
+    /// Newt (#179): a non-decorative picture takes one chapter position, drawn
+    /// or not, matching the index counter. One the reader can't draw is shown
+    /// as an italic note at text size; every note line sits at the picture's
+    /// position, so a page starting inside a note still has its own locator.
+    fn take_picture_position(&mut self, backend: &mut dyn Backend, placed: bool, note: PictureNote<'_>) {
+        if note == PictureNote::Decorative {
+            return;
         }
-        self.flush(backend);
-        self.pop();
-        self.picture_note_at = None;
-        self.chars = at;
+        let at = self.chars;
+        if !placed {
+            self.picture_note_at = Some(at);
+            // Set the style in place: a push at the element-stack limit only
+            // counts overflow and would lose it.
+            let element = self.storage.elements[self.top];
+            self.storage.elements[self.top] = Element { size: 100, flags: element.flags | ITALIC, ..element };
+            match note {
+                PictureNote::Alt { text, cut } => {
+                    self.text(backend, b"[Picture: ");
+                    self.text(backend, text);
+                    self.text(backend, if cut { b"...]" } else { b"]" });
+                }
+                _ => self.text(backend, b"[Picture]"),
+            }
+            self.flush(backend);
+            self.storage.elements[self.top] = element;
+            self.picture_note_at = None;
+        }
+        self.chars = at.wrapping_add(1);
     }
     fn emit_page(&mut self, backend: &mut dyn Backend) {
         let page = Page {

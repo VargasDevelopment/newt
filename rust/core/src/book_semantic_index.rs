@@ -1,8 +1,10 @@
 //! Policy-1 counts from authenticated complete SMALL-profile parser events.
 //! `finish` does not certify EOF, exact chapter consumption, or source validity.
 pub const MAX_SPINE_ITEMS: usize = 1024;
-pub const POLICY_VERSION: u32 = 1;
+/// 2: each non-decorative picture counts one position (#179).
+pub const POLICY_VERSION: u32 = 2;
 pub type Digest = [u8; 32];
+use crate::chapter_layout::types::PictureNote;
 
 #[derive(Default)]
 pub struct Counter {
@@ -67,14 +69,19 @@ impl Counter {
         }
         self.paragraph_bytes += 1;
         if byte & 0xc0 != 0x80 {
-            if let Some(n) = self.characters.checked_add(1) {
-                self.characters = n;
-            } else {
-                self.failed = true;
-            }
+            self.count_position();
         }
     }
-    pub fn start_element(&mut self, raw: &[u8], display_none: bool, image_has_source: bool) {
+    fn count_position(&mut self) {
+        if let Some(n) = self.characters.checked_add(1) {
+            self.characters = n;
+        } else {
+            self.failed = true;
+        }
+    }
+    /// `alt` is an `<img>`'s alt attribute; layout reads the same one.
+    pub fn start_element(&mut self, raw: &[u8], display_none: bool, image_has_source: bool,
+        alt: Option<&[u8]>) {
         if self.failed || self.finished {
             return;
         }
@@ -106,6 +113,9 @@ impl Counter {
             && !self.hidden[self.stack_top]
         {
             self.boundary();
+            if PictureNote::of(alt) != PictureNote::Decorative {
+                self.count_position();
+            }
         }
     }
     pub fn end_element(&mut self, raw: &[u8]) {

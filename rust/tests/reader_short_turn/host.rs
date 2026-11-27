@@ -22,6 +22,7 @@ mod reader_action { pub use newt_core::reader_action_profile::ActionStage; }
 #[path = "upgrade.rs"] mod upgrade;
 #[path = "boot_policy.rs"] mod boot_policy;
 #[path = "boot_resume.rs"] mod boot_resume;
+#[path = "picture_restore.rs"] mod picture_restore;
 
 use core::ffi::CStr;
 use newt_core::{progress::Progress, producer_policy::Stop, zip_window::source::BookSource};
@@ -212,6 +213,10 @@ fn main() {
     let bytes = std::fs::read(path).unwrap();
     if std::env::args().any(|arg| arg == "--boot-resume") {
         boot_resume::check(bytes);
+        return;
+    }
+    if std::env::args().any(|arg| arg == "--picture-restore") {
+        picture_restore::check(bytes);
         return;
     }
     if std::env::args().any(|arg| arg == "--cache-upgrade") {

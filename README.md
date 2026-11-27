@@ -41,6 +41,7 @@ Newt is early alpha software. Expect rough edges, and please
   and it wakes on that page. Book covers show on Home and in Books, but
   pictures inside the chapters aren't shown yet. In their place you see the
   picture's description in italics, or "[Picture]" when it has none.
+  Pictures the book marks as decoration are left out.
 - **Home.** The book you are reading, plus Books, Apps and Settings.
 - **Reading statistics.** Days read and time of day, per book and overall.
   If the card holds CrossInk's reading history, Newt imports it once.
