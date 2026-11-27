@@ -167,6 +167,46 @@ impl<C: ?Sized, S: CacheStorage + ?Sized> CacheStorage for ProducerStore<'_, '_,
             .producer_remaining_credit()
             .map(|credit| credit.saturating_sub(self.buffered_bytes() as u64))
     }
+    fn supports_envelope_read(&self) -> bool {
+        self.base.supports_envelope_read()
+    }
+    fn envelope_read_suspended(&self) -> bool {
+        self.base.envelope_read_suspended()
+    }
+    fn begin_envelope_read(
+        &mut self,
+        name: &[u8],
+        query: &mut newt_core::page_envelope::Query<'_>,
+    ) -> bool {
+        if self.state.used != 0 || !self.cancellation.checkpoint() {
+            return false;
+        }
+        let ok = self.base.begin_envelope_read(name, query);
+        if !ok {
+            return false;
+        }
+        if !self.cancellation.checkpoint() {
+            let _ = self.base.finish_envelope_read(query);
+            return false;
+        }
+        true
+    }
+    fn read_envelope_raw(
+        &mut self,
+        query: &newt_core::page_envelope::Query<'_>,
+        offset: u32,
+        out: &mut [u8],
+    ) -> bool {
+        if self.state.used != 0 || !self.cancellation.checkpoint() {
+            return false;
+        }
+        let ok = self.base.read_envelope_raw(query, offset, out);
+        self.cancellation.checkpoint() && ok
+    }
+    fn finish_envelope_read(&mut self, query: &mut newt_core::page_envelope::Query<'_>) -> bool {
+        let ok = self.base.finish_envelope_read(query);
+        self.cancellation.checkpoint() && ok
+    }
     #[cfg(feature = "page-turn-trace")]
     fn trace_micros(&self) -> u32 {
         self.base.trace_micros()

@@ -174,6 +174,12 @@ impl<'a, S: BookSource + ?Sized, B: ParserBackend + ?Sized, P: SessionPolicy<B>>
         self.state = State::Idle;
         self.total = 0
     }
+    pub fn abort_returning(&mut self) -> Resources<'a> {
+        let res = self.stream.close_returning();
+        self.state = State::Idle;
+        self.total = 0;
+        res
+    }
     pub fn run(&mut self, h: &mut LayoutHandler<'_, '_>) -> Status {
         let mut status = Status::Ok;
         while status == Status::Ok && !self.done() {

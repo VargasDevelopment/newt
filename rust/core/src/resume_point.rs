@@ -1,15 +1,12 @@
-//! Layout of a resume-point section inside a v4 page segment. MIT.
+//! Layout and streaming codec for a resume-point section inside a v4 page segment. MIT.
 //!
-//! A point lets a later producer pass restart at a page near the segment's
-//! end instead of at the member's first byte. This module freezes only the
-//! section's outer layout. The producer captures points into interior v4
-//! segments; restore is not wired yet.
+//! A point lets a later idle producer pass restart at a page near the segment's
+//! end instead of at the member's first byte.
 //!
 //! The sections follow the restore's consumption order. Restore reads the
 //! section front to back with one small window and never seeks backwards:
-//! the binding is checked before any state is used. The source is positioned
-//! before the feed buffer receives prolog, names or replay. The replay comes
-//! last, so it is still in the feed buffer when the output opens.
+//! the binding is checked before any state is used. The replay comes last,
+//! so it lands directly in the idle XML feed buffer.
 //!
 //! ```text
 //! header   "FIRP" u16 version u8 mode u8 0, then one u32 length per section
@@ -151,6 +148,192 @@ impl PointOut for CrcOut<'_> {
     }
 }
 
+/// Cursor state for Pass B's forward-only 1 KiB streaming reader, holding no
+/// borrows so Stage 1 (`Binding`/`Source`) and Stage 2 (`Stream`..`Replay`) can
+/// share one continuous window and running CRC-32 across separate borrow scopes.
+#[derive(Clone, Copy, Debug)]
+pub struct PointCursor {
+    base: u32,
+    body_len: u32,
+    pos: u32,
+    win_start: u32,
+    win_len: usize,
+    crc: u32,
+    failed: bool,
+}
+
+impl PointCursor {
+    pub fn new(base: u32, total_len: u32) -> Option<Self> {
+        let body_len = total_len.checked_sub(TRAILER_BYTES)?;
+        Some(Self {
+            base,
+            body_len,
+            pos: 0,
+            win_start: 0,
+            win_len: 0,
+            crc: u32::MAX,
+            failed: false,
+        })
+    }
+
+    pub fn bind<'a>(
+        &'a mut self,
+        window: &'a mut [u8; 1024],
+        read: &'a mut dyn FnMut(u32, &mut [u8]) -> bool,
+    ) -> PointIn<'a> {
+        PointIn { cursor: self, window, read }
+    }
+}
+
+/// Forward-only streaming reader over a 1 KiB window that accumulates CRC-32
+/// over every byte Pass B actually consumes before the trailing 4-byte checksum.
+pub struct PointIn<'a> {
+    cursor: &'a mut PointCursor,
+    window: &'a mut [u8; 1024],
+    read: &'a mut dyn FnMut(u32, &mut [u8]) -> bool,
+}
+
+impl<'a> PointIn<'a> {
+    #[inline(never)]
+    pub fn read_body(&mut self, mut dst: &mut [u8]) -> bool {
+        if self.cursor.failed {
+            return false;
+        }
+        let Ok(need) = u32::try_from(dst.len()) else {
+            self.cursor.failed = true;
+            return false;
+        };
+        if need > self.cursor.body_len - self.cursor.pos {
+            self.cursor.failed = true;
+            return false;
+        }
+        while !dst.is_empty() {
+            let win_end = self.cursor.win_start + self.cursor.win_len as u32;
+            if self.cursor.pos >= win_end || self.cursor.pos < self.cursor.win_start {
+                let rem = self.cursor.body_len + TRAILER_BYTES - self.cursor.pos;
+                let take = (rem as usize).min(self.window.len());
+                let Some(at) = self.cursor.base.checked_add(self.cursor.pos) else {
+                    self.cursor.failed = true;
+                    return false;
+                };
+                if !(self.read)(at, &mut self.window[..take]) {
+                    self.cursor.failed = true;
+                    return false;
+                }
+                self.cursor.win_start = self.cursor.pos;
+                self.cursor.win_len = take;
+            }
+            let off = (self.cursor.pos - self.cursor.win_start) as usize;
+            let avail = self.cursor.win_len - off;
+            let take = avail.min(dst.len());
+            let slice = &self.window[off..off + take];
+            dst[..take].copy_from_slice(slice);
+            self.cursor.crc = crate::page_envelope::crc(self.cursor.crc, slice);
+            self.cursor.pos += take as u32;
+            dst = &mut dst[take..];
+        }
+        true
+    }
+
+    pub fn section(&mut self, len: u32) -> SectionIn<'_, 'a> {
+        SectionIn {
+            inner: self,
+            remaining: len,
+            failed: false,
+        }
+    }
+
+    /// Consume the 4-byte trailing CRC and verify it matches both Pass A's CRC
+    /// and the running CRC over the exact bytes Pass B consumed.
+    #[inline(never)]
+    pub fn finish_crc(self, expected_crc: u32) -> bool {
+        if self.cursor.failed || self.cursor.pos != self.cursor.body_len {
+            return false;
+        }
+        let mut tail = [0u8; 4];
+        let mut dst = &mut tail[..];
+        while !dst.is_empty() {
+            let win_end = self.cursor.win_start + self.cursor.win_len as u32;
+            if self.cursor.pos >= win_end || self.cursor.pos < self.cursor.win_start {
+                let take = dst.len();
+                let Some(at) = self.cursor.base.checked_add(self.cursor.pos) else {
+                    return false;
+                };
+                if !(self.read)(at, &mut self.window[..take]) {
+                    return false;
+                }
+                self.cursor.win_start = self.cursor.pos;
+                self.cursor.win_len = take;
+            }
+            let off = (self.cursor.pos - self.cursor.win_start) as usize;
+            let take = (self.cursor.win_len - off).min(dst.len());
+            dst[..take].copy_from_slice(&self.window[off..off + take]);
+            self.cursor.pos += take as u32;
+            dst = &mut dst[take..];
+        }
+        let trailer = u32::from_le_bytes(tail);
+        (self.cursor.crc ^ u32::MAX) == expected_crc && trailer == expected_crc
+    }
+}
+
+/// Exact-length section reader over `PointIn`; fails on overrun or trailing bytes.
+pub struct SectionIn<'r, 'a> {
+    inner: &'r mut PointIn<'a>,
+    remaining: u32,
+    failed: bool,
+}
+
+impl SectionIn<'_, '_> {
+    pub fn remaining(&self) -> u32 {
+        self.remaining
+    }
+    #[inline(never)]
+    pub fn read_exact(&mut self, dst: &mut [u8]) -> bool {
+        if self.failed {
+            return false;
+        }
+        let Ok(n) = u32::try_from(dst.len()) else {
+            self.failed = true;
+            return false;
+        };
+        if n > self.remaining || !self.inner.read_body(dst) {
+            self.failed = true;
+            return false;
+        }
+        self.remaining -= n;
+        true
+    }
+    #[inline(never)]
+    pub fn get_u32s(&mut self, out: &mut [u32]) -> bool {
+        let mut buf = [0u8; 32];
+        for chunk in out.chunks_mut(8) {
+            if !self.read_exact(&mut buf[..chunk.len() * 4]) {
+                return false;
+            }
+            for (dst, src) in chunk.iter_mut().zip(buf.chunks_exact(4)) {
+                *dst = u32::from_le_bytes([src[0], src[1], src[2], src[3]]);
+            }
+        }
+        true
+    }
+    #[inline(never)]
+    pub fn get_u16s(&mut self, out: &mut [u16]) -> bool {
+        let mut buf = [0u8; 32];
+        for chunk in out.chunks_mut(16) {
+            if !self.read_exact(&mut buf[..chunk.len() * 2]) {
+                return false;
+            }
+            for (dst, src) in chunk.iter_mut().zip(buf.chunks_exact(2)) {
+                *dst = u16::from_le_bytes([src[0], src[1]]);
+            }
+        }
+        true
+    }
+    pub fn finish(&self) -> bool {
+        !self.failed && !self.inner.cursor.failed && self.remaining == 0
+    }
+}
+
 /// How restore positions the chapter member at the cut.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -207,6 +390,17 @@ impl Section {
         }
     }
 }
+
+/// Largest legal total byte length of a `FIRP` point (header + all max sections + CRC).
+pub const MAX_POINT_BYTES: u32 = HEADER_BYTES as u32
+    + Section::Binding.max_bytes()
+    + Section::Source.max_bytes()
+    + Section::Stream.max_bytes()
+    + Section::Engine.max_bytes()
+    + Section::Prolog.max_bytes()
+    + Section::Names.max_bytes()
+    + Section::Replay.max_bytes()
+    + TRAILER_BYTES;
 
 /// A point's validated outer layout. Offsets are relative to the section start.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -337,11 +531,77 @@ impl Binding {
             && put_u16s(out, &[self.style_count, self.style_issues, self.member_method])
             && out.put(&[self.style_state, self.profile])
     }
+
+    /// Decodes the fixed 108-byte `BND1` binding section and enforces exact length.
+    #[inline(never)]
+    pub fn decode(sec: &mut SectionIn<'_, '_>) -> Option<Self> {
+        let mut magic = [0u8; 4];
+        let mut book_digest = [0u8; 32];
+        let mut w = [0u32; 16];
+        let mut h = [0u16; 3];
+        let mut b = [0u8; 2];
+        if !sec.read_exact(&mut magic)
+            || &magic != b"BND1"
+            || !sec.read_exact(&mut book_digest)
+            || !sec.get_u32s(&mut w)
+            || !sec.get_u16s(&mut h)
+            || !sec.read_exact(&mut b)
+            || !sec.finish()
+        {
+            return None;
+        }
+        Some(Self {
+            book_digest,
+            spine: w[0],
+            generation: w[1],
+            segment_index: w[2],
+            page_count: w[3],
+            total_chars: w[4],
+            style_hash: w[5],
+            member_offset: w[6],
+            member_compressed: w[7],
+            member_uncompressed: w[8],
+            pages_at: w[9],
+            source_bytes: u64::from(w[10]) | (u64::from(w[11]) << 32),
+            cut: u64::from(w[12]) | (u64::from(w[13]) << 32),
+            fed: u64::from(w[14]) | (u64::from(w[15]) << 32),
+            style_count: h[0],
+            style_issues: h[1],
+            member_method: h[2],
+            style_state: b[0],
+            profile: b[1],
+        })
+    }
 }
 
 /// Emits Section 1 (`Source`): `"SRC1"` + uncompressed member bytes consumed.
 pub fn encode_source(consumed: u32, out: &mut dyn PointOut) -> bool {
     out.put(b"SRC1") && out.put(&consumed.to_le_bytes())
+}
+
+/// Decodes Section 1 (`Source`) and enforces exact length.
+pub fn decode_source(sec: &mut SectionIn<'_, '_>) -> Option<u32> {
+    let mut buf = [0u8; SOURCE_BYTES];
+    if !sec.read_exact(&mut buf) || &buf[..4] != b"SRC1" || !sec.finish() {
+        return None;
+    }
+    Some(u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]))
+}
+
+/// Checks an untrusted XML element name read from Section 5 (`Names`) before
+/// feeding it synthetically as `<name>` into Expat.
+pub fn validate_xml_name(name: &[u8]) -> bool {
+    !name.is_empty()
+        && name.len() <= u8::MAX as usize
+        && core::str::from_utf8(name).is_ok()
+        && !name.iter().any(|&b| {
+            b < 0x20
+                || matches!(
+                    b,
+                    0x7f | b'<' | b'>' | b'/' | b'=' | b'"' | b'\'' | b' ' | b'?' | b'!' | b'&'
+                        | b';'
+                )
+        })
 }
 
 struct DeclCursor<'a>(&'a [u8]);

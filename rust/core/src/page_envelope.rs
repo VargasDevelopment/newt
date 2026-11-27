@@ -208,6 +208,171 @@ impl<'n> Query<'n> {
     }
 }
 
+/// Generation-bound raw reader plus bounded pause/cancellation poll used by
+/// the 1 KiB streaming envelope verifier.
+pub trait EnvelopeIo {
+    fn read(&mut self, query: &Query<'_>, offset: u32, out: &mut [u8]) -> bool;
+    fn poll(&mut self) -> bool {
+        true
+    }
+}
+
+/// Verify an envelope's manifest and block-CRC directory over a generation-bound
+/// read lease using only a 1 KiB window (no 4 KiB block buffer or 4 KiB directory
+/// buffer). Sets `query.payload` on success.
+#[inline(never)]
+pub fn stream_attach(
+    query: &mut Query<'_>,
+    window: &mut [u8; 1024],
+    io: &mut dyn EnvelopeIo,
+) -> bool {
+    if !query.active || !query.bound || !io.poll() {
+        return false;
+    }
+    let payload = payload_for_extent(query.extent);
+    if payload == 0 {
+        return false;
+    }
+    let dir_bytes = 4 * blocks(payload);
+    if payload.checked_add(dir_bytes).and_then(|v| v.checked_add(MANIFEST_BYTES))
+        != Some(query.extent)
+    {
+        return false;
+    }
+    let mut header = [0u8; MANIFEST_BYTES as usize];
+    if !io.read(query, query.extent - MANIFEST_BYTES, &mut header) {
+        return false;
+    }
+    let mut checked = 0u32;
+    if !inspect_for(query.name, &header, query.extent, &query.route, &mut checked)
+        || checked != payload
+    {
+        return false;
+    }
+    let expected_dir_crc = get32(&header, 20);
+    let mut dir_crc = u32::MAX;
+    let mut at = 0u32;
+    while at < dir_bytes {
+        if !io.poll() {
+            return false;
+        }
+        let take = ((dir_bytes - at) as usize).min(window.len());
+        if !io.read(query, payload + at, &mut window[..take]) {
+            return false;
+        }
+        dir_crc = crc(dir_crc, &window[..take]);
+        at += take as u32;
+    }
+    if dir_crc ^ u32::MAX != expected_dir_crc || !io.poll() {
+        return false;
+    }
+    query.payload = payload;
+    true
+}
+
+/// Stream every 4 KiB block overlapping `[offset .. offset + len)` through a
+/// 1 KiB window, verifying each block's CRC against its directory entry.
+/// `deliver` receives `(relative_offset_from_offset, slice)` for bytes inside
+/// the requested range; callers must NOT act on delivered bytes until this
+/// function returns `true` (every touched block verified).
+#[inline(never)]
+pub fn stream_verified_range(
+    query: &Query<'_>,
+    window: &mut [u8; 1024],
+    offset: u32,
+    len: u32,
+    io: &mut dyn EnvelopeIo,
+    deliver: &mut dyn FnMut(u32, &[u8]) -> bool,
+) -> bool {
+    if !query.active || !query.bound || query.payload == 0 {
+        return false;
+    }
+    let Some(end) = offset.checked_add(len) else {
+        return false;
+    };
+    if end > query.payload {
+        return false;
+    }
+    if len == 0 {
+        return io.poll();
+    }
+    let first_block = offset / BLOCK_BYTES;
+    let last_block = (end - 1) / BLOCK_BYTES;
+    for block in first_block..=last_block {
+        if !io.poll() {
+            return false;
+        }
+        let mut entry = [0u8; 4];
+        if !io.read(query, query.payload + 4 * block, &mut entry) {
+            return false;
+        }
+        let expected = u32::from_le_bytes(entry);
+        let block_start = block * BLOCK_BYTES;
+        let block_len = BLOCK_BYTES.min(query.payload - block_start);
+        let mut bcrc = block_seed(&query.route, block, block_len);
+        let mut pos = 0u32;
+        while pos < block_len {
+            if !io.poll() {
+                return false;
+            }
+            let take = ((block_len - pos) as usize).min(window.len());
+            if !io.read(query, block_start + pos, &mut window[..take]) {
+                return false;
+            }
+            let chunk = &window[..take];
+            bcrc = crc(bcrc, chunk);
+            let chunk_start = block_start + pos;
+            let chunk_end = chunk_start + take as u32;
+            let ov_start = chunk_start.max(offset);
+            let ov_end = chunk_end.min(end);
+            if ov_start < ov_end {
+                let lo = (ov_start - chunk_start) as usize;
+                let hi = (ov_end - chunk_start) as usize;
+                if !deliver(ov_start - offset, &chunk[lo..hi]) {
+                    return false;
+                }
+            }
+            pos += take as u32;
+        }
+        if bcrc ^ u32::MAX != expected {
+            return false;
+        }
+    }
+    io.poll()
+}
+
+/// Read an exact verified payload slice into `dst` via `stream_verified_range`.
+#[inline(never)]
+pub fn stream_verified_exact(
+    query: &Query<'_>,
+    window: &mut [u8; 1024],
+    offset: u32,
+    dst: &mut [u8],
+    io: &mut dyn EnvelopeIo,
+) -> bool {
+    let Ok(len) = u32::try_from(dst.len()) else {
+        return false;
+    };
+    let mut written = 0usize;
+    let ok = stream_verified_range(
+        query,
+        window,
+        offset,
+        len,
+        io,
+        &mut |rel, slice| {
+            let at = rel as usize;
+            let Some(out) = dst.get_mut(at..at + slice.len()) else {
+                return false;
+            };
+            out.copy_from_slice(slice);
+            written += slice.len();
+            true
+        },
+    );
+    ok && written == dst.len()
+}
+
 /// Exactly the pinned directory and one block, borrowed from the parse loan.
 /// The caller may reclaim both buffers after this store is dropped.
 pub struct VerifiedStore<'n, 'a> {

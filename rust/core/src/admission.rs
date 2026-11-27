@@ -406,6 +406,15 @@ fn stream<S: BookSource + ?Sized>(
         }
     }
 }
+/// Outcome of positioning a freshly opened chapter member to a saved byte offset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DiscardResult {
+    Ok,
+    Stopped,
+    IoError,
+    Invalid,
+}
+
 /// A sequential chapter adapter. Successful construction corresponds to open Ok.
 /// On failed open no source object is published (stronger safe API boundary).
 pub struct ChapterSource<'a, S: BookSource + ?Sized> {
@@ -439,6 +448,16 @@ impl<'a, S: BookSource + ?Sized> ChapterSource<'a, S> {
             policy,
         })
     }
+    /// Re-open the checked ZIP member at byte 0 after a locally rejected
+    /// restore attempt that may have advanced the decoder or stored offset.
+    pub fn reopen(&mut self, entry: &'a Checked) -> Status {
+        if !inflate_input_bounded(entry) {
+            return Status::Unsupported;
+        }
+        self.consumed = 0;
+        self.length = entry.uncompressed_size;
+        self.reader.open(entry)
+    }
     /// Guard probes use the original source, never this decoded byte stream.
     pub fn with_source<R>(&mut self, operation: impl FnOnce(&mut S) -> R) -> R {
         self.reader.with_source(operation)
@@ -450,6 +469,50 @@ impl<'a, S: BookSource + ?Sized> ChapterSource<'a, S> {
     /// Compression method of the opened ZIP member (0 stored, 8 deflated).
     pub fn method(&self) -> u16 {
         self.reader.entry().map_or(u16::MAX, |e| e.method)
+    }
+    /// Seek a freshly opened stored member (method 0) directly to `target`.
+    pub fn seek_stored(&mut self, target: u32) -> bool {
+        if self.consumed != 0 || target > self.length || !self.reader.seek_stored(target) {
+            return false;
+        }
+        self.consumed = target;
+        true
+    }
+    /// Advance a freshly opened member (typically deflated, method 8) to `target`
+    /// uncompressed bytes by discarding decoded chunks into caller-lent `scratch`,
+    /// polling `step_poll` (cancellation and due duty) before each chunk and at exit.
+    #[inline(never)]
+    pub fn discard_to(
+        &mut self,
+        target: u32,
+        scratch: &mut [u8],
+        step_poll: &mut dyn FnMut() -> bool,
+    ) -> DiscardResult {
+        if self.consumed != 0 || target > self.length || scratch.is_empty() {
+            return DiscardResult::Invalid;
+        }
+        while self.consumed < target {
+            if self.policy.is_some_and(|policy| policy.cancelled()) || !step_poll() {
+                return DiscardResult::Stopped;
+            }
+            let want = scratch.len().min((target - self.consumed) as usize);
+            let at = u64::from(self.consumed);
+            let n = self.read_at(at, &mut scratch[..want]);
+            if n <= 0 {
+                return if self.policy.is_some_and(|policy| policy.cancelled()) {
+                    DiscardResult::Stopped
+                } else {
+                    DiscardResult::IoError
+                };
+            }
+        }
+        if self.consumed != target {
+            return DiscardResult::Invalid;
+        }
+        if self.policy.is_some_and(|policy| policy.cancelled()) || !step_poll() {
+            return DiscardResult::Stopped;
+        }
+        DiscardResult::Ok
     }
     pub fn finish(&mut self) -> bool {
         self.finish_checked().0

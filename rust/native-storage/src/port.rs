@@ -83,6 +83,15 @@ impl<S: Native> Operation<'_, '_, S> {
     pub fn promoted(&self) -> bool {
         self.port.state.promoted
     }
+    pub fn read_suspended(&self) -> bool {
+        self.port.state.read_suspended
+    }
+    pub fn mark_read_suspended(&mut self) {
+        self.port.state.read_suspended = true;
+    }
+    pub fn clear_read_suspended(&mut self) {
+        self.port.state.read_suspended = false;
+    }
     fn settle(&mut self, ok: bool) -> bool {
         if !ok {
             self.producer_failure()
@@ -174,6 +183,7 @@ impl<S: Native> Operation<'_, '_, S> {
         self.port.state.bytes = 0;
         self.port.state.path.truncate(self.port.state.final_bytes);
         self.port.state.names = None;
+        self.port.state.reading_backup = false;
         if let Some(fd) = fd {
             if self.close(fd).is_err() {
                 self.port.state.failed = true
@@ -260,9 +270,12 @@ impl<S: Native> Operation<'_, '_, S> {
             .flatten()
     }
     fn snapshot(&mut self, path: &str, maximum: u32, exact: bool) -> bool {
+        self.snapshot_inner(path, maximum, exact, true)
+    }
+    fn snapshot_inner(&mut self, path: &str, maximum: u32, exact: bool, record_failure: bool) -> bool {
         let Some(fd) = self.port.state.fd else { return false };
         let Ok(d) = self.io(|s| s.fstat(fd)) else {
-            return self.settle(false);
+            return if record_failure { self.settle(false) } else { false };
         };
         if d.kind != Kind::Regular
             || d.size < 0
@@ -275,18 +288,28 @@ impl<S: Native> Operation<'_, '_, S> {
         // FAT fstat has no directory-entry time. Freshness must use the
         // path timestamp here, as it does in stable().
         let Ok(p) = self.io(|s| s.stat(path, false)) else {
-            return self.settle(false);
+            return if record_failure { self.settle(false) } else { false };
         };
         if p.kind != Kind::Regular || p.size != d.size || !self.allowed() {
-            return self.settle(false);
+            return if record_failure { self.settle(false) } else { false };
         }
         self.port.state.stamp = (p.seconds, p.nanos);
         self.port.state.bytes = d.size as u32;
         true
     }
     pub fn open_read(&mut self, maximum: u32) -> bool {
+        self.open_read_inner(maximum, true)
+    }
+    /// Open an optional read-only file without latching terminal producer
+    /// failure on local open/stat errors (cancellation still stops normally).
+    pub fn open_read_optional(&mut self, maximum: u32) -> bool {
+        self.open_read_inner(maximum, false)
+    }
+    fn open_read_inner(&mut self, maximum: u32, record_failure: bool) -> bool {
         self.port.state.absent = false;
         self.port.state.invalid = false;
+        self.port.state.reading_backup = false;
+        self.port.state.read_suspended = false;
         if self.port.state.fd.is_some()
             || self.port.state.owns
             || self.canonical().is_empty()
@@ -294,41 +317,39 @@ impl<S: Native> Operation<'_, '_, S> {
         {
             return false;
         }
-        let path = self.port.state.path;
+        let mut path = self.port.state.path;
         let mut opened = self.io(|s| s.open(&path, Open::ReadNonblock));
         if opened == Err(Error::Missing) && self.canonical().len() + 4 < 256 {
-            let Some(backup)=self.backup_name() else {return self.fail();};
-            let mut names = Vec::new();
-            if names.try_reserve_exact(1).is_err() {
-                return self.fail();
-            }
-            names.push(backup);
-            self.port.state.names = Some(names);
+            let Some(backup) = self.backup_name() else {
+                return if record_failure { self.fail() } else { self.release(); false };
+            };
             opened = self.io(|s| s.open(&backup, Open::ReadNonblock));
             self.port.state.absent = opened == Err(Error::Missing);
+            if opened.is_ok() {
+                self.port.state.reading_backup = true;
+                path = backup;
+            }
         }
         self.port.state.fd = opened.ok();
         if self.port.state.fd.is_none() {
-            if self.port.state.absent {
+            if self.port.state.absent || !record_failure {
                 self.release();
                 return false;
             }
             return self.fail();
         }
-        let path = *self
-            .port
-            .state.names
-            .as_ref()
-            .map(|n| &n[0])
-            .unwrap_or(&self.port.state.path);
-        if !self.snapshot(&path, maximum, false) {
-            if self.port.state.invalid {
+        if !self.snapshot_inner(&path, maximum, false, record_failure) {
+            if self.port.state.invalid || !record_failure {
                 self.release();
                 return false;
             }
             return self.fail();
         }
         if !self.allowed() {
+            if !record_failure {
+                self.release();
+                return false;
+            }
             return self.fail();
         }
         true
@@ -368,6 +389,7 @@ impl<S: Native> Operation<'_, '_, S> {
     }
     pub fn begin(&mut self, bytes: u32, fixed: bool) -> bool {
         self.port.state.promoted = false;
+        self.port.state.read_suspended = false;
         if self.port.state.fd.is_some() || self.port.state.owns || self.canonical().is_empty() {
             return false;
         }
@@ -422,13 +444,23 @@ impl<S: Native> Operation<'_, '_, S> {
         true
     }
     pub fn read_freshness(&mut self, lease: u64) -> Freshness {
+        self.read_freshness_inner(lease, true)
+    }
+    /// Check path/fstat freshness of an optional read lease without latching
+    /// terminal producer failure on a replaced or missing file.
+    pub fn fresh_optional(&mut self, lease: u64) -> bool {
+        self.read_freshness_inner(lease, false) == Freshness::Fresh
+    }
+    fn read_freshness_inner(&mut self, lease: u64, record_failure: bool) -> Freshness {
         if lease != self.port.state.generation
             || self.port.state.fd.is_none()
             || self.port.state.failed
             || !self.permitted(lease)
             || (self.port.state.writing && !self.port.state.owns)
         {
-            self.settle(false);
+            if record_failure {
+                self.settle(false);
+            }
             return Freshness::Refused;
         }
         if !self.port.state.writing
@@ -445,11 +477,15 @@ impl<S: Native> Operation<'_, '_, S> {
         let fd = self.port.state.fd.unwrap();
         let d = self.io(|s| s.fstat(fd));
         let Ok(d) = d else {
-            self.settle(false);
+            if record_failure {
+                self.settle(false);
+            }
             return Freshness::PathFailed;
         };
         if d.kind != Kind::Regular || d.size != i64::from(self.port.state.bytes) {
-            self.settle(false);
+            if record_failure {
+                self.settle(false);
+            }
             return Freshness::PathFailed;
         }
         if !self.port.state.writing && self.port.state.defer_depth != 0 && self.port.state.deferred_fresh {
@@ -459,10 +495,12 @@ impl<S: Native> Operation<'_, '_, S> {
                 Freshness::Refused
             };
         }
-        if !self.port.state.writing && self.port.state.names.is_some() {
+        if !self.port.state.writing && self.port.state.reading_backup {
             if !matches!(self.io_state(|s, state|
                 s.stat(&state.path[..state.final_bytes], false)), Err(Error::Missing)) {
-                self.settle(false);
+                if record_failure {
+                    self.settle(false);
+                }
                 return Freshness::PathFailed;
             }
         }
@@ -473,16 +511,23 @@ impl<S: Native> Operation<'_, '_, S> {
                 Freshness::Refused
             };
         }
-        let p = self.io_state(|s, state| {
-            let path = if !state.writing {
-                state.names.as_ref().map(|n| &n[0]).unwrap_or(&state.path)
-            } else { &state.path };
-            s.stat(path, false)
-        });
+        let p = if !self.port.state.writing && self.port.state.reading_backup {
+            let Some(backup) = self.backup_name() else {
+                if record_failure {
+                    self.settle(false);
+                }
+                return Freshness::PathFailed;
+            };
+            self.io(|s| s.stat(&backup, false))
+        } else {
+            self.io_state(|s, state| s.stat(&state.path, false))
+        };
         let fresh = matches!(p,Ok(p) if p.kind==Kind::Regular && p.size==i64::from(self.port.state.bytes)
             && (d.inode==0 || p.inode==d.inode) && (d.device==0 || p.device==d.device) && (p.seconds,p.nanos)==self.port.state.stamp);
         if !fresh {
-            self.settle(false);
+            if record_failure {
+                self.settle(false);
+            }
             return Freshness::PathFailed;
         }
         if !self.permitted(lease) {
@@ -616,6 +661,53 @@ impl<S: Native> Operation<'_, '_, S> {
     }
     pub fn read_within(&mut self, lease: u64, token: u64, offset: u32, out: &mut [u8]) -> bool {
         self.read_impl(lease, Some(token), offset, out)
+    }
+    /// Generation-bound raw read for optional producer envelope leases. Checks
+    /// generation and cancellation around every <= 1 KiB chunk without latching
+    /// terminal producer failure on local seek/read errors.
+    pub fn read_raw_optional(&mut self, lease: u64, mut offset: u32, mut out: &mut [u8]) -> bool {
+        if self.port.state.token != 0
+            || self.port.state.writing
+            || self.port.state.fd.is_none()
+            || self.port.state.failed
+            || offset > self.port.state.bytes
+            || out.len() > (self.port.state.bytes - offset) as usize
+            || !self.permitted(lease)
+        {
+            return false;
+        }
+        let mut interrupted = 0;
+        while !out.is_empty() {
+            if !self.permitted(lease) {
+                return false;
+            }
+            let Some(fd) = self.port.state.fd else {
+                return false;
+            };
+            if self.io(|s| s.seek(fd, offset)) != Ok(u64::from(offset)) {
+                return false;
+            }
+            let want = out.len().min(1024);
+            let r = self.io(|s| s.read(fd, &mut out[..want]));
+            if r == Err(Error::Interrupted) {
+                interrupted += 1;
+                if interrupted < 4 {
+                    continue;
+                }
+            }
+            if r.is_ok() {
+                interrupted = 0;
+            }
+            let Ok(got) = r else {
+                return false;
+            };
+            if got == 0 || got > want || !self.permitted(lease) {
+                return false;
+            }
+            offset = offset.wrapping_add(got as u32);
+            out = &mut out[got..];
+        }
+        self.permitted(lease)
     }
     fn read_check(&mut self, lease: u64, token: Option<u64>) -> bool {
         match token {
