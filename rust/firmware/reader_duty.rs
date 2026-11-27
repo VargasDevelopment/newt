@@ -13,11 +13,13 @@ use newt_core::{
 };
 use newt_input_policy::{Snapshot, UiControl};
 
-/// Maximum phase-start renewals allowed per foreground operation.
+/// Maximum phase-start renewals per duty. Caps are per duty, not per user
+/// action: a foreground open runs two duties (indexing, then opening), and a
+/// turn retried after Loading runs a second one.
 const MAX_PHASE_RENEWALS: u8 = 32;
-/// Maximum page-milestone renewals per foreground operation: two full
-/// `MAX_PAGES` passes, since an anchor jump can lay a chapter out twice (#188).
-/// A phase start resets the per-pass milestone, so this caps total work.
+/// Maximum page-milestone renewals per duty: two full `MAX_PAGES` passes,
+/// since an anchor jump can lay a chapter out twice (#188). A phase start
+/// resets the per-pass milestone, so this caps one duty's total work.
 const MAX_PROGRESS_RENEWALS: u8 = 2 * MAX_SEGMENTS as u8;
 
 /// Short UI-only scheduling view. Shared references preserve the existing
@@ -59,7 +61,7 @@ impl<'loan, 'task> ReaderDuty<'loan, 'task> {
     /// Foreground opens, turns and Contents jumps can lay out chapters up to
     /// `MAX_PAGES` (4,096 pages, #103). With `renew`, each bounded work phase
     /// and each monotonic 128-page milestone up to `MAX_PAGES` gets a fresh
-    /// 20 s budget, up to two full passes in total: a stalled pass still times
+    /// 20 s budget, up to two full passes per duty: a stalled pass still times
     /// out, and Back/Power stays latched.
     pub fn renewing(self, renew: bool) -> Self {
         Self { renew, ..self }
