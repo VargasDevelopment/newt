@@ -39,9 +39,11 @@ impl Runtime {
         false
     }
 
-    /// Multi-segment chapters, cross-chapter turns and pending-verification turns
-    /// probe the actual page cache first so cache hits never flash Loading or add
-    /// extra SD probes, while real cache misses show Loading before full layout (#103).
+    /// Multi-segment chapters and pending-verification turns probe the actual
+    /// page cache first so cache hits never flash Loading, while real cache
+    /// misses show Loading before full layout (#103). A cross-chapter turn must
+    /// verify the whole target chapter even on a hit, so its probe always
+    /// defers to Loading before that verification runs.
     fn turn_tries_cache_first(&self, action: Action) -> bool {
         if !matches!(action, Action::Previous | Action::Next) { return false; }
         let Some(book) = self.book() else { return false; };
@@ -74,7 +76,7 @@ impl Runtime {
                 );
             });
         }
-        self.cancelled_action_exit = true;
+        self.closed_exit = ClosedExit::Cancelled;
         self.saves.set_reader(newt_core::save_notice::ReaderIssue::None);
         self.reader_ui.panel = ReaderPanel::Page;
         self.reader_ui.selected = 0;
@@ -92,6 +94,16 @@ impl Runtime {
         }
     }
 
+    /// A timeout that closed an owner which still holds progress keeps that
+    /// progress savable on exit; any later action that reopens it clears this.
+    fn note_closed_exit_image(&mut self, events: &Events<'_, '_>, had_progress: bool) {
+        if self.opened() {
+            self.closed_exit = ClosedExit::None;
+        } else if had_progress && events.control.timed_out() && self.has_progress() {
+            self.closed_exit = ClosedExit::TimedOut;
+        }
+    }
+
     fn reader_action_armed(&mut self, home: &mut Home<'_>, ui: &mut Application<'_>,
         logical: &mut Frame, events: &mut Events<'_, '_>, action: Action,
     ) -> bool {
@@ -105,7 +117,7 @@ impl Runtime {
         let (intent, at) = if let Some(result) = sample_result {
             if result.0 == Some(ReaderUiIntent::None) { return false; }
             result
-        } else if self.cancelled_action_exit {
+        } else if self.closed_exit == ClosedExit::Cancelled {
             // A live turn/jump was cancelled by Back or Power. Ignore any older
             // queued presses until that Back or Power triggers the normal exit.
             let intent = match action {
@@ -114,17 +126,18 @@ impl Runtime {
                 _ => ReaderUiIntent::None,
             };
             (Some(intent), action_at)
-        } else if self.memory.is_closed() {
+        } else if self.memory.is_closed()
+            || (self.closed_exit == ClosedExit::TimedOut && matches!(action, Action::Back | Action::Sleep)) {
             // SampleReader has no storage after failed admission, but main's
-            // real menu/draft and Back/Sleep intents still exist.
+            // real menu/draft and Back/Sleep intents still exist. A timed-out
+            // live action left a closed owner that a strict source refuses to
+            // relend, so its exits must not take the live-reader loan.
             (Some(newt_reader_ui::dispatch_unavailable_reader_ui(&mut self.reader_ui,
                 self.settings, action)), action_at)
         } else {
-            if self.needs_pre_loading_image(action)
-                && self.acknowledge_work_image(home, ui, logical, newt_reader_ui::SlowWork::Loading,
-                    events.control, events.action)
-            {
-                events.control.restart(millis());
+            if self.needs_pre_loading_image(action) {
+                self.acknowledge_and_restart_image(home, ui, logical, newt_reader_ui::SlowWork::Loading,
+                    events.control, events.action);
             }
             let cache_first = self.turn_tries_cache_first(action);
             match self.operate_action_image(home, ui, logical, events, action, cache_first) {
@@ -136,6 +149,7 @@ impl Runtime {
                         self.finish_cancelled_action_image(home, ui, events, had_progress, action_at);
                         return true;
                     }
+                    self.note_closed_exit_image(events, had_progress);
                     self.finish_pending_mark_image(home, ui, logical, events, &mut exit);
                     self.observe_operation(&exit);
                     self.update_home_image(home, events.action);
@@ -154,6 +168,7 @@ impl Runtime {
                         return true;
                     }
                     self.open_failed(error);
+                    self.note_closed_exit_image(events, had_progress);
                     self.publish_notice_image(ui);
                     return true;
                 }
@@ -165,7 +180,6 @@ impl Runtime {
             }
             Some(ReaderUiIntent::Home) => {
                 self.reflow_anchor = None;
-                self.cancelled_action_exit = false;
                 events.action.boundary(crate::reader_action::ActionStage::MarkClose as u8);
                 let _exit = events.action.scope(crate::reader_action::ActionStage::READER_EXIT);
                 self.defer_exit_metadata();
@@ -226,10 +240,7 @@ impl Runtime {
                 && page.spine.wrapping_add(1) >= spines
         } else { page.page == 0 && page.spine == 0 };
         if boundary { return; }
-        if self.acknowledge_work_image(home, ui, logical, newt_reader_ui::SlowWork::Loading,
-            events.control, events.action) {
-            events.control.restart(millis());
-        }
+        self.acknowledge_and_restart_image(home, ui, logical, newt_reader_ui::SlowWork::Loading, events.control, events.action);
         if pending {
             let _verification = events.action.scope(crate::reader_action::ActionStage::SourceSelect);
             if !self.finish_verification_image(home, ui, logical, events, true) {

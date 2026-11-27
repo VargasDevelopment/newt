@@ -216,4 +216,15 @@ impl Runtime {
         }
         painted
     }
+
+    /// Acknowledge foreground work and, once its frame is up, give the work a
+    /// fresh open budget.
+    pub(super) fn acknowledge_and_restart_image(&mut self, home: &mut Home<'_>, ui: &mut Application<'_>,
+        logical: &mut Frame, work: newt_reader_ui::SlowWork,
+        control: &newt_input_policy::UiControl<'_>, trace: crate::reader_action::Trace<'_>,
+    ) {
+        if self.acknowledge_work_image(home, ui, logical, work, control, trace) {
+            control.restart(super::millis());
+        }
+    }
 }

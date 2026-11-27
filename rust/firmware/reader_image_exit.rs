@@ -79,10 +79,10 @@ impl Runtime {
             return Ok(());
         }
         if !self.book().is_some_and(|book| book.owner.state.has_progress()) {
-            self.cancelled_action_exit = false;
+            self.closed_exit = ClosedExit::None;
             return Ok(());
         }
-        let allow_cancelled = core::mem::take(&mut self.cancelled_action_exit);
+        let allow_cancelled = core::mem::replace(&mut self.closed_exit, ClosedExit::None) != ClosedExit::None;
         if self.session.as_ref().is_some_and(|session|
             session.verification.state() != crate::reader_verification::Verification::Verified) {
             self.refuse_checkpoint_image(now, false);

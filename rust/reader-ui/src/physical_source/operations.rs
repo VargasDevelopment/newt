@@ -68,8 +68,8 @@ impl<'op> StrictSource<'op> {
         reader: &mut PhasedReader<'_, '_>) -> Option<Self> {
         Self::for_live_inner(source, selection, owner, reader, true)
     }
-    /// Relend the selected FD on exit after a cancelled live reader action
-    /// cleared `owner.state.opened()` while keeping `has_progress()`.
+    /// Relend the selected FD on exit after a cancelled or timed-out live
+    /// reader action cleared `owner.state.opened()` while keeping `has_progress()`.
     pub fn for_cancelled_exit(source: &'op mut dyn BookSource,
         selection: &'op SelectionAuthority, owner: &ExternalOwner,
         reader: &mut PhasedReader<'_, '_>) -> Option<Self> {

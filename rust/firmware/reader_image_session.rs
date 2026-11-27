@@ -126,7 +126,7 @@ impl super::Runtime {
         -> Result<(), newt_c3_board::Error> {
         use crate::home_startup::CardPort;
         self.reflow_anchor = None;
-        self.cancelled_action_exit = false;
+        self.closed_exit = super::ClosedExit::None;
         if let Some(memory) = self.memory.external_mut() {
             memory.lend(|memory| {
                 let book = &mut *memory.runtime;

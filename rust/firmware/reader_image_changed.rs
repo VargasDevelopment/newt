@@ -65,9 +65,7 @@ impl Runtime {
         if ui.app.screen != newt_core::app::Screen::Sleeping && ui.press == crate::app_image::PressState::Idle {
             ui.press = crate::app_image::PressState::Accepted;
         }
-        if self.acknowledge_work_image(home, ui, logical, newt_reader_ui::SlowWork::FirstOpen, events.control, events.action) {
-            events.control.restart(millis());
-        }
+        self.acknowledge_and_restart_image(home, ui, logical, newt_reader_ui::SlowWork::FirstOpen, events.control, events.action);
         let may_commit = self.selection.flags() & flag::COMMIT_OWED != 0
             || self.selection.flags() & (flag::SAVE_FAILED | flag::UNAVAILABLE | flag::UNCONFIRMED) == 0;
         let previous_digest = *self.selection.digest();
