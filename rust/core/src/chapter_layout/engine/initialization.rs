@@ -46,6 +46,7 @@ impl<'a> EngineState<'a> {
             pool_len: 0,
             y,
             page_chars: 0,
+            picture_note_at: None,
             par_link_count: 0,
             current_link: 0,
             last_shy: false,

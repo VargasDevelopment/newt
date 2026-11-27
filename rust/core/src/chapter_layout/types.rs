@@ -35,6 +35,9 @@ pub struct Params<'a> {
     pub embedded_styles: bool,
     pub focus: bool,
     pub inline_ascent: bool,
+    /// Newt: lay out a short italic note where a picture can't be placed
+    /// (#179). Off keeps FreeInk's silent skip for the parity traces.
+    pub picture_notes: bool,
     pub stylesheet: Option<CssStylesheet<'a>>,
 }
 impl Default for Params<'_> {
@@ -56,6 +59,7 @@ impl Default for Params<'_> {
             embedded_styles: true,
             focus: false,
             inline_ascent: false,
+            picture_notes: false,
             stylesheet: None,
         }
     }

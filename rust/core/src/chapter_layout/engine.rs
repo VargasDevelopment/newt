@@ -12,6 +12,16 @@ use crate::{
     css::{self, CssDecl, CssStylesheetBuilder, TextAlign},
     hyphenator::Hyphenator,
 };
+/// One start tag's attribute views, borrowed only for the callback.
+#[derive(Clone, Copy, Default)]
+pub struct StartAttrs<'x> {
+    pub class: Option<&'x [u8]>,
+    pub inline: Option<&'x [u8]>,
+    pub id: Option<&'x [u8]>,
+    pub href: Option<&'x [u8]>,
+    pub src: Option<&'x [u8]>,
+    pub alt: Option<&'x [u8]>,
+}
 /// Existing callers retain their backend; all layout policy lives in EngineState.
 pub struct Engine<'a> {
     pub state: EngineState<'a>,
@@ -34,6 +44,9 @@ impl<'a> Engine<'a> {
     }
     pub fn start(&mut self, name: &[u8], class: Option<&[u8]>, inline: Option<&[u8]>, id: Option<&[u8]>, href: Option<&[u8]>, src: Option<&[u8]>) {
         self.state.start(self.backend, name, class, inline, id, href, src)
+    }
+    pub fn start_tag(&mut self, name: &[u8], attrs: StartAttrs<'_>) {
+        self.state.start_tag(self.backend, name, attrs)
     }
     pub fn end(&mut self, name: &[u8]) { self.state.end(self.backend, name) }
     pub fn text(&mut self, text: &[u8]) { self.state.text(self.backend, text) }
@@ -75,6 +88,8 @@ pub struct EngineState<'a> {
     pool_len: usize,
     y: i16,
     page_chars: u32,
+    /// Chapter position held while a skipped-picture note lays out.
+    picture_note_at: Option<u32>,
     par_link_count: usize,
     current_link: u8,
     last_shy: bool,
@@ -403,6 +418,10 @@ impl<'a> EngineState<'a> {
         href: Option<&[u8]>,
         src: Option<&[u8]>,
     ) {
+        self.start_tag(backend, name, StartAttrs { class, inline, id, href, src, alt: None })
+    }
+    pub fn start_tag(&mut self, backend: &mut dyn Backend, name: &[u8], attrs: StartAttrs<'_>) {
+        let StartAttrs { class, inline, id, href, src, alt } = attrs;
         if self.failed || self.stopped {
             return;
         }
@@ -486,7 +505,9 @@ impl<'a> EngineState<'a> {
             if let Some(s) = src.or(href) {
                 if !self.state().hidden {
                     self.flush(backend);
-                    self.place_image(backend, s)
+                    if !self.place_image(backend, s) && self.params.picture_notes {
+                        self.note_skipped_picture(backend, alt)
+                    }
                 }
             }
         } else {
@@ -1912,7 +1933,10 @@ impl<'a> EngineState<'a> {
             self.apply_seg_gap_case(&segs[0], sp0, justify, per, &mut remainder, &mut x);
         }
         if before.0 == 0 {
-            self.page_chars = self.chars.wrapping_add(count(&self.storage.text[..r.start]));
+            self.page_chars = match self.picture_note_at {
+                Some(at) => at,
+                None => self.chars.wrapping_add(count(&self.storage.text[..r.start])),
+            };
         }
         let rest = if let Some((start, end, flags)) = split_rest {
             Some(self.line_metrics(backend, start, end, flags | 1))
@@ -2046,17 +2070,19 @@ impl<'a> EngineState<'a> {
         *x += width;
         true
     }
-    fn place_image(&mut self, backend: &mut dyn Backend, src: &[u8]) {
+    /// False only when the picture can't be placed at all (no member, no
+    /// size); a full page or failed layout still counts as handled.
+    fn place_image(&mut self, backend: &mut dyn Backend, src: &[u8]) -> bool {
         let mut path = [0; 512];
         let mut frag = [];
         let Some((n, _)) = self.image_source.resolve(src, &mut path, &mut frag) else {
-            return;
+            return false;
         };
         let Some((iw, ih)) = self.image_source.probe(&path[..n]) else {
-            return;
+            return false;
         };
         if iw == 0 || ih == 0 {
-            return;
+            return false;
         }
         let cw = i32::from(self.params.width)
             - i32::from(self.params.left)
@@ -2082,16 +2108,16 @@ impl<'a> EngineState<'a> {
         {
             self.emit_page(backend);
             if self.stopped {
-                return;
+                return true;
             }
         }
         let href = copy_page_bytes(self.storage.page, &mut self.pool_len, &path[..n]);
         let Some(href) = href else {
             self.failed = true;
-            return;
+            return true;
         };
         if self.image_count >= self.storage.images.len() {
-            return;
+            return true;
         }
         self.storage.images[self.image_count] = Image {
             href,
@@ -2104,7 +2130,29 @@ impl<'a> EngineState<'a> {
         if self.run_count == 0 && self.image_count == 1 {
             self.page_chars = self.chars
         }
-        self.y = (i32::from(self.y) + h + i32::from(self.params.base_size / 2)) as i16
+        self.y = (i32::from(self.y) + h + i32::from(self.params.base_size / 2)) as i16;
+        true
+    }
+    /// Newt (#179): the reader can't draw this picture, so say so in italics,
+    /// with its alt text when it has some, instead of letting the text around
+    /// it join up. Like a placed picture, the note takes no chapter positions,
+    /// so saved places, anchors and progress totals don't move.
+    fn note_skipped_picture(&mut self, backend: &mut dyn Backend, alt: Option<&[u8]>) {
+        let at = self.chars;
+        self.picture_note_at = Some(at);
+        self.push(CssDecl { style_italic: 1, ..CssDecl::default() });
+        match alt.map(<[u8]>::trim_ascii).filter(|alt| !alt.is_empty()) {
+            Some(alt) => {
+                self.text(backend, b"[Picture: ");
+                self.text(backend, alt);
+                self.text(backend, b"]");
+            }
+            None => self.text(backend, b"[Picture]"),
+        }
+        self.flush(backend);
+        self.pop();
+        self.picture_note_at = None;
+        self.chars = at;
     }
     fn emit_page(&mut self, backend: &mut dyn Backend) {
         let page = Page {

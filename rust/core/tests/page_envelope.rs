@@ -51,8 +51,8 @@ fn older_envelope_versions_are_rejected() {
         old[60..].copy_from_slice(&checksum.to_le_bytes());
         old
     };
-    // Pages (.fibp) and unnamed manifests reject v1..=v4 and future versions.
-    for other in [1u32, 2, 3, 4, 6] {
+    // Pages (.fibp) and unnamed manifests reject v1..=v5 and future versions.
+    for other in [1u32, 2, 3, 4, 5, 7] {
         let old = stamped(other);
         let mut out = 765;
         assert!(!inspect(&old, 69, &[0; 32], &mut out), "accepted v{other}");
@@ -64,12 +64,12 @@ fn older_envelope_versions_are_rejected() {
         assert_eq!(out, 765);
     }
     // Book indexes (.IDX and legacy .fibx) reject v1, v2 and future versions,
-    // while admitting v3, v4 and v5.
+    // while admitting v3 through v6.
     for (label, index_name) in [
         (".IDX", short_index.as_bytes().as_slice()),
         (".fibx", legacy_index.as_slice()),
     ] {
-        for rejected in [1u32, 2, 6] {
+        for rejected in [1u32, 2, 7] {
             let old = stamped(rejected);
             let mut out = 765;
             assert!(
@@ -78,7 +78,7 @@ fn older_envelope_versions_are_rejected() {
             );
             assert_eq!(out, 765);
         }
-        for admitted in [3u32, 4, 5] {
+        for admitted in [3u32, 4, 5, 6] {
             let mut out = 765;
             assert!(
                 inspect_for(Some(index_name), &stamped(admitted), 69, &[0; 32], &mut out),
@@ -96,7 +96,7 @@ fn older_envelope_versions_are_rejected() {
         bad_hex_index.as_slice(),
         trailing_index.as_slice(),
     ] {
-        for older in [3u32, 4] {
+        for older in [3u32, 4, 5] {
             let mut out = 765;
             assert!(
                 !inspect_for(Some(non_index), &stamped(older), 69, &[0; 32], &mut out),

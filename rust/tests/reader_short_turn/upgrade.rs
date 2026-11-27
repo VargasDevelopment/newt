@@ -83,7 +83,7 @@ fn seed_old_index(card: &card::Card, files: &BTreeMap<String, Vec<u8>>, version:
 }
 
 pub fn resume(bytes: Vec<u8>) {
-    for old_version in [1u32, 2, 3, 4] {
+    for old_version in [1u32, 2, 3, 4, 5] {
         resume_from(bytes.clone(), old_version);
     }
     println!("PASS old Pages data misses, saved content resumes, and only Pages rebuilds");
@@ -141,7 +141,7 @@ fn resume_from(bytes: Vec<u8>, old_version: u32) {
         });
         let mut files = card_files(&card);
         assert!(files.keys().any(|path| path.contains("/State/")));
-        let index_version = if old_version == 4 { 4 } else { 3 };
+        let index_version = if old_version >= 4 { old_version } else { 3 };
         let (index_path, old_index) = seed_old_index(&card, &files, index_version);
         files.insert(index_path, old_index);
         let (backup, legacy) = seed_old_pages(&card, &files, old_version);

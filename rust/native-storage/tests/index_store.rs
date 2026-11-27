@@ -155,11 +155,11 @@ fn v3_book_indexes_stay_admitted_while_v1_and_v2_are_refused() {
         }
         stamped
     };
-    for rejected in [1u32, 2, 6] {
+    for rejected in [1u32, 2, 7] {
         card.model.files.insert(path.clone(), restamp(rejected));
         assert_eq!(with_store(&mut card, |store| read(store, &BOOK, complete)), None);
     }
-    for admitted in [3u32, 4, 5] {
+    for admitted in [3u32, 4, 5, 6] {
         card.model.files.insert(path.clone(), restamp(admitted));
         assert_eq!(with_store(&mut card, |store| read(store, &BOOK, complete)), Some(true));
     }

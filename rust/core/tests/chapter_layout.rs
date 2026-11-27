@@ -241,6 +241,8 @@ mod links;
 mod inline_ascent;
 #[path = "chapter_layout/small_caps.rs"]
 mod small_caps;
+#[path = "chapter_layout/picture_notes.rs"]
+mod picture_notes;
 
 fn two_lines_on_separate_pages(page_cap: usize, run_cap: usize) {
     let mut sink = Capture::default();
