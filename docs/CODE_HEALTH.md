@@ -148,7 +148,9 @@ Owner decision, 2026-10-21: protect the safety margin, not the totals.
    for the build: before/after, reason and reviewer. No silent creep: a
    flash, RAM or selected stack ceiling edit without its record fails the gate.
    RTC has no gate ceiling yet; its growth is reviewed, and the record's reason
-   states RTC before and after.
+   states RTC before and after. The reason also says what the growth buys: what
+   the reader gains, or the reliability, security or maintainability problem it
+   solves. A correct change can still be declined when its cost outweighs that.
 3. **Ratchet down.** After a verified improvement, tighten the ceilings.
 4. **Off costs nothing.** A feature that is off costs the reader nothing by
    default. Memory a feature holds while unused (Wi-Fi static RAM is the known
