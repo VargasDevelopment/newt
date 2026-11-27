@@ -15,6 +15,30 @@ Source-import closure for PR #16: immutable checkpoint
 authorship and subjects through an explicit bounded frozen-source import exception. New integration commits remain strictly conventional;
 no firmware version, tag or installed image is changed by that closure.
 
+## v0.7.0
+
+### Feat
+- **reader**: say where a picture is skipped, with its alt text (#179) (#198)
+- **reader**: fill current-chapter page cache target-first with progress outcomes (#168) (#195)
+- **cache**: add the resume-point section to the segment format (#168) (#192)
+- **reader**: add opt-in page-turn trace, layout counter, and fixtures (#168) (#178)
+- **reader**: support small caps and text-transform (#43) (#172)
+- **reader**: read every EPUB through a durable book index (#60) (#149)
+### Fix
+- **release**: scan printable runs with plausible addresses in e-mail guard (#169) (#185)
+- **cache**: close a held page read before a producer pause (#194) (#196)
+- **dev-usb**: end a DEV session only after 250 ms without the host (#170) (#193)
+- **reader**: keep the page-turn cache on with any slim bar or refresh (#187) (#189)
+- **covers**: free the reader's receipt for Home cover work (#182) (#183)
+- **covers**: find covers in books past 1,024 ZIP entries (#177) (#181)
+- **reader**: index books past the catalog's 1,024-entry cap (#174) (#176)
+- **reader**: open long books after an index spill reopen (#171) (#173)
+- **reader**: reserve ink extents for oversized and shifted inline runs (#148) (#163)
+- **health**: add linker relocations to the Wi-Fi link check's references (#60) (#167)
+### Perf
+- **layout**: restore the plain-text fast path lost in #172 (NEWT-217) (#180)
+- **dev-usb**: bulk-read hardware RX FIFO into PUT data buffer (#135) (#164)
+
 ## v0.6.0
 
 ### Feat
