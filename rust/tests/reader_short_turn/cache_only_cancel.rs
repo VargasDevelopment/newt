@@ -140,10 +140,12 @@ fn stored_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
 }
 
 fn synthetic_fragment_epub() -> Vec<u8> {
-    synthetic_epub(false)
+    synthetic_epub(None)
 }
 
-fn synthetic_epub(two_chapters: bool) -> Vec<u8> {
+/// One chapter, or two with `second` paragraphs in the second.
+fn synthetic_epub(second: Option<usize>) -> Vec<u8> {
+    let two_chapters = second.is_some();
     let mut ch = String::from(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
          <html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>Ch 1</title></head><body><h1>Chapter 1</h1>",
@@ -161,7 +163,7 @@ fn synthetic_epub(two_chapters: bool) -> Vec<u8> {
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
          <html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>Ch 2</title></head><body><h1>Chapter 2</h1>",
     );
-    for i in 0..16 {
+    for i in 0..second.unwrap_or(0) {
         ch1.push_str(&format!(
             "<p>Second chapter paragraph {i}: Morning light crossed the breakwater and warmed the stone quay.</p>"
         ));
@@ -622,13 +624,17 @@ pub fn check() {
         })
         .unwrap();
 
-    check_cross_chapter_cache_only();
+    // A short cached chapter turns at once; a long one defers to Loading.
+    check_cross_chapter_cache_only(16);
+    check_cross_chapter_cache_only(1_600);
 
     println!("PASS cache_only cold-miss/hit and cancelled live exit save/reload");
 }
 
-fn check_cross_chapter_cache_only() {
-    let epub = synthetic_epub(true);
+fn check_cross_chapter_cache_only(paragraphs: usize) {
+    let epub = synthetic_epub(Some(paragraphs));
+    // About 100 stored bytes a paragraph.
+    let long = paragraphs * 100 > newt_phased_reader::QUICK_VERIFY_BYTES as usize;
     let mut digest = [0u8; 32];
     assert!(hash(&epub, &mut digest));
     let book = u64::from_le_bytes(digest[..8].try_into().unwrap());
@@ -758,52 +764,48 @@ fn check_cross_chapter_cache_only() {
             assert_eq!(last_ch0.spine, 0);
             assert_eq!(last_ch0.page + 1, last_ch0.page_count);
 
-            // Cross-chapter cache_only probe must defer BEFORE verifying chapter 1's range.
+            // A cache_only probe turns into a short cached chapter at once, and
+            // defers a long one before verifying its range, until Loading shows.
             ports.cache_only = true;
             reads.set(0);
             reader.reset_layout_pages();
             let h = owner.handle_ui_physical(
                 &mut reader, &mut source, &mut ui, settings, Action::Next, 1_300, &mut ports,
             );
-            let deferred = owner.complete_ui_physical(
+            let probed = owner.complete_ui_physical(
                 &mut reader, &mut source, &mut ui, h, 1_300, &mut ports,
             );
-            assert_eq!(
-                deferred.work,
-                ReaderUiWork::Intent(ReaderUiIntent::None),
-                "cross-chapter cache_only probe must defer until Loading is shown"
-            );
-            assert_eq!(reader.info(), last_ch0, "cross-chapter cache_only must keep chapter 0 shown");
-            assert_eq!(
-                reads.get(),
-                0,
-                "cross-chapter cache_only must not verify target chapter range before Loading"
-            );
-            assert_eq!(reader.last_layout_pages(), 0);
+            assert_eq!(reader.last_layout_pages(), 0, "a cache_only probe never lays out");
+            if !long {
+                assert_eq!(probed.work, ReaderUiWork::Intent(ReaderUiIntent::Repaint),
+                    "a short cached chapter must turn without deferring to Loading");
+                assert_eq!((reader.info().spine, reader.info().page), (1, 0));
+                assert!(reads.get() > 0, "the short chapter's range is verified before it publishes");
+            } else {
+                assert_eq!(probed.work, ReaderUiWork::Intent(ReaderUiIntent::None),
+                    "a long cross-chapter cache_only probe must defer until Loading is shown");
+                assert_eq!(reader.info(), last_ch0, "a deferred probe keeps chapter 0 shown");
+                let chapter_blocks = (paragraphs * 100 / BLOCK_BYTES) as u32;
+                assert!(reads.get() < chapter_blocks / 4,
+                    "a deferred probe must not verify the long chapter's range ({} reads)", reads.get());
 
-            // After Loading is acknowledged (cache_only = false), target chapter range IS verified
-            // before publishing the cached page (still 0 layout pages).
-            ports.cache_only = false;
-            reads.set(0);
-            reader.reset_layout_pages();
-            let h = owner.handle_ui_physical(
-                &mut reader, &mut source, &mut ui, settings, Action::Next, 1_400, &mut ports,
-            );
-            let published = owner.complete_ui_physical(
-                &mut reader, &mut source, &mut ui, h, 1_400, &mut ports,
-            );
-            assert_eq!(
-                published.work,
-                ReaderUiWork::Intent(ReaderUiIntent::Repaint),
-                "cross-chapter retry after Loading must publish chapter 1"
-            );
-            assert_eq!(reader.info().spine, 1);
-            assert_eq!(reader.info().page, 0);
-            assert!(
-                reads.get() > 0,
-                "cross-chapter retry must verify target chapter range before publishing"
-            );
-            assert_eq!(reader.last_layout_pages(), 0, "verified cross-chapter retry must hit page cache");
+                // After Loading is acknowledged (cache_only = false), the range IS
+                // verified before the cached page publishes (still 0 layout pages).
+                ports.cache_only = false;
+                reads.set(0);
+                let h = owner.handle_ui_physical(
+                    &mut reader, &mut source, &mut ui, settings, Action::Next, 1_400, &mut ports,
+                );
+                let published = owner.complete_ui_physical(
+                    &mut reader, &mut source, &mut ui, h, 1_400, &mut ports,
+                );
+                assert_eq!(published.work, ReaderUiWork::Intent(ReaderUiIntent::Repaint),
+                    "cross-chapter retry after Loading must publish chapter 1");
+                assert_eq!((reader.info().spine, reader.info().page), (1, 0));
+                assert!(reads.get() >= chapter_blocks,
+                    "cross-chapter retry must verify the target chapter range before publishing");
+                assert_eq!(reader.last_layout_pages(), 0, "verified cross-chapter retry must hit page cache");
+            }
 
             drop(ports);
             drop(source);

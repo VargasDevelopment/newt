@@ -10,7 +10,7 @@ use newt_phased_reader::imported_revision::{
     session::{Cache, Session},
 };
 use newt_phased_reader::phase_storage::{BuildLoan, ReadScope, Storage};
-use newt_phased_reader::{CachePresence, CacheRequest, OperationPhased, PhasedChapterCache};
+use newt_phased_reader::{CachePresence, CacheRequest, OperationPhased, PhasedChapterCache, QUICK_VERIFY_BYTES};
 #[path = "physical_owner/verification.rs"]
 mod verification;
 #[path = "physical_owner/actions.rs"]
@@ -128,15 +128,18 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
                             return PageWork::failed(Status::Unsupported);
                         }
                         let staged = if spine != session.reader.reader.info().spine {
-                            // Staging verifies the whole chapter, which can outlast
-                            // the budget before Loading shows; a cache-only probe
-                            // defers it until Loading is up (#103).
-                            if cache_only {
-                                return PageWork::VERIFICATION_PENDING;
-                            }
                             let digest = *session.revision.digest();
                             if session.cache.stored(&digest, spine, session.reader) {
+                                // Staging verifies the whole chapter. A cache-only probe
+                                // verifies only a short one; a longer one, or any failure,
+                                // retries after Loading shows, which reports it (#103).
+                                if cache_only {
+                                    session.reader.limit_verification(QUICK_VERIFY_BYTES);
+                                }
                                 let status = session.stage_owned(spine);
+                                if cache_only && status != Status::Ok {
+                                    return PageWork::VERIFICATION_PENDING;
+                                }
                                 if status != Status::Ok {
                                     return PageWork::failed(status);
                                 }

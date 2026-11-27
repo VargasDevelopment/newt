@@ -29,7 +29,7 @@ pub mod session_probe;
 #[allow(unsafe_code)]
 pub mod phase_storage;
 
-pub use reader::phase_session::{OperationPhased, PhasedChapterCache};
+pub use reader::phase_session::{OperationPhased, PhasedChapterCache, QUICK_VERIFY_BYTES};
 
 /// Attempt-scoped cache writes; no reader or parse-bank ownership.
 pub mod producer_store;

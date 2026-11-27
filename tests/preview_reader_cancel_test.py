@@ -3,6 +3,7 @@
 
 - Back that cancels a live turn exits Home and saves the shown page to SD.
 - A stalled turn over a strict source still lets Back and Power exit and save.
+- A turn into a short cached chapter shows no Loading screen.
 - Back that cancels an initial open from Library goes Home and keeps the
   previous book's selection and position; a later tagged Back in the same
   queue leaves the screen the presses between them opened.
@@ -25,11 +26,12 @@ from gate_tier import negative_controls  # noqa: E402
 BACK, CONFIRM, LEFT, RIGHT, UP, DOWN, POWER = range(7)
 HOME, LIBRARY = 0, 6
 STATUS = re.compile(r'STATUS screen=(\d+) ')
+GENERATION = re.compile(r'STATUS screen=\d+ gen=(\d+)')
 DIAG_FIELD = re.compile(r'(reader_open|actual_spine|actual_character|current_book)=(\d+)')
 # From Home: Read, then turn to the first chapter's last page, which only an
 # exit saves.
 TO_CHAPTER_END = (BACK, RIGHT, RIGHT, RIGHT)
-# The next turn crosses into the second chapter: it shows Loading, then reads.
+# The next turn crosses into the second chapter, short and cached by then.
 CROSS_CHAPTER_TURN = RIGHT
 # Without a session, live actions use the strict source, as when the session
 # cannot be allocated.
@@ -185,6 +187,20 @@ def library_cancel_queue_keeps_later_screen(binary):
             return f'a queued Back after a Library cancel left screen {screen_of(log)} instead of {opened}'
 
 
+def short_cached_chapter_turns_without_loading(binary):
+    """A turn into a short cached chapter draws its page as the only new frame."""
+    with tempfile.TemporaryDirectory(prefix='newt-no-loading-') as td:
+        d = Path(td)
+        seed(binary, d, 'healthy', 0)
+        shown = run(binary, d, TO_CHAPTER_END)
+        turned = run(binary, d, TO_CHAPTER_END + (CROSS_CHAPTER_TURN,))
+        spines = int(diag_of(shown)['actual_spine']), int(diag_of(turned)['actual_spine'])
+        assert spines[1] == spines[0] + 1, spines
+        frames = int(GENERATION.findall(turned)[-1]) - int(GENERATION.findall(shown)[-1])
+        if frames != 1:
+            return f'a turn into a short cached chapter drew {frames} frames, so Loading showed first'
+
+
 EARLY_CLEARED_CANCEL = (
     'reader_image_action.rs',
     '            Some(ReaderUiIntent::Home) => {\n'
@@ -209,6 +225,14 @@ CANCEL_BACK_EVERYWHERE = (
     '        _ => input::Screen::Other,',
     '        _ => input::Screen::Library,',
 )
+# Loading before every cross-chapter Next, as the first #103 fix did.
+LOADING_EVERY_CROSS_CHAPTER_TURN = (
+    'reader_image_action.rs',
+    '                failed.spine > 0\n            };\n        }\n        false\n',
+    '                failed.spine > 0\n            };\n        }\n'
+    '        action == Action::Next && book.ui.panel == ReaderPanel::Page\n'
+    '            && book.reader.info().page + 1 >= book.reader.info().page_count\n',
+)
 LIBRARY_KEEPS_CANCEL_BACK = (
     'app_runtime/run_loop.rs',
     'dispatch_back.then_some(input::Action::Back)',
@@ -228,6 +252,7 @@ def main():
     check(back_cancels_live_turn_and_saves, binary)
     check(library_cancel_goes_home_and_keeps_book, binary)
     check(library_cancel_queue_keeps_later_screen, binary)
+    check(short_cached_chapter_turns_without_loading, binary)
     check(stalled_strict_turn_exits_and_saves, rust_preview.control([NO_SESSION], optimize=False))
     if not negative_controls(__file__):
         return
@@ -237,6 +262,8 @@ def main():
         (stalled_strict_turn_exits_and_saves, [NO_SESSION, TIMED_OUT_EXIT_REFUSED], 'timed-out-exit-refused'),
         (library_cancel_goes_home_and_keeps_book, [LIBRARY_KEEPS_CANCEL_BACK], 'library-keeps-cancel-back'),
         (library_cancel_queue_keeps_later_screen, [CANCEL_BACK_EVERYWHERE], 'cancel-back-everywhere'),
+        (short_cached_chapter_turns_without_loading, [LOADING_EVERY_CROSS_CHAPTER_TURN],
+         'loading-every-cross-chapter-turn'),
     ):
         problem = case(rust_preview.control(edits, optimize=False))
         if not problem:

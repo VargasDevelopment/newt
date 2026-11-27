@@ -41,9 +41,9 @@ impl Runtime {
 
     /// Multi-segment chapters and pending-verification turns probe the actual
     /// page cache first so cache hits never flash Loading, while real cache
-    /// misses show Loading before full layout (#103). A cross-chapter turn must
-    /// verify the whole target chapter even on a hit, so its probe always
-    /// defers to Loading before that verification runs.
+    /// misses show Loading before full layout (#103). A cross-chapter probe
+    /// verifies a short cached target chapter at once and defers a longer one
+    /// to Loading before that verification runs.
     fn turn_tries_cache_first(&self, action: Action) -> bool {
         if !matches!(action, Action::Previous | Action::Next) { return false; }
         let Some(book) = self.book() else { return false; };

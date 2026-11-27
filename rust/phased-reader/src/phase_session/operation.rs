@@ -19,7 +19,13 @@ impl<'op, 'sel, 'plan, 'bank, B: ParserBackend + ?Sized, L: BuildLoan>
             backend,
             breaker,
             staged: None,
+            verify_limit: u64::MAX,
         }
+    }
+    /// A staged chapter whose compressed range exceeds `bytes` fails as
+    /// Unsupported before it is verified, so a probe can defer it.
+    pub fn limit_verification(&mut self, bytes: u64) {
+        self.verify_limit = bytes;
     }
     pub fn discard_candidate(&mut self, status: Status) -> Status {
         self.staged = None;
