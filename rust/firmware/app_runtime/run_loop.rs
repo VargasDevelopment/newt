@@ -414,7 +414,12 @@ fn sleep(home: &mut Home<'_>, ui: &mut Application<'_>, reader: &mut impl Reader
 }
 
 fn input_screen(screen: Screen) -> input::Screen {
-    match screen { Screen::Home => input::Screen::Home, Screen::EpubReading => input::Screen::EpubReading, _ => input::Screen::Other }
+    match screen {
+        Screen::Home => input::Screen::Home,
+        Screen::EpubReading => input::Screen::EpubReading,
+        Screen::Library => input::Screen::Library,
+        _ => input::Screen::Other,
+    }
 }
 fn core_action(action: input::Action) -> Action {
     match action { input::Action::Previous => Action::Previous, input::Action::Next => Action::Next,

@@ -44,6 +44,7 @@ const SCAN: [Button; 7] = [
 pub enum Screen {
     Home,
     EpubReading,
+    Library,
     Other,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,9 +86,10 @@ impl PhysicalEvent {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Consumption {
     Action(Action),
-    /// Always suppress ordinary navigation. Dispatch Back on the screen the
-    /// cancelled work unwound to, except Home, where Back would mean Read: a
-    /// cancelled Library open then goes Home like any Back from Library.
+    /// Always suppress ordinary navigation. Dispatch Back only where the
+    /// cancelled work unwinds to, the reader or Library: a cancelled Library
+    /// open then goes Home like any Back from Library. Elsewhere a later
+    /// tagged Back in the same queue must not close what earlier presses opened.
     CancelBack {
         dispatch_back: bool,
     },
@@ -339,7 +341,7 @@ impl UiControl<'_> {
         }
         if back {
             return Consumption::CancelBack {
-                dispatch_back: screen != Screen::Home,
+                dispatch_back: matches!(screen, Screen::EpubReading | Screen::Library),
             };
         }
         let button = match event.code {
@@ -498,16 +500,32 @@ mod clockwise_back_tests {
             control.consume_physical(PhysicalEvent { code: portrait_cancel }, Screen::Home),
             Consumption::CancelBack { dispatch_back: false }
         );
-        // A cancelled Library open unwinds to Library; its Back still goes Home.
-        let library_cancel = control.with_open(400, |control, _| {
-            let mut back = FakeIo::new(Button::Back, false);
-            producer.poll_once(&mut back);
-            assert!(control.cancelled());
-            back.tail.unwrap()
+        // A cancelled Library open queues Back, Next, Confirm, Back. The first
+        // Back unwinds to Library and goes Home; Next and Confirm then open
+        // another screen, where the second tagged Back must not close it.
+        let queued = control.with_open(400, |control, _| {
+            [Button::Back, Button::Right, Button::Confirm, Button::Back].map(|button| {
+                let mut io = FakeIo::new(button, false);
+                producer.poll_once(&mut io);
+                io.tail.unwrap()
+            })
         });
+        assert!(queued[0] == CANCEL_BACK && queued[3] == CANCEL_BACK);
         assert_eq!(
-            control.consume_physical(PhysicalEvent { code: library_cancel }, Screen::Other),
+            control.consume_physical(PhysicalEvent { code: queued[0] }, Screen::Library),
             Consumption::CancelBack { dispatch_back: true }
+        );
+        assert_eq!(
+            control.consume_physical(PhysicalEvent { code: queued[1] }, Screen::Home),
+            Consumption::Action(Action::Next)
+        );
+        assert_eq!(
+            control.consume_physical(PhysicalEvent { code: queued[2] }, Screen::Home),
+            Consumption::Action(Action::Activate)
+        );
+        assert_eq!(
+            control.consume_physical(PhysicalEvent { code: queued[3] }, Screen::Other),
+            Consumption::CancelBack { dispatch_back: false }
         );
         assert_eq!(
             control.consume_physical(PhysicalEvent { code: Button::Back as u8 }, Screen::EpubReading),

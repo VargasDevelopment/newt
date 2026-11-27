@@ -4,7 +4,8 @@
 - Back that cancels a live turn exits Home and saves the shown page to SD.
 - A stalled turn over a strict source still lets Back and Power exit and save.
 - Back that cancels an initial open from Library goes Home and keeps the
-  previous book's selection and position.
+  previous book's selection and position; a later tagged Back in the same
+  queue leaves the screen the presses between them opened.
 
 Each test reloads the position from a cold boot with RTC and RAM discarded.
 """
@@ -22,7 +23,7 @@ import rust_preview  # noqa: E402
 from gate_tier import negative_controls  # noqa: E402
 
 BACK, CONFIRM, LEFT, RIGHT, UP, DOWN, POWER = range(7)
-HOME = 0
+HOME, LIBRARY = 0, 6
 STATUS = re.compile(r'STATUS screen=(\d+) ')
 DIAG_FIELD = re.compile(r'(reader_open|actual_spine|actual_character|current_book)=(\d+)')
 # From Home: Read, then turn to the first chapter's last page, which only an
@@ -53,7 +54,7 @@ def cold_boot(directory, conf=None):
     preview_driver.fresh(directory)
     (directory / 'retained.bin').unlink(missing_ok=True)
     preview_driver.write_conf(directory, {'telemetry': 'sample', 'card.back': '', 'card.slow': '',
-                                          'card.after_refresh': '', **(conf or {})})
+                                          'card.after_refresh': '', 'card.button': '', **(conf or {})})
 
 
 def run(binary, directory, keys, conf=None, *, from_seed=True):
@@ -166,6 +167,24 @@ def library_cancel_goes_home_and_keeps_book(binary):
             return f'Read after a Library cancel restored {got} instead of {saved}'
 
 
+def library_cancel_queue_keeps_later_screen(binary):
+    """Back, Next, Confirm, Back queued during an open from Library: the first
+    Back goes Home, Next and Confirm open a Home card, and the second tagged
+    Back leaves that screen open."""
+    with tempfile.TemporaryDirectory(prefix='newt-cancel-queue-') as td:
+        d = Path(td)
+        seed(binary, d, 'four', 2)
+        to_second_book = (CONFIRM, DOWN)
+        opened = screen_of(run(binary, d, to_second_book + (BACK, RIGHT, CONFIRM)))
+        assert opened not in (HOME, LIBRARY, None), opened
+        after = first_refresh_after(binary, d, to_second_book)
+        queue = ','.join(map(str, (BACK, RIGHT, CONFIRM, BACK)))
+        log = run(binary, d, to_second_book + (CONFIRM,),
+                  {'card.back': '/Books/', 'card.after_refresh': after, 'card.button': queue})
+        if screen_of(log) != opened:
+            return f'a queued Back after a Library cancel left screen {screen_of(log)} instead of {opened}'
+
+
 EARLY_CLEARED_CANCEL = (
     'reader_image_action.rs',
     '            Some(ReaderUiIntent::Home) => {\n'
@@ -183,6 +202,12 @@ TIMED_OUT_EXIT_REFUSED = (
     'reader_image_exit.rs',
     'core::mem::replace(&mut self.closed_exit, ClosedExit::None) != ClosedExit::None;',
     'core::mem::replace(&mut self.closed_exit, ClosedExit::None) == ClosedExit::Cancelled;',
+)
+# Every screen but Home dispatches a cancel Back, as before the fix.
+CANCEL_BACK_EVERYWHERE = (
+    'app_runtime/run_loop.rs',
+    '        _ => input::Screen::Other,',
+    '        _ => input::Screen::Library,',
 )
 LIBRARY_KEEPS_CANCEL_BACK = (
     'app_runtime/run_loop.rs',
@@ -202,6 +227,7 @@ def main():
     binary = rust_preview.FIRMWARE if len(sys.argv) == 2 else rust_preview.build()
     check(back_cancels_live_turn_and_saves, binary)
     check(library_cancel_goes_home_and_keeps_book, binary)
+    check(library_cancel_queue_keeps_later_screen, binary)
     check(stalled_strict_turn_exits_and_saves, rust_preview.control([NO_SESSION], optimize=False))
     if not negative_controls(__file__):
         return
@@ -210,6 +236,7 @@ def main():
         (stalled_strict_turn_exits_and_saves, [NO_SESSION, TIMED_OUT_EXIT_TAKES_LOAN], 'timed-out-exit-takes-loan'),
         (stalled_strict_turn_exits_and_saves, [NO_SESSION, TIMED_OUT_EXIT_REFUSED], 'timed-out-exit-refused'),
         (library_cancel_goes_home_and_keeps_book, [LIBRARY_KEEPS_CANCEL_BACK], 'library-keeps-cancel-back'),
+        (library_cancel_queue_keeps_later_screen, [CANCEL_BACK_EVERYWHERE], 'cancel-back-everywhere'),
     ):
         problem = case(rust_preview.control(edits, optimize=False))
         if not problem:
