@@ -1,0 +1,221 @@
+#!/usr/bin/env python3
+"""Real-firmware preview tests for the #103 cancel contract, with negative controls.
+
+- Back that cancels a live turn exits Home and saves the shown page to SD.
+- A stalled turn over a strict source still lets Back and Power exit and save.
+- Back that cancels an initial open from Library goes Home and keeps the
+  previous book's selection and position.
+
+Each test reloads the position from a cold boot with RTC and RAM discarded.
+"""
+from pathlib import Path
+import re
+import shutil
+import struct
+import sys
+import tempfile
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path[:0] = [str(ROOT / 'tools'), str(ROOT / 'rust/host/preview')]
+import preview_driver  # noqa: E402
+import rust_preview  # noqa: E402
+from gate_tier import negative_controls  # noqa: E402
+
+BACK, CONFIRM, LEFT, RIGHT, UP, DOWN, POWER = range(7)
+HOME = 0
+STATUS = re.compile(r'STATUS screen=(\d+) ')
+DIAG_FIELD = re.compile(r'(reader_open|actual_spine|actual_character|current_book)=(\d+)')
+# From Home: Read, then turn to the first chapter's last page, which only an
+# exit saves.
+TO_CHAPTER_END = (BACK, RIGHT, RIGHT, RIGHT)
+# The next turn crosses into the second chapter: it shows Loading, then reads.
+CROSS_CHAPTER_TURN = RIGHT
+# Without a session, live actions use the strict source, as when the session
+# cannot be allocated.
+NO_SESSION = (
+    'reader_image_open.rs',
+    'if context.is_none() { *context = session::Session::try_new(&mut native, key, &cancel, millis); }',
+    'let _ = (&mut native, key, &cancel);',
+)
+
+
+def screen_of(log):
+    rows = STATUS.findall(log)
+    return int(rows[-1]) if rows else None
+
+
+def diag_of(log):
+    return dict(DIAG_FIELD.findall(log.split(' DIAG ')[-1]))
+
+
+def cold_boot(directory, conf=None):
+    """Forget run files and RTC retained words; set only this run's faults."""
+    preview_driver.fresh(directory)
+    (directory / 'retained.bin').unlink(missing_ok=True)
+    preview_driver.write_conf(directory, {'telemetry': 'sample', 'card.back': '', 'card.slow': '',
+                                          'card.after_refresh': '', **(conf or {})})
+
+
+def run(binary, directory, keys, conf=None, *, from_seed=True):
+    """Run `keys` from a cold boot; by default over the seeded card, so each
+    run starts from the same saved state."""
+    if from_seed:
+        shutil.rmtree(directory / 'card')
+        shutil.copytree(directory / 'seed-card', directory / 'card')
+    cold_boot(directory, conf)
+    return rust_preview.run(binary, directory, keys, 'power-on')[1]
+
+
+def reopened(binary, directory):
+    """(book, spine, character) the SD record restores on a cold boot, which
+    resumes an open book or else waits on Home for Read."""
+    got = diag_of(run(binary, directory, (), from_seed=False))
+    if got.get('reader_open') != '1':
+        got = diag_of(run(binary, directory, (BACK,), from_seed=False))
+    assert got.get('reader_open') == '1', f'Read did not reopen the book ({got})'
+    return got['current_book'], got['actual_spine'], got['actual_character']
+
+
+def selected_book(directory):
+    """The committed book id in newt-selected.nrs (its newest valid slot)."""
+    data = (directory / 'card/Newt/State/newt-selected.nrs').read_bytes()
+    slots = [at for at in range(512, len(data), 512)
+             if data[at:at + 4] == b'NRSK' and data[at + 20:at + 24] == b'NWLS']
+    assert slots, 'newt-selected.nrs has no valid slot'
+    at = max(slots, key=lambda pos: struct.unpack_from('<I', data, pos + 28)[0])
+    return str(struct.unpack_from('<Q', data, at + 32)[0])
+
+
+def seed(binary, directory, fixture, turns):
+    """Open the first Library book, turn `turns` pages and go Home, which
+    saves; later runs start from this card."""
+    preview_driver.world(binary, directory, preview_driver.parse(['--library-fixture', fixture]))
+    run(binary, directory, (CONFIRM, CONFIRM) + (RIGHT,) * turns + (BACK,), from_seed=False)
+    shutil.copytree(directory / 'card', directory / 'seed-card')
+    return reopened(binary, directory)
+
+
+def first_refresh_after(binary, directory, keys):
+    """The card fault's refresh count that first fires after `keys`: the
+    smallest one that leaves those keys' outcome alone, so it fires at the
+    next action's Loading or Opening refresh."""
+    clean = run(binary, directory, keys)
+    want = (screen_of(clean), diag_of(clean))
+    for after in range(1, 64):
+        log = run(binary, directory, keys, {'card.back': '/Books/', 'card.after_refresh': str(after)})
+        if (screen_of(log), diag_of(log)) == want:
+            return str(after)
+    raise AssertionError(f'no refresh count leaves {keys} alone')
+
+
+def back_cancels_live_turn_and_saves(binary):
+    """Back during a live turn exits Home through the cancelled-exit save."""
+    with tempfile.TemporaryDirectory(prefix='newt-cancel-turn-') as td:
+        d = Path(td)
+        book, *saved = seed(binary, d, 'healthy', 0)
+        shown = diag_of(run(binary, d, TO_CHAPTER_END))
+        want = [shown['actual_spine'], shown['actual_character']]
+        assert want != saved, (want, saved)
+        after = first_refresh_after(binary, d, TO_CHAPTER_END)
+        log = run(binary, d, TO_CHAPTER_END + (CROSS_CHAPTER_TURN,),
+                  {'card.back': '/Books/', 'card.after_refresh': after})
+        if screen_of(log) != HOME:
+            return f'Back during a live turn did not go Home (screen={screen_of(log)})'
+        got = reopened(binary, d)
+        if list(got[1:]) != want:
+            return f'cold reload after a cancelled turn restored {got[1:]} instead of the shown page {want}'
+
+
+def stalled_strict_turn_exits_and_saves(binary):
+    """A strict-source turn that times out still lets Back and Power exit and save."""
+    for name, exit_key in (('Back', BACK), ('Power', POWER)):
+        with tempfile.TemporaryDirectory(prefix=f'newt-stall-{name.lower()}-') as td:
+            d = Path(td)
+            book, *saved = seed(binary, d, 'healthy', 0)
+            shown = diag_of(run(binary, d, TO_CHAPTER_END))
+            want = [shown['actual_spine'], shown['actual_character']]
+            assert want != saved, (want, saved)
+            after = first_refresh_after(binary, d, TO_CHAPTER_END)
+            log = run(binary, d, TO_CHAPTER_END + (CROSS_CHAPTER_TURN, exit_key),
+                      {'card.slow': '/Books/', 'card.after_refresh': after})
+            exit_kind = (d / 'exit.txt').read_text().strip() if (d / 'exit.txt').exists() else ''
+            if exit_key == BACK and screen_of(log) != HOME:
+                return f'Back after a stalled strict turn did not go Home (screen={screen_of(log)})'
+            if exit_key == POWER and exit_kind != 'sleep':
+                return f'Power after a stalled strict turn did not sleep (exit={exit_kind!r}, screen={screen_of(log)})'
+            got = reopened(binary, d)
+            if list(got[1:]) != want:
+                return f'{name} after a stalled strict turn: cold reload restored {got[1:]} instead of {want}'
+
+
+def library_cancel_goes_home_and_keeps_book(binary):
+    """Back during an initial open from Library goes Home with the previous book kept."""
+    with tempfile.TemporaryDirectory(prefix='newt-cancel-library-') as td:
+        d = Path(td)
+        saved = seed(binary, d, 'four', 2)
+        assert int(saved[2]) > 0, saved
+        to_second_book = (CONFIRM, DOWN)
+        after = first_refresh_after(binary, d, to_second_book)
+        log = run(binary, d, to_second_book + (CONFIRM,), {'card.back': '/Books/', 'card.after_refresh': after})
+        if screen_of(log) != HOME:
+            return f'Back during an open from Library stayed on screen {screen_of(log)} instead of Home'
+        if selected_book(d) != saved[0]:
+            return f'Back during an open from Library replaced the selected book ({selected_book(d)} != {saved[0]})'
+        got = reopened(binary, d)
+        if got != saved:
+            return f'Read after a Library cancel restored {got} instead of {saved}'
+
+
+EARLY_CLEARED_CANCEL = (
+    'reader_image_action.rs',
+    '            Some(ReaderUiIntent::Home) => {\n'
+    '                self.reflow_anchor = None;',
+    '            Some(ReaderUiIntent::Home) => {\n'
+    '                self.reflow_anchor = None;\n'
+    '                self.closed_exit = ClosedExit::None;',
+)
+TIMED_OUT_EXIT_TAKES_LOAN = (
+    'reader_image_action.rs',
+    '|| (self.closed_exit == ClosedExit::TimedOut && matches!(action, Action::Back | Action::Sleep)) {',
+    '|| false {',
+)
+TIMED_OUT_EXIT_REFUSED = (
+    'reader_image_exit.rs',
+    'core::mem::replace(&mut self.closed_exit, ClosedExit::None) != ClosedExit::None;',
+    'core::mem::replace(&mut self.closed_exit, ClosedExit::None) == ClosedExit::Cancelled;',
+)
+LIBRARY_KEEPS_CANCEL_BACK = (
+    'app_runtime/run_loop.rs',
+    'dispatch_back.then_some(input::Action::Back)',
+    '(dispatch_back && ui.app.screen == Screen::EpubReading).then_some(input::Action::Back)',
+)
+
+
+def check(case, binary):
+    problem = case(binary)
+    if problem:
+        raise SystemExit(f'FAIL {case.__name__}: {problem}')
+    print(f'PASS {case.__name__}')
+
+
+def main():
+    binary = rust_preview.FIRMWARE if len(sys.argv) == 2 else rust_preview.build()
+    check(back_cancels_live_turn_and_saves, binary)
+    check(library_cancel_goes_home_and_keeps_book, binary)
+    check(stalled_strict_turn_exits_and_saves, rust_preview.control([NO_SESSION], optimize=False))
+    if not negative_controls(__file__):
+        return
+    for case, edits, label in (
+        (back_cancels_live_turn_and_saves, [EARLY_CLEARED_CANCEL], 'early-cleared-cancel'),
+        (stalled_strict_turn_exits_and_saves, [NO_SESSION, TIMED_OUT_EXIT_TAKES_LOAN], 'timed-out-exit-takes-loan'),
+        (stalled_strict_turn_exits_and_saves, [NO_SESSION, TIMED_OUT_EXIT_REFUSED], 'timed-out-exit-refused'),
+        (library_cancel_goes_home_and_keeps_book, [LIBRARY_KEEPS_CANCEL_BACK], 'library-keeps-cancel-back'),
+    ):
+        problem = case(rust_preview.control(edits, optimize=False))
+        if not problem:
+            raise SystemExit(f'FAIL control {label}: {case.__name__} did not notice')
+        print(f'PASS control {label}: {problem}')
+
+
+if __name__ == '__main__':
+    main()
