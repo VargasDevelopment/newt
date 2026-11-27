@@ -85,7 +85,9 @@ impl PhysicalEvent {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Consumption {
     Action(Action),
-    /// Always suppress ordinary navigation; dispatch Back only in EpubReading.
+    /// Always suppress ordinary navigation. Dispatch Back on the screen the
+    /// cancelled work unwound to, except Home, where Back would mean Read: a
+    /// cancelled Library open then goes Home like any Back from Library.
     CancelBack {
         dispatch_back: bool,
     },
@@ -337,7 +339,7 @@ impl UiControl<'_> {
         }
         if back {
             return Consumption::CancelBack {
-                dispatch_back: screen == Screen::EpubReading,
+                dispatch_back: screen != Screen::Home,
             };
         }
         let button = match event.code {
@@ -495,6 +497,17 @@ mod clockwise_back_tests {
         assert_eq!(
             control.consume_physical(PhysicalEvent { code: portrait_cancel }, Screen::Home),
             Consumption::CancelBack { dispatch_back: false }
+        );
+        // A cancelled Library open unwinds to Library; its Back still goes Home.
+        let library_cancel = control.with_open(400, |control, _| {
+            let mut back = FakeIo::new(Button::Back, false);
+            producer.poll_once(&mut back);
+            assert!(control.cancelled());
+            back.tail.unwrap()
+        });
+        assert_eq!(
+            control.consume_physical(PhysicalEvent { code: library_cancel }, Screen::Other),
+            Consumption::CancelBack { dispatch_back: true }
         );
         assert_eq!(
             control.consume_physical(PhysicalEvent { code: Button::Back as u8 }, Screen::EpubReading),
