@@ -443,6 +443,14 @@ impl<'a, S: BookSource + ?Sized> ChapterSource<'a, S> {
     pub fn with_source<R>(&mut self, operation: impl FnOnce(&mut S) -> R) -> R {
         self.reader.with_source(operation)
     }
+    /// Uncompressed member bytes pulled from this chapter source so far.
+    pub fn consumed(&self) -> u32 {
+        self.consumed
+    }
+    /// Compression method of the opened ZIP member (0 stored, 8 deflated).
+    pub fn method(&self) -> u16 {
+        self.reader.entry().map_or(u16::MAX, |e| e.method)
+    }
     pub fn finish(&mut self) -> bool {
         self.finish_checked().0
     }

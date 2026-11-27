@@ -39,7 +39,12 @@ stack callback record, installs parser-as-handler and userdata, and calls
 `XML_Parse` synchronously. The native start/end/text trampolines recover the
 bridge's record via `XML_GetUserData`, then invoke Rust with the original
 context. Every feed return, including XML error/abort, first clears userdata and
-all three Rust-facing handlers. Producer doctype/external callbacks can remain
+all three Rust-facing handlers. `newt_xml_feed_observed` uses the same stack
+contract with two per-call observation pointers (`root_index`, `cdata_depth`),
+installing CDATA handlers for that call only and clearing all four handlers and
+userdata before returning; no static mutable state is kept in C (`XML_SetXmlDeclHandler`
+is deliberately not installed because Expat allocates its `m_temp2Pool` on every
+UTF-8 declaration when set). Producer doctype/external callbacks can remain
 installed because they contain no Rust borrow and use only the parser.
 
 Expat guarantees names/attribute values are terminated strings and its

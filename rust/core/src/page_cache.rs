@@ -139,8 +139,11 @@ pub struct PageCacheWriter {
     offset: u32,
     anchors: usize,
     total: u32,
+    point: PointRange,
+    point_owner: u16,
     failed: bool,
     open: bool,
+    version4: bool,
 }
 impl PageCacheWriter {
     pub fn new(profile: Profile) -> Self {
@@ -150,8 +153,11 @@ impl PageCacheWriter {
             offset: 0,
             anchors: 0,
             total: 0,
+            point: PointRange::default(),
+            point_owner: u16::MAX,
             failed: false,
             open: false,
+            version4: false,
         }
     }
     pub fn failed(&self) -> bool {
@@ -159,6 +165,15 @@ impl PageCacheWriter {
     }
     pub fn page_count(&self) -> u32 {
         self.count
+    }
+    pub fn offset(&self) -> u32 {
+        self.offset
+    }
+    pub fn is_v4(&self) -> bool {
+        self.version4
+    }
+    pub fn has_point(&self) -> bool {
+        self.point.length != 0
     }
     pub fn set_total_chars(&mut self, total: u32) {
         self.total = total;
@@ -172,11 +187,34 @@ impl PageCacheWriter {
         hash: u32,
         m: &WriterMemory<'_>,
     ) -> bool {
+        self.begin_version(s, name, hash, m, VERSION_PAGES)
+    }
+    /// Begins a v4 segment payload that may embed one resume-point section.
+    pub fn begin_v4(
+        &mut self,
+        s: &mut impl CacheStorage,
+        name: &[u8],
+        hash: u32,
+        m: &WriterMemory<'_>,
+    ) -> bool {
+        self.begin_version(s, name, hash, m, VERSION_POINT)
+    }
+    pub fn begin_version(
+        &mut self,
+        s: &mut impl CacheStorage,
+        name: &[u8],
+        hash: u32,
+        m: &WriterMemory<'_>,
+        version: u16,
+    ) -> bool {
         self.count = 0;
         self.offset = 0;
         self.failed = false;
         self.open = false;
         self.anchors = 0;
+        self.point = PointRange::default();
+        self.point_owner = u16::MAX;
+        self.version4 = version == VERSION_POINT;
         if m.anchors.len() < self.profile.max_anchors() {
             self.failed = true;
             return false;
@@ -186,9 +224,42 @@ impl PageCacheWriter {
             return false;
         }
         self.open = true;
-        let mut h = *b"FIBP\x03\x00\x00\x00\x00\x00\x00\x00";
+        let mut h = *b"FIBP\x00\x00\x00\x00\x00\x00\x00\x00";
+        put16(&mut h, 4, version);
         put32(&mut h, 8, hash);
         self.raw(s, &h)
+    }
+    /// Streams one resume point into the open v4 segment after the latest page
+    /// through a single raw write callback (avoids instantiating a `dyn CacheStorage`
+    /// vtable on generic producer store adapters). A short or failing write latches
+    /// `failed` so the caller aborts the temp.
+    #[inline(never)]
+    pub fn write_point(
+        &mut self,
+        expected_len: u32,
+        write: &mut dyn FnMut(&[u8]) -> bool,
+        emit: &mut dyn FnMut(&mut crate::resume_point::CrcOut<'_>) -> bool,
+    ) -> bool {
+        if self.failed
+            || !self.open
+            || !self.version4
+            || self.has_point()
+            || self.count == 0
+            || expected_len == 0
+        {
+            return false;
+        }
+        let start = self.offset;
+        let mut crc_out = crate::resume_point::CrcOut::new(expected_len, write);
+        let ok = emit(&mut crc_out);
+        self.offset = self.offset.wrapping_add(crc_out.bytes);
+        if !ok || crc_out.failed || crc_out.bytes != expected_len {
+            self.failed = true;
+            return false;
+        }
+        self.point = PointRange { offset: start, length: expected_len };
+        self.point_owner = (self.count - 1) as u16;
+        true
     }
     fn raw(&mut self, s: &mut impl CacheStorage, b: &[u8]) -> bool {
         if self.failed || !self.open {
@@ -341,7 +412,12 @@ impl PageCacheWriter {
     ) -> bool {
         if self.failed || !self.open {
             if self.open {
-                s.end_write();
+                // Failed v4/point writers stay strictly abort-only so a native
+                // store's end_write cannot finalize and promote an incomplete
+                // temp; v3 keeps legacy SDK call ordering.
+                if !self.version4 {
+                    s.end_write();
+                }
                 s.remove(cstr(name));
                 self.open = false;
             }
@@ -375,21 +451,25 @@ impl PageCacheWriter {
             put32(&mut b, 4, a.chars);
             self.raw(s, &b);
         }
-        let mut f = [0; 32];
+        let mut f = [0; 40];
         put32(&mut f, 0, index);
         put32(&mut f, 4, self.count);
         put32(&mut f, 8, anchors);
         put32(&mut f, 12, self.anchors as u32);
         put32(&mut f, 16, self.total);
-        let len = if let Some((consumed, total)) = progress {
-            put32(&mut f, 20, consumed);
-            put32(&mut f, 24, total);
-            f[28..].copy_from_slice(b"FIBx");
-            32
-        } else {
-            f[20..24].copy_from_slice(b"FIBX");
-            24
-        };
+        let mut pos = 20;
+        if let Some((consumed, total)) = progress {
+            put32(&mut f, pos, consumed);
+            put32(&mut f, pos + 4, total);
+            pos += 8;
+        }
+        if self.version4 {
+            put32(&mut f, pos, self.point.offset);
+            put32(&mut f, pos + 4, self.point.length);
+            pos += 8;
+        }
+        f[pos..pos + 4].copy_from_slice(if progress.is_some() { b"FIBx" } else { b"FIBX" });
+        let len = pos + 4;
         self.raw(s, &f[..len]);
         // Preserve short circuit: stream failure here skips endWrite, unlike entry failure.
         let committed = !self.failed && s.end_write();
@@ -412,7 +492,9 @@ impl PageCacheWriter {
             return Err(Status::NotFound);
         }
         let e = entry(m, page).ok_or(Status::NotFound)?;
-        let end = if page + 1 < self.count {
+        let end = if self.has_point() && page == u32::from(self.point_owner) {
+            self.point.offset
+        } else if page + 1 < self.count {
             entry(m, page + 1).ok_or(Status::NotFound)?.offset
         } else {
             self.offset
@@ -424,7 +506,7 @@ impl PageCacheWriter {
             e.offset,
             scratch.view_mut(range).ok_or(Status::OutOfMemory)?,
         )?;
-        decode_page(range, page, scratch, out, false)
+        decode_page(range, page, scratch, out, self.version4)
     }
 }
 fn get_bytes(pool: &[u8], b: Bytes) -> Option<&[u8]> {

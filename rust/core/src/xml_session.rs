@@ -44,11 +44,41 @@ pub struct Resources<'a> {
     pub filter: Option<&'a mut EntityFilter>,
 }
 
+/// Per-parser capture observations updated synchronously inside `feed_observed`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ParseObservation {
+    /// Byte index of the root `start_element`, or -1 before the root starts.
+    pub root_index: i64,
+    /// Active CDATA section depth (> 0 means inside CDATA at the end of a feed).
+    pub cdata_depth: u32,
+}
+impl Default for ParseObservation {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl ParseObservation {
+    pub const fn new() -> Self {
+        Self { root_index: -1, cdata_depth: 0 }
+    }
+}
+
 /// Producer backends must expose Expat-compatible byte-index semantics.
 /// A negative index means no consumed input; the index is sampled BEFORE feed.
 pub trait ProducerBackend: ParserBackend {
     fn create_producer(&mut self) -> bool;
     fn current_byte_index(&self) -> i64;
+    /// Like `feed`, also recording root byte index and CDATA depth into
+    /// `observation`. `None` means this backend does not support capture.
+    fn feed_observed(
+        &mut self,
+        _bytes: &[u8],
+        _final_chunk: bool,
+        _handler: &mut dyn Handler,
+        _observation: &mut ParseObservation,
+    ) -> Option<bool> {
+        None
+    }
 }
 
 /// Borrowed for an entire synchronous attempt. No ownership or heap indirection.
@@ -114,6 +144,37 @@ impl<B: ParserBackend + ?Sized> SessionPolicy<B> for OptionalPolicy<'_> {
     }
 }
 
+/// Read-only view of an `XmlStream`'s counters, last feed and entity filter,
+/// available alongside a mutable source/backend loan without copying buffers.
+pub struct StreamView<'a> {
+    pub open: bool,
+    pub finished: bool,
+    pub bytes_consumed: u64,
+    pub reader_produced: u32,
+    pub last_feed: &'a [u8],
+    pub filter: Option<&'a EntityFilter>,
+}
+impl StreamView<'_> {
+    /// Emits Section 2 (`Stream`): `"XST1"`, filtered counter, raw counter and entity filter.
+    pub fn save_resume(&self, out: &mut dyn crate::resume_point::PointOut) -> bool {
+        if !self.open || self.finished {
+            return false;
+        }
+        let mut h = [0u8; 17];
+        h[..4].copy_from_slice(b"XST1");
+        h[4..12].copy_from_slice(&self.bytes_consumed.to_le_bytes());
+        h[12..16].copy_from_slice(&self.reader_produced.to_le_bytes());
+        h[16] = u8::from(self.filter.is_some());
+        if !out.put(&h) {
+            return false;
+        }
+        match self.filter {
+            Some(filter) => filter.save_resume(out),
+            None => true,
+        }
+    }
+}
+
 pub struct XmlStream<
     'a,
     S: BookSource + ?Sized,
@@ -129,6 +190,7 @@ pub struct XmlStream<
     handler_attached: bool,
     bytes_consumed: u64,
     finished: bool,
+    last_n: usize,
 }
 impl<'a, S: BookSource + ?Sized, B: ParserBackend + ?Sized> XmlStream<'a, S, B> {
     pub fn new(source: &'a mut S, decoder: Option<InflateScratch<'a>>, backend: &'a mut B) -> Self {
@@ -154,6 +216,7 @@ impl<'a, S: BookSource + ?Sized, B: ParserBackend + ?Sized, P: SessionPolicy<B>>
             handler_attached: false,
             bytes_consumed: 0,
             finished: false,
+            last_n: 0,
         }
     }
     pub fn open(
@@ -170,6 +233,7 @@ impl<'a, S: BookSource + ?Sized, B: ParserBackend + ?Sized, P: SessionPolicy<B>>
         self.handler_attached = true;
         self.bytes_consumed = 0;
         self.finished = false;
+        self.last_n = 0;
         let status = self.reader.open(entry);
         if status != Status::Ok {
             return status;
@@ -196,6 +260,26 @@ impl<'a, S: BookSource + ?Sized, B: ParserBackend + ?Sized, P: SessionPolicy<B>>
     /// Short source/backend operation between XML reads, also used for layout finish.
     pub fn with_source<R>(&mut self, operation: impl FnOnce(&mut S, &mut B) -> R) -> R {
         self.reader.with_source(|source| operation(source, self.backend))
+    }
+    /// Short source/backend operation alongside a disjoint read-only stream view.
+    pub fn with_source_and_view<R>(
+        &mut self,
+        operation: impl FnOnce(&mut S, &mut B, StreamView<'_>) -> R,
+    ) -> R {
+        let view = StreamView {
+            open: self.open,
+            finished: self.finished,
+            bytes_consumed: self.bytes_consumed,
+            reader_produced: self.reader.total_produced(),
+            last_feed: self
+                .buffer
+                .as_deref()
+                .map_or(&[], |b| &b[..self.last_n.min(PARSE_CHUNK)]),
+            filter: self.filter.as_deref(),
+        };
+        let backend = &mut *self.backend;
+        self.reader
+            .with_source(|source| operation(source, backend, view))
     }
     pub fn feed_chunk(
         &mut self,
@@ -256,6 +340,7 @@ impl<'a, S: BookSource + ?Sized, B: ParserBackend + ?Sized, P: SessionPolicy<B>>
             return Status::IoError;
         }
         self.bytes_consumed = self.bytes_consumed.wrapping_add(n as u64);
+        self.last_n = n as usize;
         if n == 0 {
             self.finished = true;
             if let Some(end) = at_end {
@@ -270,6 +355,26 @@ impl<'a, S: BookSource + ?Sized, B: ParserBackend + ?Sized, P: SessionPolicy<B>>
     pub fn bytes_consumed(&self) -> u64 {
         self.bytes_consumed
     }
+    /// Filtered bytes of the most recent reader feed, valid between feeds.
+    pub fn last_feed(&self) -> &[u8] {
+        self.buffer.as_ref().map_or(&[], |b| &b[..self.last_n.min(PARSE_CHUNK)])
+    }
+    /// Raw bytes pulled from the underlying chapter source by this stream's reader.
+    pub fn reader_produced(&self) -> u32 {
+        self.reader.total_produced()
+    }
+    /// Emits Section 2 (`Stream`): `"XST1"`, filtered counter, raw counter and entity filter.
+    pub fn save_resume(&self, out: &mut dyn crate::resume_point::PointOut) -> bool {
+        StreamView {
+            open: self.open,
+            finished: self.finished,
+            bytes_consumed: self.bytes_consumed,
+            reader_produced: self.reader.total_produced(),
+            last_feed: self.last_feed(),
+            filter: self.filter.as_deref(),
+        }
+        .save_resume(out)
+    }
     pub fn close(&mut self) {
         if self.open {
             self.backend.close();
@@ -279,6 +384,7 @@ impl<'a, S: BookSource + ?Sized, B: ParserBackend + ?Sized, P: SessionPolicy<B>>
         self.buffer = None;
         self.filter = None;
         self.finished = false;
+        self.last_n = 0;
         // Count deliberately survives close, matching the source.
     }
 }

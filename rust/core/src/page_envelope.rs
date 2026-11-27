@@ -32,6 +32,7 @@ fn c_string(input: &[u8]) -> &[u8] {
     &input[..input.iter().position(|&b| b == 0).unwrap_or(input.len())]
 }
 
+#[inline(never)]
 pub fn crc(mut value: u32, input: &[u8]) -> u32 {
     for &byte in input {
         value ^= u32::from(byte);

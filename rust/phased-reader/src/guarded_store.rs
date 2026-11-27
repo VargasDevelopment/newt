@@ -82,4 +82,7 @@ impl<C: CacheStorage + ?Sized> CacheStorage for GuardedStore<'_, '_, C> {
     fn producer_can_begin(&self) -> bool {
         self.inner.producer_can_begin()
     }
+    fn producer_remaining_credit(&self) -> Option<u64> {
+        self.inner.producer_remaining_credit()
+    }
 }
