@@ -28,8 +28,9 @@ them.
   package format, runtime, permissions and sharing, because early choices
   there are hard to undo. Don't build your own. Ideas are welcome as issues.
   Fixes and polish to the existing apps are welcome.
-- Larger changes: open an issue first. Say the problem, why it matters and
-  your evidence. A task the owner already agreed to can stand in for a new
+- Larger changes: open an issue first. Say the problem, why it matters, your
+  evidence, and roughly what the change will cost in flash, memory and
+  complexity. A task the owner already agreed to can stand in for a new
   issue. Proposals are welcome. A lasting product or architecture
   commitment, such as a new screen, setting, network feature or dependency,
   needs the owner's agreement before any code.
