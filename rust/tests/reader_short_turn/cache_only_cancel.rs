@@ -52,12 +52,16 @@ struct CancelSource<'a> {
     bytes: Vec<u8>,
     cancel: &'a core::cell::Cell<bool>,
     cancel_after: &'a core::cell::Cell<u32>,
+    reads: &'a core::cell::Cell<u32>,
 }
 impl BookSource for CancelSource<'_> {
     fn size(&self) -> u64 {
         self.bytes.len() as u64
     }
     fn read_at(&mut self, at: u64, out: &mut [u8]) -> i32 {
+        if !out.is_empty() {
+            self.reads.set(self.reads.get().saturating_add(1));
+        }
         let left = self.cancel_after.get();
         if left > 0 && !out.is_empty() {
             if left == 1 {
@@ -136,6 +140,10 @@ fn stored_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
 }
 
 fn synthetic_fragment_epub() -> Vec<u8> {
+    synthetic_epub(false)
+}
+
+fn synthetic_epub(two_chapters: bool) -> Vec<u8> {
     let mut ch = String::from(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
          <html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>Ch 1</title></head><body><h1>Chapter 1</h1>",
@@ -149,15 +157,36 @@ fn synthetic_fragment_epub() -> Vec<u8> {
         ));
     }
     ch.push_str("</body></html>");
-    let nav = b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+    let mut ch1 = String::from(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+         <html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>Ch 2</title></head><body><h1>Chapter 2</h1>",
+    );
+    for i in 0..16 {
+        ch1.push_str(&format!(
+            "<p>Second chapter paragraph {i}: Morning light crossed the breakwater and warmed the stone quay.</p>"
+        ));
+    }
+    ch1.push_str("</body></html>");
+    let nav: &[u8] = if two_chapters {
+        b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
         <html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\">\
         <head><title>Contents</title></head><body><nav epub:type=\"toc\"><ol>\
         <li><a href=\"c0.xhtml\">Chapter 1</a></li>\
         <li><a href=\"c0.xhtml#mid\">Middle Section</a></li>\
-        </ol></nav></body></html>";
+        <li><a href=\"c1.xhtml\">Chapter 2</a></li>\
+        </ol></nav></body></html>"
+    } else {
+        b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+        <html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\">\
+        <head><title>Contents</title></head><body><nav epub:type=\"toc\"><ol>\
+        <li><a href=\"c0.xhtml\">Chapter 1</a></li>\
+        <li><a href=\"c0.xhtml#mid\">Middle Section</a></li>\
+        </ol></nav></body></html>"
+    };
     let container = b"<?xml version=\"1.0\"?><container version=\"1.0\" xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\">\
         <rootfiles><rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/></rootfiles></container>";
-    let opf = b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+    let opf: &[u8] = if two_chapters {
+        b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
         <package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\" unique-identifier=\"u\">\
         <metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\
         <dc:identifier id=\"u\">urn:newt-test:103-cancel-cc0</dc:identifier>\
@@ -165,14 +194,37 @@ fn synthetic_fragment_epub() -> Vec<u8> {
         <manifest>\
         <item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/>\
         <item id=\"c0\" href=\"c0.xhtml\" media-type=\"application/xhtml+xml\"/>\
-        </manifest><spine><itemref idref=\"c0\"/></spine></package>";
-    stored_zip(&[
-        ("mimetype", b"application/epub+zip"),
-        ("META-INF/container.xml", container),
-        ("OEBPS/content.opf", opf),
-        ("OEBPS/nav.xhtml", nav),
-        ("OEBPS/c0.xhtml", ch.as_bytes()),
-    ])
+        <item id=\"c1\" href=\"c1.xhtml\" media-type=\"application/xhtml+xml\"/>\
+        </manifest><spine><itemref idref=\"c0\"/><itemref idref=\"c1\"/></spine></package>"
+    } else {
+        b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+        <package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\" unique-identifier=\"u\">\
+        <metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\
+        <dc:identifier id=\"u\">urn:newt-test:103-cancel-cc0</dc:identifier>\
+        <dc:title>Harbor Cancel</dc:title><dc:language>en</dc:language></metadata>\
+        <manifest>\
+        <item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/>\
+        <item id=\"c0\" href=\"c0.xhtml\" media-type=\"application/xhtml+xml\"/>\
+        </manifest><spine><itemref idref=\"c0\"/></spine></package>"
+    };
+    if two_chapters {
+        stored_zip(&[
+            ("mimetype", b"application/epub+zip"),
+            ("META-INF/container.xml", container),
+            ("OEBPS/content.opf", opf),
+            ("OEBPS/nav.xhtml", nav),
+            ("OEBPS/c0.xhtml", ch.as_bytes()),
+            ("OEBPS/c1.xhtml", ch1.as_bytes()),
+        ])
+    } else {
+        stored_zip(&[
+            ("mimetype", b"application/epub+zip"),
+            ("META-INF/container.xml", container),
+            ("OEBPS/content.opf", opf),
+            ("OEBPS/nav.xhtml", nav),
+            ("OEBPS/c0.xhtml", ch.as_bytes()),
+        ])
+    }
 }
 
 pub fn check() {
@@ -197,6 +249,7 @@ pub fn check() {
             let mut card = card::Card::default();
             let cancel_flag = core::cell::Cell::new(false);
             let cancel_after = core::cell::Cell::new(0u32);
+            let reads = core::cell::Cell::new(0u32);
             let cancel_auth = FlagCancel(&cancel_flag);
             let route_state = RouteState::new(
                 reader_book::CACHE_ROOT,
@@ -221,7 +274,7 @@ pub fn check() {
 
             let mut rev_hash = ShaHasher::default();
             let mut rev_scratch = [0u8; BLOCK_BYTES];
-            let mut raw = CancelSource { bytes: epub.clone(), cancel: &cancel_flag, cancel_after: &cancel_after };
+            let mut raw = CancelSource { bytes: epub.clone(), cancel: &cancel_flag, cancel_after: &cancel_after, reads: &reads };
             let mut revision = ImportedRevision::full(&mut receipt, &mut rev_hash, &mut rev_scratch);
             assert!(revision.begin_import(&mut raw));
             let mut source = ReaderSource::new(revision);
@@ -569,5 +622,196 @@ pub fn check() {
         })
         .unwrap();
 
+    check_cross_chapter_cache_only();
+
     println!("PASS cache_only cold-miss/hit and cancelled live exit save/reload");
+}
+
+fn check_cross_chapter_cache_only() {
+    let epub = synthetic_epub(true);
+    let mut digest = [0u8; 32];
+    assert!(hash(&epub, &mut digest));
+    let book = u64::from_le_bytes(digest[..8].try_into().unwrap());
+
+    let mut tokens = [0u8; 2];
+    // SAFETY: the existing host Board fake treats these as disjoint tokens.
+    let (mut board, pending, _) = unsafe {
+        newt_c3_board::Board::acquire_x3_optional_sd(
+            (&mut tokens[0] as *mut u8).cast(),
+            (&mut tokens[1] as *mut u8).cast(),
+        )
+    }
+    .unwrap();
+    drop(pending);
+
+    board
+        .with_reader_io(|panel, io| {
+            let mut card = card::Card::default();
+            let cancel_flag = core::cell::Cell::new(false);
+            let cancel_after = core::cell::Cell::new(0u32);
+            let reads = core::cell::Cell::new(0u32);
+            let cancel_auth = FlagCancel(&cancel_flag);
+            let route_state = RouteState::new(
+                reader_book::CACHE_ROOT,
+                "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+            );
+            let route = route_state.lend(&cancel_auth, now);
+
+            let mut native_pages = card.port(io);
+            let mut pages_state = ChapterCacheState::new();
+            let mut pages = reader_pages::ReaderPages(
+                ChapterCacheStorage::lend(&mut pages_state, &mut native_pages, &route).unwrap(),
+            );
+
+            let mut native_receipt = card.port(io);
+            let mut receipt_state = sd_revision::SdRevisionState::new(&mut native_receipt, &route);
+            let mut receipt = sd_revision::SdRevisionStorage::lend(
+                &mut receipt_state,
+                &mut native_receipt,
+                &route,
+            )
+            .unwrap();
+
+            let mut rev_hash = ShaHasher::default();
+            let mut rev_scratch = [0u8; BLOCK_BYTES];
+            let mut raw = CancelSource { bytes: epub.clone(), cancel: &cancel_flag, cancel_after: &cancel_after, reads: &reads };
+            let mut revision = ImportedRevision::full(&mut receipt, &mut rev_hash, &mut rev_scratch);
+            assert!(revision.begin_import(&mut raw));
+            let mut source = ReaderSource::new(revision);
+
+            let mut bank = [0u8; BANK_BYTES];
+            let mut storage = Storage::new(&mut bank);
+            let mut parser = newt_target_expat::Expat::default();
+            let mut breaker = linebreak::NativeBreak;
+            let mut selections = [Selection::default(), Selection::default()];
+            let mut runs = [Run::default(); RUNS];
+            let mut text = [0u8; TEXT];
+            let mut plan = Plan::new(&mut runs, &mut text);
+            let settings = ViewSettings {
+                orientation: newt_core::preferences::Orientation::Portrait,
+                ..ViewSettings::default()
+            };
+            let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), settings.page_layout());
+            let mut owner = ExternalOwner::default();
+            let mut ui = ReaderUiState::default();
+            let saved = Progress { book, ..Progress::default() };
+
+            let mut ports = PhysicalOwner {
+                storage: &mut storage,
+                panel,
+                backend: &mut parser,
+                breaker: &mut breaker,
+                cache: PhasedChapterCache { store: &mut pages, hash: &mut Hash, settings },
+                open: PhysicalOpen::Prepared,
+                cache_only: false,
+            };
+            let indexed = newt_phased_reader::index_build::open(
+                &mut source,
+                &digest,
+                ports.storage,
+                ports.panel,
+                ports.backend,
+                ports.cache.store,
+                None,
+                newt_phased_reader::index_build::Verification::Verified,
+            )
+            .unwrap();
+            assert!(owner.open_physical(
+                &indexed, &mut reader, &mut source, book, saved,
+                RestorePolicy::AllowInitialFallback, 1_000, &mut ports,
+            ));
+
+            // Advance into chapter 1 and populate chapter 1's page cache on SD.
+            while reader.info().spine == 0 {
+                let h = owner.handle_ui_physical(
+                    &mut reader, &mut source, &mut ui, settings, Action::Next, 1_100, &mut ports,
+                );
+                let _ = owner.complete_ui_physical(
+                    &mut reader, &mut source, &mut ui, h, 1_100, &mut ports,
+                );
+            }
+            assert_eq!(reader.info().spine, 1);
+            {
+                use newt_core::producer_policy::{Cancellation, Hooks, Stop};
+                fn never_stop(_: &()) -> Stop { Stop::None }
+                let cancel = Cancellation::new(Hooks {
+                    context: &(), stop: Some(never_stop), yield_now: None, pause: None,
+                });
+                let ch1_info = reader.info();
+                let mut route = newt_phased_reader::producer::Route {
+                    settings, digest: &digest, info: ch1_info, hash: ports.cache.hash,
+                };
+                let produced = ports.storage.with_producer(
+                    ports.panel, &cancel, ports.cache.store, &mut source, ch1_info.page_count, None,
+                    |producer| Ok(producer.produce_current(&mut reader, ports.backend, ports.breaker, &mut route)),
+                ).unwrap();
+                assert_eq!(produced, newt_core::producer_visit::CurrentOutcome::Done);
+            }
+            // Return to the last page of chapter 0.
+            let h = owner.handle_ui_physical(
+                &mut reader, &mut source, &mut ui, settings, Action::Previous, 1_200, &mut ports,
+            );
+            let _ = owner.complete_ui_physical(
+                &mut reader, &mut source, &mut ui, h, 1_200, &mut ports,
+            );
+            let last_ch0 = reader.info();
+            assert_eq!(last_ch0.spine, 0);
+            assert_eq!(last_ch0.page + 1, last_ch0.page_count);
+
+            // Cross-chapter cache_only probe must defer BEFORE verifying chapter 1's range.
+            ports.cache_only = true;
+            reads.set(0);
+            reader.reset_layout_pages();
+            let h = owner.handle_ui_physical(
+                &mut reader, &mut source, &mut ui, settings, Action::Next, 1_300, &mut ports,
+            );
+            let deferred = owner.complete_ui_physical(
+                &mut reader, &mut source, &mut ui, h, 1_300, &mut ports,
+            );
+            assert_eq!(
+                deferred.work,
+                ReaderUiWork::Intent(ReaderUiIntent::None),
+                "cross-chapter cache_only probe must defer until Loading is shown"
+            );
+            assert_eq!(reader.info(), last_ch0, "cross-chapter cache_only must keep chapter 0 shown");
+            assert_eq!(
+                reads.get(),
+                0,
+                "cross-chapter cache_only must not verify target chapter range before Loading"
+            );
+            assert_eq!(reader.last_layout_pages(), 0);
+
+            // After Loading is acknowledged (cache_only = false), target chapter range IS verified
+            // before publishing the cached page (still 0 layout pages).
+            ports.cache_only = false;
+            reads.set(0);
+            reader.reset_layout_pages();
+            let h = owner.handle_ui_physical(
+                &mut reader, &mut source, &mut ui, settings, Action::Next, 1_400, &mut ports,
+            );
+            let published = owner.complete_ui_physical(
+                &mut reader, &mut source, &mut ui, h, 1_400, &mut ports,
+            );
+            assert_eq!(
+                published.work,
+                ReaderUiWork::Intent(ReaderUiIntent::Repaint),
+                "cross-chapter retry after Loading must publish chapter 1"
+            );
+            assert_eq!(reader.info().spine, 1);
+            assert_eq!(reader.info().page, 0);
+            assert!(
+                reads.get() > 0,
+                "cross-chapter retry must verify target chapter range before publishing"
+            );
+            assert_eq!(reader.last_layout_pages(), 0, "verified cross-chapter retry must hit page cache");
+
+            drop(ports);
+            drop(source);
+            drop(receipt);
+            let _ = receipt_state.close(&mut native_receipt, &route);
+            pages.0.access().close();
+            drop(pages);
+            let _ = pages_state.close(&mut native_pages, &route);
+        })
+        .unwrap();
 }

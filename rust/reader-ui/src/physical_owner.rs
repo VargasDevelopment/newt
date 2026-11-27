@@ -128,6 +128,12 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
                             return PageWork::failed(Status::Unsupported);
                         }
                         let staged = if spine != session.reader.reader.info().spine {
+                            // Staging verifies the whole chapter, which can outlast
+                            // the budget before Loading shows; a cache-only probe
+                            // defers it until Loading is up (#103).
+                            if cache_only {
+                                return PageWork::VERIFICATION_PENDING;
+                            }
                             let digest = *session.revision.digest();
                             if session.cache.stored(&digest, spine, session.reader) {
                                 let status = session.stage_owned(spine);
