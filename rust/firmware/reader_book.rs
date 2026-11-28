@@ -389,15 +389,14 @@ where
             return Err(failure);
         }
     };
-    let revision = newt_reader_ui::ReaderSource::new(revision);
-    let mut revision = revision;
+    let digest = *revision.digest();
+    let mut revision = newt_reader_ui::ReaderSource::new(revision);
     let mut storage = Storage::new(bank);
     runtime.reader.on_yield = on_yield;
     let mut resources = Resources {
         panel, pages, storage: &mut storage, parser: Expat::default(), breaker,
         hash: identity, settings: preferences.settings(), open, cache_only: false, recovery: None,
     };
-    let digest = revision.digest();
     let mut statistics = ReadingStatsRuntime::default();
     let mut accepted_open = false;
     let mut recovery = None;

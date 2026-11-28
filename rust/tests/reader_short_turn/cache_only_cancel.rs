@@ -539,7 +539,7 @@ pub fn check() {
             assert!(cancel_flag.replace(false), "the Contents list load must be cancelled");
             assert!(owner.state.status() == Status::Ok && reader.opened() && reader.info() == page2,
                 "a cancelled Contents list load keeps the reader and its page");
-            assert_eq!(source.digest(), [0u8; 32], "a cancelled Contents list load closes the receipt");
+            assert_eq!(source.digest(), None, "a cancelled Contents list load closes the receipt");
             // 2l. Contents then reloads the receipt and builds its list from the book.
             ui.panel = ReaderPanel::Menu;
             ui.selected = 1;
@@ -550,7 +550,7 @@ pub fn check() {
             let _ = owner.complete_ui_physical(&mut reader, &mut source, &mut ui, handled, 1_950, &mut ports);
             assert!(ui.panel == ReaderPanel::Chapters && reader.chapter_menu().info().valid && reads.get() > 0,
                 "Contents after a cancelled list load reloads the receipt and rebuilds the list");
-            assert_eq!(source.digest(), digest, "Contents reloaded the receipt under its digest");
+            assert_eq!(source.digest(), Some(digest), "Contents reloaded the receipt under its digest");
             // Cancel mid-jump, after the first reads set deferred_fresh.
             jump_to_middle!(owner, reader, source, ui, settings, ports, 2_000, { cancel_after.set(2); });
             assert!(cancel_flag.get(), "mid-jump cancel must fire");
@@ -560,15 +560,60 @@ pub fn check() {
             assert_eq!((ui.panel, ui.notice), (ReaderPanel::Chapters, ReaderUiNotice::ChapterJumpFailed),
                 "a cancelled fragment jump stays on Contents with a failed-jump notice");
             assert_eq!(index_files(&card), index, "a cancelled fragment jump keeps the book index");
-            assert_eq!(source.digest(), [0u8; 32], "a cancelled fragment jump closes the receipt");
+            assert_eq!(source.digest(), None, "a cancelled fragment jump closes the receipt");
 
-            // 2p. A repaint reloads the receipt and draws the same page.
+            // 2s. A second cancel refuses the repaint's reload. It latches nothing and
+            //     draws no ready frame; the receipt still waits for a reload.
             ui.panel = ReaderPanel::Page;
             ui.notice = ReaderUiNotice::None;
-            let painted = ports.paint_ui(&mut reader, &mut source, &mut owner, &mut ui, 2_400);
+            cancel_flag.set(true);
+            let painted = ports.paint_ui(&mut reader, &mut source, &mut owner, &mut ui, 2_300);
+            cancel_flag.set(false);
+            assert!(!painted.ready() && owner.state.status() == Status::Ok && reader.opened()
+                && reader.info() == page2 && source.digest().is_none(),
+                "a cancel during a repaint's reload latches nothing and keeps the reader");
+
+            // 2v. A repaint whose source still waits on verification reloads first, so
+            //     the check runs against the book's digest, not a closed source's.
+            let mut checked = None;
+            {
+                let mut finish = |_: &mut dyn BookSource, expected: &Digest, _: &mut [u8], _: &dyn Fn() -> bool| {
+                    checked = Some(*expected);
+                    *expected == digest
+                };
+                // Another chapter, so the repaint must finish the check before it draws.
+                let mut pending = source.with_verification_gate(page2.spine + 1, &mut finish, &|| true);
+                let painted = ports.paint_ui(&mut reader, &mut pending, &mut owner, &mut ui, 2_400);
+                assert!(painted.ready() && owner.state.opened() && reader.info() == page2,
+                    "a pending-verification repaint after a cancel reloads first and draws the page");
+            }
+            assert_eq!(checked, Some(digest), "the pending check ran under the book's digest");
+            assert_eq!(source.digest(), Some(digest), "the repaint reloaded the receipt under its digest");
+
+            // 2f. A cancel that refuses the repaint's own reads latches nothing either.
+            cancel_flag.set(true);
+            let painted = ports.paint_ui(&mut reader, &mut source, &mut owner, &mut ui, 2_420);
+            cancel_flag.set(false);
+            assert!(!painted.ready() && owner.state.status() == Status::Ok && reader.opened()
+                && reader.info() == page2 && source.digest().is_none(),
+                "a cancelled repaint latches nothing and keeps the reader");
+            // 2g. That cancel dropped the retained plan, so the next paint is the owner's
+            //     page action, which reads only the Pages cache. Reload as the exit does,
+            //     then cancel that action: it drew nothing, so the paint must not report
+            //     a ready frame. (Its control pins that this paint takes the fallback.)
+            assert!(source.reload_closed(digest), "the exit's reload restores the receipt");
+            cancel_flag.set(true);
+            let painted = ports.paint_ui(&mut reader, &mut source, &mut owner, &mut ui, 2_440);
+            cancel_flag.set(false);
+            assert!(!painted.ready() && owner.state.status() == Status::Ok && reader.opened()
+                && reader.info() == page2,
+                "a cancelled fallback paint never reports a ready frame");
+
+            // 2p. A repaint reloads the receipt and draws the same page.
+            let painted = ports.paint_ui(&mut reader, &mut source, &mut owner, &mut ui, 2_460);
             assert!(painted.ready() && owner.state.opened() && reader.info() == page2,
-                "a repaint after a cancelled jump reloads the receipt and draws the page");
-            assert_eq!(source.digest(), digest, "the repaint reloaded the receipt under its digest");
+                "a repaint after a cancel reloads the receipt and draws the page");
+            assert_eq!(source.digest(), Some(digest), "the repaint reloaded the receipt under its digest");
 
             // 2t. A turn reads and moves.
             for (action, at, page) in [(Action::Next, 2_500, page2.page + 1), (Action::Previous, 2_600, page2.page)] {
@@ -592,7 +637,7 @@ pub fn check() {
             jump_to_middle!(owner, reader, source, ui, settings, ports, 5_000, { route_after.set(jump_reads); });
             assert!(route_cancel.get(), "the route cancel must fire on the jump's last read");
             route_cancel.set(false);
-            assert_eq!(source.digest(), [0u8; 32], "a page published from unchecked reads closes the receipt");
+            assert_eq!(source.digest(), None, "a page published from unchecked reads closes the receipt");
 
             // Mirror cancel_live_action_image: end reading interval at action_at and mark IoError
             // while retaining has_progress.
@@ -617,19 +662,13 @@ pub fn check() {
                 "for_cancelled_exit must accept cancelled owner state with progress"
             );
 
-            // 2b. reload_closed_receipt rejects a wrong digest and succeeds for expected digest.
+            // 2b. The exit's reload rejects a wrong digest and succeeds for the expected one.
             let mut wrong = digest;
             wrong[0] ^= 0xff;
-            assert!(
-                !source.reload_closed_receipt(wrong),
-                "reload_closed_receipt must fail closed on wrong digest"
-            );
-            assert_eq!(source.digest(), [0u8; 32]);
-            assert!(
-                source.reload_closed_receipt(digest),
-                "reload_closed_receipt must restore matching stored receipt"
-            );
-            assert_eq!(source.digest(), digest);
+            assert!(!source.reload_closed(wrong), "reload_closed must fail closed on a wrong digest");
+            assert_eq!(source.digest(), None);
+            assert!(source.reload_closed(digest), "reload_closed must restore the matching stored receipt");
+            assert_eq!(source.digest(), Some(digest));
 
             // Seed selection on SD so MountedCheckpoint can commit progress + stats.
             let selected_record = newt_core::sd_resume::SdResumeRecord::new(c"generated.epub", digest).unwrap();
@@ -711,7 +750,7 @@ pub fn check() {
             assert_eq!(reader.info(), page2, "the reopen lands on page 2");
             jump_to_middle!(owner, reader, source, ui, settings, ports, 6_100, { cancel_after.set(2); });
             assert!(cancel_flag.replace(false), "the jump after the reopen must be cancelled");
-            assert!(reader.opened() && source.digest() == [0u8; 32], "the cancel left the receipt to reload");
+            assert!(reader.opened() && source.digest().is_none(), "the cancel left the receipt to reload");
             let receipt_path = card.0.borrow().model.files.keys()
                 .find(|path| path.contains("/Imported/")).cloned().expect("the sealed receipt");
             let sealed = card.0.borrow().model.files[&receipt_path].clone();
@@ -728,7 +767,7 @@ pub fn check() {
             let _ = owner.complete_ui_physical(&mut reader, &mut source, &mut ui, handled, 6_200, &mut ports);
             assert!(owner.state.status() == Status::Stale && !owner.state.opened() && !reader.opened(),
                 "a changed receipt after a cancel gives Stale and closes the reader");
-            assert!(!source.reload_closed_receipt(digest), "the changed receipt stays refused");
+            assert!(!source.reload_closed(digest), "the changed receipt stays refused");
             drop(ports);
             card.0.borrow_mut().model.files.insert(receipt_path, sealed);
             drop(source);
@@ -759,9 +798,128 @@ pub fn check() {
     check_cross_chapter_cache_only(600, false);
     check_cross_chapter_cache_only(600, true);
     check_cross_chapter_cache_only(1_600, false);
+    check_strict_cancel();
 
     println!("PASS cache_only cold-miss/hit and cancelled live exit save/reload");
-    println!("PASS a cancelled Contents load or jump keeps the reader, its page and book index; the next repaint, turn, Contents and jump reload the receipt and run; a changed receipt after a cancel closes");
+    println!("PASS a cancelled Contents load or jump keeps the reader, its page and book index; the next repaint, turn, Contents and jump reload the receipt (or hash a strict source again) and run; a changed receipt after a cancel closes");
+}
+
+/// #199: the strict fallback opens when the receipt can't seal, so it has no
+/// receipt to reload after a cancel. Its reload hashes the held book again.
+fn check_strict_cancel() {
+    let epub = synthetic_fragment_epub();
+    let mut digest = [0u8; 32];
+    assert!(hash(&epub, &mut digest));
+    let book = u64::from_le_bytes(digest[..8].try_into().unwrap());
+
+    let mut tokens = [0u8; 2];
+    // SAFETY: the existing host Board fake treats these as disjoint tokens.
+    let (mut board, pending, _) = unsafe {
+        newt_c3_board::Board::acquire_x3_optional_sd(
+            (&mut tokens[0] as *mut u8).cast(),
+            (&mut tokens[1] as *mut u8).cast(),
+        )
+    }
+    .unwrap();
+    drop(pending);
+
+    board
+        .with_reader_io(|panel, io| {
+            let mut card = card::Card::default();
+            let cancel_flag = core::cell::Cell::new(false);
+            let cancel_after = core::cell::Cell::new(0u32);
+            let reads = core::cell::Cell::new(0u32);
+            let corrupt_at = core::cell::Cell::new(None);
+            let route_after = core::cell::Cell::new(0u32);
+            let route_cancel = core::cell::Cell::new(false);
+            let cancel_auth = FlagCancel(&cancel_flag, &route_cancel);
+            let route_state = RouteState::new(
+                reader_book::CACHE_ROOT,
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            );
+            let route = route_state.lend(&cancel_auth, now);
+            let mut native_pages = card.port(io);
+            let mut pages_state = ChapterCacheState::new();
+            let mut pages = reader_pages::ReaderPages(
+                ChapterCacheStorage::lend(&mut pages_state, &mut native_pages, &route).unwrap(),
+            );
+            let mut native_receipt = card.port(io);
+            let mut receipt_state = sd_revision::SdRevisionState::new(&mut native_receipt, &route);
+            let mut receipt = sd_revision::SdRevisionStorage::lend(
+                &mut receipt_state, &mut native_receipt, &route).unwrap();
+            let mut rev_hash = ShaHasher::default();
+            let mut rev_scratch = [0u8; BLOCK_BYTES];
+            let mut raw = CancelSource {
+                bytes: epub.clone(), cancel: &cancel_flag, cancel_after: &cancel_after, reads: &reads,
+                route_after: &route_after, route_cancel: &route_cancel, corrupt_at: &corrupt_at,
+            };
+            let mut revision = ImportedRevision::full(&mut receipt, &mut rev_hash, &mut rev_scratch);
+            assert!(revision.begin_import(&mut raw));
+            let mut source = ReaderSource::new(revision);
+
+            let mut bank = [0u8; BANK_BYTES];
+            let mut storage = Storage::new(&mut bank);
+            let mut parser = newt_target_expat::Expat::default();
+            let mut breaker = linebreak::NativeBreak;
+            let mut selections = [Selection::default(), Selection::default()];
+            let mut runs = [Run::default(); RUNS];
+            let mut text = [0u8; TEXT];
+            let mut plan = Plan::new(&mut runs, &mut text);
+            let settings = ViewSettings {
+                orientation: newt_core::preferences::Orientation::Portrait,
+                ..ViewSettings::default()
+            };
+            let mut reader = PhasedReader::new(&mut selections, Some(&mut plan), settings.page_layout());
+            let mut owner = ExternalOwner::default();
+            let mut ui = ReaderUiState::default();
+            let mut ports = PhysicalOwner {
+                storage: &mut storage,
+                panel,
+                backend: &mut parser,
+                breaker: &mut breaker,
+                cache: PhasedChapterCache { store: &mut pages, hash: &mut Hash, settings },
+                open: PhysicalOpen::Prepared,
+                cache_only: false,
+            };
+            let indexed = newt_phased_reader::index_build::open(
+                &mut source, &digest, ports.storage, ports.panel, ports.backend, ports.cache.store,
+                None, newt_phased_reader::index_build::Verification::Verified,
+            ).unwrap();
+            // The receipt's next write fails, so it can't seal and the open takes
+            // the strict fallback. Later writes work again.
+            let receipt_path = card.0.borrow().model.files.keys()
+                .find(|path| path.contains("/Imported/")).cloned().expect("the receipt being imported");
+            card.0.borrow_mut().io_fault = Some((receipt_path, model::Op::Write));
+            let saved = Progress { book, ..Progress::default() };
+            assert!(owner.open_physical(&indexed, &mut reader, &mut source, book, saved,
+                RestorePolicy::AllowInitialFallback, 1_000, &mut ports),
+                "the strict fallback opens: {:?}", owner.state.status());
+            assert!(card.0.borrow().io_fault_seen, "the receipt write failed");
+            card.0.borrow_mut().model.faults.clear();
+            let page0 = reader.info();
+            assert_eq!(source.digest(), Some(digest), "the strict fallback opened under the book's digest");
+
+            jump_to_middle!(owner, reader, source, ui, settings, ports, 2_000, { cancel_after.set(2); });
+            assert!(cancel_flag.replace(false), "the strict jump must be cancelled");
+            assert!(owner.state.status() == Status::Ok && reader.opened() && reader.info() == page0
+                && source.digest().is_none(),
+                "a cancelled jump over the strict fallback keeps the reader and its page");
+            ui.panel = ReaderPanel::Page;
+            ui.notice = ReaderUiNotice::None;
+            let handled = owner.handle_ui_physical(&mut reader, &mut source, &mut ui, settings, Action::Next, 2_100, &mut ports);
+            let _ = owner.complete_ui_physical(&mut reader, &mut source, &mut ui, handled, 2_100, &mut ports);
+            assert!(owner.state.status() == Status::Ok && reader.info().page == page0.page + 1
+                && source.digest() == Some(digest),
+                "a turn after a cancelled strict jump hashes the book again and moves");
+            drop(ports);
+            drop(source);
+            drop(receipt);
+            let _ = receipt_state.close(&mut native_receipt, &route);
+            pages.0.access().close();
+            drop(pages);
+            let _ = pages_state.close(&mut native_pages, &route);
+        })
+        .unwrap();
 }
 
 fn check_cross_chapter_cache_only(paragraphs: usize, corrupt: bool) {

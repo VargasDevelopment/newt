@@ -92,12 +92,13 @@ pub fn repaint_reader_ui<S: BookSource + ?Sized>(
     now: u32,
 ) -> ReaderPaintWork {
     repaint_reader_ui_with(reader, owner, prepared, tracker, now,
-        |reader| reader.repaint(source, frame))
+        |reader| Ok(reader.repaint(source, frame)))
 }
 pub(crate) fn repaint_reader_ui_with(
     reader: &mut PhasedReader<'_, '_>, owner: &mut ReaderOwnerState,
     prepared: PreparedReaderPaint, tracker: &mut newt_core::tracker::ReadingTracker,
-    now: u32, repaint: impl FnOnce(&mut PhasedReader<'_, '_>) -> Status,
+    now: u32,
+    repaint: impl FnOnce(&mut PhasedReader<'_, '_>) -> Result<Status, crate::external_owner::Cancelled>,
 ) -> ReaderPaintWork {
     // Retain first-paint readiness when retry preparation fails, even on a
     // fatal result. The owner latch still blocks routing and tracker resume.
@@ -111,7 +112,12 @@ pub(crate) fn repaint_reader_ui_with(
         tracker.pause(now);
         return ReaderPaintWork::Complete { ready: false };
     }
-    let status = repaint(reader);
+    let Ok(status) = repaint(reader) else {
+        // A cancelled repaint drew nothing and says nothing about the book:
+        // nothing latches, and the frame is not ready (#199).
+        tracker.pause(now);
+        return ReaderPaintWork::Complete { ready: false };
+    };
     if status == Status::Unsupported {
         return ReaderPaintWork::OwnerPaint {
             status,

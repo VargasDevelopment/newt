@@ -20,6 +20,17 @@ pub enum PhysicalSourceRef<'loan, 'source, 'hooks> {
     Pending(&'loan mut PendingReaderSource<'hooks, 'source>),
 }
 
+impl<'source> PhysicalSourceRef<'_, 'source, '_> {
+    /// The reader source behind this view, when it has one.
+    pub(crate) fn reader_source(&mut self) -> Option<&mut ReaderSource<'source>> {
+        match self {
+            Self::Reader(source) => Some(&mut **source),
+            Self::Pending(pending) => Some(&mut *pending.source),
+            Self::Revision(_) | Self::Strict(_) => None,
+        }
+    }
+}
+
 pub trait PhysicalSource: BookSource + sealed::Sealed {
     fn with_physical_source<R>(
         &mut self,
@@ -37,12 +48,21 @@ impl PhysicalSource for ImportedRevision<'_> {
     }
 }
 
-/// What `reload_after_cancel` left: a readable source, another cancel, or a
-/// book that no longer matches its receipt.
-pub(crate) enum Reload {
-    Ready,
+/// Why a source that a cancel closed did not reload: another cancel, which
+/// says nothing about the book, or a book that no longer matches its digest.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Interrupted {
     Cancelled,
     Changed,
+}
+
+/// How a source that a cancel closed becomes readable again.
+#[derive(Clone, Copy)]
+pub(crate) enum Recovery {
+    /// Reload the sealed receipt under the digest.
+    Receipt,
+    /// The strict fallback has no sealed receipt: hash the held source again.
+    Strict,
 }
 
 #[derive(Clone, Copy)]
@@ -50,10 +70,9 @@ pub(crate) enum ReaderSourceMode {
     Revision,
     Strict,
     /// A cancel ended the last action: the receipt closed and the reader kept
-    /// its page. Like Closed it has no read path; the only way back to a
-    /// readable source is `reload_closed_receipt(digest)`, which every action
-    /// and repaint runs first through `reload_after_cancel` (#199).
-    MustReload,
+    /// its page. Like Closed it has no digest and no read path. Only `reload`
+    /// leaves it, and the owner runs that before every action and repaint (#199).
+    MustReload(Recovery),
     Closed,
 }
 
@@ -83,11 +102,12 @@ impl<'a> ReaderSource<'a> {
             digest,
         }
     }
-    pub fn digest(&self) -> Digest {
+    /// None while the source has no read path (closed, or closed by a cancel).
+    pub fn digest(&self) -> Option<Digest> {
         match self.mode {
-            ReaderSourceMode::Revision => *self.revision.digest(),
-            ReaderSourceMode::Strict => self.digest,
-            ReaderSourceMode::MustReload | ReaderSourceMode::Closed => [0; 32],
+            ReaderSourceMode::Revision => Some(*self.revision.digest()),
+            ReaderSourceMode::Strict => Some(self.digest),
+            ReaderSourceMode::MustReload(_) | ReaderSourceMode::Closed => None,
         }
     }
     /// A settings/recovery open repeats the original complete-source
@@ -107,18 +127,63 @@ impl<'a> ReaderSource<'a> {
         self.mode = ReaderSourceMode::Revision;
         Some(imported)
     }
-    /// Reopen an already-verified receipt after a cancelled action closed the
-    /// receipt handle. Fails closed unless the stored receipt still matches
-    /// `expected` and passes validation.
-    pub fn reload_closed_receipt(&mut self, expected: Digest) -> bool {
-        if !matches!(self.mode, ReaderSourceMode::MustReload | ReaderSourceMode::Closed)
-            || !self.revision.reload_held_receipt(expected)
-        {
-            return false;
+    /// A cancel ended the last action. Close the source and keep the way
+    /// back: the next action or repaint reloads under the same digest (#199).
+    /// The strict fallback has no receipt to close; its reload resets the
+    /// revision as its open did.
+    pub(crate) fn close_after_cancel(&mut self) {
+        let recovery = match self.mode {
+            ReaderSourceMode::Revision => {
+                self.digest = *self.revision.digest();
+                self.revision.close_receipt();
+                Recovery::Receipt
+            }
+            ReaderSourceMode::Strict => Recovery::Strict,
+            ReaderSourceMode::MustReload(recovery) => recovery,
+            ReaderSourceMode::Closed => return,
+        };
+        self.mode = ReaderSourceMode::MustReload(recovery);
+    }
+    /// Leaves MustReload before an action or repaint. Readable and closed
+    /// sources pass through unchanged.
+    pub(crate) fn reload(&mut self) -> Result<(), Interrupted> {
+        match self.mode {
+            ReaderSourceMode::MustReload(recovery) => self.reload_as(recovery, self.digest),
+            _ => Ok(()),
         }
-        self.digest = expected;
-        self.mode = ReaderSourceMode::Revision;
-        true
+    }
+    /// The reader's exit after a cancel: make a source that the cancel closed
+    /// readable again under the selected digest, so its position can be saved.
+    /// A closed source can only have a receipt to reload. True when readable.
+    pub fn reload_closed(&mut self, expected: Digest) -> bool {
+        match self.mode {
+            ReaderSourceMode::Revision | ReaderSourceMode::Strict => true,
+            ReaderSourceMode::MustReload(recovery) => self.reload_as(recovery, expected).is_ok(),
+            ReaderSourceMode::Closed => self.reload_as(Recovery::Receipt, expected).is_ok(),
+        }
+    }
+    /// The one reload for both kinds of source. Either way the whole check
+    /// runs again under `expected`, so a changed book can't reload. A failure
+    /// that a new cancel caused leaves the mode as it was; any other closes.
+    fn reload_as(&mut self, recovery: Recovery, expected: Digest) -> Result<(), Interrupted> {
+        let (reloaded, mode) = match recovery {
+            Recovery::Receipt => (self.revision.reload_held_receipt(expected), ReaderSourceMode::Revision),
+            Recovery::Strict => (
+                self.revision.prepare_strict_source(expected, &|| true)
+                    == newt_core::zip_container::Status::Ok,
+                ReaderSourceMode::Strict,
+            ),
+        };
+        if reloaded {
+            self.digest = expected;
+            self.mode = mode;
+            return Ok(());
+        }
+        if self.revision.cancelled() {
+            return Err(Interrupted::Cancelled);
+        }
+        self.mode = ReaderSourceMode::Closed;
+        Err(Interrupted::Changed)
     }
     /// One frozen producer receipt scope over this same selected source owner.
     /// The caller records cancellation.result inside work, before settlement.
@@ -126,7 +191,7 @@ impl<'a> ReaderSource<'a> {
         &mut self,
         work: impl FnOnce(&mut Self) -> newt_core::zip_container::Status,
     ) -> (newt_core::zip_container::Status, bool) {
-        if matches!(self.mode, ReaderSourceMode::MustReload | ReaderSourceMode::Closed) {
+        if matches!(self.mode, ReaderSourceMode::MustReload(_) | ReaderSourceMode::Closed) {
             return (newt_core::zip_container::Status::Unsupported, false);
         }
         self.revision.begin_immutable_read();
@@ -134,25 +199,13 @@ impl<'a> ReaderSource<'a> {
         let fresh = self.revision.finish_immutable_read();
         (status, fresh)
     }
-    /// The index pass verifies and reads the held physical bytes independently
-    /// of the optional receipt's block checks. The source cannot escape its loan.
-    pub fn with_held_source<R>(&mut self, work: impl FnOnce(&mut dyn BookSource) -> R) -> Option<R> {
-        self.revision.with_held_source(work)
-    }
-    /// Leaves MustReload before an action or repaint. A reload that a new
-    /// cancel refuses stays MustReload with the reader open; any other failed
-    /// reload closes the reader and the source, as a changed book does.
-    pub(crate) fn reload_after_cancel(&mut self, reader: &mut newt_phased_reader::PhasedReader<'_, '_>)
-        -> Reload {
-        if !matches!(self.mode, ReaderSourceMode::MustReload) || self.reload_closed_receipt(self.digest) {
-            return Reload::Ready;
-        }
-        if self.revision.cancelled() {
-            return Reload::Cancelled;
-        }
-        reader.close();
-        self.mode = ReaderSourceMode::Closed;
-        Reload::Changed
+    /// The held raw bytes with the digest they were checked under, while the
+    /// source is readable. The source cannot escape its loan.
+    pub(crate) fn with_held_source<R>(
+        &mut self, work: impl FnOnce(&mut dyn BookSource, &Digest) -> R,
+    ) -> Option<R> {
+        let digest = self.digest()?;
+        self.revision.with_held_source(|raw| work(raw, &digest))
     }
     pub fn reset(&mut self) {
         self.revision.retain_source_for_reopen(false);
@@ -165,7 +218,7 @@ impl BookSource for ReaderSource<'_> {
         match self.mode {
             ReaderSourceMode::Revision => self.revision.size(),
             ReaderSourceMode::Strict => self.revision.held_source_bytes(),
-            ReaderSourceMode::MustReload | ReaderSourceMode::Closed => 0,
+            ReaderSourceMode::MustReload(_) | ReaderSourceMode::Closed => 0,
         }
     }
     fn read_at(&mut self, offset: u64, output: &mut [u8]) -> i32 {
@@ -175,7 +228,7 @@ impl BookSource for ReaderSource<'_> {
                 .revision
                 .with_held_source(|s| s.read_at(offset, output))
                 .unwrap_or(-1),
-            ReaderSourceMode::MustReload | ReaderSourceMode::Closed => -1,
+            ReaderSourceMode::MustReload(_) | ReaderSourceMode::Closed => -1,
         }
     }
 }
@@ -196,7 +249,7 @@ impl newt_core::producer_policy::ProducerReceipt for ReaderSource<'_> {
         match self.mode {
             ReaderSourceMode::Revision => newt_core::producer_policy::ProducerReceipt::producer_receipt_live(&mut self.revision),
             ReaderSourceMode::Strict => self.revision.strict_producer_receipt_live(),
-            ReaderSourceMode::MustReload | ReaderSourceMode::Closed => false,
+            ReaderSourceMode::MustReload(_) | ReaderSourceMode::Closed => false,
         }
     }
 }

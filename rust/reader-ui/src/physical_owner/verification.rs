@@ -42,7 +42,7 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
         let work = (|| {
             if request == PageRequest::Open {
                 if matches!(self.open, PhysicalOpen::Loaded { digest, .. }
-                    | PhysicalOpen::Selected { digest, .. } if digest != source.digest()) {
+                    | PhysicalOpen::Selected { digest, .. } if digest != source.expected()) {
                     return PageWork::failed(Status::Stale);
                 }
                 let authorized = match source.take_open_authorization() {
@@ -61,7 +61,7 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
             {
                 return PageWork::VERIFICATION_PENDING;
             }
-            let digest = source.digest();
+            let digest = source.expected();
             self.execute_raw(reader, source, &digest, request)
         })();
         if request == PageRequest::Open && work.result != Completion::Published {
@@ -79,7 +79,7 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
     pub(super) fn execute_pending(&mut self, reader: &mut PhasedReader<'_, '_>,
         source: &mut PendingReaderSource<'_, '_>, request: PageRequest) -> PageWork {
         if source.verified { return self.execute_reader(reader, source.source, request); }
-        if matches!(source.source.mode, ReaderSourceMode::Closed | ReaderSourceMode::MustReload) {
+        if matches!(source.source.mode, ReaderSourceMode::Closed | ReaderSourceMode::MustReload(_)) {
             return PageWork::failed(Status::NotFound);
         }
         begin_receipt_action(&mut source.source.revision, request);
@@ -154,15 +154,15 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
     }
 
     pub(super) fn repaint_pending(&mut self, reader: &mut PhasedReader<'_, '_>,
-        source: &mut PendingReaderSource<'_, '_>) -> Status {
+        source: &mut PendingReaderSource<'_, '_>) -> Result<Status, Cancelled> {
         // Repaint only consumes the retained plan. A changed chapter/strict
         // source requires the same actual finish before any frame publication.
         if !source.verified && (reader.info().spine != source.selected_spine
             || !matches!(source.source.mode, ReaderSourceMode::Revision)) {
             match self.finish_pending(source) {
                 Ok(true) => {}
-                Ok(false) => return Status::NotFound,
-                Err(error) => return error,
+                Ok(false) => return Ok(Status::NotFound),
+                Err(error) => return Ok(error),
             }
         }
         self.repaint_reader(reader, source.source)

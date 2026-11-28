@@ -69,6 +69,25 @@ impl PageWork {
             result: Completion::Failed(status),
         }
     }
+    /// The one reading of a reload that did not finish, for actions and
+    /// repaints alike: a new cancel stays a cancel, a changed book is Stale.
+    pub(crate) fn interrupted(interrupted: crate::physical_source::Interrupted) -> Self {
+        match interrupted {
+            crate::physical_source::Interrupted::Cancelled => Self::CANCELLED,
+            crate::physical_source::Interrupted::Changed => Self::failed(Status::Stale),
+        }
+    }
+    /// What finished work means to its caller: a status, or a cancel.
+    pub(crate) fn settle(self) -> Result<Status, Cancelled> {
+        Ok(match self.result {
+            Completion::Published => Status::Ok,
+            Completion::Failed(status) => status,
+            Completion::VerificationPending => Status::NotFound,
+            Completion::Cancelled => return Err(Cancelled),
+            // Captured is consumed by the concrete route before it reaches policy.
+            Completion::Captured => unreachable!("unpublished owner work"),
+        })
+    }
 }
 
 /// The UI and owner share exactly this state. Tracker and the bounded failure
@@ -216,7 +235,7 @@ impl ExternalOwner {
     where
         F: FnMut(&mut PhasedReader<'_, '_>, &mut S, PageRequest, &mut Frame) -> PageWork,
     {
-        self.paint_with(reader, source, now, &mut DisjointPages { frame, page })
+        self.paint_with(reader, source, now, &mut DisjointPages { frame, page }).unwrap_or(false)
     }
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn open_with<S: BookSource, P: OwnerPages<S>>(
@@ -509,42 +528,43 @@ impl ExternalOwner {
         self.tracker.relocate(self.state.position(reader).shown);
         ChapterJumpOutcome::Moved
     }
+    /// Err: a cancel ended the paint before it drew. Nothing latches, the
+    /// reader keeps its page, and the frame is not ready (#199).
     pub(crate) fn paint_with<S: BookSource, P: OwnerPages<S>>(
         &mut self,
         reader: &mut PhasedReader<'_, '_>,
         source: &mut S,
         now: u32,
         pages: &mut P,
-    ) -> bool {
+    ) -> Result<bool, Cancelled> {
         if !self.state.opened() {
-            return false;
+            return Ok(false);
         }
         let p = reader.info();
-        let mut status = pages.repaint(reader, source);
-        if status == Status::Unsupported {
-            let Ok(page) = perform(
-                reader,
-                source,
-                PageRequest::Page(p.spine, p.page),
-                pages,
-            ) else {
-                self.tracker.pause(now);
-                return false;
-            };
-            status = page;
-        }
+        let painted = match pages.repaint(reader, source) {
+            Ok(Status::Unsupported) => {
+                perform(reader, source, PageRequest::Page(p.spine, p.page), pages)
+            }
+            repainted => repainted,
+        };
+        let Ok(status) = painted else {
+            self.tracker.pause(now);
+            return Err(Cancelled);
+        };
         self.status(status);
         if status != Status::Ok {
             self.tracker.pause(now);
         }
-        status == Status::Ok
+        Ok(status == Status::Ok)
     }
 }
 // Private route: external callers cannot implement an owner-success authority.
 pub(crate) trait OwnerPages<S: BookSource> {
     fn execute(&mut self, reader: &mut PhasedReader<'_, '_>, source: &mut S,
         request: PageRequest) -> PageWork;
-    fn repaint(&mut self, reader: &mut PhasedReader<'_, '_>, source: &mut S) -> Status;
+    /// Err: a cancel ended the repaint before it drew.
+    fn repaint(&mut self, reader: &mut PhasedReader<'_, '_>, source: &mut S)
+        -> Result<Status, Cancelled>;
 }
 struct DisjointPages<'a, F> { frame: &'a mut Frame, page: F }
 impl<S: BookSource, F> OwnerPages<S> for DisjointPages<'_, F>
@@ -556,8 +576,9 @@ where F: FnMut(&mut PhasedReader<'_, '_>, &mut S, PageRequest, &mut Frame) -> Pa
             completed(reader.publish(source, self.frame))
         } else { work }
     }
-    fn repaint(&mut self, reader: &mut PhasedReader<'_, '_>, source: &mut S) -> Status {
-        reader.repaint(source, self.frame)
+    fn repaint(&mut self, reader: &mut PhasedReader<'_, '_>, source: &mut S)
+        -> Result<Status, Cancelled> {
+        Ok(reader.repaint(source, self.frame))
     }
 }
 struct PendingPages<'a, P> { inner: &'a mut P, pending: bool }
@@ -568,7 +589,8 @@ impl<S: BookSource, P: OwnerPages<S>> OwnerPages<S> for PendingPages<'_, P> {
         self.pending |= work.result == Completion::VerificationPending;
         work
     }
-    fn repaint(&mut self, reader: &mut PhasedReader<'_, '_>, source: &mut S) -> Status {
+    fn repaint(&mut self, reader: &mut PhasedReader<'_, '_>, source: &mut S)
+        -> Result<Status, Cancelled> {
         self.inner.repaint(reader, source)
     }
 }
@@ -582,14 +604,7 @@ pub(crate) struct Cancelled;
 fn perform<S: BookSource, P: OwnerPages<S>>(
     reader: &mut PhasedReader<'_, '_>, source: &mut S, request: PageRequest, pages: &mut P,
 ) -> Result<Status, Cancelled> {
-    Ok(match pages.execute(reader, source, request).result {
-        Completion::Published => Status::Ok,
-        Completion::Failed(status) => status,
-        Completion::VerificationPending => Status::NotFound,
-        Completion::Cancelled => return Err(Cancelled),
-        // Captured is consumed by the concrete route before it reaches policy.
-        Completion::Captured => unreachable!("unpublished owner work"),
-    })
+    pages.execute(reader, source, request).settle()
 }
 /// Actual direct external route. OperationReader drops before returning to
 /// perform; parse and frame may share backing only via the caller's safe lender.
@@ -753,7 +768,10 @@ pub(crate) fn finish_owner_ui_paint_with<S: BookSource, P: OwnerPages<S>>(
     owner: &mut ExternalOwner, reader: &mut PhasedReader<'_, '_>, source: &mut S,
     completion: ReaderPaintCompletion, now: u32, pages: &mut P,
 ) -> ReaderPaintWork {
-    owner.paint_with(reader, source, now, pages);
+    // A cancelled paint drew nothing, so it can never report a ready frame.
+    if owner.paint_with(reader, source, now, pages).is_err() {
+        return ReaderPaintWork::Complete { ready: false };
+    }
     let status = owner.state.status();
     finish_reader_ui_paint(
         reader,

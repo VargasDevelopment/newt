@@ -64,7 +64,7 @@ where P::Port<'io>: Directory {
                     &mut owner,
                     &mut ui,
                     &opened_digest,
-                    revision.source_verified() && revision.digest() == opened_digest,
+                    revision.source_verified() && revision.digest() == Some(opened_digest),
                     request,
                     stats_sha256,
                     &mut statistics,
@@ -81,7 +81,7 @@ where P::Port<'io>: Directory {
                         &mut owner,
                         &mut ui,
                         &opened_digest,
-                        revision.source_verified() && revision.digest() == opened_digest,
+                        revision.source_verified() && revision.digest() == Some(opened_digest),
                         request,
                         stats_sha256,
                         &mut statistics,
@@ -96,7 +96,7 @@ where P::Port<'io>: Directory {
                         *owner.tracker.snapshot(at),
                         true,
                         *accepted_open_owed,
-                        owner.state.opened() && revision.source_verified() && revision.digest() == opened_digest,
+                        owner.state.opened() && revision.source_verified() && revision.digest() == Some(opened_digest),
                         request,
                     );
                 }
@@ -153,7 +153,7 @@ where P::Port<'io>: Directory {
                 &mut owner,
                 &mut ui,
                 &opened_digest,
-                revision.source_verified() && revision.digest() == opened_digest,
+                revision.source_verified() && revision.digest() == Some(opened_digest),
                 request,
                 stats_sha256,
                 &mut statistics,
@@ -168,7 +168,7 @@ where P::Port<'io>: Directory {
                 candidate,
                 false,
                 *accepted_open_owed,
-                owner.state.opened() && revision.source_verified() && revision.digest() == opened_digest,
+                owner.state.opened() && revision.source_verified() && revision.digest() == Some(opened_digest),
                 request,
             );
             if checkpoint_verified(checkpoint.checkpoint) {
@@ -213,7 +213,7 @@ where P::Port<'io>: Directory {
                 &mut owner,
                 &mut ui,
                 &opened_digest,
-                revision.source_verified() && revision.digest() == opened_digest,
+                revision.source_verified() && revision.digest() == Some(opened_digest),
                 request,
                 stats_sha256,
                 &mut statistics,

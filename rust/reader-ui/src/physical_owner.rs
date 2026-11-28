@@ -2,7 +2,7 @@
 //! Resource-backed external owner. No frame exists during execute's Session.
 use super::*;
 use crate::lifecycle::{MenuOperation, handle_reader_ui_with};
-use crate::physical_source::{PhysicalSourceRef, ReaderSourceMode, Reload};
+use crate::physical_source::{Interrupted, PhysicalSourceRef, ReaderSourceMode};
 use newt_core::{chapter_layout::types::LineBreak, admission::ActionScope,
     reader_action_profile::{ActionStage, CacheMissReason}, reader_work_profile::ReaderOpenRoute};
 use newt_phased_reader::imported_revision::{
@@ -289,14 +289,7 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
         source: &mut ReaderSource<'_>,
         request: PageRequest,
     ) -> PageWork {
-        if request != PageRequest::Open {
-            match source.reload_after_cancel(reader) {
-                Reload::Ready => {}
-                Reload::Cancelled => return PageWork::CANCELLED,
-                Reload::Changed => return PageWork::failed(Status::Stale),
-            }
-        }
-        if matches!(source.mode, ReaderSourceMode::Closed | ReaderSourceMode::MustReload) {
+        if matches!(source.mode, ReaderSourceMode::Closed | ReaderSourceMode::MustReload(_)) {
             return PageWork::failed(Status::NotFound);
         }
         begin_receipt_action(&mut source.revision, request);
@@ -315,7 +308,7 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
             mode,
             digest,
         } = source;
-        if matches!(mode, ReaderSourceMode::Closed | ReaderSourceMode::MustReload) {
+        if matches!(mode, ReaderSourceMode::Closed | ReaderSourceMode::MustReload(_)) {
             return PageWork::failed(Status::NotFound);
         }
         let mut work = match mode {
@@ -334,7 +327,7 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
             ReaderSourceMode::Strict => revision
                 .with_held_source(|raw| self.execute_raw(reader, raw, digest, request))
                 .unwrap_or_else(|| PageWork::failed(Status::IoError)),
-            ReaderSourceMode::MustReload | ReaderSourceMode::Closed => unreachable!(),
+            ReaderSourceMode::MustReload(_) | ReaderSourceMode::Closed => unreachable!(),
         };
         if matches!(mode, ReaderSourceMode::Revision)
             && request == PageRequest::Open
@@ -381,58 +374,89 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
         source: &mut S,
         request: PageRequest,
     ) -> PageWork {
-        source.with_physical_source(|source| match source {
-            PhysicalSourceRef::Revision(revision) => {
-                self.execute_revision(reader, revision, request, false)
+        source.with_physical_source(|mut source| {
+            // Open selects its source again itself.
+            if request != PageRequest::Open {
+                if let Err(work) = reload_source(reader, &mut source) {
+                    return work;
+                }
             }
-            PhysicalSourceRef::Reader(source) => self.execute_reader(reader, source, request),
-            PhysicalSourceRef::Strict(source) => self.execute_strict(reader, source, request),
-            PhysicalSourceRef::Pending(source) => self.execute_pending(reader, source, request),
+            match source {
+                PhysicalSourceRef::Revision(revision) => {
+                    self.execute_revision(reader, revision, request, false)
+                }
+                PhysicalSourceRef::Reader(source) => self.execute_reader(reader, source, request),
+                PhysicalSourceRef::Strict(source) => self.execute_strict(reader, source, request),
+                PhysicalSourceRef::Pending(source) => self.execute_pending(reader, source, request),
+            }
         })
     }
-    fn repaint(&mut self, reader: &mut PhasedReader<'_, '_>, source: &mut S) -> Status {
-        source.with_physical_source(|source| match source {
-            PhysicalSourceRef::Revision(revision) => self.repaint_revision(reader, revision),
-            PhysicalSourceRef::Reader(source) => self.repaint_reader(reader, source),
-            PhysicalSourceRef::Strict(source) => self.repaint_strict(reader, source),
-            PhysicalSourceRef::Pending(source) => self.repaint_pending(reader, source),
+    fn repaint(&mut self, reader: &mut PhasedReader<'_, '_>, source: &mut S)
+        -> Result<Status, Cancelled> {
+        source.with_physical_source(|mut source| {
+            if let Err(work) = reload_source(reader, &mut source) {
+                return work.settle();
+            }
+            match source {
+                PhysicalSourceRef::Revision(revision) => Ok(self.repaint_revision(reader, revision)),
+                PhysicalSourceRef::Reader(source) => self.repaint_reader(reader, source),
+                PhysicalSourceRef::Strict(source) => Ok(self.repaint_strict(reader, source)),
+                PhysicalSourceRef::Pending(source) => self.repaint_pending(reader, source),
+            }
         })
     }
+}
+
+/// Every action and repaint passes here before it touches its source, so
+/// nothing reads a source that a cancel closed until it reloads (#199). Both
+/// paths read the result the same way; a changed book closes the reader.
+fn reload_source(reader: &mut PhasedReader<'_, '_>, source: &mut PhysicalSourceRef<'_, '_, '_>)
+    -> Result<(), PageWork> {
+    let Some(source) = source.reader_source() else { return Ok(()) };
+    source.reload().map_err(|interrupted| {
+        if interrupted == Interrupted::Changed {
+            reader.close();
+        }
+        PageWork::interrupted(interrupted)
+    })
 }
 
 impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence>
     PhysicalOwner<'_, '_, '_, B, L, C>
 {
     fn repaint_reader(&mut self, reader: &mut PhasedReader<'_, '_>,
-        source: &mut ReaderSource<'_>) -> Status {
-        // A repaint reports only a status: a cancel during its reload ends it
-        // like a changed book would, and Back leaves the reader either way.
-        if !matches!(source.reload_after_cancel(reader), Reload::Ready) {
-            return Status::Stale;
+        source: &mut ReaderSource<'_>) -> Result<Status, Cancelled> {
+        let strict = match source.mode {
+            ReaderSourceMode::Revision => false,
+            ReaderSourceMode::Strict => true,
+            ReaderSourceMode::MustReload(_) | ReaderSourceMode::Closed => return Ok(Status::NotFound),
+        };
+        source.revision.begin_immutable_read();
+        let status = if strict {
+            source.revision.with_held_source(|raw| {
+                self.panel.with_frame(|frame| reader.repaint(raw, frame)).unwrap_or_else(|e| e)
+            }).unwrap_or(Status::IoError)
+        } else {
+            self.panel.with_frame(|frame| reader.repaint(&mut source.revision, frame))
+                .unwrap_or_else(|e| e)
+        };
+        // Exit runs even when repaint or frame acquisition failed.
+        let fresh = source.revision.finish_immutable_read();
+        // A cancel refuses the freshness read and the repaint's own reads. Like
+        // an action's, it says nothing about the book: the source closes for a
+        // reload and nothing latches (#199). Unsupported (no retained plan) read
+        // nothing, so the owner's page action runs and meets the cancel itself.
+        let refused = !fresh || !matches!(status, Status::Ok | Status::Unsupported);
+        if refused && reader.opened() && source.revision.cancelled() {
+            source.close_after_cancel();
+            return Err(Cancelled);
         }
-        match source.mode {
-            ReaderSourceMode::Revision => self.repaint_revision(reader, &mut source.revision),
-            ReaderSourceMode::Strict => {
-                source.revision.begin_immutable_read();
-                let status = source
-                    .revision
-                    .with_held_source(|raw| {
-                        self.panel
-                            .with_frame(|frame| reader.repaint(raw, frame))
-                            .unwrap_or_else(|e| e)
-                    })
-                    .unwrap_or(Status::IoError);
-                let fresh = source.revision.finish_immutable_read();
-                if !fresh && status == Status::Ok {
-                    reject_changed_receipt(reader, &mut source.revision);
-                    source.mode = ReaderSourceMode::Closed;
-                    Status::Stale
-                } else {
-                    status
-                }
-            }
-            ReaderSourceMode::MustReload | ReaderSourceMode::Closed => Status::NotFound,
+        if !fresh && status == Status::Ok {
+            reject_changed_receipt(reader, &mut source.revision);
+            source.mode = ReaderSourceMode::Closed;
+            return Ok(Status::Stale);
         }
+        Ok(status)
     }
 }
 

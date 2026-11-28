@@ -23,7 +23,8 @@ legacy = None
 CRATE_CONTROLS = (
     # A reload that reports Ready without reloading leaves the source with no read path.
     ('skip-reload', 'reader-ui/src/physical_source.rs',
-     '|| self.reload_closed_receipt(self.digest) {', '|| true {',
+     'ReaderSourceMode::MustReload(recovery) => self.reload_as(recovery, self.digest),',
+     'ReaderSourceMode::MustReload(_) => Ok(()),',
      'Contents after a cancelled list load reloads the receipt and rebuilds the list'),
     # A cancelled Contents load latched as an I/O failure, as before #199.
     ('menu-cancel-latches', 'reader-ui/src/physical_owner.rs',
@@ -31,10 +32,34 @@ CRATE_CONTROLS = (
      'owner.menu_result(Status::IoError);\n'
      '            return MenuPreparation { status: Status::IoError, valid: false };',
      'a cancelled Contents list load keeps the reader and its page'),
-    # A failed reload read as a fresh cancel keeps a changed book open.
+    # A failed reload read as a new cancel keeps a changed book open.
     ('changed-book-open', 'reader-ui/src/physical_source.rs',
      'if self.revision.cancelled() {', 'if true {',
      'a changed receipt after a cancel gives Stale and closes the reader'),
+    # The strict fallback reloading a receipt it never sealed, as the first #199 fix did.
+    ('strict-reloads-receipt', 'reader-ui/src/physical_source.rs',
+     'ReaderSourceMode::Strict => Recovery::Strict,',
+     # Still names Strict, so dead-code analysis under -Dwarnings doesn't stop the build.
+     'ReaderSourceMode::Strict => if true { Recovery::Receipt } else { Recovery::Strict },',
+     'a turn after a cancelled strict jump hashes the book again and moves'),
+    # A repaint that reads a cancelled reload as a changed book, as the first #199 fix did.
+    ('repaint-cancel-latches', 'reader-ui/src/physical_owner.rs',
+     'return work.settle();', 'return work.settle().or(Ok(Status::Stale));',
+     "a cancel during a repaint's reload latches nothing and keeps the reader"),
+    # A pending-verification repaint that skips the reload checks a closed source.
+    ('pending-skips-reload', 'reader-ui/src/physical_source.rs',
+     'Self::Pending(pending) => Some(&mut *pending.source),', 'Self::Pending(_) => None,',
+     'a pending-verification repaint after a cancel reloads first and draws the page'),
+    # A cancelled repaint's refused reads latched as a failure.
+    ('repaint-read-cancel-latches', 'reader-ui/src/physical_owner.rs',
+     'if refused && reader.opened() && source.revision.cancelled() {',
+     'if false && refused {',
+     'a cancelled repaint latches nothing and keeps the reader'),
+    # A cancelled owner paint that still reports readiness from the owner status.
+    ('cancelled-paint-ready', 'reader-ui/src/external_owner.rs',
+     'if owner.paint_with(reader, source, now, pages).is_err() {',
+     'if owner.paint_with(reader, source, now, pages).is_err() && false {',
+     'a cancelled fallback paint never reports a ready frame'),
 )
 
 

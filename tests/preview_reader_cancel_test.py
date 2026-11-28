@@ -4,8 +4,8 @@
 - Back that cancels a live turn exits Home and saves the shown page to SD.
 - A stalled turn over a strict source still lets Back and Power exit and save.
 - A turn into a short cached chapter shows no Loading screen.
-- A Contents jump that runs out of time keeps the reader open on its page
-  (#199).
+- A Contents jump that runs out of time keeps the reader open on its page,
+  and Back then saves it, over a sealed receipt or the strict fallback (#199).
 - Back that cancels an initial open from Library goes Home and keeps the
   previous book's selection and position; a later tagged Back in the same
   queue leaves the screen the presses between them opened.
@@ -31,6 +31,8 @@ HOME, READER, LIBRARY = 0, 4, 6
 STATUS = re.compile(r'STATUS screen=(\d+) ')
 GENERATION = re.compile(r'STATUS screen=\d+ gen=(\d+)')
 ACTION_TOTAL = re.compile(r'Reader action: schema=\d+ total=(\d+) ')
+ROUTE_FLAGS = re.compile(r'Reader route: flags=(\d+) ')
+STRICT_FALLBACK = 1 << 10  # ReaderOpenRoute::StrictFallback
 # A live action's time budget (salamander/input OPEN_BUDGET_MS), in microseconds.
 BUDGET_US = 20_000_000
 DIAG_FIELD = re.compile(r'(reader_open|actual_spine|actual_character|current_book)=(\d+)')
@@ -42,6 +44,13 @@ CROSS_CHAPTER_TURN = RIGHT
 # From a page: the menu, Contents, then the second row, a chapter whose
 # opening anchor needs the producer.
 TO_CONTENTS_ROW = (CONFIRM, RIGHT, CONFIRM, RIGHT)
+# A receipt that can't seal: the reader opens over the strict fallback, which
+# reads the held book under its full digest (#199).
+SEAL_FAILS = (
+    'sd_revision.rs',
+    'file.sync() && file.commit(MAX_RECEIPT_BYTES, true)',
+    '{ let _ = &mut file; false }',
+)
 # Without a session, live actions use the strict source, as when the session
 # cannot be allocated.
 NO_SESSION = (
@@ -197,9 +206,11 @@ def library_cancel_queue_keeps_later_screen(binary):
             return f'a queued Back after a Library cancel left screen {screen_of(log)} instead of {opened}'
 
 
-def timed_out_jump_keeps_page(binary):
+def timed_out_jump_keeps_page(binary, *, strict=False):
     """A Contents jump that a stalled card runs out of time keeps the reader
-    open on its page, and a cold boot resumes that saved page."""
+    open on an unsaved page. A cold boot of that run's own card restores a
+    page the reader showed, never the jump's target; Back after the timeout
+    saves the shown page."""
     with tempfile.TemporaryDirectory(prefix='newt-jump-timeout-') as td:
         d = Path(td)
         preview_driver.world(binary, d, preview_driver.parse(['--library-fixture', 'empty']))
@@ -209,10 +220,18 @@ def timed_out_jump_keeps_page(binary):
         run(binary, d, (CONFIRM, CONFIRM, RIGHT, RIGHT, BACK), from_seed=False)
         shutil.copytree(d / 'card', d / 'seed-card')
         book, *saved = reopened(binary, d)
-        to_row = (BACK,) + TO_CONTENTS_ROW
+        # Read, then one turn: a page that only an exit saves.
+        to_page = (BACK, RIGHT)
+        log = run(binary, d, to_page)
+        fallback = any(int(flags) & STRICT_FALLBACK for flags in ROUTE_FLAGS.findall(log))
+        assert fallback == strict, f'the open took the strict fallback: {fallback}'
+        shown = diag_of(log)
+        page = [shown['actual_spine'], shown['actual_character']]
+        to_row = to_page + TO_CONTENTS_ROW
         clean = diag_of(run(binary, d, to_row + (CONFIRM,)))
-        # Otherwise a jump that saved its target would pass.
-        assert [clean['actual_spine'], clean['actual_character']] != saved, (clean, saved)
+        target = [clean['actual_spine'], clean['actual_character']]
+        # Otherwise a jump that saved its target, or a lost turn, would pass.
+        assert len({tuple(saved), tuple(page), tuple(target)}) == 3, (saved, page, target)
         # The first stall that leaves the way to the row alone and runs the jump out of time.
         for after in range(1, 64):
             stall = {'card.slow': '/Books/', 'card.after_refresh': str(after)}
@@ -223,14 +242,27 @@ def timed_out_jump_keeps_page(binary):
             raise AssertionError('no stall runs the Contents jump out of time')
         reached = run(binary, d, to_row, stall)
         assert diag_of(reached) == diag_of(run(binary, d, to_row)), f'the stall at {after} fired before the jump'
+        # The timed-out run again, so the cold boot below reads this run's card.
+        log = run(binary, d, to_row + (CONFIRM,), stall)
         shown = diag_of(log)
         if screen_of(log) != READER or shown.get('reader_open') != '1':
             return f'a timed-out jump left the reader (screen={screen_of(log)}, {shown})'
-        if [shown['actual_spine'], shown['actual_character']] != saved:
-            return f'a timed-out jump showed {shown} instead of the saved page {saved}'
+        if [shown['actual_spine'], shown['actual_character']] != page:
+            return f'a timed-out jump showed {shown} instead of the page {page}'
         got = reopened(binary, d)
-        if list(got) != [book, *saved]:
-            return f'a cold boot after a timed-out jump restored {got} instead of {[book, *saved]}'
+        if got[0] != book or list(got[1:]) not in (saved, page):
+            return f'a cold boot after a timed-out jump restored {got}, not a page the reader showed ({saved} or {page})'
+        log = run(binary, d, to_row + (CONFIRM, BACK), stall)
+        if screen_of(log) != HOME:
+            return f'Back after a timed-out jump did not go Home (screen={screen_of(log)})'
+        got = reopened(binary, d)
+        if list(got) != [book, *page]:
+            return f'Back after a timed-out jump: a cold boot restored {got} instead of the shown page {[book, *page]}'
+
+
+def strict_timed_out_jump_keeps_page(binary):
+    """The same over the strict fallback, whose reload hashes the book again."""
+    return timed_out_jump_keeps_page(binary, strict=True)
 
 
 def short_cached_chapter_turns_without_loading(binary):
@@ -298,6 +330,7 @@ CANCEL_READS_AS_CHANGED = (
     '!self.file.operation().allowed()',
     'false',
 )
+# #199: the exit after a cancel leaves the closed source unread, so Back can't save.
 LIBRARY_KEEPS_CANCEL_BACK = (
     'app_runtime/run_loop.rs',
     'dispatch_back.then_some(input::Action::Back)',
@@ -319,6 +352,7 @@ def main():
     check(library_cancel_queue_keeps_later_screen, binary)
     check(short_cached_chapter_turns_without_loading, binary)
     check(timed_out_jump_keeps_page, binary)
+    check(strict_timed_out_jump_keeps_page, rust_preview.control([SEAL_FAILS], optimize=False))
     check(stalled_turn_exits_and_saves, binary)
     check(stalled_turn_exits_and_saves, rust_preview.control([NO_SESSION], optimize=False))
     if not negative_controls(__file__):

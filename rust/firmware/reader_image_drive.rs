@@ -101,7 +101,8 @@ impl RunLoan<'_, '_, '_> {
         };
         let digest = match request.open {
             reader_book::BookOpen::Receipt(digest) => digest,
-            reader_book::BookOpen::Import => source.digest(),
+            // A closed source keeps the zero digest it had before, which matches no book.
+            reader_book::BookOpen::Import => source.digest().unwrap_or_default(),
         };
         let result = book.reader.with_scoped_work(yielded, Some(observed), |reader| {
             reader_book::run::drive(scope.io, scope.card, request, reader,

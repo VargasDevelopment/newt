@@ -36,7 +36,7 @@ impl Session {
         let digest = selected.with_source(source_native, Some(cancel), |raw|
             with_source(&mut self.source, RevisionPorts { source: Some(raw), store: &mut receipt,
                 whole: &mut whole, block: Some(&mut block), scratch: &mut self.scratch },
-                |revision| revision.digest())).ok()?.ok()?;
+                |revision| revision.digest())).ok()?.ok()??;
         self.verification.adopt_changed().then_some(digest)
     }
 

@@ -13,16 +13,14 @@ pub(super) fn finish_reader_action(reader: &mut PhasedReader<'_, '_>, source: &m
         source.mode = ReaderSourceMode::Closed;
     }
     // A cancel (Back or the time budget) refuses the final freshness read and
-    // every read after it, and leaves this receipt unreadable, so it says
-    // nothing about the book. A failed action published nothing, so the reader
-    // keeps its page. The receipt closes, and the next action reloads it under
-    // the same digest before it runs (#199). A page published from unchecked
-    // reads still closes the reader below.
+    // every read after it, so it says nothing about the book. A failed action
+    // published nothing, so the reader keeps its page. The source closes, and
+    // the next action or repaint reloads it under the same digest (#199). A
+    // page published from unchecked reads still closes the reader below.
     if request != PageRequest::Open && matches!(work.result, Completion::Failed(_))
         && reader.opened() && source.revision.cancelled() {
         let _ = finish_receipt_checks(&mut source.revision, request);
-        source.revision.close_receipt();
-        source.mode = ReaderSourceMode::MustReload;
+        source.close_after_cancel();
         return PageWork::CANCELLED;
     }
     let work = finish_receipt_action(reader, &mut source.revision, request, work);

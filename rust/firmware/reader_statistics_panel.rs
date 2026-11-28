@@ -83,7 +83,7 @@ impl<N: nvs::Native> MountedCheckpoint<'_, N> {
             // As frozen panelStatsBook (#238): the paint writes nothing, so a
             // check still running on the same digest may read the records.
             let authorized = (revision.source_verified() || revision.source_verification_pending())
-                && revision.digest() == *digest;
+                && revision.digest() == Some(*digest);
             let session = Session {
                 book: stats_book(self.checkpoint, digest, authorized, owner, reader),
                 progress: &progress,

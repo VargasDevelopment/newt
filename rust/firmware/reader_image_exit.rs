@@ -161,8 +161,10 @@ impl Runtime {
                         session::with_source(state, RevisionPorts { source: Some(source),
                             store: &mut receipt, whole: &mut whole, block: Some(&mut block),
                             scratch }, |revision| {
-                            if allow_cancelled && revision.digest() != digest {
-                                revision.reload_closed_receipt(digest);
+                            // A cancel may have closed the source. Reload it so the
+                            // exit can save the position; a strict fallback hashes again.
+                            if allow_cancelled {
+                                revision.reload_closed(digest);
                             }
                             super::drive::RunLoan { memory, ui: reader_ui, checkpoint, statistics, recovery,
                                 accepted: &mut accepted, metadata: exit_metadata, flags: None, settings }
