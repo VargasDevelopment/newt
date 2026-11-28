@@ -4,6 +4,8 @@ use newt_core::{page_cache::{CacheStorage, ReadScope}, page_cache_access::Verifi
     page_envelope::VerifiedStore, zip_container::Status};
 
 impl<N: Native> ReadScope for ChapterCacheAccess<'_, '_, N> {
+    // A failed close only costs the next open; there is nothing to report.
+    fn close_after_cancel(&mut self) { let _ = self.release_for_state(); }
     fn invalidate_index(&mut self, digest: &[u8; 32]) -> bool {
         if !self.release_for_admission() { return false; }
         let name = newt_core::book_index::FileName::new(digest, newt_core::book_index::FileKind::Index);

@@ -14,7 +14,7 @@ use newt_core::{
     tracker::ReadingEnd,
 };
 use newt_phased_reader::PhasedReader;
-use newt_reader_ui::ExternalOwner;
+use newt_reader_ui::{Composed, ExternalOwner};
 
 /// Statistics see the selected complete digest and the checkpoint owner's
 /// acknowledgement. The live tracker contributes end/position, never counters.
@@ -75,7 +75,7 @@ impl<N: nvs::Native> MountedCheckpoint<'_, N> {
         ui: &mut ReaderUiState,
         info: &DeviceInfo<'_>,
         now: u32,
-    ) -> Result<(), Status> {
+    ) -> Result<Composed, Status> {
         let settings = resources.settings;
         let painted = resources.owner().paint_ui(reader, revision, owner, ui, now);
         let progress = *owner.tracker.snapshot(now);
@@ -83,7 +83,7 @@ impl<N: nvs::Native> MountedCheckpoint<'_, N> {
             // As frozen panelStatsBook (#238): the paint writes nothing, so a
             // check still running on the same digest may read the records.
             let authorized = (revision.source_verified() || revision.source_verification_pending())
-                && revision.digest() == *digest;
+                && revision.digest() == Some(*digest);
             let session = Session {
                 book: stats_book(self.checkpoint, digest, authorized, owner, reader),
                 progress: &progress,

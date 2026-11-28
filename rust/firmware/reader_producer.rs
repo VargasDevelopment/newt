@@ -88,7 +88,7 @@ fn position(reader: &PhasedReader<'_, '_>, source: &newt_reader_ui::ReaderSource
     digest: &Digest,
 ) -> Option<Position> {
     reader.opened().then(|| Position { spine: reader.info().spine,
-        spines: reader.selection().spines, verified: source.digest() == *digest })
+        spines: reader.selection().spines, verified: source.digest() == Some(*digest) })
 }
 fn pending(visit: &mut ProducerVisit<'_>, reader: &PhasedReader<'_, '_>,
     source: &newt_reader_ui::ReaderSource<'_>, digest: &Digest, eligible: bool,
@@ -202,7 +202,7 @@ impl<'scope, 'sdk, 'route, 'bank, NativePort: Native + PageEntries>
     ) -> (bool, bool, Option<u32>)
     where P: CardPort<Port<'io> = NativePort> {
         let eligible = owner.state.opened() && reader.opened() && reader.has_page()
-            && ui.panel == newt_reader_ui::ReaderPanel::Page && source.digest() == *digest;
+            && ui.panel == newt_reader_ui::ReaderPanel::Page && source.digest() == Some(*digest);
         if !eligible { return (false, false, None); }
         if !pending(visit, reader, source, digest, eligible) { return (false, false, None); }
         let poll = Poll { callbacks, began: (request.now)(), pauses: core::cell::Cell::new(0),

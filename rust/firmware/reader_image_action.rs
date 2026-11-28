@@ -152,6 +152,14 @@ impl Runtime {
                         return true;
                     }
                     self.note_closed_exit_image(events, had_progress);
+                    // The budget stopped a Contents jump: the reader kept its
+                    // page, and the failure says so rather than naming a cause.
+                    // Only the session route keeps the reader open on a cancel;
+                    // without a session the jump fails as on main.
+                    if events.control.timed_out() && self.opened() && self.session.is_some()
+                        && self.reader_ui.notice == ReaderUiNotice::ChapterJumpFailed {
+                        self.reader_ui.notice = ReaderUiNotice::ChapterJumpTimedOut;
+                    }
                     self.finish_pending_mark_image(home, ui, logical, events, &mut exit);
                     self.observe_operation(&exit);
                     self.update_home_image(home, events.action);

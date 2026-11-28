@@ -22,7 +22,7 @@ impl<N: nvs::Native> MountedCheckpoint<'_, N> {
             &mut owner,
             &mut ui,
             &opened_digest,
-            revision.source_verified() && revision.digest() == opened_digest,
+            revision.source_verified() && revision.digest() == Some(opened_digest),
             request,
             stats_sha256,
             &mut statistics,
@@ -41,7 +41,7 @@ impl<N: nvs::Native> MountedCheckpoint<'_, N> {
             *accepted_open_owed,
             (owner.state.opened() || allow_cancelled)
                 && revision.source_verified()
-                && revision.digest() == opened_digest,
+                && revision.digest() == Some(opened_digest),
             capture.as_ref().map(|_| &mut peers),
             request,
         );
@@ -68,7 +68,7 @@ impl<N: nvs::Native> MountedCheckpoint<'_, N> {
             &mut owner,
             &mut ui,
             &opened_digest,
-            revision.source_verified() && revision.digest() == opened_digest,
+            revision.source_verified() && revision.digest() == Some(opened_digest),
             request,
             stats_sha256,
             &mut statistics,
@@ -83,7 +83,7 @@ impl<N: nvs::Native> MountedCheckpoint<'_, N> {
             settings,
             sleeping,
             false,
-            revision.source_verified() && revision.digest() == opened_digest,
+            revision.source_verified() && revision.digest() == Some(opened_digest),
             request,
         );
     }
@@ -101,6 +101,7 @@ impl<N: nvs::Native> MountedCheckpoint<'_, N> {
             } else { recovery.map(|pending| pending.progress).unwrap_or_else(|| *owner.tracker.snapshot(now())) },
             preferences_unavailable,
             statistics: observe(statistics, owner, ui, self.checkpoint, accepted_open_owed),
+            paint: None,
         }
     }
 }

@@ -74,11 +74,20 @@ pub(crate) fn handle_reader_ui_with(
     let retried = previous == P::Chapters && !op.menu().info().valid;
     if retried {
         let result = prepare_menu(
-            op, owner, newt_reader_navigation::FOCUS_CURRENT,
+            op, owner, ui, newt_reader_navigation::FOCUS_CURRENT,
         );
         menu = Some(result);
         if result.valid {
             ui.selected = op.menu().info().focus;
+        }
+        // After a timeout the reader never saw this list, so the Select that
+        // loads it only shows it. A later Select opens a row (#199).
+        if result.valid && ui.notice == ReaderUiNotice::ChapterJumpTimedOut {
+            ui.notice = ReaderUiNotice::None;
+            if action == Action::Activate {
+                tracker.pause(now);
+                return ReaderUiResult { work: ReaderUiWork::Intent(I::Repaint), menu };
+            }
         }
     }
     let shown_menu = op.menu().info();
@@ -108,7 +117,7 @@ pub(crate) fn handle_reader_ui_with(
     }
     if previous == P::Menu && ui.panel == P::Chapters {
         let result = prepare_menu(
-            op, owner, newt_reader_navigation::FOCUS_CURRENT,
+            op, owner, ui, newt_reader_navigation::FOCUS_CURRENT,
         );
         menu = Some(result);
         if result.valid {
@@ -155,7 +164,7 @@ impl<'sel, 'plan, B: ParserBackend + ?Sized, S: BookSource + ?Sized>
     fn prepare(&mut self, owner: &mut ReaderOwnerState, focus: u32) -> MenuPreparation {
         let status = legacy_prepare(&mut self.op, self.source, focus, self.directory, self.mapping);
         owner.menu_result(status);
-        MenuPreparation { status, valid: status == Status::Ok && self.menu().info().valid }
+        MenuPreparation { status: Ok(status), valid: status == Status::Ok && self.menu().info().valid }
     }
 }
 fn legacy_prepare<B: ParserBackend + ?Sized, S: BookSource + ?Sized>(
@@ -165,13 +174,20 @@ fn legacy_prepare<B: ParserBackend + ?Sized, S: BookSource + ?Sized>(
     op.reader.prepare_chapter_menu(source, focus, op.metadata, op.parse, op.resources,
         op.toc, directory, mapping, Some(op.lease))
 }
+/// A cancelled load keeps Contents open with the jump notice, which firmware
+/// words as a timeout when the time budget ran out (#199).
 pub(crate) fn prepare_menu(
-    op: &mut impl MenuOperation, owner: &mut ReaderOwnerState, focus: u32,
+    op: &mut impl MenuOperation, owner: &mut ReaderOwnerState, ui: &mut ReaderUiState, focus: u32,
 ) -> MenuPreparation {
     if !owner.opened() {
-        return MenuPreparation { status: owner.status(), valid: false };
+        return MenuPreparation { status: Ok(owner.status()), valid: false };
     }
-    op.prepare(owner, focus)
+    let result = op.prepare(owner, focus);
+    if result.status.is_err() {
+        ui.panel = ReaderPanel::Chapters;
+        ui.notice = ReaderUiNotice::ChapterJumpFailed;
+    }
+    result
 }
 
 /// External readers expose the raw menu result. The bounded SDK bool API
@@ -179,6 +195,7 @@ pub(crate) fn prepare_menu(
 #[must_use]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MenuPreparation {
-    pub status: Status,
+    /// Err: a cancel stopped the load. It says nothing about the book (#199).
+    pub status: Result<Status, crate::Cancelled>,
     pub valid: bool,
 }

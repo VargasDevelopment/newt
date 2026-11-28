@@ -35,9 +35,9 @@ impl ExternalOwner {
     ) -> bool {
         let matches = revision.with_physical_source(|source| match source {
             crate::physical_source::PhysicalSourceRef::Revision(source) => source.digest() == indexed.digest(),
-            crate::physical_source::PhysicalSourceRef::Reader(source) => source.digest() == *indexed.digest(),
-            crate::physical_source::PhysicalSourceRef::Strict(source) => source.digest() == *indexed.digest(),
-            crate::physical_source::PhysicalSourceRef::Pending(source) => source.digest() == *indexed.digest(),
+            crate::physical_source::PhysicalSourceRef::Reader(source) => source.digest() == Some(*indexed.digest()),
+            crate::physical_source::PhysicalSourceRef::Strict(source) => source.digest() == Some(*indexed.digest()),
+            crate::physical_source::PhysicalSourceRef::Pending(source) => source.digest() == Some(*indexed.digest()),
         });
         if !matches { return false; }
         self.open_with(reader, revision, identity, saved, policy, now, resources)
@@ -84,7 +84,7 @@ impl ExternalOwner {
         now: u32,
         resources: &mut PhysicalOwner<'_, '_, '_, B, L, C>,
     ) -> bool {
-        self.paint_with(reader, revision, now, resources)
+        self.paint_with(reader, revision, now, resources).unwrap_or(false)
     }
     pub fn complete_ui_physical<
         B: ParserBackend + ?Sized,

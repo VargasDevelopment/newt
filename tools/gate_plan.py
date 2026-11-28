@@ -28,7 +28,7 @@ MAC_COVER_NOTE = ("The host gate runs only on Linux x86_64; on a Mac, run "
 
 # Arguments that only add a test's negative controls (tools/gate_tier.py).
 CONTROL_FLAGS = frozenset(("--negative-controls", "--negative-control", "--baseline-controls",
-                           "--uninstrumented-control"))
+                           "--uninstrumented-control", "--crate-controls"))
 # Arguments that expand a fast test to its full-tier positive matrix.
 FULL_FLAGS = frozenset(("--full",))
 
@@ -176,8 +176,10 @@ def plan(profile: str, fresh_objects: bool, controls=None) -> list[Phase]:
     shared_target = (ROOT / ".build/rust/target",)
     test("legacy_nvs_test.py")
     # Reader recovery shares legacy NVS's startup graph but runs in its own phase, so
-    # neither nears the CPU budget.
+    # neither nears the CPU budget. Its crate controls rebuild that graph per
+    # control, so they take a third phase.
     test("reader_recovery_test.py")
+    test("reader_recovery_test.py", "--crate-controls", full_only=True)
     run(ROOT / "rust/check.py", "--landing", uses=shared_target)
     # Landing's contract and source-privacy test, split out to fit the CPU budget (#337).
     run(ROOT / "rust/tests/landing_test.py")

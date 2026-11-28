@@ -15,6 +15,6 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
         let status = self.panel.with_frame(|frame| reader.restore_retained_frame(frame))?;
         if status != Status::Ok { return Err(status); }
         self.compose_native(reader, owner, ui, settings, info, progress,
-            PhysicalPaint { ready: true }, book)
+            PhysicalPaint(Painted::Drawn { ready: true }), book).map(|_| ())
     }
 }

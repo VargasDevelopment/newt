@@ -206,12 +206,12 @@ impl Runtime {
         let previous = core::mem::take(&mut self.reader_ui);
         let previous_result = self.checkpoint.result();
         let bare = BareReaderUi { runtime: self, previous, previous_result };
-        if bare.runtime.operate_image(home, ui, logical, events, None, None, true, None, None).is_err()
-            || bare.runtime.status() != Status::Ok { return false; }
+        let Ok(exit) = bare.runtime.operate_image(home, ui, logical, events, None, None, true, None, None)
+            else { return false; };
+        if bare.runtime.status() != Status::Ok { return false; }
         let Ok(native) = home.bus.board.frame() else { return false; };
-        if native.len() != logical.len() { return false; }
-        for (out, byte) in logical.iter_mut().zip(native) { *out = !*byte; }
-        true
+        // A cancelled paint left no frame to save, whatever the owner reports.
+        crate::reader_book::take_frame(exit.paint, native, logical)
     }
 }
 

@@ -45,10 +45,19 @@ pub struct PageWork {
 enum Completion {
     Captured,
     Published,
+    /// The Contents list is ready. It publishes no page and swaps no
+    /// selection, so a cancel has no page to roll back (#199).
+    MenuPrepared,
     Failed(Status),
     VerificationPending,
+    /// A cancel (Back or the time budget) ended the action before it
+    /// published. It says nothing about the book (#199).
+    Cancelled,
 }
 impl PageWork {
+    pub(crate) const CANCELLED: Self = Self {
+        result: Completion::Cancelled,
+    };
     const CAPTURED: Self = Self {
         result: Completion::Captured,
     };
@@ -62,6 +71,25 @@ impl PageWork {
         Self {
             result: Completion::Failed(status),
         }
+    }
+    /// The one reading of a reload that did not finish, for actions and
+    /// repaints alike: a new cancel stays a cancel, a changed book is Stale.
+    pub(crate) fn interrupted(interrupted: crate::physical_source::Interrupted) -> Self {
+        match interrupted {
+            crate::physical_source::Interrupted::Cancelled => Self::CANCELLED,
+            crate::physical_source::Interrupted::Changed => Self::failed(Status::Stale),
+        }
+    }
+    /// What finished work means to its caller: a status, or a cancel.
+    pub(crate) fn settle(self) -> Result<Status, Cancelled> {
+        Ok(match self.result {
+            Completion::Published | Completion::MenuPrepared => Status::Ok,
+            Completion::Failed(status) => status,
+            Completion::VerificationPending => Status::NotFound,
+            Completion::Cancelled => return Err(Cancelled),
+            // Captured is consumed by the concrete route before it reaches policy.
+            Completion::Captured => unreachable!("unpublished owner work"),
+        })
     }
 }
 
@@ -210,7 +238,7 @@ impl ExternalOwner {
     where
         F: FnMut(&mut PhasedReader<'_, '_>, &mut S, PageRequest, &mut Frame) -> PageWork,
     {
-        self.paint_with(reader, source, now, &mut DisjointPages { frame, page })
+        self.paint_with(reader, source, now, &mut DisjointPages { frame, page }).unwrap_or(false)
     }
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn open_with<S: BookSource, P: OwnerPages<S>>(
@@ -236,7 +264,9 @@ impl ExternalOwner {
         }
         let initial = initial_progress(saved, identity);
         self.tracker = ReadingTracker::new(initial);
-        let result = perform(reader, source, PageRequest::Open, pages);
+        // An open or restore has no page to keep yet, so a cancel ends it as
+        // a failure would.
+        let result = perform(reader, source, PageRequest::Open, pages).unwrap_or(Status::Stale);
         if result != Status::Ok {
             self.reject_open(reader, result);
             return false;
@@ -251,7 +281,7 @@ impl ExternalOwner {
             }
             locator = Locator::default();
         }
-        let (result, _, _) = if fallback {
+        let result = if fallback {
             self.locate(
                 reader,
                 source,
@@ -260,18 +290,16 @@ impl ExternalOwner {
                 false,
                 pages,
             )
+            .map(|(result, _, _)| result)
         } else {
-            (
-                perform(
-                    reader,
-                    source,
-                    PageRequest::Anchor(locator.spine, locator.character),
-                    pages,
-                ),
-                false,
-                locator.spine,
+            perform(
+                reader,
+                source,
+                PageRequest::Anchor(locator.spine, locator.character),
+                pages,
             )
-        };
+        }
+        .unwrap_or(Status::Stale);
         if result != Status::Ok {
             self.reject_open(reader, result);
             return false;
@@ -304,30 +332,30 @@ impl ExternalOwner {
         mut anchor: u32,
         backward: bool,
         pages: &mut P,
-    ) -> (Status, bool, u32) {
+    ) -> Result<(Status, bool, u32), Cancelled> {
         let mut skipped = 0;
         loop {
             if let Some(f) = self.known(spine) {
-                return (f.status, false, spine);
+                return Ok((f.status, false, spine));
             }
             let status = perform(
                 reader,
                 source,
                 PageRequest::Anchor(spine, anchor),
                 pages,
-            );
+            )?;
             if status != Status::NotFound || !reader.empty_chapter {
-                return (status, false, spine);
+                return Ok((status, false, spine));
             }
             if if backward {
                 spine == 0
             } else {
                 spine.saturating_add(1) >= reader.selection().spines
             } {
-                return (status, true, spine);
+                return Ok((status, true, spine));
             }
             if skipped == 8 {
-                return (status, false, spine);
+                return Ok((status, false, spine));
             }
             skipped += 1;
             if backward {
@@ -359,23 +387,20 @@ impl ExternalOwner {
         }
         let old = reader.info();
         let mut spine = failed.map_or(old.spine, |f| f.spine);
-        let (result, boundary, attempted) = if failed.is_none()
+        let turned = if failed.is_none()
             && (if next {
                 old.page + 1 < old.page_count
             } else {
                 old.page > 0
             }) {
             let target = if next { old.page + 1 } else { old.page - 1 };
-            (
-                perform(
-                    reader,
-                    source,
-                    PageRequest::Page(spine, target),
-                    &mut route,
-                ),
-                false,
-                spine,
+            perform(
+                reader,
+                source,
+                PageRequest::Page(spine, target),
+                &mut route,
             )
+            .map(|status| (status, false, spine))
         } else {
             if if next {
                 spine.saturating_add(1) >= reader.selection().spines
@@ -393,6 +418,10 @@ impl ExternalOwner {
                 !next,
                 &mut route,
             )
+        };
+        // A cancelled turn changes nothing: the reader keeps its page.
+        let Ok((result, boundary, attempted)) = turned else {
+            return false;
         };
         if boundary {
             if !next || failed.is_some() || self.state.readable_spines() <= old.spine + 1 {
@@ -447,7 +476,10 @@ impl ExternalOwner {
             return ChapterJumpOutcome::Failed;
         }
         if !reader.chapter_menu().row(chapter).valid {
-            let menu_status = perform(reader, source, PageRequest::Menu(chapter), pages);
+            // A cancelled row load is a cancelled jump, not an unresolved row.
+            let Ok(menu_status) = perform(reader, source, PageRequest::Menu(chapter), pages) else {
+                return ChapterJumpOutcome::Failed;
+            };
             self.state.menu_result(menu_status);
             if menu_status != Status::Ok {
                 return ChapterJumpOutcome::Unresolved;
@@ -468,12 +500,17 @@ impl ExternalOwner {
         let status = if let Some(f) = self.known(spine) {
             f.status
         } else {
-            perform(
+            // A cancelled jump changes nothing: no status, no remembered
+            // chapter failure, and the reader keeps its page.
+            let Ok(status) = perform(
                 reader,
                 source,
                 PageRequest::Chapter(spine, toc),
                 pages,
-            )
+            ) else {
+                return ChapterJumpOutcome::Failed;
+            };
+            status
         };
         self.status(status);
         if status != Status::Ok {
@@ -494,38 +531,43 @@ impl ExternalOwner {
         self.tracker.relocate(self.state.position(reader).shown);
         ChapterJumpOutcome::Moved
     }
+    /// Err: a cancel ended the paint before it drew. Nothing latches, the
+    /// reader keeps its page, and the frame is not ready (#199).
     pub(crate) fn paint_with<S: BookSource, P: OwnerPages<S>>(
         &mut self,
         reader: &mut PhasedReader<'_, '_>,
         source: &mut S,
         now: u32,
         pages: &mut P,
-    ) -> bool {
+    ) -> Result<bool, Cancelled> {
         if !self.state.opened() {
-            return false;
+            return Ok(false);
         }
         let p = reader.info();
-        let mut status = pages.repaint(reader, source);
-        if status == Status::Unsupported {
-            status = perform(
-                reader,
-                source,
-                PageRequest::Page(p.spine, p.page),
-                pages,
-            );
-        }
+        let painted = match pages.repaint(reader, source) {
+            Ok(Status::Unsupported) => {
+                perform(reader, source, PageRequest::Page(p.spine, p.page), pages)
+            }
+            repainted => repainted,
+        };
+        let Ok(status) = painted else {
+            self.tracker.pause(now);
+            return Err(Cancelled);
+        };
         self.status(status);
         if status != Status::Ok {
             self.tracker.pause(now);
         }
-        status == Status::Ok
+        Ok(status == Status::Ok)
     }
 }
 // Private route: external callers cannot implement an owner-success authority.
 pub(crate) trait OwnerPages<S: BookSource> {
     fn execute(&mut self, reader: &mut PhasedReader<'_, '_>, source: &mut S,
         request: PageRequest) -> PageWork;
-    fn repaint(&mut self, reader: &mut PhasedReader<'_, '_>, source: &mut S) -> Status;
+    /// Err: a cancel ended the repaint before it drew.
+    fn repaint(&mut self, reader: &mut PhasedReader<'_, '_>, source: &mut S)
+        -> Result<Status, Cancelled>;
 }
 struct DisjointPages<'a, F> { frame: &'a mut Frame, page: F }
 impl<S: BookSource, F> OwnerPages<S> for DisjointPages<'_, F>
@@ -537,8 +579,9 @@ where F: FnMut(&mut PhasedReader<'_, '_>, &mut S, PageRequest, &mut Frame) -> Pa
             completed(reader.publish(source, self.frame))
         } else { work }
     }
-    fn repaint(&mut self, reader: &mut PhasedReader<'_, '_>, source: &mut S) -> Status {
-        reader.repaint(source, self.frame)
+    fn repaint(&mut self, reader: &mut PhasedReader<'_, '_>, source: &mut S)
+        -> Result<Status, Cancelled> {
+        Ok(reader.repaint(source, self.frame))
     }
 }
 struct PendingPages<'a, P> { inner: &'a mut P, pending: bool }
@@ -549,23 +592,27 @@ impl<S: BookSource, P: OwnerPages<S>> OwnerPages<S> for PendingPages<'_, P> {
         self.pending |= work.result == Completion::VerificationPending;
         work
     }
-    fn repaint(&mut self, reader: &mut PhasedReader<'_, '_>, source: &mut S) -> Status {
+    fn repaint(&mut self, reader: &mut PhasedReader<'_, '_>, source: &mut S)
+        -> Result<Status, Cancelled> {
         self.inner.repaint(reader, source)
     }
 }
 fn completed(status: Status) -> PageWork {
     if status == Status::Ok { PageWork::PUBLISHED } else { PageWork::failed(status) }
 }
+/// A Contents list load's result.
+fn prepared(status: Status) -> PageWork {
+    if status == Status::Ok { PageWork { result: Completion::MenuPrepared } } else { PageWork::failed(status) }
+}
+/// A cancel that ended a page action before it published. It is never a
+/// failure to latch or remember: each caller of `perform` decides what it
+/// means, and for an open reader that is "nothing happened" (#199).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Cancelled;
 fn perform<S: BookSource, P: OwnerPages<S>>(
     reader: &mut PhasedReader<'_, '_>, source: &mut S, request: PageRequest, pages: &mut P,
-) -> Status {
-    match pages.execute(reader, source, request).result {
-        Completion::Published => Status::Ok,
-        Completion::Failed(status) => status,
-        Completion::VerificationPending => Status::NotFound,
-        // Captured is consumed by the concrete route before it reaches policy.
-        Completion::Captured => unreachable!("unpublished owner work"),
-    }
+) -> Result<Status, Cancelled> {
+    pages.execute(reader, source, request).settle()
 }
 /// Actual direct external route. OperationReader drops before returning to
 /// perform; parse and frame may share backing only via the caller's safe lender.
@@ -729,7 +776,10 @@ pub(crate) fn finish_owner_ui_paint_with<S: BookSource, P: OwnerPages<S>>(
     owner: &mut ExternalOwner, reader: &mut PhasedReader<'_, '_>, source: &mut S,
     completion: ReaderPaintCompletion, now: u32, pages: &mut P,
 ) -> ReaderPaintWork {
-    owner.paint_with(reader, source, now, pages);
+    if owner.paint_with(reader, source, now, pages).is_err() {
+        owner.tracker.pause(now);
+        return ReaderPaintWork::Cancelled;
+    }
     let status = owner.state.status();
     finish_reader_ui_paint(
         reader,
@@ -787,11 +837,7 @@ pub fn execute_direct<B: ParserBackend + ?Sized>(
             Some(op.lease),
         );
         drop(op);
-        if status == Status::Ok {
-            PageWork::PUBLISHED
-        } else {
-            PageWork::failed(status)
-        }
+        prepared(status)
     } else {
         capture_direct(op, source, request)
     }

@@ -206,7 +206,7 @@ impl<C: Chapters> crate::lifecycle::MenuOperation for SampleMenu<'_, '_, '_, C> 
     fn prepare(&mut self, owner: &mut ReaderOwnerState, focus: u32) -> crate::MenuPreparation {
         // The sample's bool-returning SDK method never changes status_.
         let valid = self.reader.prepare_chapter_menu(self.metadata, focus, self.chapters);
-        crate::MenuPreparation { status: owner.status(), valid }
+        crate::MenuPreparation { status: Ok(owner.status()), valid }
     }
 }
 

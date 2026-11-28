@@ -97,11 +97,17 @@ pub fn render_reader_overlay(
             let info = chapters.as_ref().map(|v| v.info()).unwrap_or_default();
             let fallback = chapters.as_ref().map(|v| v.fallback()).unwrap_or_default();
             if !ready || !info.valid || info.count == 0 {
+                // A timed-out Contents load has no list until a press loads it.
+                let empty: &[u8] = if ready && ui.notice == ReaderUiNotice::ChapterJumpTimedOut {
+                    b"That chapter took too long to open"
+                } else {
+                    b"No chapters available"
+                };
                 text(
                     &mut c,
                     x + 22,
                     row_y + 12,
-                    b"No chapters available",
+                    empty,
                     21,
                     false,
                     w - 44,
@@ -154,6 +160,8 @@ pub fn render_reader_overlay(
                         failure_line.unwrap_or(b"")
                     } else if ui.notice == ReaderUiNotice::ChapterLocationUnresolved {
                         b"That chapter's location could not be found"
+                    } else if ui.notice == ReaderUiNotice::ChapterJumpTimedOut {
+                        b"That chapter took too long to open"
                     } else if fallback == newt_phased_reader::ContentsFallback::Capacity {
                         b"Contents too large; numbers shown."
                     } else if fallback == newt_phased_reader::ContentsFallback::Invalid {

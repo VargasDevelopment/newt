@@ -98,6 +98,9 @@ fn scenario(bytes: Vec<u8>, finished: bool) {
             let mut bytes = vec![0; raw.size() as usize]; let mut actual = [0;32];
             allowed() && raw.read_at(0, &mut bytes) == bytes.len() as i32 && hash(&bytes, &mut actual) && actual == *expected
         };
+        let indexed = newt_phased_reader::index_build::open(&mut raw, &digest, resources.storage,
+            resources.panel, &mut resources.parser, resources.pages, None,
+            newt_phased_reader::index_build::Verification::Verified).unwrap();
         let mut source = StrictSource::new(&mut raw, &digest).with_reopen_authorizer(&mut authorize, &|| true);
         let book = u64::from_le_bytes(digest[..8].try_into().unwrap());
         let info = DeviceInfo::default(); let saved = Progress { book, ..Progress::default() };
@@ -127,9 +130,6 @@ fn scenario(bytes: Vec<u8>, finished: bool) {
             pause_request: &|_, _| Some(Stop::Terminal), yield_now: None, wait: None };
         let mut pause = |_: reader_book::ProducerPause<'_, '_, '_, '_, Flash, card::Card>,
             _: &dyn Fn() -> bool| (Stop::Terminal, false);
-        let indexed = newt_phased_reader::index_build::open(&mut source, &digest, resources.storage,
-            resources.panel, &mut resources.parser, resources.pages, None,
-            newt_phased_reader::index_build::Verification::Verified).unwrap();
         let mut run = |ui: &mut ReaderUiState, initialize, paint_first, step: Option<BookStep>| {
             let mut step = step; let mut compositions = 0;
             let exit = reader_book::run::drive(io, &mut card, &request, &mut reader, &mut owner, ui,

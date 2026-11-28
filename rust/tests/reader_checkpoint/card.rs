@@ -5,7 +5,7 @@ use crate::home_startup::CardPort;
 use crate::model::{Effect, Fault, Model, Op};
 use crate::{Directory, Kind, Native, Open, Result, Stat};
 use newt_native_io::UiIo;
-use std::{cell::RefCell, collections::BTreeMap, marker::PhantomData, rc::Rc};
+use std::{cell::{Cell, RefCell}, collections::BTreeMap, marker::PhantomData, rc::Rc};
 
 #[derive(Default)]
 pub struct CardState {
@@ -19,6 +19,8 @@ pub struct CardState {
     pub watching: bool,
     pub io_fault: Option<(String, Op)>,
     pub io_fault_seen: bool,
+    /// Set when the armed read fault fires, so a test can cancel at that read.
+    pub fault_cancels: Option<Rc<Cell<bool>>>,
     pub page_write_reopens: u32,
 }
 #[derive(Clone, Default)]
@@ -126,6 +128,9 @@ impl Native for Port<'_> {
                 .model
                 .faults
                 .push(Fault::new(Op::Read, 1, 1, Effect::Errno("EIO"), 0));
+            if let Some(cancel) = &state.fault_cancels {
+                cancel.set(true);
+            }
         }
         let result = state.model.read(fd, out);
         state.io_fault_seen |= target && result == Err(crate::Error::Unavailable);

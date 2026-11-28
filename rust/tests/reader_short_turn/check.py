@@ -143,6 +143,7 @@ def check_recovery(run, command, workspace, out, positive, *, controls):
     assert 'PASS picture pages reopen' in restore, restore
     cache_cancel = run([positive, '--cache-only-cancel'])
     assert 'PASS cache_only cold-miss/hit and cancelled live exit save/reload' in cache_cancel, cache_cancel
+    assert 'PASS a cancelled Contents load or jump keeps the reader' in cache_cancel, cache_cancel
     print(policy + upgrade + resume + restore + cache_cancel, end='')
     if controls:
         recovery_controls(run, command, dense, workspace, out)
@@ -243,6 +244,7 @@ def recovery_controls(run, command, dense, workspace, out):
     policy = workspace / 'firmware/reader_restore_policy.rs'
     pages = workspace / 'firmware/reader_pages.rs'
     record = workspace / 'firmware/retained_runtime/record.rs'
+    receipt = workspace / 'firmware/sd_revision.rs'
     for target, name, original, mutation, arguments, witness in (
         (policy, 'cold-exact',
          '(Some(DurableCheckpoint::PageStart), _) => RestorePolicy::ColdCheckpoint,',
@@ -283,6 +285,11 @@ def recovery_controls(run, command, dense, workspace, out):
          '            && progress.supersedes(&retained, record.checkpoint_saved != 0, record.attempted_sequence())\n'
          '        {',
          [dense, '--boot-resume'], 'warm stale-RTC: newer durable progress supersedes stale RTC'),
+        # #199: a receipt that never reports its cancel reads a cancelled Contents load or jump as a changed book.
+        (receipt, 'cancel-reads-as-changed',
+         '!self.file.operation().allowed()',
+         'false',
+         ['--cache-only-cancel'], 'a cancelled Contents list load keeps the reader and its page'),
     ):
         source = target.read_text()
         assert source.count(original) == 1
@@ -311,7 +318,22 @@ def recovery_controls(run, command, dense, workspace, out):
     run([*command, host, '-o', child / 'program'])
     run([child / 'program', '--cache-only-cancel'],
         witness='cancelled live exit must verify and commit unsaved progress')
-    print('PASS compiled restore policy, boot resume, wake orientation, old Pages producer and cancelled-exit controls rejected')
+    # #199: both publish sites take a cancelled paint's frame for the display or the resume picture.
+    book_text = book.read_text()
+    needle = 'if paint == Some(newt_reader_ui::Composed::Cancelled) || native.len() != logical.len() {'
+    assert book_text.count(needle) == 1
+    child = out / 'cancelled-frame-published'
+    child.mkdir()
+    generated_book = child / 'book.rs'
+    generated_book.write_text(paths(book_text.replace(
+        needle, 'if paint.is_some() && false || native.len() != logical.len() {', 1), book.parent))
+    host = child / 'host.rs'
+    host.write_text(paths((HERE / 'host.rs').read_text(), HERE, {book: generated_book}))
+    run([*command, host, '-o', child / 'program'])
+    run([child / 'program', '--cache-only-cancel'],
+        witness='a cancelled paint writes no panel byte and publishes no frame')
+    print('PASS compiled restore policy, boot resume, wake orientation, old Pages producer, cancelled-jump receipt, '
+          'cancelled-exit and cancelled-frame controls rejected')
 
 
 if __name__ == '__main__':

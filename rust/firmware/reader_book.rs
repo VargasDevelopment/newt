@@ -151,7 +151,8 @@ pub struct Between<'b, 'io, 'm, 'p, 'scope, 'sdk, 'route, P: CardPort> {
     pub io: &'io UiIo,
     pub card: &'b mut P,
     /// The frame composed since the caller's last turn, if any; refresh it.
-    pub composed: Option<Result<(), Status>>,
+    /// A cancelled paint composed nothing: refresh nothing (#199).
+    pub composed: Option<Result<newt_reader_ui::Composed, Status>>,
     pub statistics: BookStatistics,
 }
 
@@ -214,6 +215,19 @@ pub struct BookExit {
     /// Frozen readerPreferenceUnavailable: a failed verification is not an
     /// assertion that the durable record stayed unchanged.
     pub preferences_unavailable: bool,
+    /// The reader paint this operation composed, if any. A cancelled one left
+    /// no frame: publish neither the display nor a resume picture (#199).
+    pub paint: Option<newt_reader_ui::Composed>,
+}
+
+/// Takes a reader paint's frame back into `logical` from the panel's native
+/// frame, which compose_native left in SDK polarity, for the display or the
+/// resume picture. A cancelled paint composed nothing, so it takes nothing and
+/// the caller publishes neither (#199). False when there is no frame to take.
+pub fn take_frame(paint: Option<newt_reader_ui::Composed>, native: &[u8], logical: &mut [u8]) -> bool {
+    if paint == Some(newt_reader_ui::Composed::Cancelled) || native.len() != logical.len() { return false; }
+    for (out, byte) in logical.iter_mut().zip(native) { *out = !*byte; }
+    true
 }
 
 /// The sole book entry uses the mounted Home scope's State resources.
@@ -389,15 +403,14 @@ where
             return Err(failure);
         }
     };
-    let revision = newt_reader_ui::ReaderSource::new(revision);
-    let mut revision = revision;
+    let digest = *revision.digest();
+    let mut revision = newt_reader_ui::ReaderSource::new(revision);
     let mut storage = Storage::new(bank);
     runtime.reader.on_yield = on_yield;
     let mut resources = Resources {
         panel, pages, storage: &mut storage, parser: Expat::default(), breaker,
         hash: identity, settings: preferences.settings(), open, cache_only: false, recovery: None,
     };
-    let digest = revision.digest();
     let mut statistics = ReadingStatsRuntime::default();
     let mut accepted_open = false;
     let mut recovery = None;

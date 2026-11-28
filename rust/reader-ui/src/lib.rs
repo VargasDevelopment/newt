@@ -14,7 +14,7 @@ pub use restore_policy::RestorePolicy;
 mod physical_source;
 mod source_state;
 pub use source_state::ReaderSourceState;
-pub use physical_source::{PendingReaderSource, PhysicalSource, PhysicalSourceRef, ReaderSource,
+pub use physical_source::{Interrupted, PendingReaderSource, PhysicalSource, PhysicalSourceRef, ReaderSource,
     SourceAuthorizer, SourceOperations, StrictOperations, StrictSource};
 mod lifecycle;
 mod overlay;

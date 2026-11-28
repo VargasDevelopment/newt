@@ -29,18 +29,40 @@ pub(crate) fn prepare_reader_ui_paint_with(
 ) -> PreparedReaderPaint {
     let retry = matches!(pass, ReaderPaintPass::RetryAfterReadyPage(_));
     let chapters = ui.panel == ReaderPanel::Chapters;
-    let menu = chapters.then(|| {
-        crate::lifecycle::prepare_menu(op, owner, ui.selected)
-    });
+    // After a Contents action ran out of time, no paint reads the card on its
+    // own: a load or repaint would stall the same way. Until a press, the
+    // paint draws the list it still has, or Contents with only the notice,
+    // over the page it has in memory (#199).
+    let timed_out = chapters && ui.notice == ReaderUiNotice::ChapterJumpTimedOut;
+    let load = chapters && !timed_out;
+    let menu = load.then(|| crate::lifecycle::prepare_menu(op, owner, ui, ui.selected));
     if menu.is_some_and(|result| result.valid) {
         ui.selected = op.menu().info().focus;
     }
-    let paint = !retry || menu.is_some_and(|result| result.valid);
+    let page = if timed_out {
+        PagePaint::Memory
+    } else if retry && !menu.is_some_and(|result| result.valid) {
+        PagePaint::Restore
+    } else {
+        PagePaint::Source
+    };
     PreparedReaderPaint {
         menu,
-        paint,
-        retry_if_missing: chapters && !retry,
+        page,
+        retry_if_missing: load && !retry,
     }
+}
+/// Where a paint gets the page under its chrome and panels.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PagePaint {
+    /// Repaint the shown page from its source.
+    Source,
+    /// A retry whose list didn't load puts the first paint's page back.
+    Restore,
+    /// The notice of a timed-out Contents action reads nothing: the card
+    /// stalled once already. The page comes from its retained plan, or the
+    /// notice goes over a blank page. A press or idle work reloads (#199).
+    Memory,
 }
 /// Retry is requested only by RetryChapterMenu after the first paint succeeded.
 #[derive(Debug, Eq, PartialEq)]
@@ -54,8 +76,10 @@ pub enum ReaderPaintPass {
 pub struct ReaderPaintRetry(());
 #[must_use]
 pub struct PreparedReaderPaint {
+    /// Err in its status: a cancel stopped the Contents load, so the paint
+    /// is cancelled too.
     pub menu: Option<MenuPreparation>,
-    pub(crate) paint: bool,
+    pub(crate) page: PagePaint,
     retry_if_missing: bool,
 }
 #[must_use]
@@ -65,12 +89,25 @@ pub enum ReaderPaintWork {
         ready: bool,
     },
     RetryChapterMenu(ReaderPaintRetry),
+    /// A cancel stopped the paint. It drew nothing and says nothing about the
+    /// book: nothing latches, and no frame or picture publishes (#199).
+    Cancelled,
     /// The real revision Session repaint/show fallback needs its own operation.
     /// Keep this work pending; do not compose or publish a successful page.
     OwnerPaint {
         status: Status,
         completion: ReaderPaintCompletion,
     },
+}
+impl ReaderPaintWork {
+    /// Err once a cancel stopped the paint. Every later step of the paint
+    /// goes through `?`, so no fallback or pixel restore can replace it (#199).
+    pub(crate) fn drawn(self) -> Result<Self, crate::external_owner::Cancelled> {
+        match self {
+            Self::Cancelled => Err(crate::external_owner::Cancelled),
+            work => Ok(work),
+        }
+    }
 }
 /// One outstanding fallback after an actual retained repaint attempt.
 #[must_use]
@@ -92,16 +129,21 @@ pub fn repaint_reader_ui<S: BookSource + ?Sized>(
     now: u32,
 ) -> ReaderPaintWork {
     repaint_reader_ui_with(reader, owner, prepared, tracker, now,
-        |reader| reader.repaint(source, frame))
+        |reader| Ok(reader.repaint(source, frame)))
 }
 pub(crate) fn repaint_reader_ui_with(
     reader: &mut PhasedReader<'_, '_>, owner: &mut ReaderOwnerState,
     prepared: PreparedReaderPaint, tracker: &mut newt_core::tracker::ReadingTracker,
-    now: u32, repaint: impl FnOnce(&mut PhasedReader<'_, '_>) -> Status,
+    now: u32,
+    repaint: impl FnOnce(&mut PhasedReader<'_, '_>) -> Result<Status, crate::external_owner::Cancelled>,
 ) -> ReaderPaintWork {
     // Retain first-paint readiness when retry preparation fails, even on a
     // fatal result. The owner latch still blocks routing and tracker resume.
-    if !prepared.paint {
+    if prepared.menu.is_some_and(|menu| menu.status.is_err()) {
+        tracker.pause(now);
+        return ReaderPaintWork::Cancelled;
+    }
+    if prepared.page == PagePaint::Restore {
         if !owner.opened() {
             tracker.pause(now);
         }
@@ -111,7 +153,13 @@ pub(crate) fn repaint_reader_ui_with(
         tracker.pause(now);
         return ReaderPaintWork::Complete { ready: false };
     }
-    let status = repaint(reader);
+    if prepared.page == PagePaint::Memory {
+        return ReaderPaintWork::Complete { ready: true };
+    }
+    let Ok(status) = repaint(reader) else {
+        tracker.pause(now);
+        return ReaderPaintWork::Cancelled;
+    };
     if status == Status::Unsupported {
         return ReaderPaintWork::OwnerPaint {
             status,
@@ -260,6 +308,8 @@ fn compose_reader_ui_with(
     let section = reader.as_ref().and_then(|reader| reader.section);
     let title = reader.as_ref().map(|reader| reader.title);
     let menu = reader.map(|reader| reader.menu);
+    // A timed-out jump isn't one: it kept the reader's page, with or without
+    // a list to show (#199).
     let failed_jump = matches!(
         ui.notice,
         ReaderUiNotice::ChapterLocationUnresolved | ReaderUiNotice::ChapterJumpFailed
@@ -345,12 +395,24 @@ pub fn settle_chapter_jump(ui: &mut ReaderUiState, outcome: ChapterJumpOutcome) 
 /// Only the actual paint sequence constructs this proof. Consumed once by final
 /// logical composition + inversion; never used as an arbitrary success flag.
 #[must_use]
-pub struct PhysicalPaint {
-    pub(crate) ready: bool,
+pub struct PhysicalPaint(pub(crate) Painted);
+#[derive(Clone, Copy)]
+pub(crate) enum Painted {
+    Drawn { ready: bool },
+    Cancelled,
 }
 impl PhysicalPaint {
     /// Read readiness without consuming the proof needed by final composition.
     pub fn ready(&self) -> bool {
-        self.ready
+        matches!(self.0, Painted::Drawn { ready: true })
     }
+}
+/// What final composition left in the native frame. A cancelled paint
+/// composes nothing: its caller publishes neither the frame nor a resume
+/// picture, and the last frame stays on screen until a real paint (#199).
+#[must_use]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Composed {
+    Drawn,
+    Cancelled,
 }

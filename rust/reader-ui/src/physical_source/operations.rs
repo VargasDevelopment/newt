@@ -16,7 +16,8 @@ pub type SourceAuthorizer<'op> = dyn FnMut(
 /// Closed source operations shared by the existing reader drive and Resources.
 /// A matching receipt digest alone is not full-source verification.
 pub trait SourceOperations: PhysicalSource {
-    fn digest(&self) -> Digest;
+    /// None while the source has no read path.
+    fn digest(&self) -> Option<Digest>;
     fn prepare_reopen(&mut self, expected: Digest, scratch: &mut [u8],
         allowed: &dyn Fn() -> bool) -> Option<bool>;
     fn source_verified(&self) -> bool;
@@ -28,7 +29,7 @@ pub trait SourceOperations: PhysicalSource {
 }
 
 impl SourceOperations for ReaderSource<'_> {
-    fn digest(&self) -> Digest { ReaderSource::digest(self) }
+    fn digest(&self) -> Option<Digest> { ReaderSource::digest(self) }
     fn prepare_reopen(&mut self, expected: Digest, scratch: &mut [u8],
         allowed: &dyn Fn() -> bool) -> Option<bool> {
         ReaderSource::prepare_reopen(self, expected, scratch, allowed)
@@ -110,6 +111,8 @@ pub struct StrictOperations<'op> {
     pub(crate) allowed: &'op dyn Fn() -> bool,
 }
 impl StrictOperations<'_> {
+    /// The digest this raw view is bound to.
+    pub(crate) fn expected(&self) -> Digest { *self.source.digest }
     pub(crate) fn take_open_authorization(&mut self) -> Option<bool> {
         core::mem::take(&mut self.source.open_authorized).then(|| (self.allowed)())
     }
@@ -120,7 +123,7 @@ impl StrictOperations<'_> {
     }
 }
 impl SourceOperations for StrictOperations<'_> {
-    fn digest(&self) -> Digest { *self.source.digest }
+    fn digest(&self) -> Option<Digest> { Some(*self.source.digest) }
     fn prepare_reopen(&mut self, expected: Digest, scratch: &mut [u8],
         allowed: &dyn Fn() -> bool) -> Option<bool> {
         self.source.verified = false;
@@ -174,7 +177,7 @@ impl<'source> ReaderSource<'source> {
 impl PendingReaderSource<'_, '_> {
     /// The pass finished this same digest; preserve the pending operation route.
     pub fn start_indexed(&mut self, indexed: &newt_phased_reader::index_build::Indexed) {
-        if indexed.verified_now() && *indexed.digest() == self.source.digest() {
+        if indexed.verified_now() && Some(*indexed.digest()) == self.source.digest() {
             self.verified = true;
             self.pending = false;
         }
@@ -183,17 +186,16 @@ impl PendingReaderSource<'_, '_> {
     pub(crate) fn finish_verification(&mut self, scratch: &mut [u8],
         allowed: &dyn Fn() -> bool) -> bool {
         if !self.verified {
-            let digest = self.source.digest();
             let finish = &mut *self.finish;
-            self.verified = self.source.revision.with_held_source(|raw|
-                finish(raw, &digest, scratch, allowed)).unwrap_or(false);
+            self.verified = self.source.with_held_source(|raw, digest|
+                finish(raw, digest, scratch, allowed)).unwrap_or(false);
             self.pending = false;
         }
         self.verified
     }
 }
 impl SourceOperations for PendingReaderSource<'_, '_> {
-    fn digest(&self) -> Digest { self.source.digest() }
+    fn digest(&self) -> Option<Digest> { self.source.digest() }
     fn prepare_reopen(&mut self, expected: Digest, scratch: &mut [u8],
         allowed: &dyn Fn() -> bool) -> Option<bool> {
         if !self.finish_verification(scratch, allowed) { return None; }

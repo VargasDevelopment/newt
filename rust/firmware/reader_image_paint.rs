@@ -26,9 +26,9 @@ impl Runtime {
         } else { match self.operate_image(home, ui, logical, events, None, None, true, None, None) {
             Ok(exit) => {
                 self.observe_operation(&exit);
-                // compose_native wrote the logical image in SDK polarity.
-                // Return it before rotating into that same SDK frame.
-                for (out, byte) in logical.iter_mut().zip(home.bus.board.frame()?) { *out = !*byte; }
+                // Take the frame back before rotating into that same SDK frame.
+                // A cancelled paint has none: the last frame stays until a real paint.
+                if !reader_book::take_frame(exit.paint, home.bus.board.frame()?, logical) { return Ok(false); }
             }
             Err(error) => {
                 self.open_failed(error);

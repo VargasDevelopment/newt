@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 4071536,
+      "flash_bytes": 4075968,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,10 +28,10 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "5efc6dab30d4e32905ba7307ecd51ae9986e69e3",
-      "before": 4069568,
-      "after": 4071536,
-      "reason": "+1,968 B over the 4,069,568 B ceiling on origin/main (90b0fe3e, #103): renews the 20 s foreground open/layout budget on every 128-page progress milestone up to 4,096 pages so long single-chapter EPUBs open, jump and reflow instead of timing out, adds a cache-only probe in PhysicalOwner so slow cache-miss turns show Loading without adding SD probes on cache hits, and routes cancelled live turns and jumps through the normal verified Home/Sleep exit with closed-receipt reload. Re-measured after rebasing onto main: the clean pinned regional DEV USB build at 5efc6dab measures 4,071,536 B. Usable app space 7,016,448 B, with 2,944,912 B remaining. RAM 124,096 to 124,096 B, RTC 300 to 300 B, lent Wi-Fi RAM 22,528 to 22,528 B. Selected stacks within ceilings (0/16/32/48/480 <= 656 B). No memory floor or stack ceiling moves.",
+      "source_revision": "fccfafb83a5d6d2d291cb90319734e9e8249bac1",
+      "before": 4071536,
+      "after": 4075968,
+      "reason": "+4,432 B over the 4,071,536 B ceiling on origin/main (00b6308c, #199): on the session route a cancel (Back or the time budget) is one typed outcome from every cancel point to every consumer, so it never reads as a changed book, a missing page or a ready frame. A cancelled Contents load or jump keeps the reader on its page; the cancelled receipt stays unreadable until one shared reload runs before every action, repaint, pending verification, exit and idle save; the final freshness check runs before the cancel question and a target it refused is discarded. Firmware reads the descriptor only through that reload gate. A Contents load and an interrupted staging complete as what they are, a cancelled paint composes nothing for the display or the resume picture, a cancelled operation closes its Pages scope so a refused index read never reads as damage, and a timed-out Contents action waits on Contents for a press: its notice paints from memory with no card read, and the Select that loads its list only shows it. The no-session route keeps main's behavior. The clean pinned regional DEV USB build at fccfafb8 measures 4,075,968 B (main measured 4,071,504 B). Usable app space 7,016,448 B, with 2,940,480 B remaining. RAM 124,096 to 124,096 B, RTC 300 to 300 B, lent Wi-Fi RAM 22,528 to 22,528 B. Selected stacks within ceilings (0/16/32/48/480 <= 656 B). No memory floor or stack ceiling moves.",
       "reviewer": "Pending PR review"
     },
     "ram_bytes": {

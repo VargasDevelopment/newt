@@ -67,7 +67,7 @@ where
             &mut owner,
             &mut ui,
             &opened_digest,
-            revision.source_verified() && revision.digest() == opened_digest,
+            revision.source_verified() && revision.digest() == Some(opened_digest),
             request,
             stats_sha256,
             &mut statistics,
@@ -123,7 +123,7 @@ where
                         &mut owner,
                         &mut ui,
                         &opened_digest,
-                        revision.source_verified() && revision.digest() == opened_digest,
+                        revision.source_verified() && revision.digest() == Some(opened_digest),
                         request,
                         stats_sha256,
                         &mut statistics,
@@ -139,7 +139,7 @@ where
                     composed = Some(match request.sleep {
                         Some(scene) => resources.paint_sleep(
                             &mut reader, &mut *revision, &mut owner, scene, info, plane, at,
-                        ),
+                        ).map(|()| newt_reader_ui::Composed::Drawn),
                         None => Err(Status::Unsupported),
                     });
                     continue;
@@ -166,7 +166,7 @@ where
                             &mut owner,
                             &mut ui,
                             &opened_digest,
-                            revision.source_verified() && revision.digest() == opened_digest,
+                            revision.source_verified() && revision.digest() == Some(opened_digest),
                             request,
                             stats_sha256,
                             &mut statistics,
@@ -197,7 +197,7 @@ where
                             candidate,
                             commit_reading && !publish_metadata,
                             accepted_open_owed,
-                            owner.state.opened() && revision.source_verified() && revision.digest() == opened_digest,
+                            owner.state.opened() && revision.source_verified() && revision.digest() == Some(opened_digest),
                             publish_metadata.then_some(&mut peers),
                             request,
                             idle.then_some(&mut admission),
@@ -240,7 +240,7 @@ where
                             &mut owner,
                             &mut ui,
                             &opened_digest,
-                            revision.source_verified() && revision.digest() == opened_digest,
+                            revision.source_verified() && revision.digest() == Some(opened_digest),
                             request,
                             stats_sha256,
                             &mut statistics,
@@ -254,7 +254,7 @@ where
                         if let Some(saves) = saves.as_deref_mut() {
                             let (attempted, repaint) = checkpoint.import_book(io, card, resources,
                                 &reader, &mut owner, &ui, &opened_digest,
-                                revision.source_verified() && revision.digest() == opened_digest,
+                                revision.source_verified() && revision.digest() == Some(opened_digest),
                                 request, saves, stats_sha256);
                             if attempted {
                                 idle_quiet_from = Some(now());
@@ -276,7 +276,9 @@ where
                                 &reader, &owner, &ui, settings, info,
                                 owner.tracker.snapshot(now()), None,
                             );
-                            if repaint || restored.is_err() { composed = Some(restored); }
+                            if repaint || restored.is_err() {
+                                composed = Some(restored.map(|()| newt_reader_ui::Composed::Drawn));
+                            }
                         } else if quiet_from.is_none() && *index_trim_owed && !request.cancel.cancelled() {
                             // Index housekeeping yields to page production: it runs only on
                             // a pass where the producer did no work, so it never delays pages.
@@ -355,7 +357,7 @@ where
                                 &mut owner,
                                 &mut ui,
                                 &opened_digest,
-                                revision.source_verified() && revision.digest() == opened_digest,
+                                revision.source_verified() && revision.digest() == Some(opened_digest),
                                 request,
                                 stats_sha256,
                                 &mut statistics,
@@ -391,7 +393,7 @@ where
                                 checkpoint, statistics: &mut statistics, stats_sha256,
                                 accepted_open_owed: &mut accepted_open_owed,
                                 opened_digest, book_identity, at,
-                            }.apply());
+                            }.apply().map(|()| newt_reader_ui::Composed::Drawn));
                         }
                     }
                 }
