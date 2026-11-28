@@ -7,6 +7,9 @@
 // Keep each quoted date/change on its own line.
 namespace newt {
 inline constexpr WhatsNewUpdate kWhatsNew[] = {
+    {"Nov 28, 2026",
+     {"Page turns are fast again in books you started before updating.",
+      "Jumping from Contents deep into a very long chapter no longer fails."}},
     {"Nov 27, 2026",
      {"Pictures Newt can't show now leave a note in their place.",
       "Small caps and all-caps styles now show in books.",
