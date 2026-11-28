@@ -13,6 +13,9 @@ One card, several launches of the real firmware with the generated book S
    rebuilds nothing.
 4. Change the text size: both chapters rebuild under new names.
 
+After each Save the active newt_prefs record must hold exactly the new
+settings; a control rewrites the saved cadence to a wrong valid value.
+
 Each launch's `Reader action` and producer `PC start`/`PC finish` rows must
 match the expected sequence exactly; doctored copies of those logs check that
 an extra, missing or repeated build fails. The text size launch shows the test
@@ -25,6 +28,7 @@ from pathlib import Path
 import re
 import sys
 import tempfile
+import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / 'tools'), str(ROOT / 'rust/host/preview')]
@@ -77,6 +81,8 @@ EXPECTED = {
     'refresh': SAVED_CACHED,
     'text size': (HIT, *[MENU] * 9, LAID_OUT, *CHAPTERS_1_AND_2, HIT, HIT),
 }
+# Each Save's active newt_prefs record after the orientation: (slim bar, refresh pages, text size byte).
+SAVED = {'bar off': (0, 5, 0), 'refresh': (0, 10, 0), 'text size': (0, 10, 34)}
 
 
 def events(log):
@@ -100,11 +106,32 @@ def mismatch(expected, log):
     return None
 
 
+def active(slots):
+    """Index of the active newt_prefs record: the valid slot with the newer
+    wrapping sequence, as PreferencesStore picks it (layout in
+    rust/core/src/preferences.rs)."""
+    valid = [index for index, slot in enumerate(slots) if len(slot) == 24 and slot[:4] == b'NWTP'
+             and zlib.crc32(slot[:20]) == int.from_bytes(slot[20:], 'little')]
+    assert valid, 'no valid newt_prefs record'
+    newest = valid[0]
+    for index in valid[1:]:
+        if (int.from_bytes(slots[index][8:12], 'little') - int.from_bytes(slots[newest][8:12], 'little')) \
+                % 2**32 < 2**31:
+            newest = index
+    return newest
+
+
+def saved_mismatch(slots, expected):
+    """None if the active record holds expected (orientation, slim bar, refresh pages, text size byte)."""
+    saved = tuple(slots[active(slots)][12:16])
+    return None if saved == expected else f'saved {saved}, expected {expected}'
+
+
 class Card:
     """One preview world whose card, NVS and retained state carry across launches."""
 
     def __init__(self, binary, directory):
-        self.binary, self.directory, self.logs = binary, directory, {}
+        self.binary, self.directory, self.logs, self.slots = binary, directory, {}, {}
         preview_driver.world(binary, directory, preview_driver.parse(
             ['--telemetry', 'sample', '--library-fixture', 'empty']))
         books = directory / 'card/Newt/Books'
@@ -117,7 +144,7 @@ class Card:
         preview_driver.fresh(self.directory)
         prefs = self.prefs()
         frames, log = rust_preview.run(self.binary, self.directory, keys)
-        self.logs[name] = log
+        self.logs[name], self.slots[name] = log, self.prefs()
         problem = mismatch(EXPECTED[name], log)
         assert problem is None, f'{name}: {problem}'
         diag = [line for line in (self.directory / 'receipt.txt').read_text().splitlines()
@@ -161,10 +188,15 @@ def journey(binary, directory):
     assert card.files() == rebuilt, 'a presentation setting changed the Pages files'
 
     _, _, saved_choice = card.launch('text size', NEXT_SIZE)
+    # Each Save stores exactly its one change: bar off, refresh 5 -> 10, then 30 -> 34 px.
+    orientation = card.slots['bar off'][active(card.slots['bar off'])][12]
+    for name in SAVED:
+        problem = saved_mismatch(card.slots[name], (orientation, *SAVED[name]))
+        assert problem is None, f'{name}: {problem}'
     resized = card.files()
     assert saved_choice and len(resized) == len(rebuilt) + 2 and set(rebuilt) < set(resized), \
         f'the text size change did not add two chapters: {sorted(resized)}'
-    return card.logs
+    return card
 
 
 def doctored(log, change):
@@ -200,15 +232,31 @@ LOG_CONTROLS = {
 }
 
 
+def cadence(slots, pages):
+    """slots with the active record's refresh cadence set to pages and its CRC still valid."""
+    slots = [bytearray(slot) for slot in slots]
+    record = slots[active(slots)]
+    record[14] = pages
+    record[20:] = zlib.crc32(record[:20]).to_bytes(4, 'little')
+    return slots
+
+
 def main():
     binary = rust_preview.FIRMWARE if len(sys.argv) == 2 else rust_preview.build()
     with tempfile.TemporaryDirectory(prefix='newt-cache-identity-') as scratch:
-        logs = journey(binary, Path(scratch))
+        card = journey(binary, Path(scratch))
+    logs = card.logs
     for label, (name, change, failure) in LOG_CONTROLS.items():
         problem = mismatch(EXPECTED[name], doctored(logs[name], change))
         assert problem == failure, f'log control {label}: {problem!r}'
+    # A Save that stored a valid but wrong cadence must fail, not pass as "changed".
+    orientation = card.slots['refresh'][active(card.slots['refresh'])][12]
+    problem = saved_mismatch(cadence(card.slots['refresh'], 1), (orientation, *SAVED['refresh']))
+    assert problem == f'saved ({orientation}, 0, 1, 0), expected ({orientation}, 0, 10, 0)', \
+        f'cadence control: {problem!r}'
     print('PASS: v0.8.0 Pages rebuild once with Home and the page unchanged; the slim bar and refresh '
-          f'keep the cache; a text size change rebuilds; {len(LOG_CONTROLS)} log controls fail')
+          f'keep the cache; a text size change rebuilds; each Save stores exactly its setting; '
+          f'{len(LOG_CONTROLS)} log controls and the cadence control fail')
 
 
 if __name__ == '__main__':
