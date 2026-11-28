@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 4075072,
+      "flash_bytes": 4076624,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,10 +28,10 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "32aeaafd42ff26883cd039046ab360cbc0a21361",
+      "source_revision": "09478031d0b209a4577ee2b2fef3daf35a8da0a9",
       "before": 4071536,
-      "after": 4075072,
-      "reason": "+3,536 B over the 4,071,536 B ceiling on origin/main (00b6308c, #199): a cancel (Back or the time budget) is one typed outcome from every cancel point to every consumer, so it never reads as a changed book, a missing page or a ready frame. A cancelled Contents load or jump keeps the reader on its page; the cancelled source stays unreadable until one shared reload runs before every action, repaint and pending verification; the final freshness check runs before the cancel question and a target it refused is discarded; the strict fallback hashes the held book again, and the no-session strict view carries that owed re-hash across its short loans; a cancelled verification stays Cancelled; a cancelled paint composes nothing for the display or the resume picture; a cancelled Contents load keeps its notice. The clean pinned regional DEV USB build at 32aeaafd measures 4,075,072 B (main measured 4,071,504 B). Usable app space 7,016,448 B, with 2,941,376 B remaining. RAM 124,096 to 124,096 B, RTC 300 to 300 B, lent Wi-Fi RAM 22,528 to 22,528 B. Selected stacks within ceilings (0/16/32/48/480 <= 656 B). No memory floor or stack ceiling moves.",
+      "after": 4076624,
+      "reason": "+5,088 B over the 4,071,536 B ceiling on origin/main (00b6308c, #199): a cancel (Back or the time budget) is one typed outcome from every cancel point to every consumer, so it never reads as a changed book, a missing page or a ready frame. A cancelled Contents load or jump keeps the reader on its page; the cancelled source stays unreadable until one shared reload runs before every action, repaint and pending verification; the final freshness check runs before the cancel question and a target it refused is discarded. The owner holds one verification authority per open book across every short loan: only a successful hash makes it Verified and a failed re-hash stays failed, so no exit saves a changed book. Firmware reads the descriptor only through that reload gate, the availability probe included. A Contents load and an interrupted staging complete as what they are, a cancelled paint composes nothing for the display or the resume picture, and a cancelled operation closes its Pages scope so a refused index read never reads as damage. The clean pinned regional DEV USB build at 09478031 measures 4,076,624 B (main measured 4,071,504 B). Usable app space 7,016,448 B, with 2,939,824 B remaining. RAM 124,096 to 124,096 B, RTC 300 to 300 B, lent Wi-Fi RAM 22,528 to 22,528 B. Selected stacks within ceilings (0/16/32/48/480 <= 656 B). No memory floor or stack ceiling moves.",
       "reviewer": "Pending PR review"
     },
     "ram_bytes": {
