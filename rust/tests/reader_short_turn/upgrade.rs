@@ -82,14 +82,38 @@ fn seed_old_index(card: &card::Card, files: &BTreeMap<String, Vec<u8>>, version:
     (path.clone(), old)
 }
 
-pub fn resume(bytes: Vec<u8>) {
-    for old_version in [1u32, 2, 3, 4, 5] {
-        resume_from(bytes.clone(), old_version);
-    }
-    println!("PASS old Pages data misses, saved content resumes, and only Pages rebuilds");
+/// The name v0.7.2 (engine revision 4) gave this fixture's one Pages file,
+/// for the generated book and the portrait settings below. It is pinned, not
+/// derived, so a build that still uses revision 4 finds a valid file here and
+/// fails the expected miss.
+const REVISION_4_PAGES: &str = "/newt-sd/Newt/Cache/Pages/\
+    0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef-\
+    fbb5de215d61f9b3efb01fe306f23259b893d12c6c1e23501ca5c6caf6e417cd.fibp";
+
+/// v0.7.2 wrote current-format Pages under revision 4 names. Move this build's
+/// Pages file to that name; its bytes stay as written.
+fn seed_previous_names(card: &card::Card) -> BTreeMap<String, Vec<u8>> {
+    let pages: Vec<String> = card.0.borrow().model.files.keys()
+        .filter(|path| path.contains("/Pages/")).cloned().collect();
+    let [path] = pages.as_slice() else { panic!("expected one Pages file, found {pages:?}") };
+    let file = card.0.borrow_mut().model.files.remove(path).unwrap();
+    card.seed(REVISION_4_PAGES, file.durable.clone());
+    BTreeMap::from([(REVISION_4_PAGES.to_owned(), file.durable)])
 }
 
-fn resume_from(bytes: Vec<u8>, old_version: u32) {
+#[derive(Clone, Copy)]
+enum Previous { Envelope(u32), Names }
+
+pub fn resume(bytes: Vec<u8>) {
+    for old_version in [1u32, 2, 3, 4, 5] {
+        resume_from(bytes.clone(), Previous::Envelope(old_version));
+    }
+    println!("PASS old Pages data misses, saved content resumes, and only Pages rebuilds");
+    resume_from(bytes, Previous::Names);
+    println!("PASS previous-revision Pages stay untouched, saved content resumes, and Pages rebuild under new names");
+}
+
+fn resume_from(bytes: Vec<u8>, previous: Previous) {
     let mut tokens = [0u8; 2];
     // SAFETY: the existing host Board fake treats these as disjoint tokens.
     let (mut board, pending, _) = unsafe { newt_c3_board::Board::acquire_x3_optional_sd(
@@ -141,11 +165,23 @@ fn resume_from(bytes: Vec<u8>, old_version: u32) {
         });
         let mut files = card_files(&card);
         assert!(files.keys().any(|path| path.contains("/State/")));
-        let index_version = if old_version >= 4 { old_version } else { 3 };
-        let (index_path, old_index) = seed_old_index(&card, &files, index_version);
-        files.insert(index_path, old_index);
-        let (backup, legacy) = seed_old_pages(&card, &files, old_version);
-        assert_ne!(card_files(&card), files);
+        let (index_version, backup) = match previous {
+            Previous::Envelope(old_version) => {
+                let index_version = if old_version >= 4 { old_version } else { 3 };
+                let (index_path, old_index) = seed_old_index(&card, &files, index_version);
+                files.insert(index_path, old_index);
+                let backup = seed_old_pages(&card, &files, old_version);
+                assert_ne!(card_files(&card), files);
+                (index_version, Some(backup))
+            }
+            Previous::Names => {
+                // The index name and format did not change with the revision.
+                files.retain(|path, _| !path.contains("/Pages/"));
+                files.extend(seed_previous_names(&card));
+                assert_eq!(card_files(&card), files);
+                (newt_core::page_envelope::VERSION, None)
+            }
+        };
 
         // Recreate the card owners from durable bytes only.
         let mut card = card.cold_bytes();
@@ -214,11 +250,18 @@ fn resume_from(bytes: Vec<u8>, old_version: u32) {
                 miss.as_micros(), started.elapsed().as_micros(), rebuild.as_micros());
         });
         // The normal Pages transaction keeps the previous NTBE as a backup.
-        assert!(files.insert(backup, legacy).is_none());
+        // Previous-revision files are never opened, so only new Pages appear.
+        if let Some((backup, legacy)) = backup {
+            assert!(files.insert(backup, legacy).is_none());
+        }
         let rebuilt = card_files(&card);
         let changed: Vec<_> = files.iter().filter(|(name, bytes)| rebuilt.get(*name) != Some(*bytes))
             .map(|(name, _)| name).collect();
         let added: Vec<_> = rebuilt.keys().filter(|name| !files.contains_key(*name)).collect();
-        assert!(changed.is_empty() && added.is_empty(), "unexpected card changes: {changed:?}, added: {added:?}");
+        let added_ok = match previous {
+            Previous::Envelope(_) => added.is_empty(),
+            Previous::Names => !added.is_empty() && added.iter().all(|name| name.contains("/Pages/")),
+        };
+        assert!(changed.is_empty() && added_ok, "unexpected card changes: {changed:?}, added: {added:?}");
     }).unwrap();
 }
