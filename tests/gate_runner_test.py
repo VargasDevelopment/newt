@@ -394,8 +394,8 @@ class PlanTests(unittest.TestCase):
                 closure[name] = set(needs[name]).union(*(before(item) for item in needs[name]))
             return closure[name]
         rust = [phase for phase in plan if str(gate_plan.ROOT / 'rust/check.py') in phase.command
-                or phase.name == 'legacy_nvs_test.py']
-        self.assertEqual(len(rust), 26)
+                or phase.name in ('legacy_nvs_test.py', 'reader_recovery_test.py')]
+        self.assertEqual(len(rust), 27)
         serial = {'check.py --landing', 'check.py --target-probes'}
         self.assertIn('check.py --landing', before('check.py --target-probes'))
         for phase in rust:
