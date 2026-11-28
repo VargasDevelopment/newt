@@ -330,7 +330,8 @@ def run_controls(run, support, workspace, target, libraries, objects, epub, outp
                 if row.get('reason') == 'compiler-artifact' and row.get('executable')]
         support.require(len(bins) == 1, 'one newt-core test binary expected')
         require_kill(run, support, [bins[0], unit_test, '--exact'], workspace, f'control "{name}"', 'stdout',
-                     ('test result: FAILED. 0 passed; 1 failed', 'panicked at'))
+                     ('test result: FAILED. 0 passed; 1 failed', 'panicked at',
+                      'a Terminal pause must override a latched interruption'))
     finally:
         path.write_text(original)
     print(f'PASS control: {name} rejected by {unit_test}', flush=True)
@@ -345,12 +346,14 @@ def main():
     support.install_signal_handlers()
     scratch = ROOT / '.build/producer-fill-policy'
     scratch.mkdir(parents=True, exist_ok=True)
+    # The setup allowance covers the workspace copy and tool checks too.
+    setup_deadline = time.monotonic() + SETUP_SECONDS
     with tempfile.TemporaryDirectory(prefix='run-', dir=scratch) as directory:
         output = Path(directory)
         workspace = output / 'rust'
         shutil.copytree(ROOT / 'rust', workspace, ignore=shutil.ignore_patterns('target', '__pycache__'))
         (output / 'logs').mkdir()
-        run = support.Run(output / 'logs', support.verify_tools(), time.monotonic() + SETUP_SECONDS)
+        run = support.Run(output / 'logs', support.verify_tools(), setup_deadline)
         # Keep RUSTFLAGS constant across positive and mutated builds so Cargo
         # never invalidates untouched crate fingerprints; rust/check.py --landing
         # already compiles the workspace with -Dwarnings.

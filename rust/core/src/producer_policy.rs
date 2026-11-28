@@ -205,7 +205,7 @@ mod tests {
             assert!(same.interrupted());
             Stop::Terminal
         }));
-        assert!(cancel.terminal());
+        assert!(cancel.terminal(), "a Terminal pause must override a latched interruption");
         assert!(!cancel.interrupted());
         // A later pause cannot downgrade a latched terminal stop.
         assert!(!cancel.pause_point_with(|_| Stop::Interrupted));
