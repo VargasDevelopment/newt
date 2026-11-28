@@ -20,17 +20,6 @@ pub enum PhysicalSourceRef<'loan, 'source, 'hooks> {
     Pending(&'loan mut PendingReaderSource<'hooks, 'source>),
 }
 
-impl<'source> PhysicalSourceRef<'_, 'source, '_> {
-    /// The reader source behind this view, when it has one.
-    pub(crate) fn reader_source(&mut self) -> Option<&mut ReaderSource<'source>> {
-        match self {
-            Self::Reader(source) => Some(&mut **source),
-            Self::Pending(pending) => Some(&mut *pending.source),
-            Self::Revision(_) | Self::Strict(_) => None,
-        }
-    }
-}
-
 pub trait PhysicalSource: BookSource + sealed::Sealed {
     fn with_physical_source<R>(
         &mut self,

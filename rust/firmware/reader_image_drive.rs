@@ -92,6 +92,7 @@ impl RunLoan<'_, '_, '_> {
         let mut mounted = MountedCheckpoint::new(self.checkpoint, scope.nvs, scope.facts);
         let mut next = turn.step;
         let mut paint_failure = None;
+        let mut paint = None;
         let (ledger, parts) = match visit {
             Some((ledger, view)) => {
                 let Some(flags) = self.flags else { return Err(BookFailure::Revision); };
@@ -111,13 +112,20 @@ impl RunLoan<'_, '_, '_> {
                 self.statistics, self.accepted, self.recovery, request.identity, request.saved, digest,
                 callbacks, ledger, turn.indexed, turn.paint_first, reader_book::run::Route::Short, turn.accepted_save,
                 parts, Some(self.metadata), title_deferred, Some(saves), index_trim_owed, |between, _, _| {
-                    if let Some(Err(status)) = between.composed { paint_failure = Some(status); }
+                    match between.composed {
+                        Some(Err(status)) => paint_failure = Some(status),
+                        Some(Ok(composed)) => paint = Some(composed),
+                        None => {}
+                    }
                     next.take()
                 }, pause)
         });
         // This is SampleReader.settings_, including the resulting geometry of
         // a failed reflow. Home's acknowledged durable preference stays separate.
         *self.settings = resources.settings;
-        match paint_failure { Some(status) => Err(BookFailure::Open(status)), None => result }
+        match paint_failure {
+            Some(status) => Err(BookFailure::Open(status)),
+            None => result.map(|exit| BookExit { paint, ..exit }),
+        }
     }
 }

@@ -139,7 +139,7 @@ where
                     composed = Some(match request.sleep {
                         Some(scene) => resources.paint_sleep(
                             &mut reader, &mut *revision, &mut owner, scene, info, plane, at,
-                        ),
+                        ).map(|()| newt_reader_ui::Composed::Drawn),
                         None => Err(Status::Unsupported),
                     });
                     continue;
@@ -276,7 +276,9 @@ where
                                 &reader, &owner, &ui, settings, info,
                                 owner.tracker.snapshot(now()), None,
                             );
-                            if repaint || restored.is_err() { composed = Some(restored); }
+                            if repaint || restored.is_err() {
+                                composed = Some(restored.map(|()| newt_reader_ui::Composed::Drawn));
+                            }
                         } else if quiet_from.is_none() && *index_trim_owed && !request.cancel.cancelled() {
                             // Index housekeeping yields to page production: it runs only on
                             // a pass where the producer did no work, so it never delays pages.
@@ -391,7 +393,7 @@ where
                                 checkpoint, statistics: &mut statistics, stats_sha256,
                                 accepted_open_owed: &mut accepted_open_owed,
                                 opened_digest, book_identity, at,
-                            }.apply());
+                            }.apply().map(|()| newt_reader_ui::Composed::Drawn));
                         }
                     }
                 }

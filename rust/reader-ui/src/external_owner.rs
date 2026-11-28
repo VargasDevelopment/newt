@@ -102,6 +102,9 @@ pub struct ExternalOwner {
     current: Option<ReaderChapterFailure>,
     failure_shown: bool,
     failed_malformed: bool,
+    /// A cancel closed the last strict loan's source: the next one hashes it
+    /// again before it reads (#199). Firmware hands it back after each loan.
+    pub(crate) strict_must_reload: bool,
 }
 impl Default for ExternalOwner {
     fn default() -> Self {
@@ -114,10 +117,16 @@ impl Default for ExternalOwner {
             current: None,
             failure_shown: false,
             failed_malformed: false,
+            strict_must_reload: false,
         }
     }
 }
 impl ExternalOwner {
+    /// Keeps a strict loan's owed re-hash for the next loan of the same book.
+    /// Call after every strict loan, whatever it returned.
+    pub fn settle_strict_loan(&mut self, strict: &crate::physical_source::StrictOperations<'_>) {
+        self.strict_must_reload = strict.must_reload();
+    }
     pub fn chapter_failure(&self) -> Option<&ReaderChapterFailure> {
         self.current
             .as_ref()
@@ -600,7 +609,8 @@ fn completed(status: Status) -> PageWork {
 /// A cancel that ended a page action before it published. It is never a
 /// failure to latch or remember: each caller of `perform` decides what it
 /// means, and for an open reader that is "nothing happened" (#199).
-pub(crate) struct Cancelled;
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Cancelled;
 fn perform<S: BookSource, P: OwnerPages<S>>(
     reader: &mut PhasedReader<'_, '_>, source: &mut S, request: PageRequest, pages: &mut P,
 ) -> Result<Status, Cancelled> {
@@ -768,9 +778,9 @@ pub(crate) fn finish_owner_ui_paint_with<S: BookSource, P: OwnerPages<S>>(
     owner: &mut ExternalOwner, reader: &mut PhasedReader<'_, '_>, source: &mut S,
     completion: ReaderPaintCompletion, now: u32, pages: &mut P,
 ) -> ReaderPaintWork {
-    // A cancelled paint drew nothing, so it can never report a ready frame.
     if owner.paint_with(reader, source, now, pages).is_err() {
-        return ReaderPaintWork::Complete { ready: false };
+        owner.tracker.pause(now);
+        return ReaderPaintWork::Cancelled;
     }
     let status = owner.state.status();
     finish_reader_ui_paint(

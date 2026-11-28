@@ -17,7 +17,7 @@ mod verification;
 mod actions;
 #[path = "physical_owner/receipt.rs"]
 mod receipt;
-use receipt::{begin_receipt_action, finish_receipt_action, finish_reader_action, reject_changed_receipt};
+use receipt::{begin_receipt_action, finish_receipt_action, finish_reader_action, reject_changed_receipt, Shown};
 
 /// One SDK context supplies BOTH loans; it cannot expose a frame from with_parse.
 /// Frame bytes are logical until compose_native consumes a completed UI paint.
@@ -292,9 +292,10 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
         if matches!(source.mode, ReaderSourceMode::Closed | ReaderSourceMode::MustReload(_)) {
             return PageWork::failed(Status::NotFound);
         }
+        let shown = Shown::of(reader);
         begin_receipt_action(&mut source.revision, request);
         let work = self.execute_reader_body(reader, source, request);
-        finish_reader_action(reader, source, request, work)
+        finish_reader_action(reader, source, request, shown, work)
     }
 
     fn execute_reader_body(
@@ -377,7 +378,7 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
         source.with_physical_source(|mut source| {
             // Open selects its source again itself.
             if request != PageRequest::Open {
-                if let Err(work) = reload_source(reader, &mut source) {
+                if let Err(work) = self.reload_source(reader, &mut source) {
                     return work;
                 }
             }
@@ -394,31 +395,46 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
     fn repaint(&mut self, reader: &mut PhasedReader<'_, '_>, source: &mut S)
         -> Result<Status, Cancelled> {
         source.with_physical_source(|mut source| {
-            if let Err(work) = reload_source(reader, &mut source) {
+            if let Err(work) = self.reload_source(reader, &mut source) {
                 return work.settle();
             }
             match source {
                 PhysicalSourceRef::Revision(revision) => Ok(self.repaint_revision(reader, revision)),
                 PhysicalSourceRef::Reader(source) => self.repaint_reader(reader, source),
-                PhysicalSourceRef::Strict(source) => Ok(self.repaint_strict(reader, source)),
+                PhysicalSourceRef::Strict(source) => self.repaint_strict(reader, source),
                 PhysicalSourceRef::Pending(source) => self.repaint_pending(reader, source),
             }
         })
     }
 }
 
-/// Every action and repaint passes here before it touches its source, so
-/// nothing reads a source that a cancel closed until it reloads (#199). Both
-/// paths read the result the same way; a changed book closes the reader.
-fn reload_source(reader: &mut PhasedReader<'_, '_>, source: &mut PhysicalSourceRef<'_, '_, '_>)
-    -> Result<(), PageWork> {
-    let Some(source) = source.reader_source() else { return Ok(()) };
-    source.reload().map_err(|interrupted| {
-        if interrupted == Interrupted::Changed {
-            reader.close();
-        }
-        PageWork::interrupted(interrupted)
-    })
+impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence>
+    PhysicalOwner<'_, '_, '_, B, L, C>
+{
+    /// Every action and repaint passes here before it touches its source, so
+    /// nothing reads a source that a cancel closed until it reloads: a receipt
+    /// reloads, a strict view hashes again (#199). Both paths read the result
+    /// the same way; a changed book closes the reader.
+    fn reload_source(&mut self, reader: &mut PhasedReader<'_, '_>,
+        source: &mut PhysicalSourceRef<'_, '_, '_>) -> Result<(), PageWork> {
+        let reloaded = match source {
+            PhysicalSourceRef::Strict(strict) => {
+                match self.panel.with_parse(|scratch| strict.reload(scratch)) {
+                    Ok(reloaded) => reloaded,
+                    Err(status) => return Err(PageWork::failed(status)),
+                }
+            }
+            PhysicalSourceRef::Reader(source) => source.reload(),
+            PhysicalSourceRef::Pending(pending) => pending.source.reload(),
+            PhysicalSourceRef::Revision(_) => Ok(()),
+        };
+        reloaded.map_err(|interrupted| {
+            if interrupted == Interrupted::Changed {
+                reader.close();
+            }
+            PageWork::interrupted(interrupted)
+        })
+    }
 }
 
 impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence>
@@ -494,16 +510,11 @@ impl<
     fn prepare(&mut self, owner: &mut ReaderOwnerState, focus: u32) -> MenuPreparation {
         // A cancelled list load says nothing about the book, so nothing latches:
         // the reader keeps its page and the next action reloads (#199).
-        let Ok(status) = perform(
-            self.reader,
-            self.revision,
-            PageRequest::Menu(focus),
-            self.resources,
-        ) else {
-            return MenuPreparation { status: Status::Stale, valid: false };
-        };
-        owner.menu_result(status);
-        MenuPreparation { status, valid: status == Status::Ok && self.menu().info().valid }
+        let status = perform(self.reader, self.revision, PageRequest::Menu(focus), self.resources);
+        if let Ok(status) = status {
+            owner.menu_result(status);
+        }
+        MenuPreparation { status, valid: status == Ok(Status::Ok) && self.menu().info().valid }
     }
 }
 impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence>
@@ -587,7 +598,8 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
                 work = self.finish_ui_paint(reader, revision, owner, completion, now);
             }
             match work {
-                ReaderPaintWork::Complete { ready } => return PhysicalPaint { ready },
+                ReaderPaintWork::Complete { ready } => return PhysicalPaint(Painted::Drawn { ready }),
+                ReaderPaintWork::Cancelled => return PhysicalPaint(Painted::Cancelled),
                 ReaderPaintWork::RetryChapterMenu(retry) => {
                     pass = ReaderPaintPass::RetryAfterReadyPage(retry)
                 }
@@ -607,7 +619,8 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
         progress: &Progress,
         painted: PhysicalPaint,
         book: Option<&BookStatsView>,
-    ) -> Result<(), Status> {
+    ) -> Result<Composed, Status> {
+        let Painted::Drawn { ready } = painted.0 else { return Ok(Composed::Cancelled) };
         self.panel.with_frame(|frame| {
             compose_reader_ui(
                 reader,
@@ -616,7 +629,7 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
                 settings,
                 info,
                 progress,
-                painted.ready,
+                ready,
                 frame,
                 owner.chapter_failure(),
                 owner.last_chapter_failure(),
@@ -625,6 +638,7 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
             for byte in frame {
                 *byte = !*byte;
             }
+            Composed::Drawn
         })
     }
 }

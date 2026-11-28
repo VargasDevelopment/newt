@@ -132,8 +132,8 @@ impl Runtime {
             || (self.closed_exit == ClosedExit::TimedOut && matches!(action, Action::Back | Action::Sleep)) {
             // SampleReader has no storage after failed admission, but main's
             // real menu/draft and Back/Sleep intents still exist. A timed-out
-            // live action left a closed owner that a strict source refuses to
-            // relend, so its exits must not take the live-reader loan.
+            // live action left a closed owner, so its exits save through the
+            // closed exit rather than a new live-reader loan.
             (Some(newt_reader_ui::dispatch_unavailable_reader_ui(&mut self.reader_ui,
                 self.settings, action)), action_at)
         } else {

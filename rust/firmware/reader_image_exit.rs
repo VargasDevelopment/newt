@@ -138,10 +138,19 @@ impl Runtime {
                                 }.ok_or(Error::Io)?;
                                 let allowed = || !newt_native_storage::Authority::cancelled(&cancel);
                                 let mut strict = strict.with_reopen_authorizer(&mut authorize, &allowed);
-                                Ok(super::drive::RunLoan { memory, ui: reader_ui, checkpoint, statistics, recovery,
-                                    accepted: &mut accepted, metadata: exit_metadata, flags: None, settings }
+                                // As the receipt exit below: hash again what a cancel
+                                // closed, so the exit can save. This authorizer
+                                // hashes through the SDK and takes no scratch.
+                                if allow_cancelled {
+                                    strict.reload_closed(&mut []);
+                                }
+                                let progress = super::drive::RunLoan { memory: &mut *memory, ui: reader_ui,
+                                    checkpoint, statistics, recovery, accepted: &mut accepted,
+                                    metadata: exit_metadata, flags: None, settings }
                                     .finish(ports, &mut pages, &mut strict, digest, zone, now, sleeping,
-                                        allow_cancelled, trace))
+                                        allow_cancelled, trace);
+                                memory.runtime.owner.settle_strict_loan(&strict);
+                                Ok(progress)
                             }).map_err(|_| Error::Io)?
                         };
                         let closed = pages_state.close(&mut pages_native, &route);

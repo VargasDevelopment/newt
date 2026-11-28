@@ -151,7 +151,8 @@ pub struct Between<'b, 'io, 'm, 'p, 'scope, 'sdk, 'route, P: CardPort> {
     pub io: &'io UiIo,
     pub card: &'b mut P,
     /// The frame composed since the caller's last turn, if any; refresh it.
-    pub composed: Option<Result<(), Status>>,
+    /// A cancelled paint composed nothing: refresh nothing (#199).
+    pub composed: Option<Result<newt_reader_ui::Composed, Status>>,
     pub statistics: BookStatistics,
 }
 
@@ -214,6 +215,9 @@ pub struct BookExit {
     /// Frozen readerPreferenceUnavailable: a failed verification is not an
     /// assertion that the durable record stayed unchanged.
     pub preferences_unavailable: bool,
+    /// The reader paint this operation composed, if any. A cancelled one left
+    /// no frame: publish neither the display nor a resume picture (#199).
+    pub paint: Option<newt_reader_ui::Composed>,
 }
 
 /// The sole book entry uses the mounted Home scope's State resources.

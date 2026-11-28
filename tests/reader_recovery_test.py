@@ -28,10 +28,14 @@ CRATE_CONTROLS = (
      'Contents after a cancelled list load reloads the receipt and rebuilds the list'),
     # A cancelled Contents load latched as an I/O failure, as before #199.
     ('menu-cancel-latches', 'reader-ui/src/physical_owner.rs',
-     'return MenuPreparation { status: Status::Stale, valid: false };',
-     'owner.menu_result(Status::IoError);\n'
-     '            return MenuPreparation { status: Status::IoError, valid: false };',
+     'let status = perform(self.reader, self.revision, PageRequest::Menu(focus), self.resources);',
+     'let status = Ok(perform(self.reader, self.revision, PageRequest::Menu(focus), self.resources)\n'
+     '            .unwrap_or(Status::IoError));',
      'a cancelled Contents list load keeps the reader and its page'),
+    # A cancelled Contents load that leaves no notice, so a timeout says nothing.
+    ('menu-cancel-silent', 'reader-ui/src/lifecycle.rs',
+     'if result.status.is_err() {', 'if false && result.status.is_err() {',
+     'a cancelled Contents list load stays on Contents with the jump notice'),
     # A failed reload read as a new cancel keeps a changed book open.
     ('changed-book-open', 'reader-ui/src/physical_source.rs',
      'if self.revision.cancelled() {', 'if true {',
@@ -47,9 +51,38 @@ CRATE_CONTROLS = (
      'return work.settle();', 'return work.settle().or(Ok(Status::Stale));',
      "a cancel during a repaint's reload latches nothing and keeps the reader"),
     # A pending-verification repaint that skips the reload checks a closed source.
-    ('pending-skips-reload', 'reader-ui/src/physical_source.rs',
-     'Self::Pending(pending) => Some(&mut *pending.source),', 'Self::Pending(_) => None,',
+    ('pending-skips-reload', 'reader-ui/src/physical_owner.rs',
+     'PhysicalSourceRef::Pending(pending) => pending.source.reload(),',
+     'PhysicalSourceRef::Pending(_) => Ok(()),',
      'a pending-verification repaint after a cancel reloads first and draws the page'),
+    # A cancelled verification read as a missing page, which the repaint latches.
+    ('pending-cancel-latches', 'reader-ui/src/physical_owner/verification.rs',
+     'Ok(false) if !allowed() => Err(Completion::Cancelled),',
+     'Ok(false) if false && !allowed() => Err(Completion::Cancelled),',
+     'a cancel during a pending verification latches nothing'),
+    # A jump target published from reads the final check refused, kept as shown.
+    ('cancel-keeps-unchecked-page', 'reader-ui/src/physical_owner/receipt.rs',
+     'Completion::Published if fresh => return work,',
+     'Completion::Published if fresh || true => return work,',
+     'a jump cancelled at its final check keeps the shown page'),
+    # The cancel question asked before the final check, so a cancel that lands
+    # during the check reads as a changed book.
+    ('cancel-before-check', 'reader-ui/src/physical_owner/receipt.rs',
+     '    let fresh = finish_receipt_checks(&mut source.revision, request);\n'
+     '    let cancelled = work.result == Completion::Cancelled || source.revision.cancelled();\n',
+     '    let cancelled = work.result == Completion::Cancelled || source.revision.cancelled();\n'
+     '    let fresh = finish_receipt_checks(&mut source.revision, request);\n',
+     'a jump cancelled after its final check keeps the checked target'),
+    # Each short strict loan starting verified, so a cancel's re-hash is lost.
+    ('strict-loan-forgets-reload', 'reader-ui/src/external_owner.rs',
+     'self.strict_must_reload = strict.must_reload();',
+     'self.strict_must_reload = strict.must_reload() && false;',
+     'the next no-session loan hashes the book again before its repaint reads'),
+    # A cancelled paint composed as a not-ready frame, which firmware would publish.
+    ('cancelled-paint-composes', 'reader-ui/src/physical_owner.rs',
+     'let Painted::Drawn { ready } = painted.0 else { return Ok(Composed::Cancelled) };',
+     'let ready = matches!(painted.0, Painted::Drawn { ready: true });',
+     'a cancelled paint composes nothing'),
     # A cancelled repaint's refused reads latched as a failure.
     ('repaint-read-cancel-latches', 'reader-ui/src/physical_owner.rs',
      'if refused && reader.opened() && source.revision.cancelled() {',

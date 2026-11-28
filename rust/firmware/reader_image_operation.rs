@@ -216,12 +216,16 @@ impl Runtime {
                                 &mut memory.runtime.reader).ok_or(BookFailure::Source)? };
                         let allowed = || !cancel.cancelled();
                         let mut strict = strict.with_reopen_authorizer(&mut authorize, &allowed);
-                        super::drive::RunLoan { memory, ui: reader_ui, checkpoint, statistics, recovery,
-                            accepted: &mut accepted, metadata: exit_metadata, flags: None, settings: current_settings }
+                        let result = super::drive::RunLoan { memory: &mut *memory, ui: reader_ui, checkpoint,
+                            statistics, recovery, accepted: &mut accepted, metadata: exit_metadata, flags: None,
+                            settings: current_settings }
                             .run(super::drive::Ports { io: scope.io, panel: &mut *scope.bus.panel,
                                 card: &mut *scope.card, preferences: &mut *scope.preferences,
                                 nvs: &mut *scope.nvs, facts: &mut *scope.facts }, &mut pages, &mut strict, &request, &callbacks, &mut pause,
-                                None, run_turn(false), &yielded, &observed, saves, title_deferred, index_trim_owed)
+                                None, run_turn(false), &yielded, &observed, saves, title_deferred, index_trim_owed);
+                        // A cancel's owed re-hash outlives this short loan (#199).
+                        memory.runtime.owner.settle_strict_loan(&strict);
+                        result
                     }).map_err(|_| BookFailure::Source)?
                 };
                 let closed = state.close(&mut pages_native, &route);

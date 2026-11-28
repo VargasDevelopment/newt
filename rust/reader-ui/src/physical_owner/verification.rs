@@ -67,13 +67,26 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
         if request == PageRequest::Open && work.result != Completion::Published {
             reader.close();
         }
+        // As a receipt source's cancel (finish_reader_action): a cancelled
+        // action says nothing about the book, and this view reads nothing
+        // until the owner hashes it again, in this loan or the next.
+        if request != PageRequest::Open && reader.opened() && !(source.allowed)()
+            && matches!(work.result, Completion::Failed(_) | Completion::Cancelled) {
+            source.close_after_cancel();
+            return PageWork::CANCELLED;
+        }
         work
     }
 
     pub(super) fn repaint_strict(&mut self, reader: &mut PhasedReader<'_, '_>,
-        source: &mut StrictOperations<'_>) -> Status {
-        if !source.source_verified() { return Status::Stale; }
-        self.panel.with_frame(|frame| reader.repaint(source, frame)).unwrap_or_else(|e| e)
+        source: &mut StrictOperations<'_>) -> Result<Status, Cancelled> {
+        if !source.source_verified() { return Ok(Status::Stale); }
+        let status = self.panel.with_frame(|frame| reader.repaint(source, frame)).unwrap_or_else(|e| e);
+        if !matches!(status, Status::Ok | Status::Unsupported) && reader.opened() && !(source.allowed)() {
+            source.close_after_cancel();
+            return Err(Cancelled);
+        }
+        Ok(status)
     }
 
     pub(super) fn execute_pending(&mut self, reader: &mut PhasedReader<'_, '_>,
@@ -82,6 +95,7 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
         if matches!(source.source.mode, ReaderSourceMode::Closed | ReaderSourceMode::MustReload(_)) {
             return PageWork::failed(Status::NotFound);
         }
+        let shown = Shown::of(reader);
         begin_receipt_action(&mut source.source.revision, request);
         let cached = match request {
             PageRequest::Open => self.open_pending(reader, source),
@@ -101,17 +115,25 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
             } else {
                 match self.finish_pending(source) {
                     Ok(true) => self.execute_reader_body(reader, source.source, request),
+                    // An open has no shown page to keep: its retry stays pending.
+                    Ok(false) | Err(Completion::Cancelled) if request == PageRequest::Open => cached,
                     Ok(false) => cached,
-                    Err(error) => PageWork::failed(error),
+                    Err(result) => PageWork { result },
                 }
             }
         } else { cached };
-        finish_reader_action(reader, source.source, request, work)
+        finish_reader_action(reader, source.source, request, shown, work)
     }
 
-    fn finish_pending(&mut self, source: &mut PendingReaderSource<'_, '_>) -> Result<bool, Status> {
+    /// True when verified. A cancel stays its own outcome, never a missing
+    /// page or a failure (#199).
+    fn finish_pending(&mut self, source: &mut PendingReaderSource<'_, '_>) -> Result<bool, Completion> {
         let allowed = source.allowed;
-        self.panel.with_parse(|scratch| source.finish_verification(scratch, allowed))
+        match self.panel.with_parse(|scratch| source.finish_verification(scratch, allowed)) {
+            Ok(false) if !allowed() => Err(Completion::Cancelled),
+            Ok(verified) => Ok(verified),
+            Err(error) => Err(Completion::Failed(error)),
+        }
     }
 
     fn open_pending(&mut self, reader: &mut PhasedReader<'_, '_>,
@@ -162,7 +184,11 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
             match self.finish_pending(source) {
                 Ok(true) => {}
                 Ok(false) => return Ok(Status::NotFound),
-                Err(error) => return Ok(error),
+                Err(Completion::Cancelled) => {
+                    source.source.close_after_cancel();
+                    return Err(Cancelled);
+                }
+                Err(result) => return PageWork { result }.settle(),
             }
         }
         self.repaint_reader(reader, source.source)

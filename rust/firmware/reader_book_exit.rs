@@ -101,6 +101,7 @@ impl<N: nvs::Native> MountedCheckpoint<'_, N> {
             } else { recovery.map(|pending| pending.progress).unwrap_or_else(|| *owner.tracker.snapshot(now())) },
             preferences_unavailable,
             statistics: observe(statistics, owner, ui, self.checkpoint, accepted_open_owed),
+            paint: None,
         }
     }
 }

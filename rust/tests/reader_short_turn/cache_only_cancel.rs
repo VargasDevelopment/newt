@@ -18,7 +18,7 @@ use newt_phased_reader::{
     imported_revision::{BLOCK_BYTES, Digest, ImportedRevision, RevisionHasher},
 };
 use newt_reader_ui::{
-    PhysicalOwner, ReaderOwnerState, ReaderSource, ReaderUiNotice, ReaderUiWork,
+    Composed, PhysicalOwner, ReaderOwnerState, ReaderSource, ReaderUiNotice, ReaderUiWork,
 };
 use upgrade::with_router;
 
@@ -42,10 +42,19 @@ impl RevisionHasher for ShaHasher {
 }
 
 /// The operation's cancel: the shared flag, which the source also obeys, or
-/// a route-only cancel that leaves the source readable.
-struct FlagCancel<'a>(&'a core::cell::Cell<bool>, &'a core::cell::Cell<bool>);
+/// a route-only cancel that leaves the source readable. A nonzero count lands
+/// the route cancel on that many more queries, as a deadline that runs out
+/// between two checks.
+struct FlagCancel<'a>(&'a core::cell::Cell<bool>, &'a core::cell::Cell<bool>, &'a core::cell::Cell<u32>);
 impl Authority for FlagCancel<'_> {
     fn cancelled(&self) -> bool {
+        let left = self.2.get();
+        if left > 0 {
+            self.2.set(left - 1);
+            if left == 1 {
+                self.1.set(true);
+            }
+        }
         self.0.get() || self.1.get()
     }
 }
@@ -55,9 +64,6 @@ struct CancelSource<'a> {
     cancel: &'a core::cell::Cell<bool>,
     cancel_after: &'a core::cell::Cell<u32>,
     reads: &'a core::cell::Cell<u32>,
-    /// Cancels only the route on this many more reads; the source keeps serving them.
-    route_after: &'a core::cell::Cell<u32>,
-    route_cancel: &'a core::cell::Cell<bool>,
     /// A source offset whose byte reads back flipped, as a corrupt SD block.
     corrupt_at: &'a core::cell::Cell<Option<usize>>,
 }
@@ -77,11 +83,6 @@ impl BookSource for CancelSource<'_> {
             } else {
                 self.cancel_after.set(left - 1);
             }
-        }
-        let left = self.route_after.get();
-        if left > 0 && !out.is_empty() {
-            self.route_after.set(left - 1);
-            self.route_cancel.set(left == 1);
         }
         if self.cancel.get() {
             return -1;
@@ -118,6 +119,15 @@ macro_rules! jump_to_middle {
             let _ = $owner.complete_ui_physical(&mut $reader, &mut $source, &mut $ui, handled, at, &mut $ports);
         }
     }};
+}
+
+/// What final composition does with a paint: a cancelled one composes
+/// nothing, so neither the display nor a resume picture publishes (#199).
+macro_rules! compose {
+    ($ports:ident, $reader:ident, $owner:ident, $ui:ident, $settings:ident, $painted:expr) => {
+        $ports.compose_native(&$reader, &$owner, &$ui, $settings, &DeviceInfo::default(),
+            &Progress::default(), $painted, None)
+    };
 }
 
 /// Every book index file on the card, with its durable bytes.
@@ -297,9 +307,9 @@ pub fn check() {
             let cancel_after = core::cell::Cell::new(0u32);
             let reads = core::cell::Cell::new(0u32);
             let corrupt_at = core::cell::Cell::new(None);
-            let route_after = core::cell::Cell::new(0u32);
             let route_cancel = core::cell::Cell::new(false);
-            let cancel_auth = FlagCancel(&cancel_flag, &route_cancel);
+            let route_queries = core::cell::Cell::new(0u32);
+            let cancel_auth = FlagCancel(&cancel_flag, &route_cancel, &route_queries);
             let route_state = RouteState::new(
                 reader_book::CACHE_ROOT,
                 "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
@@ -325,7 +335,7 @@ pub fn check() {
             let mut rev_scratch = [0u8; BLOCK_BYTES];
             let mut raw = CancelSource {
                 bytes: epub.clone(), cancel: &cancel_flag, cancel_after: &cancel_after, reads: &reads,
-                route_after: &route_after, route_cancel: &route_cancel, corrupt_at: &corrupt_at,
+                corrupt_at: &corrupt_at,
             };
             let mut revision = ImportedRevision::full(&mut receipt, &mut rev_hash, &mut rev_scratch);
             assert!(revision.begin_import(&mut raw));
@@ -539,13 +549,13 @@ pub fn check() {
             assert!(cancel_flag.replace(false), "the Contents list load must be cancelled");
             assert!(owner.state.status() == Status::Ok && reader.opened() && reader.info() == page2,
                 "a cancelled Contents list load keeps the reader and its page");
+            assert_eq!((ui.panel, ui.notice), (ReaderPanel::Chapters, ReaderUiNotice::ChapterJumpFailed),
+                "a cancelled Contents list load stays on Contents with the jump notice");
             assert_eq!(source.digest(), None, "a cancelled Contents list load closes the receipt");
-            // 2l. Contents then reloads the receipt and builds its list from the book.
-            ui.panel = ReaderPanel::Menu;
-            ui.selected = 1;
+            // 2l. The next press on Contents reloads the receipt and builds its list.
             reads.set(0);
             let handled = owner.handle_ui_physical(
-                &mut reader, &mut source, &mut ui, settings, Action::Activate, 1_950, &mut ports,
+                &mut reader, &mut source, &mut ui, settings, Action::Next, 1_950, &mut ports,
             );
             let _ = owner.complete_ui_physical(&mut reader, &mut source, &mut ui, handled, 1_950, &mut ports);
             assert!(ui.panel == ReaderPanel::Chapters && reader.chapter_menu().info().valid && reads.get() > 0,
@@ -569,9 +579,11 @@ pub fn check() {
             cancel_flag.set(true);
             let painted = ports.paint_ui(&mut reader, &mut source, &mut owner, &mut ui, 2_300);
             cancel_flag.set(false);
-            assert!(!painted.ready() && owner.state.status() == Status::Ok && reader.opened()
+            assert!(owner.state.status() == Status::Ok && reader.opened()
                 && reader.info() == page2 && source.digest().is_none(),
                 "a cancel during a repaint's reload latches nothing and keeps the reader");
+            assert_eq!(compose!(ports, reader, owner, ui, settings, painted), Ok(Composed::Cancelled),
+                "a cancelled paint composes nothing");
 
             // 2v. A repaint whose source still waits on verification reloads first, so
             //     the check runs against the book's digest, not a closed source's.
@@ -594,9 +606,11 @@ pub fn check() {
             cancel_flag.set(true);
             let painted = ports.paint_ui(&mut reader, &mut source, &mut owner, &mut ui, 2_420);
             cancel_flag.set(false);
-            assert!(!painted.ready() && owner.state.status() == Status::Ok && reader.opened()
+            assert!(owner.state.status() == Status::Ok && reader.opened()
                 && reader.info() == page2 && source.digest().is_none(),
                 "a cancelled repaint latches nothing and keeps the reader");
+            assert_eq!(compose!(ports, reader, owner, ui, settings, painted), Ok(Composed::Cancelled),
+                "a cancelled repaint composes nothing");
             // 2g. That cancel dropped the retained plan, so the next paint is the owner's
             //     page action, which reads only the Pages cache. Reload as the exit does,
             //     then cancel that action: it drew nothing, so the paint must not report
@@ -605,8 +619,9 @@ pub fn check() {
             cancel_flag.set(true);
             let painted = ports.paint_ui(&mut reader, &mut source, &mut owner, &mut ui, 2_440);
             cancel_flag.set(false);
-            assert!(!painted.ready() && owner.state.status() == Status::Ok && reader.opened()
-                && reader.info() == page2,
+            assert!(owner.state.status() == Status::Ok && reader.opened() && reader.info() == page2,
+                "a cancelled fallback paint latches nothing and keeps the reader");
+            assert_eq!(compose!(ports, reader, owner, ui, settings, painted), Ok(Composed::Cancelled),
                 "a cancelled fallback paint never reports a ready frame");
 
             // 2p. A repaint reloads the receipt and draws the same page.
@@ -614,6 +629,31 @@ pub fn check() {
             assert!(painted.ready() && owner.state.opened() && reader.info() == page2,
                 "a repaint after a cancel reloads the receipt and draws the page");
             assert_eq!(source.digest(), Some(digest), "the repaint reloaded the receipt under its digest");
+
+            // 2w. A cancel during a pending verification is a cancel, not a missing
+            //     page: a repaint latches nothing and composes nothing, and a turn
+            //     keeps its page. Each cancel leaves the receipt to reload.
+            {
+                let mut finish = |_: &mut dyn BookSource, _: &Digest, _: &mut [u8], _: &dyn Fn() -> bool| {
+                    cancel_flag.set(true);
+                    false
+                };
+                let allowed = || !cancel_flag.get();
+                let mut pending = source.with_verification_gate(page2.spine + 1, &mut finish, &allowed);
+                let painted = ports.paint_ui(&mut reader, &mut pending, &mut owner, &mut ui, 2_405);
+                cancel_flag.set(false);
+                assert!(owner.state.status() == Status::Ok && reader.opened() && reader.info() == page2,
+                    "a cancel during a pending verification latches nothing");
+                assert_eq!(compose!(ports, reader, owner, ui, settings, painted), Ok(Composed::Cancelled),
+                    "a repaint cancelled during its verification composes nothing");
+                let handled = owner.handle_ui_physical(&mut reader, &mut pending, &mut ui, settings,
+                    Action::Next, 2_410, &mut ports);
+                let _ = owner.complete_ui_physical(&mut reader, &mut pending, &mut ui, handled, 2_410, &mut ports);
+                cancel_flag.set(false);
+                assert!(owner.state.status() == Status::Ok && reader.opened() && reader.info() == page2,
+                    "a turn cancelled during its verification keeps the reader and its page");
+            }
+            assert_eq!(source.digest(), None, "a cancelled verification leaves the receipt to reload");
 
             // 2t. A turn reads and moves.
             for (action, at, page) in [(Action::Next, 2_500, page2.page + 1), (Action::Previous, 2_600, page2.page)] {
@@ -624,20 +664,106 @@ pub fn check() {
             }
             assert_eq!(reader.info(), page2);
 
+            // 2n. The no-session route lends a new strict view for each operation. A
+            //     cancelled jump keeps the page, and the next loan hashes the book again
+            //     before its repaint reads, however short each loan is.
+            let hashes = core::cell::Cell::new(0u32);
+            let mut authorize = |_: &mut dyn BookSource, expected: &Digest, _: &mut [u8], allowed: &dyn Fn() -> bool| {
+                hashes.set(hashes.get() + 1);
+                allowed() && *expected == digest
+            };
+            let allowed = || !cancel_flag.get();
+            let mut selection = SelectionAuthority::new();
+            assert!(selection.publish_candidate(c"generated.epub", digest, &mut || {}, &mut || {}));
+            {
+                let mut raw = CancelSource {
+                    bytes: epub.clone(), cancel: &cancel_flag, cancel_after: &cancel_after, reads: &reads,
+                    corrupt_at: &corrupt_at,
+                };
+                let mut strict = StrictSource::for_live_reader(&mut raw, &selection, &owner, &mut reader)
+                    .expect("live strict source").with_reopen_authorizer(&mut authorize, &allowed);
+                jump_to_middle!(owner, reader, strict, ui, settings, ports, 2_700, { cancel_after.set(2); });
+                assert!(cancel_flag.replace(false), "the no-session jump must be cancelled");
+                assert!(owner.state.status() == Status::Ok && reader.opened() && reader.info() == page2,
+                    "a cancelled no-session jump keeps the reader and its page");
+                owner.settle_strict_loan(&strict);
+            }
+            {
+                let mut raw = CancelSource {
+                    bytes: epub.clone(), cancel: &cancel_flag, cancel_after: &cancel_after, reads: &reads,
+                    corrupt_at: &corrupt_at,
+                };
+                let mut strict = StrictSource::for_live_reader(&mut raw, &selection, &owner, &mut reader)
+                    .expect("live strict source").with_reopen_authorizer(&mut authorize, &allowed);
+                ui.panel = ReaderPanel::Page;
+                ui.notice = ReaderUiNotice::None;
+                let before = hashes.get();
+                let painted = ports.paint_ui(&mut reader, &mut strict, &mut owner, &mut ui, 2_750);
+                assert_eq!(hashes.get(), before + 1,
+                    "the next no-session loan hashes the book again before its repaint reads");
+                assert!(painted.ready() && owner.state.opened() && reader.info() == page2,
+                    "the no-session repaint after a cancelled jump draws the page");
+                owner.settle_strict_loan(&strict);
+            }
+
             // 2r. The same jump then runs: the cancel was not kept as a chapter failure.
-            jump_to_middle!(owner, reader, source, ui, settings, ports, 3_000, { reads.set(0); });
-            let jump_reads = reads.get();
+            jump_to_middle!(owner, reader, source, ui, settings, ports, 3_000);
             let mid = reader.info();
             assert_eq!(ui.notice, ReaderUiNotice::None, "the jump after a cancelled one moves");
             assert!(mid.spine == page2.spine && mid.char_start > page2.char_start,
                 "the jump after a cancelled one lands on the fragment, not page 2");
 
-            // 2c. The same jump with only the route cancelled at its last read: the page
-            //     publishes from reads the final check can't confirm, so the receipt closes.
-            jump_to_middle!(owner, reader, source, ui, settings, ports, 5_000, { route_after.set(jump_reads); });
-            assert!(route_cancel.get(), "the route cancel must fire on the jump's last read");
-            route_cancel.set(false);
-            assert_eq!(source.digest(), None, "a page published from unchecked reads closes the receipt");
+            // 2k. A jump whose route is cancelled during its final check, after it
+            //     published its target: the deadline running out between the
+            //     producer and that check. The shown page stays authoritative: the
+            //     cancel discards the target, never reads as a changed book, and the
+            //     next repaint reloads and draws the shown page. Each jump starts one
+            //     page off the target, so a kept target would show.
+            //     The action's last cancel query comes after that check, so the
+            //     route cancel lands one query before it.
+            let mut shown = None;
+            let mut queries = 0;
+            for (at, cancel_at) in [(4_000, None), (4_200, Some(0)), (4_400, Some(1))] {
+                let handled = owner.handle_ui_physical(&mut reader, &mut source, &mut ui, settings, Action::Next, at, &mut ports);
+                let _ = owner.complete_ui_physical(&mut reader, &mut source, &mut ui, handled, at, &mut ports);
+                let page = reader.info();
+                assert!(owner.state.status() == Status::Ok && page.spine == mid.spine && page.page == mid.page + 1,
+                    "a turn moves off the jump's target");
+                assert!(*shown.get_or_insert(page) == page);
+                let Some(before_last) = cancel_at else {
+                    jump_to_middle!(owner, reader, source, ui, settings, ports, at + 100, { route_queries.set(u32::MAX); });
+                    queries = u32::MAX - route_queries.replace(0);
+                    assert_eq!(reader.info(), mid, "a clean jump from the next page lands on the target");
+                    continue;
+                };
+                jump_to_middle!(owner, reader, source, ui, settings, ports, at + 100,
+                    { route_queries.set(queries - before_last); });
+                assert!(route_cancel.get() && route_queries.get() == 0,
+                    "the route cancel must land inside the jump");
+                route_cancel.set(false);
+                if before_last == 0 {
+                    // A cancel after the final check passed keeps the checked target.
+                    assert!(owner.state.status() == Status::Ok && reader.opened() && reader.info() == mid,
+                        "a jump cancelled after its final check keeps the checked target");
+                }
+            }
+            let shown = shown.unwrap();
+            assert!(owner.state.status() == Status::Ok && reader.opened() && reader.info() == shown,
+                "a jump cancelled at its final check keeps the shown page");
+            assert_eq!((ui.panel, ui.notice), (ReaderPanel::Chapters, ReaderUiNotice::ChapterJumpFailed),
+                "a jump cancelled at its final check stays on Contents with a failed-jump notice");
+            assert_eq!(source.digest(), None, "a jump cancelled at its final check leaves the receipt to reload");
+            ui.panel = ReaderPanel::Page;
+            ui.notice = ReaderUiNotice::None;
+            let painted = ports.paint_ui(&mut reader, &mut source, &mut owner, &mut ui, 5_050);
+            assert!(painted.ready() && owner.state.opened() && reader.info() == shown,
+                "the repaint after a jump cancelled at its final check draws the shown page");
+            assert_eq!(source.digest(), Some(digest), "that repaint reloaded the receipt under its digest");
+            // A cancelled repaint closes the receipt again, as the exit below expects.
+            cancel_flag.set(true);
+            let _ = ports.paint_ui(&mut reader, &mut source, &mut owner, &mut ui, 5_060);
+            cancel_flag.set(false);
+            assert!(reader.info() == shown && source.digest().is_none());
 
             // Mirror cancel_live_action_image: end reading interval at action_at and mark IoError
             // while retaining has_progress.
@@ -699,7 +825,7 @@ pub fn check() {
                 breaker: &mut breaker,
                 hash: &mut Hash,
                 settings,
-                open: PhysicalOpen::Selected { digest, spine: mid.spine },
+                open: PhysicalOpen::Selected { digest, spine: shown.spine },
                 cache_only: false,
                 recovery: None,
             };
@@ -787,7 +913,7 @@ pub fn check() {
             );
             assert_eq!(
                 restored.locator,
-                Locator { spine: mid.spine, character: mid.char_start },
+                Locator { spine: shown.spine, character: shown.char_start },
                 "cancelled live exit must persist exact unsaved pre-turn locator"
             );
         })
@@ -830,9 +956,9 @@ fn check_strict_cancel() {
             let cancel_after = core::cell::Cell::new(0u32);
             let reads = core::cell::Cell::new(0u32);
             let corrupt_at = core::cell::Cell::new(None);
-            let route_after = core::cell::Cell::new(0u32);
             let route_cancel = core::cell::Cell::new(false);
-            let cancel_auth = FlagCancel(&cancel_flag, &route_cancel);
+            let route_queries = core::cell::Cell::new(0u32);
+            let cancel_auth = FlagCancel(&cancel_flag, &route_cancel, &route_queries);
             let route_state = RouteState::new(
                 reader_book::CACHE_ROOT,
                 "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
@@ -851,7 +977,7 @@ fn check_strict_cancel() {
             let mut rev_scratch = [0u8; BLOCK_BYTES];
             let mut raw = CancelSource {
                 bytes: epub.clone(), cancel: &cancel_flag, cancel_after: &cancel_after, reads: &reads,
-                route_after: &route_after, route_cancel: &route_cancel, corrupt_at: &corrupt_at,
+                corrupt_at: &corrupt_at,
             };
             let mut revision = ImportedRevision::full(&mut receipt, &mut rev_hash, &mut rev_scratch);
             assert!(revision.begin_import(&mut raw));
@@ -948,10 +1074,10 @@ fn check_cross_chapter_cache_only(paragraphs: usize, corrupt: bool) {
             let cancel_after = core::cell::Cell::new(0u32);
             let reads = core::cell::Cell::new(0u32);
             let corrupt_at = core::cell::Cell::new(None);
-            let route_after = core::cell::Cell::new(0u32);
             // Shared with the card, which can cancel the route at a faulted read.
             let route_cancel = std::rc::Rc::new(core::cell::Cell::new(false));
-            let cancel_auth = FlagCancel(&cancel_flag, &route_cancel);
+            let route_queries = core::cell::Cell::new(0u32);
+            let cancel_auth = FlagCancel(&cancel_flag, &route_cancel, &route_queries);
             let route_state = RouteState::new(
                 reader_book::CACHE_ROOT,
                 "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
@@ -977,7 +1103,7 @@ fn check_cross_chapter_cache_only(paragraphs: usize, corrupt: bool) {
             let mut rev_scratch = [0u8; BLOCK_BYTES];
             let mut raw = CancelSource {
                 bytes: epub.clone(), cancel: &cancel_flag, cancel_after: &cancel_after, reads: &reads,
-                route_after: &route_after, route_cancel: &route_cancel, corrupt_at: &corrupt_at,
+                corrupt_at: &corrupt_at,
             };
             let mut revision = ImportedRevision::full(&mut receipt, &mut rev_hash, &mut rev_scratch);
             assert!(revision.begin_import(&mut raw));
