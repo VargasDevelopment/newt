@@ -2,7 +2,7 @@
 No dependency acquisition, generated expectations or book-identity exceptions.
 """
 from pathlib import Path
-from zipfile import ZipFile, ZIP_STORED, ZIP_DEFLATED
+from zipfile import ZipFile, ZipInfo, ZIP_STORED, ZIP_DEFLATED
 
 CONTAINER = b'<container><rootfiles><rootfile full-path="OPS/book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>'
 
@@ -103,13 +103,17 @@ def write_run_budget(path: Path):
         "He has a cup of tea and I eat an egg. Do we go up or do we go on? "
     )
     paragraphs = ("<p>" + short_words * 3 + "</p>") * 8
+    # A fixed timestamp keeps the book digest stable across runs, so
+    # reader_short_turn/upgrade.rs can pin the previous release's cache name.
+    def entry(name):
+        return ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
     with ZipFile(path, "w") as z:
-        z.writestr("mimetype", "application/epub+zip")
-        z.writestr("META-INF/container.xml", CONTAINER)
-        z.writestr("OPS/book.opf", '<package><manifest><item id="c" href="chapter.xhtml" '
+        z.writestr(entry("mimetype"), "application/epub+zip")
+        z.writestr(entry("META-INF/container.xml"), CONTAINER)
+        z.writestr(entry("OPS/book.opf"), '<package><manifest><item id="c" href="chapter.xhtml" '
                    'media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c"/>'
                    '</spine></package>')
-        z.writestr("OPS/chapter.xhtml", "<html><head><style>p { font-size: 74%; }</style>"
+        z.writestr(entry("OPS/chapter.xhtml"), "<html><head><style>p { font-size: 74%; }</style>"
                    "</head><body>" + paragraphs + "</body></html>")
 
 

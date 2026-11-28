@@ -82,22 +82,23 @@ fn seed_old_index(card: &card::Card, files: &BTreeMap<String, Vec<u8>>, version:
     (path.clone(), old)
 }
 
-/// v0.7.2 wrote current-format Pages under revision 4 names. Move every Pages
-/// file to a name this build never derives; its bytes stay as written.
+/// The name v0.7.2 (engine revision 4) gave this fixture's one Pages file,
+/// for the generated book and the portrait settings below. It is pinned, not
+/// derived, so a build that still uses revision 4 finds a valid file here and
+/// fails the expected miss.
+const REVISION_4_PAGES: &str = "/newt-sd/Newt/Cache/Pages/\
+    0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef-\
+    fbb5de215d61f9b3efb01fe306f23259b893d12c6c1e23501ca5c6caf6e417cd.fibp";
+
+/// v0.7.2 wrote current-format Pages under revision 4 names. Move this build's
+/// Pages file to that name; its bytes stay as written.
 fn seed_previous_names(card: &card::Card) -> BTreeMap<String, Vec<u8>> {
     let pages: Vec<String> = card.0.borrow().model.files.keys()
         .filter(|path| path.contains("/Pages/")).cloned().collect();
-    assert!(!pages.is_empty());
-    let mut moved = BTreeMap::new();
-    for path in pages {
-        let file = card.0.borrow_mut().model.files.remove(&path).unwrap();
-        let (book, identity) = path.rsplit_once('-').unwrap();
-        let first = if identity.starts_with('0') { '1' } else { '0' };
-        let old = format!("{book}-{first}{}", &identity[1..]);
-        card.seed(&old, file.durable.clone());
-        moved.insert(old, file.durable);
-    }
-    moved
+    let [path] = pages.as_slice() else { panic!("expected one Pages file, found {pages:?}") };
+    let file = card.0.borrow_mut().model.files.remove(path).unwrap();
+    card.seed(REVISION_4_PAGES, file.durable.clone());
+    BTreeMap::from([(REVISION_4_PAGES.to_owned(), file.durable)])
 }
 
 #[derive(Clone, Copy)]
