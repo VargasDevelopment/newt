@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 4073056,
+      "flash_bytes": 4075072,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,10 +28,10 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "1e6a0b7e979e95880ea6ae095d01850f1d7e7949",
+      "source_revision": "32aeaafd42ff26883cd039046ab360cbc0a21361",
       "before": 4071536,
-      "after": 4073056,
-      "reason": "+1,520 B over the 4,071,536 B ceiling on origin/main (00b6308c, #199): a cancelled Contents load or jump keeps the reader open on its page instead of closing it as a changed book. The cancelled source becomes unreadable until one shared reload runs before every action, repaint and pending verification; the strict fallback hashes the held book again instead of reloading a receipt it never sealed; a cancelled repaint or owner paint never reports a ready frame. The clean pinned regional DEV USB build at 1e6a0b7e measures 4,073,056 B (main measured 4,071,504 B). Usable app space 7,016,448 B, with 2,943,392 B remaining. RAM 124,096 to 124,096 B, RTC 300 to 300 B, lent Wi-Fi RAM 22,528 to 22,528 B. Selected stacks within ceilings (0/16/32/48/480 <= 656 B). No memory floor or stack ceiling moves.",
+      "after": 4075072,
+      "reason": "+3,536 B over the 4,071,536 B ceiling on origin/main (00b6308c, #199): a cancel (Back or the time budget) is one typed outcome from every cancel point to every consumer, so it never reads as a changed book, a missing page or a ready frame. A cancelled Contents load or jump keeps the reader on its page; the cancelled source stays unreadable until one shared reload runs before every action, repaint and pending verification; the final freshness check runs before the cancel question and a target it refused is discarded; the strict fallback hashes the held book again, and the no-session strict view carries that owed re-hash across its short loans; a cancelled verification stays Cancelled; a cancelled paint composes nothing for the display or the resume picture; a cancelled Contents load keeps its notice. The clean pinned regional DEV USB build at 32aeaafd measures 4,075,072 B (main measured 4,071,504 B). Usable app space 7,016,448 B, with 2,941,376 B remaining. RAM 124,096 to 124,096 B, RTC 300 to 300 B, lent Wi-Fi RAM 22,528 to 22,528 B. Selected stacks within ceilings (0/16/32/48/480 <= 656 B). No memory floor or stack ceiling moves.",
       "reviewer": "Pending PR review"
     },
     "ram_bytes": {
