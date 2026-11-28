@@ -25,6 +25,12 @@ CRATE_CONTROLS = (
     ('skip-reload', 'reader-ui/src/physical_source.rs',
      '|| self.reload_closed_receipt(self.digest) {', '|| true {',
      'Contents after a cancelled list load reloads the receipt and rebuilds the list'),
+    # A cancelled Contents load latched as an I/O failure, as before #199.
+    ('menu-cancel-latches', 'reader-ui/src/physical_owner.rs',
+     'return MenuPreparation { status: Status::Stale, valid: false };',
+     'owner.menu_result(Status::IoError);\n'
+     '            return MenuPreparation { status: Status::IoError, valid: false };',
+     'a cancelled Contents list load keeps the reader and its page'),
     # A failed reload read as a fresh cancel keeps a changed book open.
     ('changed-book-open', 'reader-ui/src/physical_source.rs',
      'if self.revision.cancelled() {', 'if true {',
