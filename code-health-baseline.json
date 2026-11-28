@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 4071536,
+      "flash_bytes": 4073056,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,10 +28,10 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "5efc6dab30d4e32905ba7307ecd51ae9986e69e3",
-      "before": 4069568,
-      "after": 4071536,
-      "reason": "+1,968 B over the 4,069,568 B ceiling on origin/main (90b0fe3e, #103): renews the 20 s foreground open/layout budget on every 128-page progress milestone up to 4,096 pages so long single-chapter EPUBs open, jump and reflow instead of timing out, adds a cache-only probe in PhysicalOwner so slow cache-miss turns show Loading without adding SD probes on cache hits, and routes cancelled live turns and jumps through the normal verified Home/Sleep exit with closed-receipt reload. Re-measured after rebasing onto main: the clean pinned regional DEV USB build at 5efc6dab measures 4,071,536 B. Usable app space 7,016,448 B, with 2,944,912 B remaining. RAM 124,096 to 124,096 B, RTC 300 to 300 B, lent Wi-Fi RAM 22,528 to 22,528 B. Selected stacks within ceilings (0/16/32/48/480 <= 656 B). No memory floor or stack ceiling moves.",
+      "source_revision": "1e6a0b7e979e95880ea6ae095d01850f1d7e7949",
+      "before": 4071536,
+      "after": 4073056,
+      "reason": "+1,520 B over the 4,071,536 B ceiling on origin/main (00b6308c, #199): a cancelled Contents load or jump keeps the reader open on its page instead of closing it as a changed book. The cancelled source becomes unreadable until one shared reload runs before every action, repaint and pending verification; the strict fallback hashes the held book again instead of reloading a receipt it never sealed; a cancelled repaint or owner paint never reports a ready frame. The clean pinned regional DEV USB build at 1e6a0b7e measures 4,073,056 B (main measured 4,071,504 B). Usable app space 7,016,448 B, with 2,943,392 B remaining. RAM 124,096 to 124,096 B, RTC 300 to 300 B, lent Wi-Fi RAM 22,528 to 22,528 B. Selected stacks within ceilings (0/16/32/48/480 <= 656 B). No memory floor or stack ceiling moves.",
       "reviewer": "Pending PR review"
     },
     "ram_bytes": {
