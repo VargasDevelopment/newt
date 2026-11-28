@@ -66,10 +66,27 @@ impl<'op> StrictSource<'op> {
     pub fn for_live_reader(source: &'op mut dyn BookSource,
         selection: &'op SelectionAuthority, owner: &ExternalOwner,
         reader: &mut PhasedReader<'_, '_>) -> Option<Self> {
-        if !selection.active() || !owner.state.opened() || !reader.opened()
+        Self::for_live_inner(source, selection, owner, reader, true)
+    }
+    /// Relend the selected FD on exit after a cancelled or timed-out live
+    /// reader action cleared `owner.state.opened()` while keeping `has_progress()`.
+    pub fn for_cancelled_exit(source: &'op mut dyn BookSource,
+        selection: &'op SelectionAuthority, owner: &ExternalOwner,
+        reader: &mut PhasedReader<'_, '_>) -> Option<Self> {
+        Self::for_live_inner(source, selection, owner, reader, false)
+    }
+    fn for_live_inner(source: &'op mut dyn BookSource,
+        selection: &'op SelectionAuthority, owner: &ExternalOwner,
+        reader: &mut PhasedReader<'_, '_>, require_opened: bool) -> Option<Self> {
+        let ready = if require_opened {
+            owner.state.opened() && reader.opened()
+        } else {
+            owner.state.has_progress()
+        };
+        if !selection.active() || !ready
             || owner.tracker.snapshot(0).book != selection.book_id()
             || selection.identity().digest != *selection.digest()
-            || !reader.source_available(source) {
+            || (reader.opened() && !reader.source_available(source)) {
             return None;
         }
         Some(Self { source, digest: selection.digest(), verified: true, open_authorized: false })

@@ -10,7 +10,7 @@ use newt_phased_reader::imported_revision::{
     session::{Cache, Session},
 };
 use newt_phased_reader::phase_storage::{BuildLoan, ReadScope, Storage};
-use newt_phased_reader::{CachePresence, CacheRequest, OperationPhased, PhasedChapterCache};
+use newt_phased_reader::{CachePresence, CacheRequest, OperationPhased, PhasedChapterCache, QUICK_VERIFY_BYTES};
 #[path = "physical_owner/verification.rs"]
 mod verification;
 #[path = "physical_owner/actions.rs"]
@@ -130,7 +130,16 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
                         let staged = if spine != session.reader.reader.info().spine {
                             let digest = *session.revision.digest();
                             if session.cache.stored(&digest, spine, session.reader) {
+                                // Staging verifies the whole chapter. A cache-only probe
+                                // verifies only a short one; a longer one, or any failure,
+                                // retries after Loading shows, which reports it (#103).
+                                if cache_only {
+                                    session.reader.limit_verification(QUICK_VERIFY_BYTES);
+                                }
                                 let status = session.stage_owned(spine);
+                                if cache_only && status != Status::Ok {
+                                    return PageWork::VERIFICATION_PENDING;
+                                }
                                 if status != Status::Ok {
                                     return PageWork::failed(status);
                                 }
@@ -308,6 +317,12 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
             }
             ReaderSourceMode::Strict if request == PageRequest::Open => {
                 self.open_strict(reader, revision, mode, *digest)
+            }
+            ReaderSourceMode::Strict
+                if self.cache_only
+                    && matches!(request, PageRequest::Page(..) | PageRequest::Anchor(..)) =>
+            {
+                PageWork::VERIFICATION_PENDING
             }
             ReaderSourceMode::Strict => revision
                 .with_held_source(|raw| self.execute_raw(reader, raw, digest, request))

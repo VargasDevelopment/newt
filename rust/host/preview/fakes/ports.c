@@ -568,8 +568,9 @@ static int open_fault(const char *path) {
     return 0;
 }
 /* "card.back=TEXT": the first card read of a path holding TEXT presses Back
- * (or "card.button=N"), optionally once refreshes >= "card.after_refresh",
- * as a hand would while that work still reads, on any boot.
+ * (or "card.button=N", or "card.button=N,M,..." pressed in turn), optionally
+ * once refreshes >= "card.after_refresh", as a hand would while that work
+ * still reads, on any boot.
  * "card.slow=TEXT": stalls that read past the 20 s work budget instead. */
 static int card_back_used, card_slow_used;
 static void card_back(const char *path) {
@@ -585,7 +586,12 @@ static void card_back(const char *path) {
     if (card_back_used || !text || !*text || !strstr(path, text) || !task_started || task_suspended) return;
     const char *button = preview_conf("card.button");
     card_back_used = 1;
-    press(button && *button ? atoi(button) : 0);
+    if (!button || !*button) { press(0); return; }
+    for (char *end; *button; button = *end == ',' ? end + 1 : end) {
+        const long code = strtol(button, &end, 10);
+        if (end == button) break;
+        press((uint8_t)code);
+    }
 }
 /* "card-write:PATH" or "card-sync:PATH": 0 go on, 1 refuse, 2 drop the sync. */
 int preview_io_fault(const char *operation, int32_t fd) {

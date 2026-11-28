@@ -78,7 +78,11 @@ impl Runtime {
             self.save_sample_image(home, now);
             return Ok(());
         }
-        if !self.book().is_some_and(|book| book.owner.state.has_progress()) { return Ok(()); }
+        if !self.book().is_some_and(|book| book.owner.state.has_progress()) {
+            self.closed_exit = ClosedExit::None;
+            return Ok(());
+        }
+        let allow_cancelled = core::mem::replace(&mut self.closed_exit, ClosedExit::None) != ClosedExit::None;
         if self.session.as_ref().is_some_and(|session|
             session.verification.state() != crate::reader_verification::Verification::Verified) {
             self.refuse_checkpoint_image(now, false);
@@ -125,13 +129,19 @@ impl Runtime {
                                     (unsafe { crate::reader_hash::hash_source(raw, &mut digest,
                                         &mut || yield_now(), None) }) && allowed() && digest == *expected
                                 };
-                                let strict = StrictSource::for_live_reader(raw, selection,
-                                    &memory.runtime.owner, &mut memory.runtime.reader).ok_or(Error::Io)?;
+                                let strict = if allow_cancelled {
+                                    StrictSource::for_cancelled_exit(raw, selection,
+                                        &memory.runtime.owner, &mut memory.runtime.reader)
+                                } else {
+                                    StrictSource::for_live_reader(raw, selection,
+                                        &memory.runtime.owner, &mut memory.runtime.reader)
+                                }.ok_or(Error::Io)?;
                                 let allowed = || !newt_native_storage::Authority::cancelled(&cancel);
                                 let mut strict = strict.with_reopen_authorizer(&mut authorize, &allowed);
                                 Ok(super::drive::RunLoan { memory, ui: reader_ui, checkpoint, statistics, recovery,
                                     accepted: &mut accepted, metadata: exit_metadata, flags: None, settings }
-                                    .finish(ports, &mut pages, &mut strict, digest, zone, now, sleeping, trace))
+                                    .finish(ports, &mut pages, &mut strict, digest, zone, now, sleeping,
+                                        allow_cancelled, trace))
                             }).map_err(|_| Error::Io)?
                         };
                         let closed = pages_state.close(&mut pages_native, &route);
@@ -151,9 +161,13 @@ impl Runtime {
                         session::with_source(state, RevisionPorts { source: Some(source),
                             store: &mut receipt, whole: &mut whole, block: Some(&mut block),
                             scratch }, |revision| {
+                            if allow_cancelled && revision.digest() != digest {
+                                revision.reload_closed_receipt(digest);
+                            }
                             super::drive::RunLoan { memory, ui: reader_ui, checkpoint, statistics, recovery,
                                 accepted: &mut accepted, metadata: exit_metadata, flags: None, settings }
-                                .finish(ports, &mut pages, revision, digest, zone, now, sleeping, trace)
+                                .finish(ports, &mut pages, revision, digest, zone, now, sleeping,
+                                    allow_cancelled, trace)
                         }).map_err(|_| Error::Io)
                     }).map_err(|_| Error::Io)?
                 }).and_then(|result| result))

@@ -395,7 +395,7 @@ where
     runtime.reader.on_yield = on_yield;
     let mut resources = Resources {
         panel, pages, storage: &mut storage, parser: Expat::default(), breaker,
-        hash: identity, settings: preferences.settings(), open, recovery: None,
+        hash: identity, settings: preferences.settings(), open, cache_only: false, recovery: None,
     };
     let digest = revision.digest();
     let mut statistics = ReadingStatsRuntime::default();

@@ -56,6 +56,10 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
                 }
             } else if !source.source_verified() {
                 return PageWork::failed(Status::Stale);
+            } else if self.cache_only
+                && matches!(request, PageRequest::Page(..) | PageRequest::Anchor(..))
+            {
+                return PageWork::VERIFICATION_PENDING;
             }
             let digest = source.digest();
             self.execute_raw(reader, source, &digest, request)
@@ -90,10 +94,16 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
             _ => PageWork::VERIFICATION_PENDING,
         };
         let work = if cached.result == Completion::VerificationPending {
-            match self.finish_pending(source) {
-                Ok(true) => self.execute_reader_body(reader, source.source, request),
-                Ok(false) => cached,
-                Err(error) => PageWork::failed(error),
+            if self.cache_only
+                && matches!(request, PageRequest::Page(..) | PageRequest::Anchor(..))
+            {
+                cached
+            } else {
+                match self.finish_pending(source) {
+                    Ok(true) => self.execute_reader_body(reader, source.source, request),
+                    Ok(false) => cached,
+                    Err(error) => PageWork::failed(error),
+                }
             }
         } else { cached };
         finish_reader_action(reader, source.source, request, work)

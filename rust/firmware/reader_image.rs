@@ -155,6 +155,18 @@ struct ReflowAnchor {
     locator: newt_core::progress::Locator,
 }
 
+/// A live turn or jump stopped and closed the owner, but its progress stays
+/// savable: the next Back, Sleep or auto-sleep exit checkpoints the retained
+/// position through the closed owner (#103).
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ClosedExit {
+    None,
+    /// Back or Power cancelled the action; only that queued exit runs next.
+    Cancelled,
+    /// The action timed out; Back and Sleep exit without the live-reader loan.
+    TimedOut,
+}
+
 /// The four reader allocations exist only while an admitted reader owns them.
 /// Nothing in this owner borrows the Board, panel, native backend or authority.
 pub struct Runtime {
@@ -181,6 +193,7 @@ pub struct Runtime {
     restore_failure: newt_reader_ui::RestoreFailure,
     progress_ready: bool,
     index_trim_owed: bool,
+    closed_exit: ClosedExit,
     exit_metadata: Option<Fixed<crate::reader_exit_metadata::ExitMetadata>>,
     settings: newt_reader_ui::ViewSettings,
     last_progress: core::cell::Cell<u32>,
@@ -216,6 +229,7 @@ impl Runtime {
             cover_generation: 0, reading_refresh: newt_core::refresh::ReadingRefresh::default(),
             standalone_status: newt_core::zip_container::Status::NotFound,
             restore_failure: newt_reader_ui::RestoreFailure::None, progress_ready: false, index_trim_owed: false,
+            closed_exit: ClosedExit::None,
             exit_metadata: None, settings: newt_reader_ui::ViewSettings::default(),
             last_progress: core::cell::Cell::new(0),
             #[cfg(feature="dev-usb")]
@@ -235,8 +249,23 @@ impl Runtime {
         { 0 }
     }
     fn reading(&self) -> Option<ReadingView<'_>> { self.memory.reading(self.standalone_status) }
-    fn opened(&self) -> bool { self.reading().is_some_and(|view| view.opened) }
-    fn has_progress(&self) -> bool { self.reading().is_some_and(|view| view.has_progress) }
+    // Read the owner state directly: reading() also builds a page view.
+    fn opened(&self) -> bool {
+        match &self.memory {
+            ReaderBacking::External(memory) => memory.view().owner.state.opened(),
+            #[cfg(feature = "embedded-sample")]
+            ReaderBacking::Sample(_) => self.standalone_status == newt_core::zip_container::Status::Ok,
+            _ => false,
+        }
+    }
+    fn has_progress(&self) -> bool {
+        match &self.memory {
+            ReaderBacking::External(memory) => memory.view().owner.state.has_progress(),
+            #[cfg(feature = "embedded-sample")]
+            ReaderBacking::Sample(_) => true,
+            _ => false,
+        }
+    }
     pub(super) fn reflow_anchor_for(
         &mut self,
         book: u64,

@@ -1150,6 +1150,7 @@ fn pass_stream<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
             },
             &engine,
         );
+        let mut next_milestone = newt_core::cache_names::segment::PAGES;
         while status == Status::Ok && !session.done() {
             status = session.step(
                 &mut LayoutHandler {
@@ -1169,6 +1170,15 @@ fn pass_stream<S: BookSource + ?Sized, B: ParserBackend + ?Sized>(
             if status == Status::Ok && !session.done() {
                 if let Some(f) = on_yield {
                     f.yield_now();
+                }
+                if engine.pages >= next_milestone
+                    && next_milestone <= newt_core::cache_names::segment::MAX_PAGES
+                {
+                    let milestone = (engine.pages / newt_core::cache_names::segment::PAGES)
+                        .min(newt_core::cache_names::segment::MAX_SEGMENTS as u32)
+                        * newt_core::cache_names::segment::PAGES;
+                    admission::layout_progress(on_yield, milestone);
+                    next_milestone = milestone + newt_core::cache_names::segment::PAGES;
                 }
             }
         }

@@ -20,7 +20,12 @@ pub struct OperationPhased<'op, 'sel, 'plan, 'bank, B: ParserBackend + ?Sized, L
     pub backend: &'op mut B,
     pub breaker: &'op mut dyn LineBreak,
     staged: Option<(u32, u64, bool, bool)>,
+    verify_limit: u64,
 }
+/// Compressed chapter bytes a cache-only turn may verify before Loading shows:
+/// 32 blocks, about 0.3 s at the X3's measured 1 KiB-step SD rate (#106), so a
+/// typical chapter still turns with no Loading screen (#103).
+pub const QUICK_VERIFY_BYTES: u64 = 32 * crate::imported_revision::BLOCK_BYTES as u64;
 impl<B: ParserBackend + ?Sized, L: BuildLoan> session::Reader
     for OperationPhased<'_, '_, '_, '_, B, L>
 {
@@ -455,6 +460,7 @@ impl<B: ParserBackend + ?Sized, L: BuildLoan> OperationPhased<'_, '_, '_, '_, B,
         }
         let r = &mut self.reader;
         let backend = &mut self.backend;
+        let verify_limit = self.verify_limit;
         let undeclared = self.storage.with_loan(self.lender, |phase| {
             let undeclared = r.select_indexed(revision, store, &digest, spine, phase, *backend, plain)?;
             let entry = r.staged_selection().entry;
@@ -462,6 +468,7 @@ impl<B: ParserBackend + ?Sized, L: BuildLoan> OperationPhased<'_, '_, '_, '_, B,
             {
                 let _action = ActionScope::new(r.on_yield, ActionStage::ChapterVerify);
                 let (at, count) = session::chapter_range(revision, &entry)?;
+                if count > verify_limit { return Err(Status::Unsupported); }
                 if !revision.verify_range(at, count) { return Err(Status::Stale); }
             }
             Ok(undeclared)

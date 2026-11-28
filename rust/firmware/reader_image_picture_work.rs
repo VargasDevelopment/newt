@@ -50,13 +50,15 @@ impl super::Runtime {
         let shown = match self.show_picture_image(home, ui, logical, control, trace) {
             Ok(shown) => shown, Err(_) => crate::app_power::stop(),
         };
-        if !shown {
+        let painted = shown || {
             let name = self.selection.identity().filename;
             let present = core::ffi::CStr::from_bytes_until_nul(&name).ok()
                 .is_some_and(|name| self.receipt_present_image(home, name));
             self.acknowledge_work_image(home, ui, logical,
-                if self.selection.active() && !present { SlowWork::FirstOpen } else { SlowWork::Opening }, control, trace);
+                if self.selection.active() && !present { SlowWork::FirstOpen } else { SlowWork::Opening }, control, trace)
+        };
+        if painted {
+            control.restart(home.bus.board.millis());
         }
-        control.restart(home.bus.board.millis());
     }
 }

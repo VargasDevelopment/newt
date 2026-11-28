@@ -94,6 +94,19 @@ impl<'a> ReaderSource<'a> {
         self.mode = ReaderSourceMode::Revision;
         Some(imported)
     }
+    /// Reopen an already-verified receipt after a cancelled deferred-path check
+    /// closed the receipt handle. Fails closed unless the stored receipt still
+    /// matches `expected` and passes validation.
+    pub fn reload_closed_receipt(&mut self, expected: Digest) -> bool {
+        if !matches!(self.mode, ReaderSourceMode::Closed)
+            || !self.revision.reload_held_receipt(expected)
+        {
+            return false;
+        }
+        self.digest = expected;
+        self.mode = ReaderSourceMode::Revision;
+        true
+    }
     /// One frozen producer receipt scope over this same selected source owner.
     /// The caller records cancellation.result inside work, before settlement.
     pub fn with_producer_read(

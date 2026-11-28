@@ -574,6 +574,7 @@ where
                 hash: &mut cache_hash,
                 settings: portrait(),
                 open: PhysicalOpen::Prepared,
+                cache_only: false,
                 recovery: None,
             };
             let indexed = newt_phased_reader::index_build::open(

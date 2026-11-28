@@ -11,6 +11,7 @@ pub(crate) struct Resources<'r, 'scope, 'sdk, 'route, 'bank, N: Native> {
     pub(crate) hash: &'r mut dyn newt_phased_reader::hash_provider::CacheHash,
     pub(crate) settings: ViewSettings,
     pub(crate) open: PhysicalOpen,
+    pub(crate) cache_only: bool,
     pub(crate) recovery: Option<PendingRecovery>,
 }
 
@@ -30,7 +31,7 @@ impl<'scope, 'sdk, 'route, 'bank, N: Native + newt_native_storage::page_entries:
                 settings: self.settings,
             },
             open: self.open,
-            cache_only: false,
+            cache_only: self.cache_only,
         }
     }
 
