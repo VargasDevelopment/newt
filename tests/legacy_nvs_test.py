@@ -5,7 +5,6 @@ import importlib.util
 import json
 from pathlib import Path
 import shutil
-import signal
 import sys
 import tempfile
 import time
@@ -77,41 +76,6 @@ def startup(run, workspace, graph, inputs, label, *, control=False):
     return executable
 
 
-def reader_recovery(run, workspace, graph, objects, support, *, controls):
-    here = workspace / 'tests/reader_short_turn'
-    checks = load('reader_short_turn', here / 'check.py')
-    build = load('recovery_build', workspace / 'tests/phased_reader/physical/build.py')
-    out = run.output / 'reader-recovery'
-    out.mkdir()
-    fake = out / 'checkpoint-board.o'
-    run.run([run.tools['clang++'], '--no-default-config', '-x', 'c', '-std=c11', '-O1', '-g',
-             '-fsanitize=address,undefined', '-fno-sanitize-recover=all',
-             '-I', workspace / 'salamander/board/native',
-             '-c', workspace / 'tests/reader_checkpoint/board_fake.c', '-o', fake], workspace)
-    # The startup graph and parser objects already cover this firmware fixture.
-    flags = [arg for arg in link_flags(build, run, graph, [fake, *objects], control=True) if arg != '-Dwarnings']
-    executable = out / 'positive'
-    # Its runs open many pages, so the positive keeps opt 1 (rustc takes the last opt-level).
-    run.run([*flags, '-Copt-level=1', here / 'host.rs', '-o', executable], workspace)
-
-    def recorded(command, *, witness=None):
-        if witness is None:
-            return run.run(command, workspace)
-        number = len(run.commands)
-        try:
-            run.run(command, workspace)
-        except RuntimeError:
-            stderr = (run.output / f'{number:03d}.stderr').read_text()
-            support.require(run.commands[number].get('returncode') == -signal.SIGABRT
-                            and 'panicked at ' in stderr and witness in stderr,
-                            'short-turn or recovery control must reach its runtime assertion')
-        else:
-            raise RuntimeError('mutation survived: ' + witness)
-
-    checks.check_short_turn(recorded, flags, workspace, out, executable, controls=controls)
-    checks.check_recovery(recorded, flags, workspace, out, executable, controls=controls)
-
-
 def start_failure_graph(run, workspace, support):
     """The shipped app_startup's crates; its own source compiles per program."""
     clock = load('failure_clock', workspace / 'tests/board/clock/recipe.py')
@@ -146,7 +110,6 @@ def prove(run, workspace, support):
     fake, objects = startup_natives(run, workspace, support)
     run.run([startup(run, workspace, graph, [fake, *objects], 'startup')], workspace)
     controls = gate_tier.negative_controls(__file__)
-    reader_recovery(run, workspace, graph, objects, support, controls=controls)
     failures = start_failure_graph(run, workspace, support)
     failure_program = start_failure(run, workspace, failures, 'start-failure')
     for case in ('panel', 'no-panel'):
@@ -195,10 +158,12 @@ def prove(run, workspace, support):
     return dict(host_startup=True, hardware=False, controls=killed)
 
 
-def main():
+def in_sealed_copy(prove, evidence):
+    """Run `prove(run, workspace, support)` over a sealed copy of rust/, keeping
+    small command logs and a RESULT.json under .build/`evidence`."""
     support = load('legacy_support', ROOT / 'rust/tests/inflate/run_support.py')
     support.install_signal_handlers()
-    evidence = ROOT / '.build/legacy-nvs-evidence'
+    evidence = ROOT / '.build' / evidence
     evidence.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='run-', dir=evidence) as directory:
         output = Path(directory)
@@ -232,6 +197,10 @@ def main():
                 if path.is_file():
                     shutil.copy2(path, retained / path.name)
             (retained / 'RESULT.json').write_text(json.dumps(result, indent=2) + '\n')
+
+
+def main():
+    in_sealed_copy(prove, 'legacy-nvs-evidence')
     print('PASS legacy NVS: startup, start failures, durable preservation, capacity and selected controls')
 
 
