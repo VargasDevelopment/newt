@@ -4,6 +4,8 @@
 - Back that cancels a live turn exits Home and saves the shown page to SD.
 - A stalled turn over a strict source still lets Back and Power exit and save.
 - A turn into a short cached chapter shows no Loading screen.
+- A Contents jump that runs out of time keeps the reader open on its page
+  (#199).
 - Back that cancels an initial open from Library goes Home and keeps the
   previous book's selection and position; a later tagged Back in the same
   queue leaves the screen the presses between them opened.
@@ -19,20 +21,27 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / 'tools'), str(ROOT / 'rust/host/preview')]
+import page_turn_fixtures  # noqa: E402
 import preview_driver  # noqa: E402
 import rust_preview  # noqa: E402
 from gate_tier import negative_controls  # noqa: E402
 
 BACK, CONFIRM, LEFT, RIGHT, UP, DOWN, POWER = range(7)
-HOME, LIBRARY = 0, 6
+HOME, READER, LIBRARY = 0, 4, 6
 STATUS = re.compile(r'STATUS screen=(\d+) ')
 GENERATION = re.compile(r'STATUS screen=\d+ gen=(\d+)')
+ACTION_TOTAL = re.compile(r'Reader action: schema=\d+ total=(\d+) ')
+# A live action's time budget (salamander/input OPEN_BUDGET_MS), in microseconds.
+BUDGET_US = 20_000_000
 DIAG_FIELD = re.compile(r'(reader_open|actual_spine|actual_character|current_book)=(\d+)')
 # From Home: Read, then turn to the first chapter's last page, which only an
 # exit saves.
 TO_CHAPTER_END = (BACK, RIGHT, RIGHT, RIGHT)
 # The next turn crosses into the second chapter, short and cached by then.
 CROSS_CHAPTER_TURN = RIGHT
+# From a page: the menu, Contents, then the second row, a chapter whose
+# opening anchor needs the producer.
+TO_CONTENTS_ROW = (CONFIRM, RIGHT, CONFIRM, RIGHT)
 # Without a session, live actions use the strict source, as when the session
 # cannot be allocated.
 NO_SESSION = (
@@ -188,6 +197,42 @@ def library_cancel_queue_keeps_later_screen(binary):
             return f'a queued Back after a Library cancel left screen {screen_of(log)} instead of {opened}'
 
 
+def timed_out_jump_keeps_page(binary):
+    """A Contents jump that a stalled card runs out of time keeps the reader
+    open on its page, and a cold boot resumes that saved page."""
+    with tempfile.TemporaryDirectory(prefix='newt-jump-timeout-') as td:
+        d = Path(td)
+        preview_driver.world(binary, d, preview_driver.parse(['--library-fixture', 'empty']))
+        books = d / 'card/Newt/Books'
+        books.mkdir(parents=True, exist_ok=True)
+        (books / 'book-l.epub').write_bytes(page_turn_fixtures.build_book('l'))
+        run(binary, d, (CONFIRM, CONFIRM, RIGHT, RIGHT, BACK), from_seed=False)
+        shutil.copytree(d / 'card', d / 'seed-card')
+        book, *saved = reopened(binary, d)
+        to_row = (BACK,) + TO_CONTENTS_ROW
+        clean = diag_of(run(binary, d, to_row + (CONFIRM,)))
+        # Otherwise a jump that saved its target would pass.
+        assert [clean['actual_spine'], clean['actual_character']] != saved, (clean, saved)
+        # The first stall that leaves the way to the row alone and runs the jump out of time.
+        for after in range(1, 64):
+            stall = {'card.slow': '/Books/', 'card.after_refresh': str(after)}
+            log = run(binary, d, to_row + (CONFIRM,), stall)
+            if int(ACTION_TOTAL.findall(log)[-1]) >= BUDGET_US:
+                break
+        else:
+            raise AssertionError('no stall runs the Contents jump out of time')
+        reached = run(binary, d, to_row, stall)
+        assert diag_of(reached) == diag_of(run(binary, d, to_row)), f'the stall at {after} fired before the jump'
+        shown = diag_of(log)
+        if screen_of(log) != READER or shown.get('reader_open') != '1':
+            return f'a timed-out jump left the reader (screen={screen_of(log)}, {shown})'
+        if [shown['actual_spine'], shown['actual_character']] != saved:
+            return f'a timed-out jump showed {shown} instead of the saved page {saved}'
+        got = reopened(binary, d)
+        if list(got) != [book, *saved]:
+            return f'a cold boot after a timed-out jump restored {got} instead of {[book, *saved]}'
+
+
 def short_cached_chapter_turns_without_loading(binary):
     """A turn into a short cached chapter draws its page as the only new frame."""
     with tempfile.TemporaryDirectory(prefix='newt-no-loading-') as td:
@@ -247,6 +292,12 @@ LOADING_EVERY_CROSS_CHAPTER_TURN = (
     '        action == Action::Next && book.ui.panel == ReaderPanel::Page\n'
     '            && book.reader.info().page + 1 >= book.reader.info().page_count\n',
 )
+# #199: a receipt that never reports its cancel reads the timed-out jump as a changed book.
+CANCEL_READS_AS_CHANGED = (
+    'sd_revision.rs',
+    '!self.file.operation().allowed()',
+    'false',
+)
 LIBRARY_KEEPS_CANCEL_BACK = (
     'app_runtime/run_loop.rs',
     'dispatch_back.then_some(input::Action::Back)',
@@ -267,6 +318,7 @@ def main():
     check(library_cancel_goes_home_and_keeps_book, binary)
     check(library_cancel_queue_keeps_later_screen, binary)
     check(short_cached_chapter_turns_without_loading, binary)
+    check(timed_out_jump_keeps_page, binary)
     check(stalled_turn_exits_and_saves, binary)
     check(stalled_turn_exits_and_saves, rust_preview.control([NO_SESSION], optimize=False))
     if not negative_controls(__file__):
@@ -282,6 +334,7 @@ def main():
         (library_cancel_queue_keeps_later_screen, [CANCEL_BACK_EVERYWHERE], 'cancel-back-everywhere'),
         (short_cached_chapter_turns_without_loading, [LOADING_EVERY_CROSS_CHAPTER_TURN],
          'loading-every-cross-chapter-turn'),
+        (timed_out_jump_keeps_page, [CANCEL_READS_AS_CHANGED], 'cancel-reads-as-changed'),
     ):
         problem = case(rust_preview.control(edits, optimize=False))
         if not problem:

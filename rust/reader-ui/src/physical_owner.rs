@@ -2,7 +2,7 @@
 //! Resource-backed external owner. No frame exists during execute's Session.
 use super::*;
 use crate::lifecycle::{MenuOperation, handle_reader_ui_with};
-use crate::physical_source::{PhysicalSourceRef, ReaderSourceMode};
+use crate::physical_source::{PhysicalSourceRef, ReaderSourceMode, Reload};
 use newt_core::{chapter_layout::types::LineBreak, admission::ActionScope,
     reader_action_profile::{ActionStage, CacheMissReason}, reader_work_profile::ReaderOpenRoute};
 use newt_phased_reader::imported_revision::{
@@ -289,7 +289,14 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
         source: &mut ReaderSource<'_>,
         request: PageRequest,
     ) -> PageWork {
-        if matches!(source.mode, ReaderSourceMode::Closed) {
+        if request != PageRequest::Open {
+            match source.reload_after_cancel(reader) {
+                Reload::Ready => {}
+                Reload::Cancelled => return PageWork::CANCELLED,
+                Reload::Changed => return PageWork::failed(Status::Stale),
+            }
+        }
+        if matches!(source.mode, ReaderSourceMode::Closed | ReaderSourceMode::MustReload) {
             return PageWork::failed(Status::NotFound);
         }
         begin_receipt_action(&mut source.revision, request);
@@ -308,7 +315,7 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
             mode,
             digest,
         } = source;
-        if matches!(mode, ReaderSourceMode::Closed) {
+        if matches!(mode, ReaderSourceMode::Closed | ReaderSourceMode::MustReload) {
             return PageWork::failed(Status::NotFound);
         }
         let mut work = match mode {
@@ -327,7 +334,7 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
             ReaderSourceMode::Strict => revision
                 .with_held_source(|raw| self.execute_raw(reader, raw, digest, request))
                 .unwrap_or_else(|| PageWork::failed(Status::IoError)),
-            ReaderSourceMode::Closed => unreachable!(),
+            ReaderSourceMode::MustReload | ReaderSourceMode::Closed => unreachable!(),
         };
         if matches!(mode, ReaderSourceMode::Revision)
             && request == PageRequest::Open
@@ -398,6 +405,11 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
 {
     fn repaint_reader(&mut self, reader: &mut PhasedReader<'_, '_>,
         source: &mut ReaderSource<'_>) -> Status {
+        // A repaint reports only a status: a cancel during its reload ends it
+        // like a changed book would, and Back leaves the reader either way.
+        if !matches!(source.reload_after_cancel(reader), Reload::Ready) {
+            return Status::Stale;
+        }
         match source.mode {
             ReaderSourceMode::Revision => self.repaint_revision(reader, &mut source.revision),
             ReaderSourceMode::Strict => {
@@ -419,7 +431,7 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
                     status
                 }
             }
-            ReaderSourceMode::Closed => Status::NotFound,
+            ReaderSourceMode::MustReload | ReaderSourceMode::Closed => Status::NotFound,
         }
     }
 }
@@ -456,12 +468,16 @@ impl<
         owner.position(self.reader).shown
     }
     fn prepare(&mut self, owner: &mut ReaderOwnerState, focus: u32) -> MenuPreparation {
-        let status = perform(
+        // A cancelled list load says nothing about the book, so nothing latches:
+        // the reader keeps its page and the next action reloads (#199).
+        let Ok(status) = perform(
             self.reader,
             self.revision,
             PageRequest::Menu(focus),
             self.resources,
-        );
+        ) else {
+            return MenuPreparation { status: Status::Stale, valid: false };
+        };
         owner.menu_result(status);
         MenuPreparation { status, valid: status == Status::Ok && self.menu().info().valid }
     }

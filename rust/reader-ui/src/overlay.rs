@@ -154,6 +154,8 @@ pub fn render_reader_overlay(
                         failure_line.unwrap_or(b"")
                     } else if ui.notice == ReaderUiNotice::ChapterLocationUnresolved {
                         b"That chapter's location could not be found"
+                    } else if ui.notice == ReaderUiNotice::ChapterJumpTimedOut {
+                        b"That chapter took too long to open"
                     } else if fallback == newt_phased_reader::ContentsFallback::Capacity {
                         b"Contents too large; numbers shown."
                     } else if fallback == newt_phased_reader::ContentsFallback::Invalid {

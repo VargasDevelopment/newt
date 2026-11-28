@@ -47,8 +47,14 @@ enum Completion {
     Published,
     Failed(Status),
     VerificationPending,
+    /// A cancel (Back or the time budget) ended the action before it
+    /// published. It says nothing about the book (#199).
+    Cancelled,
 }
 impl PageWork {
+    pub(crate) const CANCELLED: Self = Self {
+        result: Completion::Cancelled,
+    };
     const CAPTURED: Self = Self {
         result: Completion::Captured,
     };
@@ -236,7 +242,9 @@ impl ExternalOwner {
         }
         let initial = initial_progress(saved, identity);
         self.tracker = ReadingTracker::new(initial);
-        let result = perform(reader, source, PageRequest::Open, pages);
+        // An open or restore has no page to keep yet, so a cancel ends it as
+        // a failure would.
+        let result = perform(reader, source, PageRequest::Open, pages).unwrap_or(Status::Stale);
         if result != Status::Ok {
             self.reject_open(reader, result);
             return false;
@@ -251,7 +259,7 @@ impl ExternalOwner {
             }
             locator = Locator::default();
         }
-        let (result, _, _) = if fallback {
+        let result = if fallback {
             self.locate(
                 reader,
                 source,
@@ -260,18 +268,16 @@ impl ExternalOwner {
                 false,
                 pages,
             )
+            .map(|(result, _, _)| result)
         } else {
-            (
-                perform(
-                    reader,
-                    source,
-                    PageRequest::Anchor(locator.spine, locator.character),
-                    pages,
-                ),
-                false,
-                locator.spine,
+            perform(
+                reader,
+                source,
+                PageRequest::Anchor(locator.spine, locator.character),
+                pages,
             )
-        };
+        }
+        .unwrap_or(Status::Stale);
         if result != Status::Ok {
             self.reject_open(reader, result);
             return false;
@@ -304,30 +310,30 @@ impl ExternalOwner {
         mut anchor: u32,
         backward: bool,
         pages: &mut P,
-    ) -> (Status, bool, u32) {
+    ) -> Result<(Status, bool, u32), Cancelled> {
         let mut skipped = 0;
         loop {
             if let Some(f) = self.known(spine) {
-                return (f.status, false, spine);
+                return Ok((f.status, false, spine));
             }
             let status = perform(
                 reader,
                 source,
                 PageRequest::Anchor(spine, anchor),
                 pages,
-            );
+            )?;
             if status != Status::NotFound || !reader.empty_chapter {
-                return (status, false, spine);
+                return Ok((status, false, spine));
             }
             if if backward {
                 spine == 0
             } else {
                 spine.saturating_add(1) >= reader.selection().spines
             } {
-                return (status, true, spine);
+                return Ok((status, true, spine));
             }
             if skipped == 8 {
-                return (status, false, spine);
+                return Ok((status, false, spine));
             }
             skipped += 1;
             if backward {
@@ -359,23 +365,20 @@ impl ExternalOwner {
         }
         let old = reader.info();
         let mut spine = failed.map_or(old.spine, |f| f.spine);
-        let (result, boundary, attempted) = if failed.is_none()
+        let turned = if failed.is_none()
             && (if next {
                 old.page + 1 < old.page_count
             } else {
                 old.page > 0
             }) {
             let target = if next { old.page + 1 } else { old.page - 1 };
-            (
-                perform(
-                    reader,
-                    source,
-                    PageRequest::Page(spine, target),
-                    &mut route,
-                ),
-                false,
-                spine,
+            perform(
+                reader,
+                source,
+                PageRequest::Page(spine, target),
+                &mut route,
             )
+            .map(|status| (status, false, spine))
         } else {
             if if next {
                 spine.saturating_add(1) >= reader.selection().spines
@@ -393,6 +396,10 @@ impl ExternalOwner {
                 !next,
                 &mut route,
             )
+        };
+        // A cancelled turn changes nothing: the reader keeps its page.
+        let Ok((result, boundary, attempted)) = turned else {
+            return false;
         };
         if boundary {
             if !next || failed.is_some() || self.state.readable_spines() <= old.spine + 1 {
@@ -447,7 +454,10 @@ impl ExternalOwner {
             return ChapterJumpOutcome::Failed;
         }
         if !reader.chapter_menu().row(chapter).valid {
-            let menu_status = perform(reader, source, PageRequest::Menu(chapter), pages);
+            // A cancelled row load is a cancelled jump, not an unresolved row.
+            let Ok(menu_status) = perform(reader, source, PageRequest::Menu(chapter), pages) else {
+                return ChapterJumpOutcome::Failed;
+            };
             self.state.menu_result(menu_status);
             if menu_status != Status::Ok {
                 return ChapterJumpOutcome::Unresolved;
@@ -468,12 +478,17 @@ impl ExternalOwner {
         let status = if let Some(f) = self.known(spine) {
             f.status
         } else {
-            perform(
+            // A cancelled jump changes nothing: no status, no remembered
+            // chapter failure, and the reader keeps its page.
+            let Ok(status) = perform(
                 reader,
                 source,
                 PageRequest::Chapter(spine, toc),
                 pages,
-            )
+            ) else {
+                return ChapterJumpOutcome::Failed;
+            };
+            status
         };
         self.status(status);
         if status != Status::Ok {
@@ -507,12 +522,16 @@ impl ExternalOwner {
         let p = reader.info();
         let mut status = pages.repaint(reader, source);
         if status == Status::Unsupported {
-            status = perform(
+            let Ok(page) = perform(
                 reader,
                 source,
                 PageRequest::Page(p.spine, p.page),
                 pages,
-            );
+            ) else {
+                self.tracker.pause(now);
+                return false;
+            };
+            status = page;
         }
         self.status(status);
         if status != Status::Ok {
@@ -556,16 +575,21 @@ impl<S: BookSource, P: OwnerPages<S>> OwnerPages<S> for PendingPages<'_, P> {
 fn completed(status: Status) -> PageWork {
     if status == Status::Ok { PageWork::PUBLISHED } else { PageWork::failed(status) }
 }
+/// A cancel that ended a page action before it published. It is never a
+/// failure to latch or remember: each caller of `perform` decides what it
+/// means, and for an open reader that is "nothing happened" (#199).
+pub(crate) struct Cancelled;
 fn perform<S: BookSource, P: OwnerPages<S>>(
     reader: &mut PhasedReader<'_, '_>, source: &mut S, request: PageRequest, pages: &mut P,
-) -> Status {
-    match pages.execute(reader, source, request).result {
+) -> Result<Status, Cancelled> {
+    Ok(match pages.execute(reader, source, request).result {
         Completion::Published => Status::Ok,
         Completion::Failed(status) => status,
         Completion::VerificationPending => Status::NotFound,
+        Completion::Cancelled => return Err(Cancelled),
         // Captured is consumed by the concrete route before it reaches policy.
         Completion::Captured => unreachable!("unpublished owner work"),
-    }
+    })
 }
 /// Actual direct external route. OperationReader drops before returning to
 /// perform; parse and frame may share backing only via the caller's safe lender.

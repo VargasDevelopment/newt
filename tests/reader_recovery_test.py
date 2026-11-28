@@ -8,6 +8,7 @@ legacy_nvs_test.py, and has its own gate phase so neither phase nears its CPU
 budget.
 """
 from pathlib import Path
+import shutil
 import signal
 import sys
 
@@ -17,6 +18,18 @@ sys.path.insert(0, str(ROOT / 'tools'))
 import gate_tier  # noqa: E402
 
 legacy = None
+
+# #199: these live in the reader-ui crate, so each needs its own crate graph.
+CRATE_CONTROLS = (
+    # A reload that reports Ready without reloading leaves the source with no read path.
+    ('skip-reload', 'reader-ui/src/physical_source.rs',
+     '|| self.reload_closed_receipt(self.digest) {', '|| true {',
+     'Contents after a cancelled list load reloads the receipt and rebuilds the list'),
+    # A failed reload read as a fresh cancel keeps a changed book open.
+    ('changed-book-open', 'reader-ui/src/physical_source.rs',
+     'if self.revision.cancelled() {', 'if true {',
+     'a changed receipt after a cancel gives Stale and closes the reader'),
+)
 
 
 def reader_recovery(run, workspace, graph, objects, support, *, controls):
@@ -53,6 +66,28 @@ def reader_recovery(run, workspace, graph, objects, support, *, controls):
 
     checks.check_short_turn(recorded, flags, workspace, out, executable, controls=controls)
     checks.check_recovery(recorded, flags, workspace, out, executable, controls=controls)
+    if controls:
+        crate_controls(run, workspace, support, build, [fake, *objects], recorded)
+
+
+def crate_controls(run, workspace, support, build, inputs, recorded):
+    """One mutant tree and target serve every crate control, so after the first
+    graph each control rebuilds only reader-ui and the crates above it. The
+    sealed workspace and its graph stay unmutated."""
+    mutant = run.output / 'crate-controls' / 'rust'
+    shutil.copytree(workspace, mutant)
+    for name, file, original, mutation, witness in CRATE_CONTROLS:
+        source = mutant / file
+        text = source.read_text()
+        support.require(text.count(original) == 1, 'one causal mutation anchor: ' + name)
+        source.write_text(text.replace(original, mutation, 1))
+        graph = legacy.startup_graph(run, mutant, support, 'crate-controls-target')
+        flags = [arg for arg in legacy.link_flags(build, run, graph, inputs, control=True) if arg != '-Dwarnings']
+        program = run.output / 'reader-recovery' / name
+        run.run([*flags, mutant / 'tests/reader_short_turn/host.rs', '-o', program], mutant)
+        recorded([program, '--cache-only-cancel'], witness=witness)
+        source.write_text(text)
+    print(f'PASS {len(CRATE_CONTROLS)} reader-ui cancel-reload controls rejected')
 
 
 def prove(run, workspace, support):

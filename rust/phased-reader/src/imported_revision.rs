@@ -28,6 +28,12 @@ pub trait RevisionStorage {
     fn finish_deferred_path_checks(&mut self) -> bool {
         true
     }
+    /// Whether this operation was cancelled (Back or the time budget), so a
+    /// refused freshness read says nothing about the book. Memory stores
+    /// never cancel.
+    fn cancelled(&mut self) -> bool {
+        false
+    }
     fn load(&mut self, bytes: &mut u32) -> bool;
     fn begin(&mut self, bytes: u32) -> bool;
     fn read(&mut self, offset: u32, output: &mut [u8]) -> bool;
@@ -159,6 +165,9 @@ impl<'a> ImportedRevision<'a> {
     }
     pub fn finish_deferred_path_checks(&mut self) -> bool {
         self.core.store.finish_deferred_path_checks()
+    }
+    pub fn cancelled(&mut self) -> bool {
+        self.core.store.cancelled()
     }
     /// Native rejectChangedReceipt closes even a committed descriptor.
     pub fn close_receipt(&mut self) {

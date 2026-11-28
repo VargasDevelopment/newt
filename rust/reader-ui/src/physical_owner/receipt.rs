@@ -12,11 +12,33 @@ pub(super) fn finish_reader_action(reader: &mut PhasedReader<'_, '_>, source: &m
         source.revision.close_receipt();
         source.mode = ReaderSourceMode::Closed;
     }
+    // A cancel (Back or the time budget) refuses the final freshness read and
+    // every read after it, and leaves this receipt unreadable, so it says
+    // nothing about the book. A failed action published nothing, so the reader
+    // keeps its page. The receipt closes, and the next action reloads it under
+    // the same digest before it runs (#199). A page published from unchecked
+    // reads still closes the reader below.
+    if request != PageRequest::Open && matches!(work.result, Completion::Failed(_))
+        && reader.opened() && source.revision.cancelled() {
+        let _ = finish_receipt_checks(&mut source.revision, request);
+        source.revision.close_receipt();
+        source.mode = ReaderSourceMode::MustReload;
+        return PageWork::CANCELLED;
+    }
     let work = finish_receipt_action(reader, &mut source.revision, request, work);
     if !reader.opened() && work.result != Completion::VerificationPending {
         source.mode = ReaderSourceMode::Closed;
     }
     work
+}
+
+/// Ends the checks begin_receipt_action started; true when the receipt stayed fresh.
+fn finish_receipt_checks(revision: &mut ImportedRevision<'_>, request: PageRequest) -> bool {
+    if matches!(request, PageRequest::Chapter(_, toc) if toc != u16::MAX) {
+        revision.finish_deferred_path_checks()
+    } else {
+        revision.finish_immutable_read()
+    }
 }
 
 pub(super) fn begin_receipt_action(revision: &mut ImportedRevision<'_>, request: PageRequest) {
@@ -33,11 +55,7 @@ pub(super) fn finish_receipt_action(
     work: PageWork,
 ) -> PageWork {
     let fragment = matches!(request, PageRequest::Chapter(_, toc) if toc != u16::MAX);
-    let fresh = if fragment {
-        revision.finish_deferred_path_checks()
-    } else {
-        revision.finish_immutable_read()
-    };
+    let fresh = finish_receipt_checks(revision, request);
     if !fresh && (fragment || work.result == Completion::Published) {
         reject_changed_receipt(reader, revision);
         return PageWork::failed(Status::Stale);

@@ -79,7 +79,7 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
     pub(super) fn execute_pending(&mut self, reader: &mut PhasedReader<'_, '_>,
         source: &mut PendingReaderSource<'_, '_>, request: PageRequest) -> PageWork {
         if source.verified { return self.execute_reader(reader, source.source, request); }
-        if matches!(source.source.mode, ReaderSourceMode::Closed) {
+        if matches!(source.source.mode, ReaderSourceMode::Closed | ReaderSourceMode::MustReload) {
             return PageWork::failed(Status::NotFound);
         }
         begin_receipt_action(&mut source.source.revision, request);

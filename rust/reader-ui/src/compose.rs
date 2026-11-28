@@ -263,6 +263,7 @@ fn compose_reader_ui_with(
     let failed_jump = matches!(
         ui.notice,
         ReaderUiNotice::ChapterLocationUnresolved | ReaderUiNotice::ChapterJumpFailed
+            | ReaderUiNotice::ChapterJumpTimedOut
     );
     let retained = !chapters || !failed_jump || menu.as_ref().is_some_and(|menu| menu.info().valid);
     let label = if ui.notice == ReaderUiNotice::BookChanged {

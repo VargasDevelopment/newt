@@ -36,6 +36,8 @@ pub enum ReaderUiNotice {
     FinishSaveFailed,
     FinishUnconfirmed,
     FinishOpening,
+    /// A Contents jump ran out of time; the reader kept its page (#199).
+    ChapterJumpTimedOut,
 }
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[repr(u8)]

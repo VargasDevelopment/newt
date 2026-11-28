@@ -59,6 +59,10 @@ impl<N: Native> RevisionStorage for SdRevisionStorage<'_, N> {
     fn finish_deferred_path_checks(&mut self) -> bool {
         SdRevisionStorage::finish_deferred_path_checks(self)
     }
+    fn cancelled(&mut self) -> bool {
+        // The receipt port has no producer, so only the route's cancel refuses it.
+        !self.file.operation().allowed()
+    }
 
     fn load(&mut self, bytes: &mut u32) -> bool {
         *bytes = 0;
