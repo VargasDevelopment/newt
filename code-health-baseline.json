@@ -9,7 +9,7 @@
   "large_files": {},
   "resources": {
     "regional-dev-usb": {
-      "flash_bytes": 4069328,
+      "flash_bytes": 4069568,
       "ram_bytes": 124096,
       "wifi_lent_bytes": 22528,
       "stack_bytes": {
@@ -28,11 +28,11 @@
   },
   "records": {
     "flash_bytes": {
-      "source_revision": "d50e60be5e7beef13acf1483a351de6024d5c0da",
-      "before": 4098176,
-      "after": 4069328,
-      "reason": "Revert #168 resume-point capture and restore (R2 #202, R3 #208): owner decision, cost not justified by a user-facing outcome. Clean regional DEV USB build saves 28,848 B. RAM 124,096 to 124,096 B, RTC 300 to 300 B, lent Wi-Fi RAM 22,528 to 22,528 B.",
-      "reviewer": "Lead"
+      "source_revision": "729441be8c157a76dd60d30087104db4078de919",
+      "before": 4069328,
+      "after": 4069568,
+      "reason": "Owner-approved What's new entry for v0.8.0: page turns are fast again in books started before updating (#217), and Contents jumps deep into very long chapters work (#188). It adds a 12 B date and two lines of 63 B and 68 B. The clean pinned regional DEV USB build at 729441be measures 4,069,568 B against the 4,069,328 B ceiling recorded at d50e60be (+240 B padded image). Usable app space 7,016,448 B, with 2,946,880 B remaining. RAM 124,096 to 124,096 B, RTC 300 to 300 B, lent Wi-Fi RAM 22,528 to 22,528 B. No selected stack ceiling failed.",
+      "reviewer": "Lead review pending"
     },
     "ram_bytes": {
       "source_revision": "af09edbda9d8a7aed153ba1abe0723e5edf19513",

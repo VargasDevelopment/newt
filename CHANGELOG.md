@@ -15,6 +15,15 @@ Source-import closure for PR #16: immutable checkpoint
 authorship and subjects through an explicit bounded frozen-source import exception. New integration commits remain strictly conventional;
 no firmware version, tag or installed image is changed by that closure.
 
+## v0.8.0
+
+### Feat
+- **reader**: restore verified resume points in background page-cache fills (#168) (#208)
+- **reader**: capture resume points into interior v4 cache segments (#168) (#202)
+### Fix
+- **reader**: name Pages caches by a new engine revision after the v0.7.0 envelope change (#217) (#218)
+- **reader**: give each pass of a Contents jump its own open budget (#188) (#201)
+
 ## v0.7.2
 
 ### Fix
