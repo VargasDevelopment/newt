@@ -134,7 +134,7 @@ def check_recovery(run, command, workspace, out, positive, *, controls):
     fixtures.write_run_budget(dense)
     upgrade = run([positive, dense, '--cache-upgrade'])
     assert 'PASS old Pages data misses, saved content resumes, and only Pages rebuilds' in upgrade
-    assert 'PASS previous-revision Pages stay untouched, saved content resumes, and Pages rebuild under new names' in upgrade
+    assert 'PASS v0.7.2 and v0.8.0 Pages stay untouched, saved content resumes, and Pages rebuild under new names' in upgrade
     resume = run([positive, dense, '--boot-resume'])
     assert 'PASS boot restore policy reopens sleep and power-on pages under the durable settings' in resume
     pictures = out / 'fixtures/pictures.epub'
