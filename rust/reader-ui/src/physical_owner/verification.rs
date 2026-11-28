@@ -67,26 +67,14 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
         if request == PageRequest::Open && work.result != Completion::Published {
             reader.close();
         }
-        // As a receipt source's cancel (finish_reader_action): a cancelled
-        // action says nothing about the book, and this view reads nothing
-        // until the owner hashes it again, in this loan or the next.
-        if request != PageRequest::Open && reader.opened() && !(source.allowed)()
-            && matches!(work.result, Completion::Failed(_) | Completion::Cancelled) {
-            source.close_after_cancel();
-            return PageWork::CANCELLED;
-        }
         work
     }
 
     pub(super) fn repaint_strict(&mut self, reader: &mut PhasedReader<'_, '_>,
         source: &mut StrictOperations<'_>) -> Result<Status, Cancelled> {
         if !source.source_verified() { return Ok(Status::Stale); }
-        let status = self.panel.with_frame(|frame| reader.repaint(source, frame)).unwrap_or_else(|e| e);
-        if !matches!(status, Status::Ok | Status::Unsupported) && reader.opened() && !(source.allowed)() {
-            source.close_after_cancel();
-            return Err(Cancelled);
-        }
-        Ok(status)
+        // The no-session route keeps main's behavior: a cancel is a status.
+        Ok(self.panel.with_frame(|frame| reader.repaint(source, frame)).unwrap_or_else(|e| e))
     }
 
     pub(super) fn execute_pending(&mut self, reader: &mut PhasedReader<'_, '_>,

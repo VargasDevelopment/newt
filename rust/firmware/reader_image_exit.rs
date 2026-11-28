@@ -131,25 +131,17 @@ impl Runtime {
                                 };
                                 let strict = if allow_cancelled {
                                     StrictSource::for_cancelled_exit(raw, selection,
-                                        &mut memory.runtime.owner, &memory.runtime.reader)
+                                        &memory.runtime.owner, &mut memory.runtime.reader)
                                 } else {
                                     StrictSource::for_live_reader(raw, selection,
-                                        &mut memory.runtime.owner, &memory.runtime.reader)
+                                        &memory.runtime.owner, &mut memory.runtime.reader)
                                 }.ok_or(Error::Io)?;
                                 let allowed = || !newt_native_storage::Authority::cancelled(&cancel);
                                 let mut strict = strict.with_reopen_authorizer(&mut authorize, &allowed);
-                                // Every exit passes the gate before it saves: it probes
-                                // this loan's descriptor and hashes again what a cancel
-                                // closed; a failed book stays unsaved. This authorizer
-                                // hashes through the SDK and takes no scratch.
-                                strict.reload_closed(&mut memory.runtime.reader, &mut []);
-                                let progress = super::drive::RunLoan { memory: &mut *memory, ui: reader_ui,
-                                    checkpoint, statistics, recovery, accepted: &mut accepted,
-                                    metadata: exit_metadata, flags: None, settings }
-                                    .finish(ports, &mut pages, &strict, digest, zone, now, sleeping,
-                                        allow_cancelled, trace);
-                                memory.runtime.owner.settle_strict_loan(strict);
-                                Ok(progress)
+                                Ok(super::drive::RunLoan { memory, ui: reader_ui, checkpoint, statistics, recovery,
+                                    accepted: &mut accepted, metadata: exit_metadata, flags: None, settings }
+                                    .finish(ports, &mut pages, &mut strict, digest, zone, now, sleeping,
+                                        allow_cancelled, trace))
                             }).map_err(|_| Error::Io)?
                         };
                         let closed = pages_state.close(&mut pages_native, &route);

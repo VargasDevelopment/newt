@@ -3,13 +3,13 @@
 
 - Back that cancels a live turn exits Home and saves the shown page to SD.
 - A stalled turn, with or without a session, still lets Back and Power exit and save.
-- Without a session, a stalled cross-chapter turn keeps the shown page and the
-  next turn moves; one that then fails closes the owner, and Back and Power
-  exit through the closed exit and save (#199).
+- With a session, a stalled cross-chapter turn keeps the shown page and the
+  next turn moves (#199, #228).
 - A turn into a short cached chapter shows no Loading screen.
 - A Contents jump that runs out of time keeps the reader open on its page,
-  and Back then saves it, over a sealed receipt, the strict fallback or no
-  session (#199).
+  and Back then saves it, over a sealed receipt or the strict fallback (#199).
+- A Contents load or jump that runs out of time waits on Contents for a
+  press, so a second stall can't close the reader or cost the book index (#199).
 - Back during a slow Contents jump or a Contents list load goes Home and
   saves the shown page; the exit is the first to reload the source the
   cancel closed (#199).
@@ -81,7 +81,8 @@ def cold_boot(directory, conf=None):
     preview_driver.fresh(directory)
     (directory / 'retained.bin').unlink(missing_ok=True)
     preview_driver.write_conf(directory, {'telemetry': 'sample', 'card.back': '', 'card.slow': '',
-                                          'card.after_refresh': '', 'card.button': '', **(conf or {})})
+                                          'card.slow.count': '', 'card.after_refresh': '', 'card.button': '',
+                                          **(conf or {})})
 
 
 def run(binary, directory, keys, conf=None, *, from_seed=True):
@@ -180,9 +181,9 @@ def stalled_turn_exits_and_saves(binary):
 
 
 def timed_out_turn_keeps_page(binary):
-    """Without a session, a cross-chapter turn that runs out of time keeps the
+    """With a session, a cross-chapter turn that runs out of time keeps the
     reader on the shown page, and the next turn moves into the next chapter
-    (#199). With a session it still closes the reader (#228)."""
+    (#199, #228)."""
     with tempfile.TemporaryDirectory(prefix='newt-stall-turn-') as td:
         d = Path(td)
         seed(binary, d, 'healthy', 0)
@@ -196,34 +197,6 @@ def timed_out_turn_keeps_page(binary):
         got = diag_of(run(binary, d, TO_CHAPTER_END + (CROSS_CHAPTER_TURN, CROSS_CHAPTER_TURN), stall))
         if got.get('reader_open') != '1' or int(got['actual_spine']) != int(shown['actual_spine']) + 1:
             return f'the turn after a timed-out one did not reach the next chapter ({got})'
-
-
-def timed_out_close_exits_and_saves(binary):
-    """A timed-out turn whose operation then fails closes the owner. Back and
-    Power after it exit through the closed exit, not a new live loan, and save
-    the shown page."""
-    for name, exit_key in (('Back', BACK), ('Power', POWER)):
-        with tempfile.TemporaryDirectory(prefix=f'newt-stall-close-{name.lower()}-') as td:
-            d = Path(td)
-            seed(binary, d, 'healthy', 0)
-            shown = diag_of(run(binary, d, TO_CHAPTER_END))
-            want = [shown['actual_spine'], shown['actual_character']]
-            # The stall times the turn out; the refused cache close after the
-            # turn's key then fails its operation.
-            faults = {'card.slow': '/Books/', 'card.after_refresh': first_refresh_after(binary, d, TO_CHAPTER_END),
-                      'store.refuse': 'card-close:/newt-sd/Newt/Cache',
-                      'store.refuse.after': str(len(TO_CHAPTER_END) + 1)}
-            closed = diag_of(run(binary, d, TO_CHAPTER_END + (CROSS_CHAPTER_TURN,), faults))
-            assert closed.get('reader_open') == '0', f'the failed timed-out turn left the owner open ({closed})'
-            log = run(binary, d, TO_CHAPTER_END + (CROSS_CHAPTER_TURN, exit_key), faults)
-            exit_kind = (d / 'exit.txt').read_text().strip() if (d / 'exit.txt').exists() else ''
-            if exit_key == BACK and screen_of(log) != HOME:
-                return f'Back after a closed timed-out turn did not go Home (screen={screen_of(log)})'
-            if exit_key == POWER and exit_kind != 'sleep':
-                return f'Power after a closed timed-out turn did not sleep (exit={exit_kind!r})'
-            got = reopened(binary, d)
-            if list(got[1:]) != want:
-                return f'{name} after a closed timed-out turn: cold reload restored {got[1:]} instead of {want}'
 
 
 def library_cancel_goes_home_and_keeps_book(binary):
@@ -325,8 +298,8 @@ def timed_out_jump_keeps_page(binary, *, strict=False):
 
 def back_during_slow_jump_saves_page(binary):
     """Back during a Contents jump cancels it and goes Home, and a cold boot
-    restores the shown page. Over the strict route the cancel closes the
-    source, so the exit is its first reader and its own reload lets it save."""
+    restores the shown page. The cancel closes the receipt, so the exit is its
+    first reader and its own reload lets it save."""
     with tempfile.TemporaryDirectory(prefix='newt-jump-back-') as td:
         d = Path(td)
         book, saved, page, to_row = jump_setup(binary, d)
@@ -356,6 +329,36 @@ def back_during_contents_load_saves_page(binary):
             return f'Back during a Contents load: a cold boot restored {got} instead of the shown page {[book, *page]}'
 
 
+def timed_out_contents_waits_for_press(binary):
+    """A Contents load or jump that runs out of time stays on Contents with its
+    notice until a press: no paint loads Contents again on its own. With a second stall
+    waiting for that load, the press still takes one budget, the reader stays
+    open and the book index stays on the card (#199)."""
+    with tempfile.TemporaryDirectory(prefix='newt-contents-timeout-') as td:
+        d = Path(td)
+        book, saved, page, to_row = jump_setup(binary, d)
+        index = lambda card: sorted(p.name for p in (card / 'Newt/Cache/Index').glob('*'))
+        kept = index(d / 'seed-card')
+        assert kept, 'the seeded card has no book index'
+        for name, keys in (('load', to_row[:-2] + (CONFIRM,)), ('jump', to_row + (CONFIRM,))):
+            # The first stall on the index that runs the press out of time.
+            for after in range(1, 64):
+                stall = {'card.slow': '/Index/', 'card.after_refresh': str(after)}
+                if int(ACTION_TOTAL.findall(run(binary, d, keys, stall))[-1]) >= BUDGET_US:
+                    break
+            else:
+                raise AssertionError(f'no index stall runs the Contents {name} out of time')
+            log = run(binary, d, keys, {**stall, 'card.slow.count': '2'})
+            total = sum(int(us) for us in ACTION_TOTAL.findall(log))
+            shown = diag_of(log)
+            if total >= 2 * BUDGET_US:
+                return f'a timed-out Contents {name} loaded Contents again on its own ({total} us)'
+            if screen_of(log) != READER or shown.get('reader_open') != '1':
+                return f'a timed-out Contents {name} left the reader (screen={screen_of(log)}, {shown})'
+            if index(d / 'card') != kept:
+                return f'a timed-out Contents {name} lost the book index ({index(d / "card")})'
+
+
 def strict_timed_out_jump_keeps_page(binary):
     """The same over the strict fallback, whose reload hashes the book again."""
     return timed_out_jump_keeps_page(binary, strict=True)
@@ -383,7 +386,6 @@ EARLY_CLEARED_CANCEL = (
     '                self.reflow_anchor = None;\n'
     '                self.closed_exit = ClosedExit::None;',
 )
-# A timed-out exit takes a new live-reader loan instead of the closed exit.
 TIMED_OUT_EXIT_TAKES_LOAN = (
     'reader_image_action.rs',
     '|| (self.closed_exit == ClosedExit::TimedOut && matches!(action, Action::Back | Action::Sleep)) {',
@@ -427,17 +429,18 @@ CANCEL_READS_AS_CHANGED = (
     '!self.file.operation().allowed()',
     'false',
 )
+# #199: a timed-out Contents load or jump without its timeout notice, so the
+# next paint, which keys on that notice, loads Contents again on its own.
+CONTENTS_TIMEOUT_RELOADS = (
+    'reader_image_action.rs',
+    'self.reader_ui.notice = ReaderUiNotice::ChapterJumpTimedOut;',
+    'let _ = ReaderUiNotice::ChapterJumpTimedOut;',
+)
 # #199: the exit after a cancel leaves the closed receipt unread, so it can't save.
 EXIT_SKIPS_RELOAD = (
     'reader_image_exit.rs',
     'revision.reload_closed(digest);',
     'let _ = digest;',
-)
-# #199: the no-session exit leaves unhashed what a cancel closed, so it can't save.
-STRICT_EXIT_SKIPS_RELOAD = (
-    'reader_image_exit.rs',
-    'strict.reload_closed(&mut memory.runtime.reader, &mut []);',
-    'let _ = &mut strict;',
 )
 # #199: the exit after a cancel leaves the closed source unread, so Back can't save.
 LIBRARY_KEEPS_CANCEL_BACK = (
@@ -462,27 +465,23 @@ def main():
     check(short_cached_chapter_turns_without_loading, binary)
     check(timed_out_jump_keeps_page, binary)
     check(strict_timed_out_jump_keeps_page, rust_preview.control([SEAL_FAILS], optimize=False))
-    no_session = rust_preview.control([NO_SESSION], optimize=False)
-    check(timed_out_jump_keeps_page, no_session)
     check(back_during_slow_jump_saves_page, binary)
-    check(back_during_slow_jump_saves_page, no_session)
     check(back_during_contents_load_saves_page, binary)
-    check(back_cancels_live_turn_and_saves, no_session)
     check(stalled_turn_exits_and_saves, binary)
-    check(stalled_turn_exits_and_saves, no_session)
-    check(timed_out_turn_keeps_page, no_session)
-    check(timed_out_close_exits_and_saves, no_session)
+    check(stalled_turn_exits_and_saves, rust_preview.control([NO_SESSION], optimize=False))
+    check(timed_out_turn_keeps_page, binary)
+    check(timed_out_contents_waits_for_press, binary)
     if not negative_controls(__file__):
         return
     for case, edits, label in (
         (back_cancels_live_turn_and_saves, [EARLY_CLEARED_CANCEL], 'early-cleared-cancel'),
-        (timed_out_close_exits_and_saves, [NO_SESSION, TIMED_OUT_EXIT_REFUSED], 'timed-out-exit-refused'),
-        (timed_out_close_exits_and_saves, [NO_SESSION, TIMED_OUT_EXIT_TAKES_LOAN], 'timed-out-exit-takes-loan'),
+        (stalled_turn_exits_and_saves, [NO_SESSION, TIMED_OUT_EXIT_TAKES_LOAN], 'timed-out-exit-takes-loan'),
+        (stalled_turn_exits_and_saves, [NO_SESSION, TIMED_OUT_EXIT_REFUSED], 'timed-out-exit-refused'),
         # With a session a stalled turn keeps the reader, and its producer saves
         # the page before Back, so the session's exit controls run where only
         # the exit can save.
         (back_cancels_live_turn_and_saves, [STOPPED_EXIT_SKIPS_CHECKPOINT], 'session-exit-skips-checkpoint'),
-        (back_cancels_live_turn_and_saves, [NO_SESSION, STOPPED_EXIT_SKIPS_CHECKPOINT], 'strict-exit-skips-checkpoint'),
+        (stalled_turn_exits_and_saves, [NO_SESSION, STOPPED_EXIT_SKIPS_CHECKPOINT], 'strict-exit-skips-checkpoint'),
         (timed_out_jump_keeps_page, [TIMED_OUT_CLEARED_WHILE_OPEN], 'timed-out-cleared-while-open'),
         (library_cancel_goes_home_and_keeps_book, [LIBRARY_KEEPS_CANCEL_BACK], 'library-keeps-cancel-back'),
         (library_cancel_queue_keeps_later_screen, [CANCEL_BACK_EVERYWHERE], 'cancel-back-everywhere'),
@@ -490,7 +489,7 @@ def main():
          'loading-every-cross-chapter-turn'),
         (timed_out_jump_keeps_page, [CANCEL_READS_AS_CHANGED], 'cancel-reads-as-changed'),
         (back_during_contents_load_saves_page, [EXIT_SKIPS_RELOAD], 'exit-skips-reload'),
-        (back_during_slow_jump_saves_page, [NO_SESSION, STRICT_EXIT_SKIPS_RELOAD], 'strict-exit-skips-reload'),
+        (timed_out_contents_waits_for_press, [CONTENTS_TIMEOUT_RELOADS], 'contents-timeout-reloads'),
     ):
         problem = case(rust_preview.control(edits, optimize=False))
         if not problem:

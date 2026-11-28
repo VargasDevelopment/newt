@@ -130,14 +130,6 @@ macro_rules! compose {
     };
 }
 
-/// The verification authority a no-session open leaves with its owner: that
-/// open's first loan comes from its index pass over the hashed descriptor.
-fn seed_strict(owner: &mut ExternalOwner, raw: &mut dyn BookSource,
-    indexed: &newt_phased_reader::index_build::Indexed) {
-    let mut authorize = |_: &mut dyn BookSource, _: &Digest, _: &mut [u8], _: &dyn Fn() -> bool| false;
-    owner.settle_strict_loan(StrictSource::from_indexed(raw, indexed).with_reopen_authorizer(&mut authorize, &|| true));
-}
-
 /// Every book index file on the card, with its durable bytes.
 fn index_files(card: &card::Card) -> Vec<(String, Vec<u8>)> {
     card.0.borrow().model.files.iter().filter(|(path, _)| path.contains("/Index/"))
@@ -448,9 +440,8 @@ pub fn check() {
                 let mut selection = SelectionAuthority::new();
                 assert!(selection.publish_candidate(c"generated.epub", digest, &mut || {}, &mut || {}));
                 let mut raw_strict = Source(epub.clone());
-                seed_strict(&mut owner, &mut raw_strict, &indexed);
                 let mut authorize = |_: &mut dyn BookSource, _: &Digest, _: &mut [u8], _: &dyn Fn() -> bool| true;
-                let mut strict = StrictSource::for_live_reader(&mut raw_strict, &selection, &mut owner, &reader)
+                let mut strict = StrictSource::for_live_reader(&mut raw_strict, &selection, &owner, &mut reader)
                     .expect("live strict source")
                     .with_reopen_authorizer(&mut authorize, &|| true);
                 reader.reset_layout_pages();
@@ -467,7 +458,6 @@ pub fn check() {
                 );
                 assert_eq!(reader.info(), page0);
                 assert_eq!(reader.last_layout_pages(), 0, "strict cache_only cold miss must lay out zero pages");
-                owner.settle_strict_loan(strict);
             }
 
             // 1d. Populate chapter 0 page cache via the real producer; cache_only hit must advance
@@ -732,49 +722,6 @@ pub fn check() {
             }
             assert_eq!(reader.info(), page2);
 
-            // 2n. The no-session route lends a new strict view for each operation. A
-            //     cancelled jump keeps the page, and the next loan hashes the book again
-            //     before its repaint reads, however short each loan is.
-            let hashes = core::cell::Cell::new(0u32);
-            let mut authorize = |_: &mut dyn BookSource, expected: &Digest, _: &mut [u8], allowed: &dyn Fn() -> bool| {
-                hashes.set(hashes.get() + 1);
-                allowed() && *expected == digest
-            };
-            let allowed = || !cancel_flag.get();
-            let mut selection = SelectionAuthority::new();
-            assert!(selection.publish_candidate(c"generated.epub", digest, &mut || {}, &mut || {}));
-            seed_strict(&mut owner, &mut Source(epub.clone()), &indexed);
-            {
-                let mut raw = CancelSource {
-                    bytes: epub.clone(), cancel: &cancel_flag, cancel_after: &cancel_after, reads: &reads,
-                    corrupt_at: &corrupt_at,
-                };
-                let mut strict = StrictSource::for_live_reader(&mut raw, &selection, &mut owner, &reader)
-                    .expect("live strict source").with_reopen_authorizer(&mut authorize, &allowed);
-                jump_to_middle!(owner, reader, strict, ui, settings, ports, 2_700, { cancel_after.set(2); });
-                assert!(cancel_flag.replace(false), "the no-session jump must be cancelled");
-                assert!(owner.state.status() == Status::Ok && reader.opened() && reader.info() == page2,
-                    "a cancelled no-session jump keeps the reader and its page");
-                owner.settle_strict_loan(strict);
-            }
-            {
-                let mut raw = CancelSource {
-                    bytes: epub.clone(), cancel: &cancel_flag, cancel_after: &cancel_after, reads: &reads,
-                    corrupt_at: &corrupt_at,
-                };
-                let mut strict = StrictSource::for_live_reader(&mut raw, &selection, &mut owner, &reader)
-                    .expect("live strict source").with_reopen_authorizer(&mut authorize, &allowed);
-                ui.panel = ReaderPanel::Page;
-                ui.notice = ReaderUiNotice::None;
-                let before = hashes.get();
-                let painted = ports.paint_ui(&mut reader, &mut strict, &mut owner, &mut ui, 2_750);
-                assert_eq!(hashes.get(), before + 1,
-                    "the next no-session loan hashes the book again before its repaint reads");
-                assert!(painted.ready() && owner.state.opened() && reader.info() == page2,
-                    "the no-session repaint after a cancelled jump draws the page");
-                owner.settle_strict_loan(strict);
-            }
-
             // 2r. The same jump then runs: the cancel was not kept as a chapter failure.
             jump_to_middle!(owner, reader, source, ui, settings, ports, 3_000);
             let mid = reader.info();
@@ -849,11 +796,11 @@ pub fn check() {
             assert!(selection.publish_candidate(c"generated.epub", digest, &mut || {}, &mut || {}));
             let mut raw_strict = Source(epub.clone());
             assert!(
-                StrictSource::for_live_reader(&mut raw_strict, &selection, &mut owner, &reader).is_none(),
+                StrictSource::for_live_reader(&mut raw_strict, &selection, &owner, &mut reader).is_none(),
                 "for_live_reader must reject cancelled owner state"
             );
             assert!(
-                StrictSource::for_cancelled_exit(&mut raw_strict, &selection, &mut owner, &reader).is_some(),
+                StrictSource::for_cancelled_exit(&mut raw_strict, &selection, &owner, &mut reader).is_some(),
                 "for_cancelled_exit must accept cancelled owner state with progress"
             );
 
@@ -996,12 +943,9 @@ pub fn check() {
     check_cross_chapter_cache_only(600, true);
     check_cross_chapter_cache_only(1_600, false);
     check_strict_cancel();
-    no_session_authority::check_timed_out_exit(true);
-    no_session_authority::check_timed_out_exit(false);
 
     println!("PASS cache_only cold-miss/hit and cancelled live exit save/reload");
-    println!("PASS a cancelled Contents load or jump keeps the reader, its page and book index; the next repaint, turn, Contents and jump reload the receipt (or hash a strict source again) and run; a changed receipt after a cancel closes");
-    println!("PASS without a session, a timed-out exit hashes the book again: a changed book saves nothing, now or later in the open");
+    println!("PASS a cancelled Contents load or jump keeps the reader, its page and book index; the next repaint, turn, Contents and jump reload the receipt (or hash a strict fallback again) and run; a changed receipt after a cancel closes");
 }
 
 /// #199: the strict fallback opens when the receipt can't seal, so it has no
@@ -1412,5 +1356,3 @@ fn check_cross_chapter_cache_only(paragraphs: usize, corrupt: bool) {
         .unwrap();
 }
 
-#[path = "no_session_authority.rs"]
-mod no_session_authority;

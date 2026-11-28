@@ -10,7 +10,6 @@ mod sealed {
 mod operations;
 pub use operations::{PendingReaderSource, SourceAuthorizer, SourceOperations, StrictOperations,
     StrictSource};
-pub(crate) use operations::StrictCheck;
 
 /// Only actual revision owners and short, explicitly bound source views enter
 /// PhysicalOwner's private page route.

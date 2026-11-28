@@ -105,9 +105,6 @@ pub struct ExternalOwner {
     current: Option<ReaderChapterFailure>,
     failure_shown: bool,
     failed_malformed: bool,
-    /// The strict open book's one verification authority, held between short
-    /// loans: each loan takes it, and settling the loan gives it back (#199).
-    pub(crate) strict: crate::physical_source::StrictCheck,
 }
 impl Default for ExternalOwner {
     fn default() -> Self {
@@ -120,16 +117,10 @@ impl Default for ExternalOwner {
             current: None,
             failure_shown: false,
             failed_malformed: false,
-            strict: crate::physical_source::StrictCheck::Unchecked,
         }
     }
 }
 impl ExternalOwner {
-    /// Takes back what a strict loan learned about the book. Call after every
-    /// strict loan, whatever it returned; an unsettled loan leaves a re-hash owed.
-    pub fn settle_strict_loan(&mut self, strict: crate::physical_source::StrictOperations<'_>) {
-        self.strict = strict.into_check();
-    }
     pub fn chapter_failure(&self) -> Option<&ReaderChapterFailure> {
         self.current
             .as_ref()

@@ -29,9 +29,11 @@ pub(crate) fn prepare_reader_ui_paint_with(
 ) -> PreparedReaderPaint {
     let retry = matches!(pass, ReaderPaintPass::RetryAfterReadyPage(_));
     let chapters = ui.panel == ReaderPanel::Chapters;
-    let menu = chapters.then(|| {
-        crate::lifecycle::prepare_menu(op, owner, ui, ui.selected)
-    });
+    // After a Contents action ran out of time, no paint loads Contents again
+    // on its own: that load would stall the same way. Until a press, the
+    // paint draws the list it still has, or Contents with only the notice (#199).
+    let load = chapters && ui.notice != ReaderUiNotice::ChapterJumpTimedOut;
+    let menu = load.then(|| crate::lifecycle::prepare_menu(op, owner, ui, ui.selected));
     if menu.is_some_and(|result| result.valid) {
         ui.selected = op.menu().info().focus;
     }
@@ -39,7 +41,7 @@ pub(crate) fn prepare_reader_ui_paint_with(
     PreparedReaderPaint {
         menu,
         paint,
-        retry_if_missing: chapters && !retry,
+        retry_if_missing: load && !retry,
     }
 }
 /// Retry is requested only by RetryChapterMenu after the first paint succeeded.
@@ -283,10 +285,11 @@ fn compose_reader_ui_with(
     let section = reader.as_ref().and_then(|reader| reader.section);
     let title = reader.as_ref().map(|reader| reader.title);
     let menu = reader.map(|reader| reader.menu);
+    // A timed-out jump isn't one: it kept the reader's page, with or without
+    // a list to show (#199).
     let failed_jump = matches!(
         ui.notice,
         ReaderUiNotice::ChapterLocationUnresolved | ReaderUiNotice::ChapterJumpFailed
-            | ReaderUiNotice::ChapterJumpTimedOut
     );
     let retained = !chapters || !failed_jump || menu.as_ref().is_some_and(|menu| menu.info().valid);
     let label = if ui.notice == ReaderUiNotice::BookChanged {

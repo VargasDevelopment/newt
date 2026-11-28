@@ -132,8 +132,8 @@ impl Runtime {
             || (self.closed_exit == ClosedExit::TimedOut && matches!(action, Action::Back | Action::Sleep)) {
             // SampleReader has no storage after failed admission, but main's
             // real menu/draft and Back/Sleep intents still exist. A timed-out
-            // live action left a closed owner, so its exits save through the
-            // closed exit rather than a new live-reader loan.
+            // live action left a closed owner that a strict source refuses to
+            // relend, so its exits must not take the live-reader loan.
             (Some(newt_reader_ui::dispatch_unavailable_reader_ui(&mut self.reader_ui,
                 self.settings, action)), action_at)
         } else {
@@ -154,7 +154,9 @@ impl Runtime {
                     self.note_closed_exit_image(events, had_progress);
                     // The budget stopped a Contents jump: the reader kept its
                     // page, and the failure says so rather than naming a cause.
-                    if events.control.timed_out() && self.opened()
+                    // Only the session route keeps the reader open on a cancel;
+                    // without a session the jump fails as on main.
+                    if events.control.timed_out() && self.opened() && self.session.is_some()
                         && self.reader_ui.notice == ReaderUiNotice::ChapterJumpFailed {
                         self.reader_ui.notice = ReaderUiNotice::ChapterJumpTimedOut;
                     }

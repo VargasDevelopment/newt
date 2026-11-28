@@ -75,26 +75,6 @@ CRATE_CONTROLS = (
      '    let cancelled = work.result == Completion::Cancelled || source.revision.cancelled();\n'
      '    let fresh = finish_receipt_checks(&mut source.revision, request);\n',
      'a cancelled Contents paint latches nothing and keeps the reader'),
-    # The owner forgetting what a strict loan learned, so the next loan
-    # starts from a fresh probe and a cancel's re-hash is lost.
-    ('strict-loan-forgets-reload', 'reader-ui/src/external_owner.rs',
-     'self.strict = strict.into_check();',
-     'self.strict = match strict.into_check() {\n'
-     '            crate::physical_source::StrictCheck::MustReload\n'
-     '                | crate::physical_source::StrictCheck::Failed => crate::physical_source::StrictCheck::Unchecked,\n'
-     '            check => check,\n'
-     '        };',
-     'the next no-session loan hashes the book again before its repaint reads'),
-    # A failed re-hash that the next pass may retry, so a later exit saves a changed open.
-    ('failed-rehash-retries', 'reader-ui/src/physical_source/operations.rs',
-     '            None => {\n                self.source.check = StrictCheck::Failed;',
-     '            None => {\n                self.source.check = StrictCheck::MustReload;',
-     'a failed re-hash stays failed for the open'),
-    # The availability probe's cancel read as a changed book, which closes the reader.
-    ('probe-cancel-fails', 'reader-ui/src/physical_source/operations.rs',
-     'None if !allowed() => Err(Interrupted::Cancelled),',
-     'None if false && !allowed() => Err(Interrupted::Cancelled),',
-     'a cancelled availability probe keeps the reader and its page'),
     # Firmware's way to the held bytes skipping the gate, so it finds a closed source.
     ('gate-skips-reload', 'reader-ui/src/physical_source.rs',
      '        self.reload()?;\n        self.with_held_source(work)',

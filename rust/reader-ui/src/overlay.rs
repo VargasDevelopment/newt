@@ -97,11 +97,17 @@ pub fn render_reader_overlay(
             let info = chapters.as_ref().map(|v| v.info()).unwrap_or_default();
             let fallback = chapters.as_ref().map(|v| v.fallback()).unwrap_or_default();
             if !ready || !info.valid || info.count == 0 {
+                // A timed-out Contents load has no list until a press loads it.
+                let empty: &[u8] = if ready && ui.notice == ReaderUiNotice::ChapterJumpTimedOut {
+                    b"That chapter took too long to open"
+                } else {
+                    b"No chapters available"
+                };
                 text(
                     &mut c,
                     x + 22,
                     row_y + 12,
-                    b"No chapters available",
+                    empty,
                     21,
                     false,
                     w - 44,

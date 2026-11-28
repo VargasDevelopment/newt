@@ -422,21 +422,16 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
     PhysicalOwner<'_, '_, '_, B, L, C>
 {
     /// Every action and repaint passes here before it touches its source, so
-    /// nothing reads a source that a cancel closed until it reloads: a receipt
-    /// reloads, a strict view hashes again or probes its new descriptor (#199).
-    /// Both paths read the result the same way; a changed book closes the reader.
+    /// nothing reads a receipt that a cancel closed until it reloads (#199).
+    /// A changed book closes the reader. A strict view never closes on a
+    /// cancel (the no-session route keeps main's behavior), so it has nothing
+    /// to reload.
     fn reload_source(&mut self, reader: &mut PhasedReader<'_, '_>,
         source: &mut PhysicalSourceRef<'_, '_, '_>) -> Result<(), PageWork> {
         let reloaded = match source {
-            PhysicalSourceRef::Strict(strict) => {
-                match self.panel.with_parse(|scratch| strict.reload(reader, scratch)) {
-                    Ok(reloaded) => reloaded,
-                    Err(status) => return Err(PageWork::failed(status)),
-                }
-            }
+            PhysicalSourceRef::Strict(_) | PhysicalSourceRef::Revision(_) => Ok(()),
             PhysicalSourceRef::Reader(source) => source.reload(),
             PhysicalSourceRef::Pending(pending) => pending.source.reload(),
-            PhysicalSourceRef::Revision(_) => Ok(()),
         };
         reloaded.map_err(|interrupted| {
             if interrupted == Interrupted::Changed {
