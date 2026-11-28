@@ -99,9 +99,9 @@ impl CachePresence for Store {
 pub struct Key;
 impl CacheHash for Key {
     fn hash(&mut self, bytes: &[u8], key: &mut [u8; 32]) -> bool {
-        // Preserve the spine, generation, engine revision and view settings
+        // Preserve the spine, generation, engine revision and layout class
         // from the production key encoding. The fixture holds the digest fixed.
-        let Some(layout) = bytes.get(84..99) else { return false; };
+        let Some(layout) = bytes.get(84..97) else { return false; };
         key[..layout.len()].copy_from_slice(layout);
         true
     }

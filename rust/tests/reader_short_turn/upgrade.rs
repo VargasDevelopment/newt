@@ -82,35 +82,43 @@ fn seed_old_index(card: &card::Card, files: &BTreeMap<String, Vec<u8>>, version:
     (path.clone(), old)
 }
 
-/// The name v0.7.2 (engine revision 4) gave this fixture's one Pages file,
-/// for the generated book and the portrait settings below. It is pinned, not
-/// derived, so a build that still uses revision 4 finds a valid file here and
-/// fails the expected miss.
-const REVISION_4_PAGES: &str = "/newt-sd/Newt/Cache/Pages/\
+/// The names earlier releases gave this fixture's one Pages file, for the
+/// generated book and the portrait settings below: v0.7.2 (engine revision 4)
+/// and v0.8.0 (revision 5, which also named the slim bar and refresh cadence).
+/// They are pinned, not derived, so a build that still uses either revision
+/// finds a valid file here and fails the expected miss.
+const PREVIOUS_PAGES: [&str; 2] = [
+    "/newt-sd/Newt/Cache/Pages/\
     0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef-\
-    fbb5de215d61f9b3efb01fe306f23259b893d12c6c1e23501ca5c6caf6e417cd.fibp";
+    fbb5de215d61f9b3efb01fe306f23259b893d12c6c1e23501ca5c6caf6e417cd.fibp",
+    "/newt-sd/Newt/Cache/Pages/\
+    0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef-\
+    03d5fcd9133b273e7dac135c7def36f80e591b4e4e7dea05f9b1fadab0c497b2.fibp",
+];
 
-/// v0.7.2 wrote current-format Pages under revision 4 names. Move this build's
-/// Pages file to that name; its bytes stay as written.
-fn seed_previous_names(card: &card::Card) -> BTreeMap<String, Vec<u8>> {
+/// Earlier releases wrote current-format Pages under their own names. Move
+/// this build's Pages file to `name`; its bytes stay as written.
+fn seed_previous_names(card: &card::Card, name: &str) -> BTreeMap<String, Vec<u8>> {
     let pages: Vec<String> = card.0.borrow().model.files.keys()
         .filter(|path| path.contains("/Pages/")).cloned().collect();
     let [path] = pages.as_slice() else { panic!("expected one Pages file, found {pages:?}") };
     let file = card.0.borrow_mut().model.files.remove(path).unwrap();
-    card.seed(REVISION_4_PAGES, file.durable.clone());
-    BTreeMap::from([(REVISION_4_PAGES.to_owned(), file.durable)])
+    card.seed(name, file.durable.clone());
+    BTreeMap::from([(name.to_owned(), file.durable)])
 }
 
 #[derive(Clone, Copy)]
-enum Previous { Envelope(u32), Names }
+enum Previous { Envelope(u32), Names(&'static str) }
 
 pub fn resume(bytes: Vec<u8>) {
     for old_version in [1u32, 2, 3, 4, 5] {
         resume_from(bytes.clone(), Previous::Envelope(old_version));
     }
     println!("PASS old Pages data misses, saved content resumes, and only Pages rebuilds");
-    resume_from(bytes, Previous::Names);
-    println!("PASS previous-revision Pages stay untouched, saved content resumes, and Pages rebuild under new names");
+    for name in PREVIOUS_PAGES {
+        resume_from(bytes.clone(), Previous::Names(name));
+    }
+    println!("PASS v0.7.2 and v0.8.0 Pages stay untouched, saved content resumes, and Pages rebuild under new names");
 }
 
 fn resume_from(bytes: Vec<u8>, previous: Previous) {
@@ -174,10 +182,10 @@ fn resume_from(bytes: Vec<u8>, previous: Previous) {
                 assert_ne!(card_files(&card), files);
                 (index_version, Some(backup))
             }
-            Previous::Names => {
+            Previous::Names(name) => {
                 // The index name and format did not change with the revision.
                 files.retain(|path, _| !path.contains("/Pages/"));
-                files.extend(seed_previous_names(&card));
+                files.extend(seed_previous_names(&card, name));
                 assert_eq!(card_files(&card), files);
                 (newt_core::page_envelope::VERSION, None)
             }
@@ -260,7 +268,7 @@ fn resume_from(bytes: Vec<u8>, previous: Previous) {
         let added: Vec<_> = rebuilt.keys().filter(|name| !files.contains_key(*name)).collect();
         let added_ok = match previous {
             Previous::Envelope(_) => added.is_empty(),
-            Previous::Names => !added.is_empty() && added.iter().all(|name| name.contains("/Pages/")),
+            Previous::Names(_) => !added.is_empty() && added.iter().all(|name| name.contains("/Pages/")),
         };
         assert!(changed.is_empty() && added_ok, "unexpected card changes: {changed:?}, added: {added:?}");
     }).unwrap();

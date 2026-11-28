@@ -11,11 +11,12 @@ use newt_core::{
 // also bump it: v0.7.0 moved the envelope from 3 to 6 under revision 4, so
 // upgraded cards kept unreadable v3 files under the current names. Bumping
 // this revision changes the filenames and leaves the old files behind.
-const CACHE_ENGINE_REVISION: u32 = 5;
+// Revision 6 took the slim bar and refresh cadence out of the name (#190).
+const CACHE_ENGINE_REVISION: u32 = 6;
 // Change these two together: a new envelope version under the old revision
 // would reuse the old filenames.
 const _: () = assert!(
-    newt_core::page_envelope::VERSION == 6 && CACHE_ENGINE_REVISION == 5,
+    newt_core::page_envelope::VERSION == 6 && CACHE_ENGINE_REVISION == 6,
     "a Pages envelope version change needs a CACHE_ENGINE_REVISION bump"
 );
 
@@ -267,7 +268,8 @@ impl<B: ParserBackend + ?Sized, C: CacheStorage + CachePresence>
     }
 }
 
-/// Chapter page cache identity: SHA-256 over exactly 99 bytes.
+/// Chapter page cache identity: SHA-256 over exactly 97 bytes. Only what lays
+/// out a page names it; the slim bar and refresh cadence apply at show time.
 /// The hash loan is used only for this call; packageSha256 failure is observable.
 pub(super) fn identity(
     settings: ViewSettings,
@@ -279,18 +281,14 @@ pub(super) fn identity(
     let generation = identity_generation(settings, language);
     identity_at_generation(settings, digest, spine, hash, generation).map(|name| (name, generation))
 }
+// One shared copy: inlined into both callers, it outlines the layout hash
+// instead and costs about 340 B more flash (#190).
+#[inline(never)]
 fn identity_generation(settings: ViewSettings, language: BookLanguage) -> u32 {
     let params = reader_parameters(settings.page_layout(), None, language);
     let mix = |h: u32, v: u32| (h ^ v).wrapping_mul(16777619);
-    let engine = CACHE_ENGINE_REVISION;
-    let mut generation = layout_generation_hash(&params, newt_reader_atlas::IDENTITY, false);
-    generation = mix(generation, engine);
-    generation = mix(generation, styles::ID);
-    generation = mix(
-        mix(generation, u32::from(settings.slim_progress_bar)),
-        u32::from(settings.refresh_pages),
-    );
-    generation
+    let generation = layout_generation_hash(&params, newt_reader_atlas::IDENTITY, false);
+    mix(mix(generation, CACHE_ENGINE_REVISION), styles::ID)
 }
 fn identity_at_generation(
     settings: ViewSettings, digest: &Digest, spine: u32, hash: &mut dyn crate::hash_provider::CacheHash, generation: u32,
@@ -298,7 +296,7 @@ fn identity_at_generation(
     let font = b"ce2bda740b0031ba41b864e73c9d1107e4c59383b8ae1a64b16fd3fa9d91f553";
     let sdk = b"cd6f5b831c8fad899723b6d406586f00c575f021";
     let unhex = |b: u8| if b <= b'9' { b - b'0' } else { b - b'a' + 10 };
-    let mut encoded = [0; 99];
+    let mut encoded = [0; 97];
     encoded[..32].copy_from_slice(digest);
     for i in 0..32 {
         encoded[32 + i] = (unhex(font[2 * i]) << 4) | unhex(font[2 * i + 1]);
@@ -311,8 +309,6 @@ fn identity_at_generation(
     }
     // The layout class, not the turn: both landscapes share their pages.
     encoded[96] = u8::from(settings.orientation.is_landscape());
-    encoded[97] = u8::from(settings.slim_progress_bar);
-    encoded[98] = settings.refresh_pages;
     let mut key = [0; 32];
     if !hash.hash(&encoded, &mut key) {
         return Err(Status::IoError);
@@ -335,8 +331,8 @@ pub trait CachePresence {
 }
 
 /// Cached pages hold layout only. The slim bar and refresh cadence are drawn
-/// or applied at show time, so only the page layout must match. Those two
-/// still name the cache (identity), so each choice keeps its own files.
+/// or applied at show time, so only the page layout must match, and neither
+/// names the cache: changing them keeps every Pages file.
 pub(super) fn reader_settings_match(reader: &PhasedReader<'_, '_>, settings: ViewSettings) -> bool {
     reader.page_layout == settings.page_layout()
 }
