@@ -3,6 +3,9 @@
 
 - Back that cancels a live turn exits Home and saves the shown page to SD.
 - A stalled turn, with or without a session, still lets Back and Power exit and save.
+- Without a session, a stalled cross-chapter turn keeps the shown page and the
+  next turn moves; one that then fails closes the owner, and Back and Power
+  exit through the closed exit and save (#199).
 - A turn into a short cached chapter shows no Loading screen.
 - A Contents jump that runs out of time keeps the reader open on its page,
   and Back then saves it, over a sealed receipt, the strict fallback or no
@@ -176,6 +179,53 @@ def stalled_turn_exits_and_saves(binary):
                 return f'{name} after a stalled turn: cold reload restored {got[1:]} instead of {want}'
 
 
+def timed_out_turn_keeps_page(binary):
+    """Without a session, a cross-chapter turn that runs out of time keeps the
+    reader on the shown page, and the next turn moves into the next chapter
+    (#199). With a session it still closes the reader (#228)."""
+    with tempfile.TemporaryDirectory(prefix='newt-stall-turn-') as td:
+        d = Path(td)
+        seed(binary, d, 'healthy', 0)
+        shown = diag_of(run(binary, d, TO_CHAPTER_END))
+        stall = {'card.slow': '/Books/', 'card.after_refresh': first_refresh_after(binary, d, TO_CHAPTER_END)}
+        log = run(binary, d, TO_CHAPTER_END + (CROSS_CHAPTER_TURN,), stall)
+        if int(ACTION_TOTAL.findall(log)[-1]) < BUDGET_US:
+            return 'the stalled turn did not run out of time'
+        if screen_of(log) != READER or diag_of(log) != shown:
+            return f'a timed-out turn left {screen_of(log)} {diag_of(log)} instead of the shown page {shown}'
+        got = diag_of(run(binary, d, TO_CHAPTER_END + (CROSS_CHAPTER_TURN, CROSS_CHAPTER_TURN), stall))
+        if got.get('reader_open') != '1' or int(got['actual_spine']) != int(shown['actual_spine']) + 1:
+            return f'the turn after a timed-out one did not reach the next chapter ({got})'
+
+
+def timed_out_close_exits_and_saves(binary):
+    """A timed-out turn whose operation then fails closes the owner. Back and
+    Power after it exit through the closed exit, not a new live loan, and save
+    the shown page."""
+    for name, exit_key in (('Back', BACK), ('Power', POWER)):
+        with tempfile.TemporaryDirectory(prefix=f'newt-stall-close-{name.lower()}-') as td:
+            d = Path(td)
+            seed(binary, d, 'healthy', 0)
+            shown = diag_of(run(binary, d, TO_CHAPTER_END))
+            want = [shown['actual_spine'], shown['actual_character']]
+            # The stall times the turn out; the refused cache close after the
+            # turn's key then fails its operation.
+            faults = {'card.slow': '/Books/', 'card.after_refresh': first_refresh_after(binary, d, TO_CHAPTER_END),
+                      'store.refuse': 'card-close:/newt-sd/Newt/Cache',
+                      'store.refuse.after': str(len(TO_CHAPTER_END) + 1)}
+            closed = diag_of(run(binary, d, TO_CHAPTER_END + (CROSS_CHAPTER_TURN,), faults))
+            assert closed.get('reader_open') == '0', f'the failed timed-out turn left the owner open ({closed})'
+            log = run(binary, d, TO_CHAPTER_END + (CROSS_CHAPTER_TURN, exit_key), faults)
+            exit_kind = (d / 'exit.txt').read_text().strip() if (d / 'exit.txt').exists() else ''
+            if exit_key == BACK and screen_of(log) != HOME:
+                return f'Back after a closed timed-out turn did not go Home (screen={screen_of(log)})'
+            if exit_key == POWER and exit_kind != 'sleep':
+                return f'Power after a closed timed-out turn did not sleep (exit={exit_kind!r})'
+            got = reopened(binary, d)
+            if list(got[1:]) != want:
+                return f'{name} after a closed timed-out turn: cold reload restored {got[1:]} instead of {want}'
+
+
 def library_cancel_goes_home_and_keeps_book(binary):
     """Back during an initial open from Library goes Home with the previous book kept."""
     with tempfile.TemporaryDirectory(prefix='newt-cancel-library-') as td:
@@ -333,6 +383,12 @@ EARLY_CLEARED_CANCEL = (
     '                self.reflow_anchor = None;\n'
     '                self.closed_exit = ClosedExit::None;',
 )
+# A timed-out exit takes a new live-reader loan instead of the closed exit.
+TIMED_OUT_EXIT_TAKES_LOAN = (
+    'reader_image_action.rs',
+    '|| (self.closed_exit == ClosedExit::TimedOut && matches!(action, Action::Back | Action::Sleep)) {',
+    '|| false {',
+)
 # An open owner's timeout clears the exit state, as before the fix.
 TIMED_OUT_CLEARED_WHILE_OPEN = (
     'reader_image_action.rs',
@@ -380,7 +436,7 @@ EXIT_SKIPS_RELOAD = (
 # #199: the no-session exit leaves unhashed what a cancel closed, so it can't save.
 STRICT_EXIT_SKIPS_RELOAD = (
     'reader_image_exit.rs',
-    'strict.reload_closed(&mut []);',
+    'strict.reload_closed(&mut memory.runtime.reader, &mut []);',
     'let _ = &mut strict;',
 )
 # #199: the exit after a cancel leaves the closed source unread, so Back can't save.
@@ -414,14 +470,20 @@ def main():
     check(back_cancels_live_turn_and_saves, no_session)
     check(stalled_turn_exits_and_saves, binary)
     check(stalled_turn_exits_and_saves, no_session)
+    check(timed_out_turn_keeps_page, no_session)
+    check(timed_out_close_exits_and_saves, no_session)
     if not negative_controls(__file__):
         return
     for case, edits, label in (
         (back_cancels_live_turn_and_saves, [EARLY_CLEARED_CANCEL], 'early-cleared-cancel'),
-        (stalled_turn_exits_and_saves, [TIMED_OUT_EXIT_REFUSED], 'timed-out-exit-refused'),
-        (stalled_turn_exits_and_saves, [STOPPED_EXIT_SKIPS_CHECKPOINT], 'session-exit-skips-checkpoint'),
+        (timed_out_close_exits_and_saves, [NO_SESSION, TIMED_OUT_EXIT_REFUSED], 'timed-out-exit-refused'),
+        (timed_out_close_exits_and_saves, [NO_SESSION, TIMED_OUT_EXIT_TAKES_LOAN], 'timed-out-exit-takes-loan'),
+        # With a session a stalled turn keeps the reader, and its producer saves
+        # the page before Back, so the session's exit controls run where only
+        # the exit can save.
+        (back_cancels_live_turn_and_saves, [STOPPED_EXIT_SKIPS_CHECKPOINT], 'session-exit-skips-checkpoint'),
         (back_cancels_live_turn_and_saves, [NO_SESSION, STOPPED_EXIT_SKIPS_CHECKPOINT], 'strict-exit-skips-checkpoint'),
-        (stalled_turn_exits_and_saves, [TIMED_OUT_CLEARED_WHILE_OPEN], 'timed-out-cleared-while-open'),
+        (timed_out_jump_keeps_page, [TIMED_OUT_CLEARED_WHILE_OPEN], 'timed-out-cleared-while-open'),
         (library_cancel_goes_home_and_keeps_book, [LIBRARY_KEEPS_CANCEL_BACK], 'library-keeps-cancel-back'),
         (library_cancel_queue_keeps_later_screen, [CANCEL_BACK_EVERYWHERE], 'cancel-back-everywhere'),
         (short_cached_chapter_turns_without_loading, [LOADING_EVERY_CROSS_CHAPTER_TURN],

@@ -10,6 +10,7 @@ mod sealed {
 mod operations;
 pub use operations::{PendingReaderSource, SourceAuthorizer, SourceOperations, StrictOperations,
     StrictSource};
+pub(crate) use operations::StrictCheck;
 
 /// Only actual revision owners and short, explicitly bound source views enter
 /// PhysicalOwner's private page route.
@@ -40,7 +41,7 @@ impl PhysicalSource for ImportedRevision<'_> {
 /// Why a source that a cancel closed did not reload: another cancel, which
 /// says nothing about the book, or a book that no longer matches its digest.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Interrupted {
+pub enum Interrupted {
     Cancelled,
     Changed,
 }
@@ -187,6 +188,14 @@ impl<'a> ReaderSource<'a> {
         let status = work(self);
         let fresh = self.revision.finish_immutable_read();
         (status, fresh)
+    }
+    /// Firmware's way to the held bytes outside a page operation, such as a
+    /// verification pass: through the reload gate, under the digest the bytes
+    /// were checked against (#199). Err says why the gate stayed shut.
+    pub fn with_checked_source<R>(&mut self, work: impl FnOnce(&mut dyn BookSource, &Digest) -> R)
+        -> Result<R, Interrupted> {
+        self.reload()?;
+        self.with_held_source(work).ok_or(Interrupted::Changed)
     }
     /// The held raw bytes with the digest they were checked under, while the
     /// source is readable. The source cannot escape its loan.

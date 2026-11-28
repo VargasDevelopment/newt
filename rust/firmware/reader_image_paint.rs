@@ -24,16 +24,11 @@ impl Runtime {
         } else if self.memory.is_closed() {
             self.paint_unavailable(ui, logical);
         } else { match self.operate_image(home, ui, logical, events, None, None, true, None, None) {
-            Ok(exit) if exit.paint == Some(newt_reader_ui::Composed::Cancelled) => {
-                // Nothing composed: the last frame stays until a real paint.
-                self.observe_operation(&exit);
-                return Ok(false);
-            }
             Ok(exit) => {
                 self.observe_operation(&exit);
-                // compose_native wrote the logical image in SDK polarity.
-                // Return it before rotating into that same SDK frame.
-                for (out, byte) in logical.iter_mut().zip(home.bus.board.frame()?) { *out = !*byte; }
+                // Take the frame back before rotating into that same SDK frame.
+                // A cancelled paint has none: the last frame stays until a real paint.
+                if !reader_book::take_frame(exit.paint, home.bus.board.frame()?, logical) { return Ok(false); }
             }
             Err(error) => {
                 self.open_failed(error);

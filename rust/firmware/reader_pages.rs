@@ -58,6 +58,7 @@ impl<N: Native + newt_native_storage::page_entries::PageEntries> CachePresence f
 /// `new(scratch) VerifiedPageStore(name)`. A failed attach still runs the
 /// checked exit, and its read is Stale.
 impl<N: Native> ReadScope for ReaderPages<'_, N> {
+    fn close_after_cancel(&mut self) { self.0.access().close_after_cancel() }
     fn invalidate_index(&mut self, digest: &[u8; 32]) -> bool { self.0.invalidate_index(digest) }
     #[inline(always)]
     fn query<R>(

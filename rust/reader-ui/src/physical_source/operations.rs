@@ -50,47 +50,87 @@ pub struct StrictSource<'op> {
     pub(in crate::physical_source) open_authorized: bool,
 }
 
-/// What this strict view knows about its bytes. Each loan is short, so a
-/// cancel's owed re-hash rides on the owner into the next loan (#199).
+mod proof {
+    use super::{BookSource, Digest, SourceAuthorizer};
+    /// A full hash of the lent descriptor matched this digest. Nothing outside
+    /// this module can make one, so no loan, retry or fallback can turn a
+    /// failed or skipped hash into a verified view (#199).
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub(crate) struct Hashed(Digest);
+    impl Hashed {
+        pub(super) fn hash(authorize: &mut SourceAuthorizer<'_>, raw: &mut dyn BookSource,
+            expected: &Digest, scratch: &mut [u8], allowed: &dyn Fn() -> bool) -> Option<Self> {
+            authorize(raw, expected, scratch, allowed).then_some(Self(*expected))
+        }
+        /// The no-session open hashed this descriptor in prepare_image before
+        /// its index pass, which only a successful pass can prove.
+        pub(super) fn indexed(indexed: &newt_phased_reader::index_build::Indexed) -> Self {
+            Self(*indexed.digest())
+        }
+        pub(super) fn digest(&self) -> &Digest { &self.0 }
+    }
+}
+use proof::Hashed;
+
+/// The one verification authority of a strict open book. Strict loans are
+/// short, so the owner holds it between them: each loan takes it and
+/// `ExternalOwner::settle_strict_loan` gives it back (#199).
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(in crate::physical_source) enum StrictCheck {
-    /// Never hashed in this view: only an open may authorize it.
+pub(crate) enum StrictCheck {
+    /// Never hashed: only an open may authorize the view.
     Unchecked,
-    Verified,
-    /// A cancel stopped an action or repaint. Nothing reads until the owner
+    /// Hashed in an earlier loan. This loan's descriptor has not passed the
+    /// gate's availability probe yet, so nothing reads it.
+    Lent(Hashed),
+    Verified(Hashed),
+    /// A cancel stopped an action or repaint. Nothing reads until the gate
     /// hashes the source again under the same digest.
     MustReload,
+    /// A hash or probe failed without a cancel. Nothing reads again in this open.
+    Failed,
+}
+impl StrictCheck {
+    /// What a new loan of `digest` starts from. A hash of another book's bytes
+    /// proves nothing about these.
+    fn lend(self, digest: &Digest) -> Self {
+        match self {
+            Self::Verified(hashed) | Self::Lent(hashed) if hashed.digest() == digest => Self::Lent(hashed),
+            Self::Verified(_) | Self::Lent(_) => Self::MustReload,
+            other => other,
+        }
+    }
 }
 impl<'op> StrictSource<'op> {
     pub fn new(source: &'op mut dyn BookSource, digest: &'op Digest) -> Self {
         Self { source, digest, check: StrictCheck::Unchecked, open_authorized: false }
     }
-    /// This descriptor was fully hashed against `expected` earlier in this open,
-    /// and any intervening reopen was fully re-hashed. Firmware establishes this
-    /// in prepare_image (reader_image_open.rs) and reader_index_reopen.rs.
-    /// A matching index/receipt digest alone does not meet this precondition.
-    pub fn from_hashed_descriptor(source: &'op mut dyn BookSource, expected: &'op Digest) -> Self {
-        Self { source, digest: expected, check: StrictCheck::Verified, open_authorized: true }
+    /// The no-session open's first loan. prepare_image (reader_image_open.rs)
+    /// fully hashed this same descriptor against the selection's digest before
+    /// the index pass; a matching index or receipt digest alone is not that.
+    pub fn from_indexed(source: &'op mut dyn BookSource,
+        indexed: &'op newt_phased_reader::index_build::Indexed) -> Self {
+        Self { source, digest: indexed.digest(), check: StrictCheck::Verified(Hashed::indexed(indexed)),
+            open_authorized: true }
     }
     /// Relend only the actual selected FD which opened this reader. Selection
     /// owns full D; the tracker's book binds its existing successful owner.
-    /// The source probe checks the reader's admitted byte count and live FD,
-    /// not a fresh digest. This grants no first-open/reopen bypass.
+    /// The loan takes the owner's check. Its descriptor reads only after the
+    /// gate's cancel-aware probe. This grants no first-open/reopen bypass.
     pub fn for_live_reader(source: &'op mut dyn BookSource,
-        selection: &'op SelectionAuthority, owner: &ExternalOwner,
-        reader: &mut PhasedReader<'_, '_>) -> Option<Self> {
+        selection: &'op SelectionAuthority, owner: &mut ExternalOwner,
+        reader: &PhasedReader<'_, '_>) -> Option<Self> {
         Self::for_live_inner(source, selection, owner, reader, true)
     }
     /// Relend the selected FD on exit after a cancelled or timed-out live
     /// reader action cleared `owner.state.opened()` while keeping `has_progress()`.
     pub fn for_cancelled_exit(source: &'op mut dyn BookSource,
-        selection: &'op SelectionAuthority, owner: &ExternalOwner,
-        reader: &mut PhasedReader<'_, '_>) -> Option<Self> {
+        selection: &'op SelectionAuthority, owner: &mut ExternalOwner,
+        reader: &PhasedReader<'_, '_>) -> Option<Self> {
         Self::for_live_inner(source, selection, owner, reader, false)
     }
     fn for_live_inner(source: &'op mut dyn BookSource,
-        selection: &'op SelectionAuthority, owner: &ExternalOwner,
-        reader: &mut PhasedReader<'_, '_>, require_opened: bool) -> Option<Self> {
+        selection: &'op SelectionAuthority, owner: &mut ExternalOwner,
+        reader: &PhasedReader<'_, '_>, require_opened: bool) -> Option<Self> {
         let ready = if require_opened {
             owner.state.opened() && reader.opened()
         } else {
@@ -98,22 +138,27 @@ impl<'op> StrictSource<'op> {
         };
         if !selection.active() || !ready
             || owner.tracker.snapshot(0).book != selection.book_id()
-            || selection.identity().digest != *selection.digest()
-            || (reader.opened() && !reader.source_available(source)) {
+            || selection.identity().digest != *selection.digest() {
             return None;
         }
-        let check = if owner.strict_must_reload { StrictCheck::MustReload } else { StrictCheck::Verified };
-        Some(Self { source, digest: selection.digest(), check, open_authorized: false })
+        // Until this loan is settled, the owner owes a re-hash; a failure stays failed.
+        let taken = owner.strict;
+        if taken != StrictCheck::Failed { owner.strict = StrictCheck::MustReload; }
+        Some(Self { source, digest: selection.digest(), check: taken.lend(selection.digest()),
+            open_authorized: false })
     }
     pub fn with_reopen_authorizer(self, authorize: &'op mut SourceAuthorizer<'op>,
         allowed: &'op dyn Fn() -> bool) -> StrictOperations<'op> {
         StrictOperations { source: self, authorize, allowed }
     }
 }
+// Only a verified view lends its bytes; the gate reads the raw source itself.
 impl BookSource for StrictSource<'_> {
-    fn size(&self) -> u64 { self.source.size() }
+    fn size(&self) -> u64 {
+        if matches!(self.check, StrictCheck::Verified(_)) { self.source.size() } else { 0 }
+    }
     fn read_at(&mut self, offset: u64, output: &mut [u8]) -> i32 {
-        self.source.read_at(offset, output)
+        if matches!(self.check, StrictCheck::Verified(_)) { self.source.read_at(offset, output) } else { -1 }
     }
 }
 
@@ -129,35 +174,56 @@ impl StrictOperations<'_> {
     pub(crate) fn take_open_authorization(&mut self) -> Option<bool> {
         core::mem::take(&mut self.source.open_authorized).then(|| (self.allowed)())
     }
+    fn hash(&mut self, expected: &Digest, scratch: &mut [u8], allowed: &dyn Fn() -> bool) -> Option<Hashed> {
+        Hashed::hash(self.authorize, self.source.source, expected, scratch, allowed)
+    }
     pub(crate) fn authorize_open(&mut self, scratch: &mut [u8]) -> bool {
-        let verified = (self.authorize)(self.source.source, self.source.digest, scratch, self.allowed);
-        self.source.check = if verified { StrictCheck::Verified } else { StrictCheck::Unchecked };
-        verified
+        let (digest, allowed) = (*self.source.digest, self.allowed);
+        self.source.check = match self.hash(&digest, scratch, allowed) {
+            Some(hashed) => StrictCheck::Verified(hashed),
+            None if allowed() => StrictCheck::Failed,
+            None => StrictCheck::Unchecked,
+        };
+        self.source_verified()
     }
     /// A cancel stopped this view's action or repaint: nothing reads it until
-    /// `reload` hashes it again.
+    /// the gate hashes it again.
     pub(crate) fn close_after_cancel(&mut self) {
-        self.source.check = StrictCheck::MustReload;
+        if self.source.check != StrictCheck::Failed { self.source.check = StrictCheck::MustReload; }
     }
-    /// The strict side of the owner's one reload gate: hash again what a
-    /// cancel closed. Readable and unchecked views pass through unchanged.
-    pub(crate) fn reload(&mut self, scratch: &mut [u8]) -> Result<(), Interrupted> {
-        if self.source.check != StrictCheck::MustReload || self.authorize_open(scratch) {
-            return Ok(());
+    /// The strict side of the owner's one reload gate, before every action,
+    /// repaint and exit. It hashes again what a cancel closed, and probes a
+    /// newly lent descriptor. Another cancel leaves the view as it was; any
+    /// other failure fails it for this open.
+    pub(crate) fn reload(&mut self, reader: &mut PhasedReader<'_, '_>, scratch: &mut [u8])
+        -> Result<(), Interrupted> {
+        let (digest, allowed) = (*self.source.digest, self.allowed);
+        let passed = match self.source.check {
+            StrictCheck::Unchecked | StrictCheck::Verified(_) => return Ok(()),
+            StrictCheck::Failed => return Err(Interrupted::Changed),
+            StrictCheck::MustReload => self.hash(&digest, scratch, allowed),
+            StrictCheck::Lent(hashed) => (!reader.opened()
+                || reader.source_available(&mut *self.source.source)).then_some(hashed),
+        };
+        match passed {
+            Some(hashed) => {
+                self.source.check = StrictCheck::Verified(hashed);
+                Ok(())
+            }
+            None if !allowed() => Err(Interrupted::Cancelled),
+            None => {
+                self.source.check = StrictCheck::Failed;
+                Err(Interrupted::Changed)
+            }
         }
-        // authorize_open left it Unchecked: a non-Open action then gives Stale.
-        if (self.allowed)() { Err(Interrupted::Changed) } else {
-            self.source.check = StrictCheck::MustReload;
-            Err(Interrupted::Cancelled)
-        }
     }
-    /// The reader's exit after a cancel, as `ReaderSource::reload_closed`.
-    /// True when readable.
-    pub fn reload_closed(&mut self, scratch: &mut [u8]) -> bool {
-        self.reload(scratch).is_ok() && self.source.check == StrictCheck::Verified
+    /// What this loan learned, for the owner to keep until the next loan.
+    pub(crate) fn into_check(self) -> StrictCheck { self.source.check }
+    /// The exit's pass through the gate, as `ReaderSource::reload_closed`.
+    /// True when the exit may save from this view.
+    pub fn reload_closed(&mut self, reader: &mut PhasedReader<'_, '_>, scratch: &mut [u8]) -> bool {
+        self.reload(reader, scratch).is_ok() && self.source_verified()
     }
-    /// True while a cancel's re-hash is owed. The owner keeps it across loans.
-    pub(crate) fn must_reload(&self) -> bool { self.source.check == StrictCheck::MustReload }
 }
 impl SourceOperations for StrictOperations<'_> {
     fn digest(&self) -> Option<Digest> { Some(*self.source.digest) }
@@ -165,15 +231,12 @@ impl SourceOperations for StrictOperations<'_> {
         allowed: &dyn Fn() -> bool) -> Option<bool> {
         self.source.check = StrictCheck::Unchecked;
         self.source.open_authorized = false;
-        if expected != *self.source.digest
-            || !(self.authorize)(self.source.source, &expected, scratch, allowed) {
-            return None;
-        }
-        self.source.check = StrictCheck::Verified;
+        if expected != *self.source.digest { return None; }
+        self.source.check = StrictCheck::Verified(self.hash(&expected, scratch, allowed)?);
         self.source.open_authorized = true;
         Some(false)
     }
-    fn source_verified(&self) -> bool { self.source.check == StrictCheck::Verified }
+    fn source_verified(&self) -> bool { matches!(self.source.check, StrictCheck::Verified(_)) }
     fn with_producer_source<R>(&mut self,
         work: impl FnOnce(Option<&mut ReaderSource<'_>>) -> R) -> R { work(None) }
 }

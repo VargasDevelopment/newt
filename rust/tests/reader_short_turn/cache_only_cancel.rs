@@ -18,7 +18,7 @@ use newt_phased_reader::{
     imported_revision::{BLOCK_BYTES, Digest, ImportedRevision, RevisionHasher},
 };
 use newt_reader_ui::{
-    Composed, PhysicalOwner, ReaderOwnerState, ReaderSource, ReaderUiNotice, ReaderUiWork,
+    Composed, PhysicalOwner, ReaderOwnerState, ReaderPanelLoan, ReaderSource, ReaderUiNotice, ReaderUiWork,
 };
 use upgrade::with_router;
 
@@ -128,6 +128,14 @@ macro_rules! compose {
         $ports.compose_native(&$reader, &$owner, &$ui, $settings, &DeviceInfo::default(),
             &Progress::default(), $painted, None)
     };
+}
+
+/// The verification authority a no-session open leaves with its owner: that
+/// open's first loan comes from its index pass over the hashed descriptor.
+fn seed_strict(owner: &mut ExternalOwner, raw: &mut dyn BookSource,
+    indexed: &newt_phased_reader::index_build::Indexed) {
+    let mut authorize = |_: &mut dyn BookSource, _: &Digest, _: &mut [u8], _: &dyn Fn() -> bool| false;
+    owner.settle_strict_loan(StrictSource::from_indexed(raw, indexed).with_reopen_authorizer(&mut authorize, &|| true));
 }
 
 /// Every book index file on the card, with its durable bytes.
@@ -440,8 +448,9 @@ pub fn check() {
                 let mut selection = SelectionAuthority::new();
                 assert!(selection.publish_candidate(c"generated.epub", digest, &mut || {}, &mut || {}));
                 let mut raw_strict = Source(epub.clone());
+                seed_strict(&mut owner, &mut raw_strict, &indexed);
                 let mut authorize = |_: &mut dyn BookSource, _: &Digest, _: &mut [u8], _: &dyn Fn() -> bool| true;
-                let mut strict = StrictSource::for_live_reader(&mut raw_strict, &selection, &owner, &mut reader)
+                let mut strict = StrictSource::for_live_reader(&mut raw_strict, &selection, &mut owner, &reader)
                     .expect("live strict source")
                     .with_reopen_authorizer(&mut authorize, &|| true);
                 reader.reset_layout_pages();
@@ -458,6 +467,7 @@ pub fn check() {
                 );
                 assert_eq!(reader.info(), page0);
                 assert_eq!(reader.last_layout_pages(), 0, "strict cache_only cold miss must lay out zero pages");
+                owner.settle_strict_loan(strict);
             }
 
             // 1d. Populate chapter 0 page cache via the real producer; cache_only hit must advance
@@ -609,8 +619,51 @@ pub fn check() {
             assert!(owner.state.status() == Status::Ok && reader.opened()
                 && reader.info() == page2 && source.digest().is_none(),
                 "a cancelled repaint latches nothing and keeps the reader");
-            assert_eq!(compose!(ports, reader, owner, ui, settings, painted), Ok(Composed::Cancelled),
-                "a cancelled repaint composes nothing");
+            let before = ports.panel.with_frame(|frame| frame.to_vec()).unwrap();
+            let composed = compose!(ports, reader, owner, ui, settings, painted);
+            assert_eq!(composed, Ok(Composed::Cancelled), "a cancelled repaint composes nothing");
+            // Its firmware consumer: no panel byte written, and no frame for the
+            // display or the resume picture to publish.
+            let native = ports.panel.with_frame(|frame| frame.to_vec()).unwrap();
+            let mut logical = vec![0x5a; native.len()];
+            assert!(native == before && !reader_book::take_frame(composed.ok(), &native, &mut logical)
+                && logical.iter().all(|byte| *byte == 0x5a),
+                "a cancelled paint writes no panel byte and publishes no frame");
+            // 2h. A cancel anywhere in a Contents paint, including its retried
+            //     Contents load after the page drew, stays cancelled: no pixel
+            //     restore or fallback after it reports a frame. Each paint lands
+            //     the route cancel one query later. A cancel inside the book
+            //     index read leaves nothing that refuses the next paint's read
+            //     of it, so the first paint the cancel misses draws Contents.
+            let (mut landed, mut after_page) = (0, 0);
+            for at in 1.. {
+                ui.panel = ReaderPanel::Chapters;
+                ui.notice = ReaderUiNotice::None;
+                route_queries.set(at);
+                let painted = ports.paint_ui(&mut reader, &mut source, &mut owner, &mut ui, 2_420 + at);
+                if !route_cancel.replace(false) {
+                    route_queries.set(0);
+                    assert!(painted.ready() && owner.state.status() == Status::Ok && reader.info() == page2,
+                        "a Contents paint after cancelled ones draws ({at})");
+                    break;
+                }
+                landed += 1;
+                after_page += usize::from(reader.has_retained_page_plan());
+                assert!(owner.state.status() == Status::Ok && reader.opened() && reader.info() == page2,
+                    "a cancelled Contents paint latches nothing and keeps the reader ({at})");
+                assert_eq!(compose!(ports, reader, owner, ui, settings, painted), Ok(Composed::Cancelled),
+                    "a cancelled Contents paint composes nothing ({at})");
+            }
+            assert!(landed > 1 && after_page > 0,
+                "the route cancel must land inside the Contents paints, also after the page drew");
+            ui.panel = ReaderPanel::Page;
+            ui.notice = ReaderUiNotice::None;
+            // As 2f, a cancelled repaint drops the retained plan for 2g.
+            cancel_flag.set(true);
+            let _ = ports.paint_ui(&mut reader, &mut source, &mut owner, &mut ui, 2_430);
+            cancel_flag.set(false);
+            assert!(!reader.has_retained_page_plan() && source.digest().is_none(),
+                "a cancelled repaint drops the retained plan and closes the receipt");
             // 2g. That cancel dropped the retained plan, so the next paint is the owner's
             //     page action, which reads only the Pages cache. Reload as the exit does,
             //     then cancel that action: it drew nothing, so the paint must not report
@@ -629,6 +682,21 @@ pub fn check() {
             assert!(painted.ready() && owner.state.opened() && reader.info() == page2,
                 "a repaint after a cancel reloads the receipt and draws the page");
             assert_eq!(source.digest(), Some(digest), "the repaint reloaded the receipt under its digest");
+            let composed = compose!(ports, reader, owner, ui, settings, painted);
+            let native = ports.panel.with_frame(|frame| frame.to_vec()).unwrap();
+            assert!(reader_book::take_frame(composed.ok(), &native, &mut logical)
+                && logical.iter().zip(&native).all(|(out, byte)| *out == !*byte),
+                "a drawn paint gives its frame to publish");
+            // 2v. Firmware reaches the held bytes outside a page operation, as a
+            //     verification pass does, only through the gate: it reloads
+            //     what a cancel closed before the work reads.
+            cancel_flag.set(true);
+            let _ = ports.paint_ui(&mut reader, &mut source, &mut owner, &mut ui, 2_462);
+            cancel_flag.set(false);
+            assert!(source.digest().is_none(), "the cancelled repaint closed the receipt");
+            assert_eq!(source.with_checked_source(|raw, checked| (*checked, raw.size())),
+                Ok((digest, epub.len() as u64)), "a firmware read through the gate reloads the receipt first");
+            assert_eq!(source.digest(), Some(digest));
 
             // 2w. A cancel during a pending verification is a cancel, not a missing
             //     page: a repaint latches nothing and composes nothing, and a turn
@@ -675,25 +743,26 @@ pub fn check() {
             let allowed = || !cancel_flag.get();
             let mut selection = SelectionAuthority::new();
             assert!(selection.publish_candidate(c"generated.epub", digest, &mut || {}, &mut || {}));
+            seed_strict(&mut owner, &mut Source(epub.clone()), &indexed);
             {
                 let mut raw = CancelSource {
                     bytes: epub.clone(), cancel: &cancel_flag, cancel_after: &cancel_after, reads: &reads,
                     corrupt_at: &corrupt_at,
                 };
-                let mut strict = StrictSource::for_live_reader(&mut raw, &selection, &owner, &mut reader)
+                let mut strict = StrictSource::for_live_reader(&mut raw, &selection, &mut owner, &reader)
                     .expect("live strict source").with_reopen_authorizer(&mut authorize, &allowed);
                 jump_to_middle!(owner, reader, strict, ui, settings, ports, 2_700, { cancel_after.set(2); });
                 assert!(cancel_flag.replace(false), "the no-session jump must be cancelled");
                 assert!(owner.state.status() == Status::Ok && reader.opened() && reader.info() == page2,
                     "a cancelled no-session jump keeps the reader and its page");
-                owner.settle_strict_loan(&strict);
+                owner.settle_strict_loan(strict);
             }
             {
                 let mut raw = CancelSource {
                     bytes: epub.clone(), cancel: &cancel_flag, cancel_after: &cancel_after, reads: &reads,
                     corrupt_at: &corrupt_at,
                 };
-                let mut strict = StrictSource::for_live_reader(&mut raw, &selection, &owner, &mut reader)
+                let mut strict = StrictSource::for_live_reader(&mut raw, &selection, &mut owner, &reader)
                     .expect("live strict source").with_reopen_authorizer(&mut authorize, &allowed);
                 ui.panel = ReaderPanel::Page;
                 ui.notice = ReaderUiNotice::None;
@@ -703,7 +772,7 @@ pub fn check() {
                     "the next no-session loan hashes the book again before its repaint reads");
                 assert!(painted.ready() && owner.state.opened() && reader.info() == page2,
                     "the no-session repaint after a cancelled jump draws the page");
-                owner.settle_strict_loan(&strict);
+                owner.settle_strict_loan(strict);
             }
 
             // 2r. The same jump then runs: the cancel was not kept as a chapter failure.
@@ -780,11 +849,11 @@ pub fn check() {
             assert!(selection.publish_candidate(c"generated.epub", digest, &mut || {}, &mut || {}));
             let mut raw_strict = Source(epub.clone());
             assert!(
-                StrictSource::for_live_reader(&mut raw_strict, &selection, &owner, &mut reader).is_none(),
+                StrictSource::for_live_reader(&mut raw_strict, &selection, &mut owner, &reader).is_none(),
                 "for_live_reader must reject cancelled owner state"
             );
             assert!(
-                StrictSource::for_cancelled_exit(&mut raw_strict, &selection, &owner, &mut reader).is_some(),
+                StrictSource::for_cancelled_exit(&mut raw_strict, &selection, &mut owner, &reader).is_some(),
                 "for_cancelled_exit must accept cancelled owner state with progress"
             );
 
@@ -894,6 +963,8 @@ pub fn check() {
             assert!(owner.state.status() == Status::Stale && !owner.state.opened() && !reader.opened(),
                 "a changed receipt after a cancel gives Stale and closes the reader");
             assert!(!source.reload_closed(digest), "the changed receipt stays refused");
+            assert_eq!(source.with_checked_source(|_, _| unreachable!("a closed gate lent the source")),
+                Err(newt_reader_ui::Interrupted::Changed), "a firmware read through the gate stays refused");
             drop(ports);
             card.0.borrow_mut().model.files.insert(receipt_path, sealed);
             drop(source);
@@ -925,9 +996,12 @@ pub fn check() {
     check_cross_chapter_cache_only(600, true);
     check_cross_chapter_cache_only(1_600, false);
     check_strict_cancel();
+    no_session_authority::check_timed_out_exit(true);
+    no_session_authority::check_timed_out_exit(false);
 
     println!("PASS cache_only cold-miss/hit and cancelled live exit save/reload");
     println!("PASS a cancelled Contents load or jump keeps the reader, its page and book index; the next repaint, turn, Contents and jump reload the receipt (or hash a strict source again) and run; a changed receipt after a cancel closes");
+    println!("PASS without a session, a timed-out exit hashes the book again: a changed book saves nothing, now or later in the open");
 }
 
 /// #199: the strict fallback opens when the receipt can't seal, so it has no
@@ -1208,14 +1282,31 @@ fn check_cross_chapter_cache_only(paragraphs: usize, corrupt: bool) {
                     "a corrupt short chapter must not publish from the probe");
                 assert_eq!(reader.info(), last_ch0, "a corrupt short chapter keeps chapter 0 shown");
             } else {
-                reads.set(0);
                 reader.reset_layout_pages();
-                let h = owner.handle_ui_physical(
-                    &mut reader, &mut source, &mut ui, settings, Action::Next, 1_300, &mut ports,
-                );
-                let probed = owner.complete_ui_physical(
-                    &mut reader, &mut source, &mut ui, h, 1_300, &mut ports,
-                );
+                // #199: a cancel anywhere in the probe, staging included, is a
+                // cancel: chapter 0 stays, the receipt closes for a reload, and
+                // no work is left pending. Each probe cancels one read later;
+                // the first that reads past its cancel point is the clean probe.
+                let mut cancelled = 0;
+                let probed = loop {
+                    reads.set(0);
+                    cancel_after.set(cancelled + 1);
+                    let h = owner.handle_ui_physical(
+                        &mut reader, &mut source, &mut ui, settings, Action::Next, 1_300, &mut ports,
+                    );
+                    let probed = owner.complete_ui_physical(
+                        &mut reader, &mut source, &mut ui, h, 1_300, &mut ports,
+                    );
+                    if !cancel_flag.replace(false) {
+                        cancel_after.set(0);
+                        break probed;
+                    }
+                    cancelled += 1;
+                    assert!(owner.state.status() == Status::Ok && reader.opened() && reader.info() == last_ch0
+                        && source.digest().is_none(),
+                        "a cancelled cache-only turn keeps chapter 0 and closes the receipt ({cancelled})");
+                };
+                assert!(cancelled > 0, "the cancel must land inside the cache-only turn");
                 assert_eq!(reader.last_layout_pages(), 0, "a cache_only probe never lays out");
                 if !long {
                     assert_eq!(probed.work, ReaderUiWork::Intent(ReaderUiIntent::Repaint),
@@ -1255,6 +1346,35 @@ fn check_cross_chapter_cache_only(paragraphs: usize, corrupt: bool) {
             // failure without a cancel removes it, so the check can see a removal.
             if !long && !corrupt {
                 ports.cache_only = false;
+                // #199: a Contents load publishes no page, so a cancel anywhere
+                // in it, even inside its final check, has none to roll back: the
+                // reader keeps its page and that chapter's selection. Chapter 1
+                // shows; the other selection holds chapter 0. Each load lands the
+                // route cancel one query later.
+                let here = reader.info();
+                let href = reader.selection().href().to_vec();
+                let mut landed = 0;
+                for at in 1.. {
+                    ui.panel = ReaderPanel::Menu;
+                    ui.selected = 1;
+                    ui.notice = ReaderUiNotice::None;
+                    route_queries.set(at);
+                    let h = owner.handle_ui_physical(
+                        &mut reader, &mut source, &mut ui, settings, Action::Activate, 1_450, &mut ports,
+                    );
+                    let _ = owner.complete_ui_physical(&mut reader, &mut source, &mut ui, h, 1_450, &mut ports);
+                    if !route_cancel.replace(false) {
+                        route_queries.set(0);
+                        break;
+                    }
+                    landed += 1;
+                    assert!(owner.state.status() == Status::Ok && reader.opened() && reader.info() == here
+                        && reader.selection().href() == href.as_slice(),
+                        "a cancelled Contents load keeps the page and its selection ({at})");
+                }
+                assert!(landed > 1, "the route cancel must land inside the Contents loads");
+                ui.panel = ReaderPanel::Page;
+                ui.notice = ReaderUiNotice::None;
                 let index = index_files(&card);
                 assert_eq!(index.len(), 1, "the open built one book index");
                 let here = reader.info();
@@ -1291,3 +1411,6 @@ fn check_cross_chapter_cache_only(paragraphs: usize, corrupt: bool) {
         })
         .unwrap();
 }
+
+#[path = "no_session_authority.rs"]
+mod no_session_authority;

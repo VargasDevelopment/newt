@@ -53,6 +53,11 @@ pub trait CacheStorage {
 /// before attach, then after query cleanup before the checked exit, including
 /// failures; the read callback has no raw source capability.
 pub trait ReadScope: CacheStorage {
+    /// A cancelled operation ends its scope here. A refused same-name
+    /// descriptor stays latched until an explicit close, so without this the
+    /// next operation's first read is refused too and reads as a damaged
+    /// index (#199).
+    fn close_after_cancel(&mut self) {}
     /// A failed consumed index block must not leave a header-only cache hit.
     fn invalidate_index(&mut self, digest: &[u8; 32]) -> bool {
         let name = crate::book_index::FileName::new(digest, crate::book_index::FileKind::Index);

@@ -131,25 +131,24 @@ impl Runtime {
                                 };
                                 let strict = if allow_cancelled {
                                     StrictSource::for_cancelled_exit(raw, selection,
-                                        &memory.runtime.owner, &mut memory.runtime.reader)
+                                        &mut memory.runtime.owner, &memory.runtime.reader)
                                 } else {
                                     StrictSource::for_live_reader(raw, selection,
-                                        &memory.runtime.owner, &mut memory.runtime.reader)
+                                        &mut memory.runtime.owner, &memory.runtime.reader)
                                 }.ok_or(Error::Io)?;
                                 let allowed = || !newt_native_storage::Authority::cancelled(&cancel);
                                 let mut strict = strict.with_reopen_authorizer(&mut authorize, &allowed);
-                                // As the receipt exit below: hash again what a cancel
-                                // closed, so the exit can save. This authorizer
+                                // Every exit passes the gate before it saves: it probes
+                                // this loan's descriptor and hashes again what a cancel
+                                // closed; a failed book stays unsaved. This authorizer
                                 // hashes through the SDK and takes no scratch.
-                                if allow_cancelled {
-                                    strict.reload_closed(&mut []);
-                                }
+                                strict.reload_closed(&mut memory.runtime.reader, &mut []);
                                 let progress = super::drive::RunLoan { memory: &mut *memory, ui: reader_ui,
                                     checkpoint, statistics, recovery, accepted: &mut accepted,
                                     metadata: exit_metadata, flags: None, settings }
-                                    .finish(ports, &mut pages, &mut strict, digest, zone, now, sleeping,
+                                    .finish(ports, &mut pages, &strict, digest, zone, now, sleeping,
                                         allow_cancelled, trace);
-                                memory.runtime.owner.settle_strict_loan(&strict);
+                                memory.runtime.owner.settle_strict_loan(strict);
                                 Ok(progress)
                             }).map_err(|_| Error::Io)?
                         };

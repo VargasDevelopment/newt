@@ -205,13 +205,13 @@ fn resume_from(bytes: Vec<u8>, previous: Previous) {
                 allowed() && raw.read_at(0, &mut bytes) == bytes.len() as i32
                     && hash(&bytes, &mut actual) && &actual == expected
             };
-            let mut source = StrictSource::new(&mut source, &digest).with_reopen_authorizer(&mut authorize, &|| true);
             let mut ports = PhysicalOwner { storage: &mut storage, panel, backend: &mut parser, breaker: &mut breaker,
                 cache: PhasedChapterCache { store: pages, hash: &mut Hash, settings },
                 open: PhysicalOpen::Import, cache_only: false };
             let indexed = newt_phased_reader::index_build::open(&mut source, &digest, ports.storage,
                 ports.panel, ports.backend, ports.cache.store, None,
                 newt_phased_reader::index_build::Verification::Verified).unwrap();
+            let mut source = StrictSource::new(&mut source, &digest).with_reopen_authorizer(&mut authorize, &|| true);
             assert!(!indexed.built(), "v{index_version} .IDX book index must stay admitted, not rebuild");
             assert!(!owner.open_physical(&indexed, &mut reader, &mut source, book, restored,
                 RestorePolicy::ExactPage, now(), &mut ports));

@@ -40,6 +40,36 @@ impl Session {
         self.verification.adopt_changed().then_some(digest)
     }
 
+    /// A verification pass's descriptor, borrowed through the reader source's
+    /// reload gate rather than raw: it reloads what a cancel closed and lends
+    /// nothing while the source is closed (#199). A cancel stays a cancel.
+    pub(super) fn with_checked_source<N: Native, R>(&mut self,
+        selected: &mut super::selected::SelectedSource, source_native: &mut N,
+        receipt_native: &mut N, cancel: &dyn Authority, yielded: &dyn Fn(), now: fn() -> u32,
+        expected: &[u8; 32],
+        work: impl FnOnce(&mut dyn newt_core::zip_window::source::BookSource,
+            &mut ReaderVerification<MbedHasher>) -> R,
+    ) -> Result<R, newt_reader_ui::Interrupted> {
+        let interrupted = || if cancel.cancelled() { newt_reader_ui::Interrupted::Cancelled }
+            else { newt_reader_ui::Interrupted::Changed };
+        let Self { route, receipt, whole, block, scratch, source, verification, .. } = self;
+        let route = route.lend(cancel, now);
+        let mut receipt = crate::sd_revision::SdRevisionStorage::lend(receipt, receipt_native, &route)
+            .map_err(|_| interrupted())?;
+        let mut whole = whole.borrow_with_yield(yielded);
+        let mut block = block.borrow_with_yield(yielded);
+        let checked = selected.with_source(source_native, Some(cancel), |raw|
+            with_source(source, RevisionPorts { source: Some(raw), store: &mut receipt,
+                whole: &mut whole, block: Some(&mut block), scratch },
+                |revision| revision.with_checked_source(|raw, digest|
+                    (digest == expected).then(|| work(raw, verification)))));
+        match checked {
+            Ok(Ok(Ok(Some(done)))) => Ok(done),
+            Ok(Ok(Err(gate))) => Err(gate),
+            _ => Err(interrupted()),
+        }
+    }
+
     /// Allocate at frozen new(nothrow) ReaderRevisionSession, before either
     /// hasher constructor. The caller holds the initialized SDK/SD domain.
     // End construction moves before the caller begins import.

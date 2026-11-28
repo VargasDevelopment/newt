@@ -209,11 +209,11 @@ impl Runtime {
                             (unsafe { crate::reader_hash::hash_source(raw, &mut actual, &mut || yielded(), hash_observer) })
                                 && allowed() && actual == *expected
                         };
-                        let strict = if indexed.is_some() {
-                            StrictSource::from_hashed_descriptor(raw, &digest)
+                        let strict = if let Some(indexed) = indexed {
+                            StrictSource::from_indexed(raw, indexed)
                         }
-                            else { StrictSource::for_live_reader(raw, selection, &memory.runtime.owner,
-                                &mut memory.runtime.reader).ok_or(BookFailure::Source)? };
+                            else { StrictSource::for_live_reader(raw, selection, &mut memory.runtime.owner,
+                                &memory.runtime.reader).ok_or(BookFailure::Source)? };
                         let allowed = || !cancel.cancelled();
                         let mut strict = strict.with_reopen_authorizer(&mut authorize, &allowed);
                         let result = super::drive::RunLoan { memory: &mut *memory, ui: reader_ui, checkpoint,
@@ -223,8 +223,8 @@ impl Runtime {
                                 card: &mut *scope.card, preferences: &mut *scope.preferences,
                                 nvs: &mut *scope.nvs, facts: &mut *scope.facts }, &mut pages, &mut strict, &request, &callbacks, &mut pause,
                                 None, run_turn(false), &yielded, &observed, saves, title_deferred, index_trim_owed);
-                        // A cancel's owed re-hash outlives this short loan (#199).
-                        memory.runtime.owner.settle_strict_loan(&strict);
+                        // The owner keeps the book's check between short loans (#199).
+                        memory.runtime.owner.settle_strict_loan(strict);
                         result
                     }).map_err(|_| BookFailure::Source)?
                 };

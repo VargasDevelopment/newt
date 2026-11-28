@@ -220,6 +220,16 @@ pub struct BookExit {
     pub paint: Option<newt_reader_ui::Composed>,
 }
 
+/// Takes a reader paint's frame back into `logical` from the panel's native
+/// frame, which compose_native left in SDK polarity, for the display or the
+/// resume picture. A cancelled paint composed nothing, so it takes nothing and
+/// the caller publishes neither (#199). False when there is no frame to take.
+pub fn take_frame(paint: Option<newt_reader_ui::Composed>, native: &[u8], logical: &mut [u8]) -> bool {
+    if paint == Some(newt_reader_ui::Composed::Cancelled) || native.len() != logical.len() { return false; }
+    for (out, byte) in logical.iter_mut().zip(native) { *out = !*byte; }
+    true
+}
+
 /// The sole book entry uses the mounted Home scope's State resources.
 /// Each turn briefly reborrows NVS/facts so State work cannot overlap parsing.
 /// A cold component caller supplies a fresh Committed checkpoint owner.

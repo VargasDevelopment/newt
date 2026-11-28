@@ -318,8 +318,22 @@ def recovery_controls(run, command, dense, workspace, out):
     run([*command, host, '-o', child / 'program'])
     run([child / 'program', '--cache-only-cancel'],
         witness='cancelled live exit must verify and commit unsaved progress')
-    print('PASS compiled restore policy, boot resume, wake orientation, old Pages producer, cancelled-jump receipt '
-          'and cancelled-exit controls rejected')
+    # #199: both publish sites take a cancelled paint's frame for the display or the resume picture.
+    book_text = book.read_text()
+    needle = 'if paint == Some(newt_reader_ui::Composed::Cancelled) || native.len() != logical.len() {'
+    assert book_text.count(needle) == 1
+    child = out / 'cancelled-frame-published'
+    child.mkdir()
+    generated_book = child / 'book.rs'
+    generated_book.write_text(paths(book_text.replace(
+        needle, 'if paint.is_some() && false || native.len() != logical.len() {', 1), book.parent))
+    host = child / 'host.rs'
+    host.write_text(paths((HERE / 'host.rs').read_text(), HERE, {book: generated_book}))
+    run([*command, host, '-o', child / 'program'])
+    run([child / 'program', '--cache-only-cancel'],
+        witness='a cancelled paint writes no panel byte and publishes no frame')
+    print('PASS compiled restore policy, boot resume, wake orientation, old Pages producer, cancelled-jump receipt, '
+          'cancelled-exit and cancelled-frame controls rejected')
 
 
 if __name__ == '__main__':

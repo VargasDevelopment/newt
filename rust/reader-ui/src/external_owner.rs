@@ -45,6 +45,9 @@ pub struct PageWork {
 enum Completion {
     Captured,
     Published,
+    /// The Contents list is ready. It publishes no page and swaps no
+    /// selection, so a cancel has no page to roll back (#199).
+    MenuPrepared,
     Failed(Status),
     VerificationPending,
     /// A cancel (Back or the time budget) ended the action before it
@@ -80,7 +83,7 @@ impl PageWork {
     /// What finished work means to its caller: a status, or a cancel.
     pub(crate) fn settle(self) -> Result<Status, Cancelled> {
         Ok(match self.result {
-            Completion::Published => Status::Ok,
+            Completion::Published | Completion::MenuPrepared => Status::Ok,
             Completion::Failed(status) => status,
             Completion::VerificationPending => Status::NotFound,
             Completion::Cancelled => return Err(Cancelled),
@@ -102,9 +105,9 @@ pub struct ExternalOwner {
     current: Option<ReaderChapterFailure>,
     failure_shown: bool,
     failed_malformed: bool,
-    /// A cancel closed the last strict loan's source: the next one hashes it
-    /// again before it reads (#199). Firmware hands it back after each loan.
-    pub(crate) strict_must_reload: bool,
+    /// The strict open book's one verification authority, held between short
+    /// loans: each loan takes it, and settling the loan gives it back (#199).
+    pub(crate) strict: crate::physical_source::StrictCheck,
 }
 impl Default for ExternalOwner {
     fn default() -> Self {
@@ -117,15 +120,15 @@ impl Default for ExternalOwner {
             current: None,
             failure_shown: false,
             failed_malformed: false,
-            strict_must_reload: false,
+            strict: crate::physical_source::StrictCheck::Unchecked,
         }
     }
 }
 impl ExternalOwner {
-    /// Keeps a strict loan's owed re-hash for the next loan of the same book.
-    /// Call after every strict loan, whatever it returned.
-    pub fn settle_strict_loan(&mut self, strict: &crate::physical_source::StrictOperations<'_>) {
-        self.strict_must_reload = strict.must_reload();
+    /// Takes back what a strict loan learned about the book. Call after every
+    /// strict loan, whatever it returned; an unsettled loan leaves a re-hash owed.
+    pub fn settle_strict_loan(&mut self, strict: crate::physical_source::StrictOperations<'_>) {
+        self.strict = strict.into_check();
     }
     pub fn chapter_failure(&self) -> Option<&ReaderChapterFailure> {
         self.current
@@ -606,6 +609,10 @@ impl<S: BookSource, P: OwnerPages<S>> OwnerPages<S> for PendingPages<'_, P> {
 fn completed(status: Status) -> PageWork {
     if status == Status::Ok { PageWork::PUBLISHED } else { PageWork::failed(status) }
 }
+/// A Contents list load's result.
+fn prepared(status: Status) -> PageWork {
+    if status == Status::Ok { PageWork { result: Completion::MenuPrepared } } else { PageWork::failed(status) }
+}
 /// A cancel that ended a page action before it published. It is never a
 /// failure to latch or remember: each caller of `perform` decides what it
 /// means, and for an open reader that is "nothing happened" (#199).
@@ -839,11 +846,7 @@ pub fn execute_direct<B: ParserBackend + ?Sized>(
             Some(op.lease),
         );
         drop(op);
-        if status == Status::Ok {
-            PageWork::PUBLISHED
-        } else {
-            PageWork::failed(status)
-        }
+        prepared(status)
     } else {
         capture_direct(op, source, request)
     }

@@ -45,16 +45,16 @@ pub(super) fn open_page(panel: &mut newt_c3_board::ReaderPanel<'_, '_>, io: &UiI
         let mut actual = [0; 32];
         allowed() && raw.read_at(0, &mut bytes) == bytes.len() as i32 && hash(&bytes, &mut actual) && &actual == expected
     };
-    let mut source = StrictSource::new(&mut raw, &digest).with_reopen_authorizer(&mut authorize, &|| true);
     let mut shown = None;
     with_pages(card, io, &route, |pages| {
         let mut owner = ExternalOwner::default();
         let mut ports = newt_reader_ui::PhysicalOwner { storage: &mut storage, panel, backend: &mut parser,
             breaker: &mut breaker, cache: PhasedChapterCache { store: pages, hash: &mut Hash, settings },
             open: PhysicalOpen::Import, cache_only: false };
-        let indexed = newt_phased_reader::index_build::open(&mut source, &digest, ports.storage,
+        let indexed = newt_phased_reader::index_build::open(&mut raw, &digest, ports.storage,
             ports.panel, ports.backend, ports.cache.store, None,
             newt_phased_reader::index_build::Verification::Verified).unwrap();
+        let mut source = StrictSource::new(&mut raw, &digest).with_reopen_authorizer(&mut authorize, &|| true);
         if owner.open_physical(&indexed, &mut reader, &mut source, saved.book, saved, policy, now(), &mut ports) {
             shown = Some(reader.info());
         }

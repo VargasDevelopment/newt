@@ -32,16 +32,19 @@ pub(super) fn finish_reader_action(reader: &mut PhasedReader<'_, '_>, source: &m
     let cancelled = work.result == Completion::Cancelled || source.revision.cancelled();
     if request != PageRequest::Open && reader.opened() && cancelled {
         // A cancel (Back or the time budget) refuses the final freshness read
-        // and every read after it, so it says nothing about the book. Only a
-        // page that passed that read replaces the shown one: an unchecked
-        // publication is discarded, never kept and never read as Stale. The
-        // source closes and the next action or repaint reloads it (#199).
+        // and every read after it, so it says nothing about the book. Only
+        // work that passed that read stands: an unchecked page publication is
+        // discarded, never kept and never read as Stale. A Contents load
+        // published no page, so it has none to roll back. The source closes
+        // and the next action or repaint reloads it (#199).
         match work.result {
-            Completion::Published if fresh => return work,
+            Completion::Published | Completion::MenuPrepared if fresh => return work,
             Completion::Published => reader.discard_chapter_publication(shown.info, shown.had_page),
-            // Deferred work read nothing the cancel could refuse.
+            // Pending is only work that read nothing a cancel interrupted
+            // (retry_after_loading), so it can safely retry.
             Completion::VerificationPending => return work,
-            Completion::Captured | Completion::Failed(_) | Completion::Cancelled => {}
+            Completion::MenuPrepared | Completion::Captured | Completion::Failed(_)
+                | Completion::Cancelled => {}
         }
         source.close_after_cancel();
         return PageWork::CANCELLED;
@@ -83,7 +86,7 @@ pub(super) fn finish_receipt_action(
 fn reject_unless_fresh(reader: &mut PhasedReader<'_, '_>, revision: &mut ImportedRevision<'_>,
     request: PageRequest, work: PageWork, fresh: bool) -> PageWork {
     let fragment = matches!(request, PageRequest::Chapter(_, toc) if toc != u16::MAX);
-    if !fresh && (fragment || work.result == Completion::Published) {
+    if !fresh && (fragment || matches!(work.result, Completion::Published | Completion::MenuPrepared)) {
         reject_changed_receipt(reader, revision);
         return PageWork::failed(Status::Stale);
     }

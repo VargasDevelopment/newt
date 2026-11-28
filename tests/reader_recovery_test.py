@@ -5,7 +5,8 @@ restore (rust/tests/reader_short_turn), with their compiled controls.
 
 It links against the same startup crate graph and native objects as
 legacy_nvs_test.py, and has its own gate phase so neither phase nears its CPU
-budget.
+budget. Its reader-ui crate controls rebuild the crate graph for each control,
+so they run alone under --crate-controls, as a third phase.
 """
 from pathlib import Path
 import shutil
@@ -62,22 +63,69 @@ CRATE_CONTROLS = (
      'a cancel during a pending verification latches nothing'),
     # A jump target published from reads the final check refused, kept as shown.
     ('cancel-keeps-unchecked-page', 'reader-ui/src/physical_owner/receipt.rs',
-     'Completion::Published if fresh => return work,',
-     'Completion::Published if fresh || true => return work,',
+     'Completion::Published | Completion::MenuPrepared if fresh => return work,',
+     'Completion::Published | Completion::MenuPrepared if fresh || true => return work,',
      'a jump cancelled at its final check keeps the shown page'),
     # The cancel question asked before the final check, so a cancel that lands
-    # during the check reads as a changed book.
+    # during the check reads as a changed book. The Contents paint sweep meets
+    # it first, at a cancel inside the paint's final check.
     ('cancel-before-check', 'reader-ui/src/physical_owner/receipt.rs',
      '    let fresh = finish_receipt_checks(&mut source.revision, request);\n'
      '    let cancelled = work.result == Completion::Cancelled || source.revision.cancelled();\n',
      '    let cancelled = work.result == Completion::Cancelled || source.revision.cancelled();\n'
      '    let fresh = finish_receipt_checks(&mut source.revision, request);\n',
-     'a jump cancelled after its final check keeps the checked target'),
-    # Each short strict loan starting verified, so a cancel's re-hash is lost.
+     'a cancelled Contents paint latches nothing and keeps the reader'),
+    # The owner forgetting what a strict loan learned, so the next loan
+    # starts from a fresh probe and a cancel's re-hash is lost.
     ('strict-loan-forgets-reload', 'reader-ui/src/external_owner.rs',
-     'self.strict_must_reload = strict.must_reload();',
-     'self.strict_must_reload = strict.must_reload() && false;',
+     'self.strict = strict.into_check();',
+     'self.strict = match strict.into_check() {\n'
+     '            crate::physical_source::StrictCheck::MustReload\n'
+     '                | crate::physical_source::StrictCheck::Failed => crate::physical_source::StrictCheck::Unchecked,\n'
+     '            check => check,\n'
+     '        };',
      'the next no-session loan hashes the book again before its repaint reads'),
+    # A failed re-hash that the next pass may retry, so a later exit saves a changed open.
+    ('failed-rehash-retries', 'reader-ui/src/physical_source/operations.rs',
+     '            None => {\n                self.source.check = StrictCheck::Failed;',
+     '            None => {\n                self.source.check = StrictCheck::MustReload;',
+     'a failed re-hash stays failed for the open'),
+    # The availability probe's cancel read as a changed book, which closes the reader.
+    ('probe-cancel-fails', 'reader-ui/src/physical_source/operations.rs',
+     'None if !allowed() => Err(Interrupted::Cancelled),',
+     'None if false && !allowed() => Err(Interrupted::Cancelled),',
+     'a cancelled availability probe keeps the reader and its page'),
+    # Firmware's way to the held bytes skipping the gate, so it finds a closed source.
+    ('gate-skips-reload', 'reader-ui/src/physical_source.rs',
+     '        self.reload()?;\n        self.with_held_source(work)',
+     '        self.with_held_source(work)',
+     'a firmware read through the gate reloads the receipt first'),
+    # A cancelled Contents load rolled back as a page publication, which flips
+    # the reader's selection to a page Contents never published. The Contents
+    # paint sweep meets it first: the next paint can't draw from that selection.
+    ('menu-cancel-rolls-back', 'reader-ui/src/physical_owner/receipt.rs',
+     'Completion::Published => reader.discard_chapter_publication(shown.info, shown.had_page),\n'
+     '            // Pending is only work that read nothing a cancel interrupted\n'
+     '            // (retry_after_loading), so it can safely retry.\n'
+     '            Completion::VerificationPending => return work,\n'
+     '            Completion::MenuPrepared | Completion::Captured',
+     'Completion::Published | Completion::MenuPrepared\n'
+     '                => reader.discard_chapter_publication(shown.info, shown.had_page),\n'
+     '            Completion::VerificationPending => return work,\n'
+     '            Completion::Captured',
+     'a Contents paint after cancelled ones draws'),
+    # An interrupted cache-only staging left owed as Pending, so the next
+    # action keeps the receipt a cancel refused.
+    ('cancelled-staging-pending', 'reader-ui/src/physical_owner.rs',
+     'if revision.cancelled() { PageWork::CANCELLED }',
+     'if false && revision.cancelled() { PageWork::CANCELLED }',
+     'a cancelled cache-only turn keeps chapter 0 and closes the receipt'),
+    # A cancelled action leaving its Pages scope open, so a refused index read
+    # stays latched and the next Contents load reads it as a damaged index.
+    ('cancel-keeps-cache-latch', 'reader-ui/src/physical_owner.rs',
+     'if work.result == Completion::Cancelled { self.cache.store.close_after_cancel(); }',
+     '',
+     'a Contents paint after cancelled ones draws'),
     # A cancelled paint composed as a not-ready frame, which firmware would publish.
     ('cancelled-paint-composes', 'reader-ui/src/physical_owner.rs',
      'let Painted::Drawn { ready } = painted.0 else { return Ok(Composed::Cancelled) };',
@@ -96,9 +144,8 @@ CRATE_CONTROLS = (
 )
 
 
-def reader_recovery(run, workspace, graph, objects, support, *, controls):
-    here = workspace / 'tests/reader_short_turn'
-    checks = legacy.load('reader_short_turn', here / 'check.py')
+def harness(run, workspace, objects):
+    """The harness's build recipe and link inputs: its board fake and the startup objects."""
     build = legacy.load('recovery_build', workspace / 'tests/phased_reader/physical/build.py')
     out = run.output / 'reader-recovery'
     out.mkdir()
@@ -107,13 +154,11 @@ def reader_recovery(run, workspace, graph, objects, support, *, controls):
              '-fsanitize=address,undefined', '-fno-sanitize-recover=all',
              '-I', workspace / 'salamander/board/native',
              '-c', workspace / 'tests/reader_checkpoint/board_fake.c', '-o', fake], workspace)
-    # The startup graph and parser objects already cover this firmware fixture.
-    flags = [arg for arg in legacy.link_flags(build, run, graph, [fake, *objects], control=True)
-             if arg != '-Dwarnings']
-    executable = out / 'positive'
-    # Its runs open many pages, so the positive keeps opt 1 (rustc takes the last opt-level).
-    run.run([*flags, '-Copt-level=1', here / 'host.rs', '-o', executable], workspace)
+    return build, [fake, *objects]
 
+
+def recorder(run, workspace, support):
+    """Runs a command; with a witness, it must abort at that runtime assertion."""
     def recorded(command, *, witness=None):
         if witness is None:
             return run.run(command, workspace)
@@ -127,17 +172,29 @@ def reader_recovery(run, workspace, graph, objects, support, *, controls):
                             'short-turn or recovery control must reach its runtime assertion')
         else:
             raise RuntimeError('mutation survived: ' + witness)
+    return recorded
 
+
+def reader_recovery(run, workspace, graph, objects, support, *, controls):
+    here = workspace / 'tests/reader_short_turn'
+    checks = legacy.load('reader_short_turn', here / 'check.py')
+    build, inputs = harness(run, workspace, objects)
+    out = run.output / 'reader-recovery'
+    # The startup graph and parser objects already cover this firmware fixture.
+    flags = [arg for arg in legacy.link_flags(build, run, graph, inputs, control=True)
+             if arg != '-Dwarnings']
+    executable = out / 'positive'
+    # Its runs open many pages, so the positive keeps opt 1 (rustc takes the last opt-level).
+    run.run([*flags, '-Copt-level=1', here / 'host.rs', '-o', executable], workspace)
+    recorded = recorder(run, workspace, support)
     checks.check_short_turn(recorded, flags, workspace, out, executable, controls=controls)
     checks.check_recovery(recorded, flags, workspace, out, executable, controls=controls)
-    if controls:
-        crate_controls(run, workspace, support, build, [fake, *objects], recorded)
 
 
 def crate_controls(run, workspace, support, build, inputs, recorded):
     """One mutant tree and target serve every crate control, so after the first
     graph each control rebuilds only reader-ui and the crates above it. The
-    sealed workspace and its graph stay unmutated."""
+    sealed workspace stays unmutated."""
     mutant = run.output / 'crate-controls' / 'rust'
     shutil.copytree(workspace, mutant)
     for name, file, original, mutation, witness in CRATE_CONTROLS:
@@ -163,14 +220,27 @@ def prove(run, workspace, support):
     return dict(host_startup=True, hardware=False, controls=controls)
 
 
+def prove_crate_controls(run, workspace, support):
+    run.env['RUSTFLAGS'] = '-Dwarnings -Ccodegen-units=1'
+    _, objects = legacy.startup_natives(run, workspace, support)
+    build, inputs = harness(run, workspace, objects)
+    crate_controls(run, workspace, support, build, inputs, recorder(run, workspace, support))
+    return dict(host_startup=True, hardware=False, controls=True)
+
+
 def main():
     global legacy
     import importlib.util
     spec = importlib.util.spec_from_file_location('legacy_nvs_test', ROOT / 'tests/legacy_nvs_test.py')
     legacy = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(legacy)
-    legacy.in_sealed_copy(prove, 'reader-recovery-evidence')
-    print('PASS reader recovery: short turns, restore policy, Pages upgrades, boot resume and picture restore')
+    if '--crate-controls' not in sys.argv[1:]:
+        legacy.in_sealed_copy(prove, 'reader-recovery-evidence')
+        print('PASS reader recovery: short turns, restore policy, Pages upgrades, boot resume and picture restore')
+    elif gate_tier.negative_controls(__file__):
+        legacy.in_sealed_copy(prove_crate_controls, 'reader-recovery-controls-evidence')
+    else:
+        print('SKIP reader-ui cancel-reload controls: not selected for this run')
 
 
 if __name__ == '__main__':

@@ -119,20 +119,24 @@ impl Runtime {
                 true
             };
             let cancel = Cancel(&allowed);
-            let mut native = scope.card.port(scope.io);
-            source.with_source(&mut native, Some(&cancel), |raw| {
-                scope.bus.panel.with_parse(|scratch| {
+            let mut source_native = scope.card.port(scope.io);
+            let mut receipt_native = scope.card.port(scope.io);
+            let panel = &mut *scope.bus.panel;
+            session.with_checked_source(source, &mut source_native, &mut receipt_native, &cancel,
+                &yielded, millis, &digest, |raw, verification| panel.with_parse(|scratch| {
                     let began = clock.micros();
-                    while session.verification.state() == Verification::Pending && allowed()
+                    while verification.state() == Verification::Pending && allowed()
                         && (!idle || clock.micros().wrapping_sub(began) < 20000) {
                         let bytes = if idle { scratch.len().min(4096) } else { scratch.len() };
-                        session.verification.step_with_update(raw, &digest, &mut scratch[..bytes],
+                        verification.step_with_update(raw, &digest, &mut scratch[..bytes],
                             &mut || allowed(), &mut |hash, bytes| hash.borrow_with_yield(&yielded).update(bytes));
                     }
-                })
-            })
+                }))
         });
-        if !matches!(result, Ok(Ok(Ok(())))) { session.verification.mark_failed(); }
+        // A cancel at the gate leaves the check pending for the next pass.
+        if !matches!(result, Ok(Ok(Ok(())) | Err(newt_reader_ui::Interrupted::Cancelled))) {
+            session.verification.mark_failed();
+        }
         self.invalidate_failed_index(home);
         let Ok(native) = home.bus.board.frame() else { crate::app_power::stop(); };
         let Ok(native) = native.try_into() else { crate::app_power::stop(); };

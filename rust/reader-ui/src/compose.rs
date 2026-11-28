@@ -77,6 +77,16 @@ pub enum ReaderPaintWork {
         completion: ReaderPaintCompletion,
     },
 }
+impl ReaderPaintWork {
+    /// Err once a cancel stopped the paint. Every later step of the paint
+    /// goes through `?`, so no fallback or pixel restore can replace it (#199).
+    pub(crate) fn drawn(self) -> Result<Self, crate::external_owner::Cancelled> {
+        match self {
+            Self::Cancelled => Err(crate::external_owner::Cancelled),
+            work => Ok(work),
+        }
+    }
+}
 /// One outstanding fallback after an actual retained repaint attempt.
 #[must_use]
 #[derive(Debug, Eq, PartialEq)]

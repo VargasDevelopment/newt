@@ -120,7 +120,7 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
                         let status = session.prepare_menu_owned(focus);
                         drop(session);
                         drop(op);
-                        return completed(status);
+                        return prepared(status);
                     }
                     PageRequest::Chapter(spine, toc) => session.capture_chapter_owned(spine, toc),
                     PageRequest::Page(spine, target) | PageRequest::Anchor(spine, target) => {
@@ -138,7 +138,7 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
                                 }
                                 let status = session.stage_owned(spine);
                                 if cache_only && status != Status::Ok {
-                                    return PageWork::VERIFICATION_PENDING;
+                                    return retry_after_loading(session.revision);
                                 }
                                 if status != Status::Ok {
                                     return PageWork::failed(status);
@@ -161,7 +161,7 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
                         publication = result.publication;
                         cached = result.result.hit;
                         if cache_only && result.result.status == Status::NotFound {
-                            return PageWork::VERIFICATION_PENDING;
+                            return retry_after_loading(session.revision);
                         }
                         result.result.status
                     }
@@ -235,7 +235,7 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
                 ));
             }
             PageRequest::Menu(focus) => {
-                return completed(reader.prepare_chapter_menu_indexed(
+                return prepared(reader.prepare_chapter_menu_indexed(
                     source, self.cache.store, digest,
                     focus,
                     self.storage,
@@ -366,6 +366,12 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
     }
 }
 
+/// A cache-only probe that didn't finish retries once Loading shows, unless a
+/// cancel interrupted it: that work is cancelled, not owed (#199).
+fn retry_after_loading(revision: &mut ImportedRevision<'_>) -> PageWork {
+    if revision.cancelled() { PageWork::CANCELLED } else { PageWork::VERIFICATION_PENDING }
+}
+
 impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence, S: PhysicalSource>
     OwnerPages<S> for PhysicalOwner<'_, '_, '_, B, L, C>
 {
@@ -375,7 +381,7 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
         source: &mut S,
         request: PageRequest,
     ) -> PageWork {
-        source.with_physical_source(|mut source| {
+        let work = source.with_physical_source(|mut source| {
             // Open selects its source again itself.
             if request != PageRequest::Open {
                 if let Err(work) = self.reload_source(reader, &mut source) {
@@ -390,11 +396,13 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
                 PhysicalSourceRef::Strict(source) => self.execute_strict(reader, source, request),
                 PhysicalSourceRef::Pending(source) => self.execute_pending(reader, source, request),
             }
-        })
+        });
+        if work.result == Completion::Cancelled { self.cache.store.close_after_cancel(); }
+        work
     }
     fn repaint(&mut self, reader: &mut PhasedReader<'_, '_>, source: &mut S)
         -> Result<Status, Cancelled> {
-        source.with_physical_source(|mut source| {
+        let status = source.with_physical_source(|mut source| {
             if let Err(work) = self.reload_source(reader, &mut source) {
                 return work.settle();
             }
@@ -404,7 +412,9 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
                 PhysicalSourceRef::Strict(source) => self.repaint_strict(reader, source),
                 PhysicalSourceRef::Pending(source) => self.repaint_pending(reader, source),
             }
-        })
+        });
+        if status.is_err() { self.cache.store.close_after_cancel(); }
+        status
     }
 }
 
@@ -413,13 +423,13 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
 {
     /// Every action and repaint passes here before it touches its source, so
     /// nothing reads a source that a cancel closed until it reloads: a receipt
-    /// reloads, a strict view hashes again (#199). Both paths read the result
-    /// the same way; a changed book closes the reader.
+    /// reloads, a strict view hashes again or probes its new descriptor (#199).
+    /// Both paths read the result the same way; a changed book closes the reader.
     fn reload_source(&mut self, reader: &mut PhasedReader<'_, '_>,
         source: &mut PhysicalSourceRef<'_, '_, '_>) -> Result<(), PageWork> {
         let reloaded = match source {
             PhysicalSourceRef::Strict(strict) => {
-                match self.panel.with_parse(|scratch| strict.reload(scratch)) {
+                match self.panel.with_parse(|scratch| strict.reload(reader, scratch)) {
                     Ok(reloaded) => reloaded,
                     Err(status) => return Err(PageWork::failed(status)),
                 }
@@ -547,6 +557,17 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
         prepared: PreparedReaderPaint,
         now: u32,
     ) -> ReaderPaintWork {
+        self.repaint_ui_drawn(reader, revision, owner, prepared, now)
+            .unwrap_or(ReaderPaintWork::Cancelled)
+    }
+    fn repaint_ui_drawn<S: PhysicalSource>(
+        &mut self,
+        reader: &mut PhasedReader<'_, '_>,
+        revision: &mut S,
+        owner: &mut ExternalOwner,
+        prepared: PreparedReaderPaint,
+        now: u32,
+    ) -> Result<ReaderPaintWork, Cancelled> {
         let restore_pixels = !prepared.paint;
         let work = crate::compose::repaint_reader_ui_with(
             reader,
@@ -555,7 +576,7 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
             &mut owner.tracker,
             now,
             |r| self.repaint(r, revision),
-        );
+        ).drawn()?;
         if restore_pixels {
             // Retrying menu preparation used/cleared native storage. Recreate
             // the validated FIRST page even if retry latched a source failure.
@@ -566,10 +587,10 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
             if status != Status::Ok {
                 owner.state.note_failure(status);
                 owner.tracker.pause(now);
-                return ReaderPaintWork::Complete { ready: false };
+                return Ok(ReaderPaintWork::Complete { ready: false });
             }
         }
-        work
+        Ok(work)
     }
     pub fn finish_ui_paint<S: PhysicalSource>(
         &mut self,
