@@ -43,32 +43,35 @@ def turn(route, miss=0):
     return ('turn', 1, route, miss)
 
 
-def build(chapter):
-    """One producer run for `chapter` (1-based) that sealed it."""
-    return [('build', chapter), ('sealed', 0, 0)]
+def build(spine, ahead):
+    """One sealed producer run, started while the reader is in `spine` (0-based),
+    for the chapter `ahead` of it."""
+    return [('build', spine, ahead), ('sealed', 0, 0)]
 
 
 HIT = turn(3)
 EXPECTED = (
     turn(0),          # Home opens the Books list.
     turn(5, miss=2),  # The book opens on a fresh card: probed, no cache to attach, laid out.
-    *build(1), *build(2),
+    *build(0, 0), *build(0, 1),  # Chapters 1 and 2, from chapter 1.
     *[HIT] * 13,      # The 13th turn enters chapter 2.
-    *build(3),
+    *build(1, 1),     # Chapter 3, from chapter 2.
     *[HIT] * 3,       # The last turn forward, then back across the edge.
 )
 
 
+ROWS = {'Reader action: ': ('turn', ACTION), 'PC start: ': ('build', START), 'PC finish: ': ('sealed', FINISH)}
+
+
 def events(log):
-    """Every action and producer run row in the log, in order."""
+    """Every action and producer run row in the log, in order. A row that
+    doesn't parse is kept as unreadable, so it breaks the sequence."""
     found = []
     for line in log.splitlines():
-        if (match := ACTION.match(line)):
-            found.append(('turn', *map(int, match.groups())))
-        elif (match := START.match(line)):
-            found.append(('build', int(match[1]) + int(match[2]) + 1))
-        elif (match := FINISH.match(line)):
-            found.append(('sealed', *map(int, match.groups())))
+        for prefix, (kind, pattern) in ROWS.items():
+            if line.startswith(prefix):
+                match = pattern.match(line)
+                found.append((kind, *map(int, match.groups())) if match else ('unreadable', line))
     return found
 
 
@@ -132,12 +135,23 @@ def rebuild_chapter_1(lines):
     lines[at:at] = ['PC start: at=0 from=0 next=0', 'PC finish: at=0 status=0 interrupted=0']
 
 
+def prefetch_chapter_3_from_chapter_1(lines):
+    at = next(i for i, line in enumerate(lines) if START.match(line) and line.endswith(' from=1 next=1'))
+    lines[at] = lines[at].replace(' from=1 next=1', ' from=0 next=2')
+
+
+def extend_first_start(lines):
+    lines[first(lines, START)] += ' retry=1'
+
+
 # Log-level controls: each slack the sequence check must refuse, and the
 # event where it must notice.
 LOG_CONTROLS = {
     'a sealed turn laid out again': (lay_out_first_hit, 6),
     'a turn row went missing': (drop_first_hit, 18),
     'chapter 1 built again between seals': (rebuild_chapter_1, 4),
+    'chapter 3 prefetched from chapter 1 instead of reached': (prefetch_chapter_3_from_chapter_1, 19),
+    'a producer row that does not parse': (extend_first_start, 2),
 }
 # A firmware edit that keeps the producer from ever running must fail.
 CONTROL = ('reader_image_producer.rs', 'Reason::None => ProducerEntry::Ready,',
@@ -159,7 +173,7 @@ def main():
         return
     control = rust_preview.control([CONTROL], optimize=False)
     _, problem = journey(control, SETTINGS['A'])
-    assert problem == "event 2: expected ('build', 1), got ('turn', 1, 5, 2)", f'control: unexpected result {problem!r}'
+    assert problem == "event 2: expected ('build', 0, 0), got ('turn', 1, 5, 2)", f'control: unexpected result {problem!r}'
     print(f'PASS: {len(SETTINGS)} reader work journeys match the sealed-cache sequence; '
           f'{len(LOG_CONTROLS)} log controls and the firmware control fail')
 
