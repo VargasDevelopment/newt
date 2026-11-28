@@ -13,8 +13,12 @@ One card, several launches of the real firmware with the generated book S
    rebuilds nothing.
 4. Change the text size: both chapters rebuild under new names.
 
-After each Save the active newt_prefs record must hold exactly the new
-settings; a control rewrites the saved cadence to a wrong valid value.
+After each Save, the newt_prefs record the firmware would load (its decoder
+and A/B rules, ported below) must hold exactly the settings the upgraded read
+started from plus that Save's change. Controls rewrite a saved record to a
+wrong valid cadence, downgrade the 34 px record to version 2 (which firmware
+rejects, falling back to the older slot) and give both records one sequence
+(which firmware treats as ambiguous); each must fail the same check.
 
 Each launch's `Reader action` and producer `PC start`/`PC finish` rows must
 match the expected sequence exactly; doctored copies of those logs check that
@@ -81,8 +85,12 @@ EXPECTED = {
     'refresh': SAVED_CACHED,
     'text size': (HIT, *[MENU] * 9, LAID_OUT, *CHAPTERS_1_AND_2, HIT, HIT),
 }
-# Each Save's active newt_prefs record after the orientation: (slim bar, refresh pages, text size byte).
+# Each Save's loaded settings after the orientation: (slim bar, refresh pages, text size byte).
 SAVED = {'bar off': (0, 5, 0), 'refresh': (0, 10, 0), 'text size': (0, 10, 34)}
+# The firmware's newt_prefs NVS keys (SLOT_KEYS, rust/core/src/durable.rs), and
+# the settings it keeps when both are missing (ViewSettings::default).
+SLOTS = ('slot0', 'slot1')
+DEFAULTS = (1, 1, 5, 0)
 
 
 def events(log):
@@ -106,25 +114,69 @@ def mismatch(expected, log):
     return None
 
 
-def active(slots):
-    """Index of the active newt_prefs record: the valid slot with the newer
-    wrapping sequence, as PreferencesStore picks it (layout in
-    rust/core/src/preferences.rs)."""
-    valid = [index for index, slot in enumerate(slots) if len(slot) == 24 and slot[:4] == b'NWTP'
-             and zlib.crc32(slot[:20]) == int.from_bytes(slot[20:], 'little')]
-    assert valid, 'no valid newt_prefs record'
-    newest = valid[0]
-    for index in valid[1:]:
-        if (int.from_bytes(slots[index][8:12], 'little') - int.from_bytes(slots[newest][8:12], 'little')) \
-                % 2**32 < 2**31:
-            newest = index
-    return newest
+def u32(record, at):
+    return int.from_bytes(record[at:at + 4], 'little')
 
 
-def saved_mismatch(slots, expected):
-    """None if the active record holds expected (orientation, slim bar, refresh pages, text size byte)."""
-    saved = tuple(slots[active(slots)][12:16])
-    return None if saved == expected else f'saved {saved}, expected {expected}'
+def decode(record):
+    """Preferences::decode (rust/core/src/preferences.rs): (sequence,
+    (orientation, slim bar, refresh pages, text size byte)), or 'corrupt' or
+    'unsupported'. There is no host decoder to reuse, so this follows it rule
+    for rule, in its order."""
+    if len(record) < 8 or record[:4] != b'NWTP':
+        return 'corrupt'
+    version = u32(record, 4)
+    if not 1 <= version <= 4:
+        return 'unsupported'
+    if len(record) < 16 or record[12] > 2 or (record[12] == 2 and version < 3) \
+            or not (record[15] == 0 or (version == 4 and record[15] in (22, 24, 27, 34))):
+        return 'corrupt'
+    if len(record) != 24 or record[13] > 1 or u32(record, 20) != zlib.crc32(record[:20]) \
+            or (version == 1 and record[14] != 0) or (version > 1 and record[14] not in (1, 5, 10)) \
+            or any(record[16:20]):
+        return 'corrupt'
+    return u32(record, 8), (record[12], record[13], 5 if version == 1 else record[14], record[15])
+
+
+def select(slots):
+    """PreferencesStore::read_and_select (rust/core/src/preferences_store.rs)
+    over [slot0, slot1], None for a missing key: the active slot's index, None
+    when both are missing, or why firmware loads neither."""
+    read = ['missing' if slot is None else 'failed' if len(slot) > 24 else decode(slot) for slot in slots]
+    for error in ('failed', 'unsupported'):
+        if error in read:
+            return f'newt_prefs {error}'
+    valid = [index for index, value in enumerate(read) if not isinstance(value, str)]
+    if len(valid) == 2:
+        delta = (read[0][0] - read[1][0]) % 2**32
+        if delta == 2**31 or (delta == 0 and slots[0] != slots[1]):
+            return 'newt_prefs ambiguous'
+        return int(delta >= 2**31)
+    if valid:
+        return valid[0]
+    return None if read == ['missing', 'missing'] else 'newt_prefs corrupt'
+
+
+def loaded(slots):
+    """The settings firmware loads from these slots, or why it loads none."""
+    index = select(slots)
+    if isinstance(index, str):
+        return index
+    return DEFAULTS if index is None else decode(slots[index])[1]
+
+
+def save_problem(slots):
+    """None if each Save's loaded settings are the upgraded read's orientation
+    plus exactly that Save's change, else the first that isn't."""
+    before = loaded(slots['upgraded read'])
+    if isinstance(before, str):
+        return f'upgraded read: {before}'
+    for name, change in SAVED.items():
+        expected = (before[0], *change)
+        saved = loaded(slots[name])
+        if saved != expected:
+            return f'{name}: saved {saved}, expected {expected}'
+    return None
 
 
 class Card:
@@ -152,7 +204,9 @@ class Card:
         return frames[-1], int(CHARACTER.search(diag[-1])[1]), self.prefs() != prefs
 
     def prefs(self):
-        return [slot.read_bytes() for slot in sorted((self.directory / 'nvs/newt_prefs').glob('slot*'))]
+        """[slot0, slot1] bytes, None for a missing key, so a gap can't shift the other slot."""
+        paths = [self.directory / 'nvs/newt_prefs' / key for key in SLOTS]
+        return [path.read_bytes() if path.exists() else None for path in paths]
 
     def files(self):
         """{name: bytes} of the Pages folder, without the book's revision prefix."""
@@ -189,10 +243,8 @@ def journey(binary, directory):
 
     _, _, saved_choice = card.launch('text size', NEXT_SIZE)
     # Each Save stores exactly its one change: bar off, refresh 5 -> 10, then 30 -> 34 px.
-    orientation = card.slots['bar off'][active(card.slots['bar off'])][12]
-    for name in SAVED:
-        problem = saved_mismatch(card.slots[name], (orientation, *SAVED[name]))
-        assert problem is None, f'{name}: {problem}'
+    problem = save_problem(card.slots)
+    assert problem is None, problem
     resized = card.files()
     assert saved_choice and len(resized) == len(rebuilt) + 2 and set(rebuilt) < set(resized), \
         f'the text size change did not add two chapters: {sorted(resized)}'
@@ -232,13 +284,28 @@ LOG_CONTROLS = {
 }
 
 
-def cadence(slots, pages):
-    """slots with the active record's refresh cadence set to pages and its CRC still valid."""
+def rewritten(slots, index, at, value):
+    """slots with slot index's bytes from at replaced by value, its CRC recomputed."""
     slots = [bytearray(slot) for slot in slots]
-    record = slots[active(slots)]
-    record[14] = pages
+    record = slots[index]
+    record[at:at + len(value)] = value
     record[20:] = zlib.crc32(record[:20]).to_bytes(4, 'little')
-    return slots
+    return [bytes(slot) for slot in slots]
+
+
+# Each a saved record the Save check must refuse: (launch, rewrite of its
+# slots given the active index, the exact failure under orientation o).
+SAVE_CONTROLS = {
+    'a valid but wrong cadence': (
+        'refresh', lambda slots, at: rewritten(slots, at, 14, b'\x01'),
+        'refresh: saved ({o}, 0, 1, 0), expected ({o}, 0, 10, 0)'),
+    'the 34 px record downgraded to version 2': (
+        'text size', lambda slots, at: rewritten(slots, at, 4, (2).to_bytes(4, 'little')),
+        'text size: saved ({o}, 0, 10, 0), expected ({o}, 0, 10, 34)'),
+    'both records on one sequence': (
+        'text size', lambda slots, at: rewritten(slots, 1 - at, 8, slots[at][8:12]),
+        'text size: saved newt_prefs ambiguous, expected ({o}, 0, 10, 34)'),
+}
 
 
 def main():
@@ -249,14 +316,13 @@ def main():
     for label, (name, change, failure) in LOG_CONTROLS.items():
         problem = mismatch(EXPECTED[name], doctored(logs[name], change))
         assert problem == failure, f'log control {label}: {problem!r}'
-    # A Save that stored a valid but wrong cadence must fail, not pass as "changed".
-    orientation = card.slots['refresh'][active(card.slots['refresh'])][12]
-    problem = saved_mismatch(cadence(card.slots['refresh'], 1), (orientation, *SAVED['refresh']))
-    assert problem == f'saved ({orientation}, 0, 1, 0), expected ({orientation}, 0, 10, 0)', \
-        f'cadence control: {problem!r}'
+    orientation = loaded(card.slots['upgraded read'])[0]
+    for label, (name, change, failure) in SAVE_CONTROLS.items():
+        problem = save_problem({**card.slots, name: change(card.slots[name], select(card.slots[name]))})
+        assert problem == failure.format(o=orientation), f'save control {label}: {problem!r}'
     print('PASS: v0.8.0 Pages rebuild once with Home and the page unchanged; the slim bar and refresh '
           f'keep the cache; a text size change rebuilds; each Save stores exactly its setting; '
-          f'{len(LOG_CONTROLS)} log controls and the cadence control fail')
+          f'{len(LOG_CONTROLS)} log controls and {len(SAVE_CONTROLS)} saved-record controls fail')
 
 
 if __name__ == '__main__':
