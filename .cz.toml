@@ -2,7 +2,7 @@
 # Newt's plugin (tools/cz_newt), registered under its own path: when it is
 # missing, Commitizen's "Try running 'pip install NAME'" names the local package.
 name = "./tools/cz_newt"
-version = "0.8.0"
+version = "0.8.1-dev.2611280517"
 version_scheme = "semver2"
 version_provider = "commitizen"
 version_files = ["rust/firmware/native/firmware_version.h:NEWT_FIRMWARE_VERSION"]
