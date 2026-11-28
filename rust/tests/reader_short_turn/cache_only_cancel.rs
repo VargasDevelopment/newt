@@ -552,15 +552,26 @@ pub fn check() {
             assert_eq!((ui.panel, ui.notice), (ReaderPanel::Chapters, ReaderUiNotice::ChapterJumpFailed),
                 "a cancelled Contents list load stays on Contents with the jump notice");
             assert_eq!(source.digest(), None, "a cancelled Contents list load closes the receipt");
+            // 2t. Firmware words that cancel as a timeout. Its notice paints from
+            //     memory: no book read and no reload, so the receipt stays closed.
+            ui.notice = ReaderUiNotice::ChapterJumpTimedOut;
+            reads.set(0);
+            let painted = ports.paint_ui(&mut reader, &mut source, &mut owner, &mut ui, 1_920);
+            assert!(painted.ready() && reads.get() == 0 && source.digest().is_none() && reader.info() == page2,
+                "a timed-out Contents notice paints without reading the book");
+            assert_eq!(compose!(ports, reader, owner, ui, settings, painted), Ok(Composed::Drawn));
             // 2l. The next press on Contents reloads the receipt and builds its list.
+            //     That Select only shows the list, which the reader never saw.
             reads.set(0);
             let handled = owner.handle_ui_physical(
-                &mut reader, &mut source, &mut ui, settings, Action::Next, 1_950, &mut ports,
+                &mut reader, &mut source, &mut ui, settings, Action::Activate, 1_950, &mut ports,
             );
             let _ = owner.complete_ui_physical(&mut reader, &mut source, &mut ui, handled, 1_950, &mut ports);
-            assert!(ui.panel == ReaderPanel::Chapters && reader.chapter_menu().info().valid && reads.get() > 0,
-                "Contents after a cancelled list load reloads the receipt and rebuilds the list");
+            assert!(reads.get() > 0, "Contents after a cancelled list load reloads the receipt and rebuilds the list");
             assert_eq!(source.digest(), Some(digest), "Contents reloaded the receipt under its digest");
+            assert!(ui.panel == ReaderPanel::Chapters && ui.notice == ReaderUiNotice::None
+                && reader.chapter_menu().info().valid && reader.info() == page2,
+                "the Select that loads a timed-out Contents list only shows it");
             // Cancel mid-jump, after the first reads set deferred_fresh.
             jump_to_middle!(owner, reader, source, ui, settings, ports, 2_000, { cancel_after.set(2); });
             assert!(cancel_flag.get(), "mid-jump cancel must fire");
@@ -769,6 +780,22 @@ pub fn check() {
             assert_eq!((ui.panel, ui.notice), (ReaderPanel::Chapters, ReaderUiNotice::ChapterJumpFailed),
                 "a jump cancelled at its final check stays on Contents with a failed-jump notice");
             assert_eq!(source.digest(), None, "a jump cancelled at its final check leaves the receipt to reload");
+            // As 2t and 2l, for a timed-out jump: the notice reads nothing, and
+            // the Select that loads the list the jump left empty only shows it.
+            ui.notice = ReaderUiNotice::ChapterJumpTimedOut;
+            reads.set(0);
+            let painted = ports.paint_ui(&mut reader, &mut source, &mut owner, &mut ui, 5_010);
+            assert!(painted.ready() && reads.get() == 0 && source.digest().is_none() && reader.info() == shown,
+                "a timed-out Contents notice paints without reading the book");
+            assert_eq!(compose!(ports, reader, owner, ui, settings, painted), Ok(Composed::Drawn));
+            assert!(!reader.chapter_menu().info().valid, "the timed-out jump left no list");
+            let handled = owner.handle_ui_physical(
+                &mut reader, &mut source, &mut ui, settings, Action::Activate, 5_020, &mut ports,
+            );
+            let _ = owner.complete_ui_physical(&mut reader, &mut source, &mut ui, handled, 5_020, &mut ports);
+            assert!(ui.panel == ReaderPanel::Chapters && ui.notice == ReaderUiNotice::None
+                && reader.chapter_menu().info().valid && reader.info() == shown,
+                "the Select that loads a timed-out Contents list only shows it");
             ui.panel = ReaderPanel::Page;
             ui.notice = ReaderUiNotice::None;
             let painted = ports.paint_ui(&mut reader, &mut source, &mut owner, &mut ui, 5_050);

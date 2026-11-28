@@ -29,20 +29,40 @@ pub(crate) fn prepare_reader_ui_paint_with(
 ) -> PreparedReaderPaint {
     let retry = matches!(pass, ReaderPaintPass::RetryAfterReadyPage(_));
     let chapters = ui.panel == ReaderPanel::Chapters;
-    // After a Contents action ran out of time, no paint loads Contents again
-    // on its own: that load would stall the same way. Until a press, the
-    // paint draws the list it still has, or Contents with only the notice (#199).
-    let load = chapters && ui.notice != ReaderUiNotice::ChapterJumpTimedOut;
+    // After a Contents action ran out of time, no paint reads the card on its
+    // own: a load or repaint would stall the same way. Until a press, the
+    // paint draws the list it still has, or Contents with only the notice,
+    // over the page it has in memory (#199).
+    let timed_out = chapters && ui.notice == ReaderUiNotice::ChapterJumpTimedOut;
+    let load = chapters && !timed_out;
     let menu = load.then(|| crate::lifecycle::prepare_menu(op, owner, ui, ui.selected));
     if menu.is_some_and(|result| result.valid) {
         ui.selected = op.menu().info().focus;
     }
-    let paint = !retry || menu.is_some_and(|result| result.valid);
+    let page = if timed_out {
+        PagePaint::Memory
+    } else if retry && !menu.is_some_and(|result| result.valid) {
+        PagePaint::Restore
+    } else {
+        PagePaint::Source
+    };
     PreparedReaderPaint {
         menu,
-        paint,
+        page,
         retry_if_missing: load && !retry,
     }
+}
+/// Where a paint gets the page under its chrome and panels.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PagePaint {
+    /// Repaint the shown page from its source.
+    Source,
+    /// A retry whose list didn't load puts the first paint's page back.
+    Restore,
+    /// The notice of a timed-out Contents action reads nothing: the card
+    /// stalled once already. The page comes from its retained plan, or the
+    /// notice goes over a blank page. A press or idle work reloads (#199).
+    Memory,
 }
 /// Retry is requested only by RetryChapterMenu after the first paint succeeded.
 #[derive(Debug, Eq, PartialEq)]
@@ -59,7 +79,7 @@ pub struct PreparedReaderPaint {
     /// Err in its status: a cancel stopped the Contents load, so the paint
     /// is cancelled too.
     pub menu: Option<MenuPreparation>,
-    pub(crate) paint: bool,
+    pub(crate) page: PagePaint,
     retry_if_missing: bool,
 }
 #[must_use]
@@ -123,7 +143,7 @@ pub(crate) fn repaint_reader_ui_with(
         tracker.pause(now);
         return ReaderPaintWork::Cancelled;
     }
-    if !prepared.paint {
+    if prepared.page == PagePaint::Restore {
         if !owner.opened() {
             tracker.pause(now);
         }
@@ -132,6 +152,9 @@ pub(crate) fn repaint_reader_ui_with(
     if !owner.opened() {
         tracker.pause(now);
         return ReaderPaintWork::Complete { ready: false };
+    }
+    if prepared.page == PagePaint::Memory {
+        return ReaderPaintWork::Complete { ready: true };
     }
     let Ok(status) = repaint(reader) else {
         tracker.pause(now);

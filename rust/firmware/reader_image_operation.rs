@@ -248,6 +248,13 @@ impl Runtime {
             source.with_source_observed(&mut source_native, Some(&cancel), file_observer, |source| {
                 session::with_source_lent(state, RevisionPorts { source: Some(source), store: &mut receipt,
                     whole: &mut whole, block: Some(&mut block), scratch }, action_storage, |revision| {
+                    // A timed-out Contents notice paints without reloading the
+                    // receipt a cancel closed. Work that is neither a press nor
+                    // a paint reloads it here, as the exit does, so it can save (#199).
+                    if matches!(step, Some(BookStep::Idle { .. } | BookStep::Save
+                        | BookStep::ReflowCheckpoint { .. } | BookStep::MarkFinished(_))) {
+                        revision.reload_closed(digest);
+                    }
                     let verified_now = indexed.is_some_and(|indexed| indexed.verified_now());
                     if verified_now || verification.state() == crate::reader_verification::Verification::Pending {
                         let mut finish = |raw: &mut dyn newt_core::zip_window::source::BookSource,

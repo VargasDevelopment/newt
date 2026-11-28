@@ -121,6 +121,14 @@ CRATE_CONTROLS = (
      'if owner.paint_with(reader, source, now, pages).is_err() {',
      'if owner.paint_with(reader, source, now, pages).is_err() && false {',
      'a cancelled fallback paint never reports a ready frame'),
+    # A timed-out Contents notice repainted from the book, reloading the receipt.
+    ('notice-paint-reads', 'reader-ui/src/compose.rs',
+     'let page = if timed_out {', 'let page = if false && timed_out {',
+     'a timed-out Contents notice paints without reading the book'),
+    # The Select that loads a timed-out Contents list also opens a row of it.
+    ('timeout-select-opens-row', 'reader-ui/src/lifecycle.rs',
+     'if action == Action::Activate {', 'if false && action == Action::Activate {',
+     'the Select that loads a timed-out Contents list only shows it'),
 )
 
 

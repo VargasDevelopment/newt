@@ -80,6 +80,15 @@ pub(crate) fn handle_reader_ui_with(
         if result.valid {
             ui.selected = op.menu().info().focus;
         }
+        // After a timeout the reader never saw this list, so the Select that
+        // loads it only shows it. A later Select opens a row (#199).
+        if result.valid && ui.notice == ReaderUiNotice::ChapterJumpTimedOut {
+            ui.notice = ReaderUiNotice::None;
+            if action == Action::Activate {
+                tracker.pause(now);
+                return ReaderUiResult { work: ReaderUiWork::Intent(I::Repaint), menu };
+            }
+        }
     }
     let shown_menu = op.menu().info();
     let intent = crate::dispatch::dispatch_reader_ui_with_availability(

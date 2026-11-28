@@ -563,7 +563,7 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
         prepared: PreparedReaderPaint,
         now: u32,
     ) -> Result<ReaderPaintWork, Cancelled> {
-        let restore_pixels = !prepared.paint;
+        let page = prepared.page;
         let work = crate::compose::repaint_reader_ui_with(
             reader,
             &mut owner.state,
@@ -572,7 +572,12 @@ impl<B: ParserBackend + ?Sized, L: ReaderPanelLoan, C: ReadScope + CachePresence
             now,
             |r| self.repaint(r, revision),
         ).drawn()?;
-        if restore_pixels {
+        if page == PagePaint::Memory {
+            let _ = self.panel.with_frame(|frame| {
+                if reader.restore_retained_frame(frame) != Status::Ok { frame.fill(0); }
+            });
+        }
+        if page == PagePaint::Restore {
             // Retrying menu preparation used/cleared native storage. Recreate
             // the validated FIRST page even if retry latched a source failure.
             let status = self

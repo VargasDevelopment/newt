@@ -9,7 +9,9 @@
 - A Contents jump that runs out of time keeps the reader open on its page,
   and Back then saves it, over a sealed receipt or the strict fallback (#199).
 - A Contents load or jump that runs out of time waits on Contents for a
-  press, so a second stall can't close the reader or cost the book index (#199).
+  press, and its notice reads nothing from the card, so a second stall can't
+  cost another budget, close the reader or cost the book index. The Select that
+  loads that list only shows it (#199).
 - Back during a slow Contents jump or a Contents list load goes Home and
   saves the shown page; the exit is the first to reload the source the
   cancel closed (#199).
@@ -329,34 +331,81 @@ def back_during_contents_load_saves_page(binary):
             return f'Back during a Contents load: a cold boot restored {got} instead of the shown page {[book, *page]}'
 
 
+def shows_loading(directory):
+    """Whether the last frame is the Loading screen: blank but for its centred
+    400x104 box (render_reader_working_ui), in portrait."""
+    _, size, bits = (directory / 'frame.pbm').read_bytes().split(b'\n', 2)
+    width, height = map(int, size.split())
+    row = width // 8
+    left, top = (width - 400) // 16, (height - 104) // 2
+    outside = (bits[y * row:(y + 1) * row] if not top <= y < top + 104
+               else bits[y * row:y * row + left] + bits[y * row + row - left:(y + 1) * row]
+               for y in range(height))
+    return not any(any(line) for line in outside)
+
+
+def contents_timeouts(binary, d, to_row, slow):
+    """(name, keys, stall) for a Contents load and a Contents jump, each with
+    the first stall on `slow` that runs the press out of time."""
+    for name, keys in (('load', to_row[:-2] + (CONFIRM,)), ('jump', to_row + (CONFIRM,))):
+        for after in range(1, 64):
+            stall = {'card.slow': slow, 'card.after_refresh': str(after)}
+            if int(ACTION_TOTAL.findall(run(binary, d, keys, stall))[-1]) >= BUDGET_US:
+                break
+        else:
+            raise AssertionError(f'no stall on {slow} runs the Contents {name} out of time')
+        yield name, keys, stall
+
+
 def timed_out_contents_waits_for_press(binary):
     """A Contents load or jump that runs out of time stays on Contents with its
-    notice until a press: no paint loads Contents again on its own. With a second stall
-    waiting for that load, the press still takes one budget, the reader stays
-    open and the book index stays on the card (#199)."""
+    notice until a press, and that paint reads nothing from the card: it loads
+    no Contents and reloads no receipt. With more stalls waiting on the book
+    index or the receipt, the press still takes one budget, the notice replaces
+    Loading, the reader keeps its page and the book index stays on the card.
+    Idle work reloads the receipt, so its save keeps the shown page (#199)."""
     with tempfile.TemporaryDirectory(prefix='newt-contents-timeout-') as td:
         d = Path(td)
         book, saved, page, to_row = jump_setup(binary, d)
         index = lambda card: sorted(p.name for p in (card / 'Newt/Cache/Index').glob('*'))
         kept = index(d / 'seed-card')
         assert kept, 'the seeded card has no book index'
-        for name, keys in (('load', to_row[:-2] + (CONFIRM,)), ('jump', to_row + (CONFIRM,))):
-            # The first stall on the index that runs the press out of time.
-            for after in range(1, 64):
-                stall = {'card.slow': '/Index/', 'card.after_refresh': str(after)}
-                if int(ACTION_TOTAL.findall(run(binary, d, keys, stall))[-1]) >= BUDGET_US:
-                    break
-            else:
-                raise AssertionError(f'no index stall runs the Contents {name} out of time')
-            log = run(binary, d, keys, {**stall, 'card.slow.count': '2'})
-            total = sum(int(us) for us in ACTION_TOTAL.findall(log))
-            shown = diag_of(log)
-            if total >= 2 * BUDGET_US:
-                return f'a timed-out Contents {name} loaded Contents again on its own ({total} us)'
-            if screen_of(log) != READER or shown.get('reader_open') != '1':
-                return f'a timed-out Contents {name} left the reader (screen={screen_of(log)}, {shown})'
-            if index(d / 'card') != kept:
-                return f'a timed-out Contents {name} lost the book index ({index(d / "card")})'
+        for slow, count in (('/Imported/', '3'), ('/Index/', '2')):
+            for name, keys, stall in contents_timeouts(binary, d, to_row, slow):
+                log = run(binary, d, keys, {**stall, 'card.slow.count': count})
+                total = sum(int(us) for us in ACTION_TOTAL.findall(log))
+                shown = diag_of(log)
+                what = f'a Contents {name} timed out on {slow}'
+                if total >= 2 * BUDGET_US:
+                    return f'{what}, and its notice read the card again ({total} us)'
+                if shows_loading(d):
+                    return f'{what}, and Loading stayed up'
+                if screen_of(log) != READER or shown.get('reader_open') != '1':
+                    return f'{what}, and the reader closed (screen={screen_of(log)}, {shown})'
+                if [shown['actual_spine'], shown['actual_character']] != page:
+                    return f'{what}, and the reader showed {shown} instead of the page {page}'
+                if index(d / 'card') != kept:
+                    return f'{what}, and the book index is gone ({index(d / "card")})'
+                got = reopened(binary, d)
+                if list(got) != [book, *page]:
+                    return f'{what}: a cold boot restored {got}, so idle work did not save the shown page'
+
+
+def timed_out_contents_select_shows_list(binary):
+    """After a Contents load or jump runs out of time, the Select that loads
+    the list only shows it, since the reader never saw it. The next Select
+    opens a row (#199)."""
+    with tempfile.TemporaryDirectory(prefix='newt-contents-select-') as td:
+        d = Path(td)
+        book, saved, page, to_row = jump_setup(binary, d)
+        for name, keys, stall in contents_timeouts(binary, d, to_row, '/Index/'):
+            shown = diag_of(run(binary, d, keys + (CONFIRM,), stall))
+            if [shown['actual_spine'], shown['actual_character']] != page:
+                return (f'the Select after a timed-out Contents {name} opened a row the reader never saw '
+                        f'({shown}, not the page {page})')
+            moved = diag_of(run(binary, d, keys + (CONFIRM, CONFIRM), stall))
+            if [moved['actual_spine'], moved['actual_character']] == page:
+                return f'the second Select after a timed-out Contents {name} opened no row ({moved})'
 
 
 def strict_timed_out_jump_keeps_page(binary):
@@ -423,7 +472,7 @@ LOADING_EVERY_CROSS_CHAPTER_TURN = (
     '        action == Action::Next && book.ui.panel == ReaderPanel::Page\n'
     '            && book.reader.info().page + 1 >= book.reader.info().page_count\n',
 )
-# #199: a receipt that never reports its cancel reads the timed-out jump as a changed book.
+# #199: a receipt that never reports its cancel reads a refused receipt read as a changed book.
 CANCEL_READS_AS_CHANGED = (
     'sd_revision.rs',
     '!self.file.operation().allowed()',
@@ -435,6 +484,18 @@ CONTENTS_TIMEOUT_RELOADS = (
     'reader_image_action.rs',
     'self.reader_ui.notice = ReaderUiNotice::ChapterJumpTimedOut;',
     'let _ = ReaderUiNotice::ChapterJumpTimedOut;',
+)
+# #199: the timed-out notice's paint reloads the receipt, as every step but a press once did.
+NOTICE_RELOADS = (
+    'reader_image_operation.rs',
+    'if matches!(step, Some(BookStep::Idle { .. } | BookStep::Save',
+    'if step.is_none() || matches!(step, Some(BookStep::Idle { .. } | BookStep::Save',
+)
+# #199: idle work leaves the receipt a timeout closed, so its save is refused.
+IDLE_SKIPS_RELOAD = (
+    'reader_image_operation.rs',
+    'revision.reload_closed(digest);',
+    'let _ = digest;',
 )
 # #199: the exit after a cancel leaves the closed receipt unread, so it can't save.
 EXIT_SKIPS_RELOAD = (
@@ -471,6 +532,7 @@ def main():
     check(stalled_turn_exits_and_saves, rust_preview.control([NO_SESSION], optimize=False))
     check(timed_out_turn_keeps_page, binary)
     check(timed_out_contents_waits_for_press, binary)
+    check(timed_out_contents_select_shows_list, binary)
     if not negative_controls(__file__):
         return
     for case, edits, label in (
@@ -487,9 +549,11 @@ def main():
         (library_cancel_queue_keeps_later_screen, [CANCEL_BACK_EVERYWHERE], 'cancel-back-everywhere'),
         (short_cached_chapter_turns_without_loading, [LOADING_EVERY_CROSS_CHAPTER_TURN],
          'loading-every-cross-chapter-turn'),
-        (timed_out_jump_keeps_page, [CANCEL_READS_AS_CHANGED], 'cancel-reads-as-changed'),
+        (timed_out_contents_waits_for_press, [CANCEL_READS_AS_CHANGED], 'cancel-reads-as-changed'),
         (back_during_contents_load_saves_page, [EXIT_SKIPS_RELOAD], 'exit-skips-reload'),
         (timed_out_contents_waits_for_press, [CONTENTS_TIMEOUT_RELOADS], 'contents-timeout-reloads'),
+        (timed_out_contents_waits_for_press, [NOTICE_RELOADS], 'notice-reloads'),
+        (timed_out_contents_waits_for_press, [IDLE_SKIPS_RELOAD], 'idle-skips-reload'),
     ):
         problem = case(rust_preview.control(edits, optimize=False))
         if not problem:
