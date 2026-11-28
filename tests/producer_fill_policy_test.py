@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """Target-first current-chapter page-cache fill policy, progress outcomes,
-failure precedence, and cold-boot wake cache hit over real firmware code."""
+failure precedence, and cold-boot wake cache hit over real firmware code.
+
+--negative-controls runs only the negative controls: the gate runs them as
+their own phase so neither half outgrows one phase's CPU budget. Each control
+has its own time allowance, so a slow earlier control can't starve a later
+one, and only a mutant that panics with its witness counts as a kill.
+"""
+import argparse
 import importlib.util
 import json
 import os
@@ -16,7 +23,6 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 HOST = 'x86_64-unknown-linux-gnu'
 sys.path.insert(0, str(ROOT / 'tools'))
-from gate_tier import negative_controls
 from host_common import crypto_flags
 
 # Ordered by crate layer so firmware/ controls reuse the clean library graph
@@ -103,6 +109,15 @@ UNIT_CONTROL = (
     '        if self.reason.get() == Stop::None {\n',
     'producer_policy::tests::terminal_failures_override_interrupted_monotonically',
 )
+
+
+# Setup (copy, native objects, the clean library graph and, in the positive
+# phase, its run) and each control get separate allowances. Measured locally
+# at load 7-8: the positive phase 53 s, the controls phase 105 s with its
+# slowest control 8 s (a core/ mutant rebuilds every dependent crate). CI ran
+# about 1.9x slower, so a control's 120 s is over 7x its expected time there.
+SETUP_SECONDS = 300
+CONTROL_SECONDS = 120
 
 
 def load(name, path):
@@ -233,7 +248,99 @@ def compile_host(run, workspace, target, libraries, objects, output_binary, *, o
     run.run(command, workspace)
 
 
+def require_kill(run, support, command, cwd, label, log, witnesses):
+    """Run a mutant and require it to fail on its own assertion: exit status
+    101 (a Rust panic) with every witness in its log. A timeout, an exhausted
+    allowance, a crash or a pass is never a kill."""
+    number = len(run.commands)
+    try:
+        run.run(command, cwd)
+    except RuntimeError:
+        returncode = run.commands[number].get('returncode') if len(run.commands) > number else None
+        if returncode is None:
+            raise
+        support.require(returncode == 101, f'{label}: exit {returncode}, not a panic, so never a mutation kill')
+        text = (run.output / f'{number:03d}.{log}').read_text()
+        support.require(all(witness in text for witness in witnesses),
+                        f'{label}: expected {witnesses} in {log}:\n{text}')
+    else:
+        raise RuntimeError(f'{label}: passed with the rule broken')
+
+
+def judge_controls(run, support, cwd):
+    """The kill judgement's own controls: a starved or timed-out mutant that
+    already printed its witness, and one that passes, must each fail; one that
+    panics with its witness must count."""
+    witness = 'Progress must renew quiet window'
+    shell = '/bin/sh', '-c'
+    panic = f'echo "panicked at host.rs: {witness}" >&2'
+    # Only the timed-out case has a short allowance, so a loaded runner can't
+    # turn another case into a timeout.
+    cases = (('timed out', 1, f'{panic}; exec sleep 30', 'timeout, never a mutation kill'),
+             ('starved', -1, panic, 'phase allowance exhausted'),
+             ('passed', 30, 'exit 0', 'passed with the rule broken'),
+             ('crashed', 30, f'{panic}; kill -SEGV $$', 'not a panic, so never a mutation kill'))
+    for label, seconds, script, failure in cases:
+        run.deadline = time.monotonic() + seconds
+        try:
+            require_kill(run, support, [*shell, script], cwd, label, 'stderr', (witness,))
+        except RuntimeError as error:
+            support.require(failure in str(error), f'judge control "{label}": failed with {error}')
+        else:
+            raise RuntimeError(f'judge control "{label}": counted as a mutation kill')
+    run.deadline = time.monotonic() + 30
+    require_kill(run, support, [*shell, f'{panic}; exit 101'], cwd, 'panicked', 'stderr', (witness,))
+    print(f'PASS control: a {", ".join(label for label, *_ in cases)} mutant is never a kill', flush=True)
+
+
+def run_controls(run, support, workspace, target, libraries, objects, epub, output):
+    judge_controls(run, support, workspace)
+    for name, rel_source, good, bad, case, witness in CONTROLS:
+        run.deadline = time.monotonic() + CONTROL_SECONDS
+        path = workspace / rel_source
+        original = path.read_text()
+        support.require(original.count(good) == 1,
+                        f'control "{name}": anchor must appear once in rust/{rel_source}')
+        path.write_text(original.replace(good, bad, 1))
+        try:
+            # firmware/ files are #[path]-included by host.rs, never compiled
+            # into the Cargo library graph, so they reuse clean libraries directly.
+            mut_libs = libraries if rel_source.startswith('firmware/') else build_libraries(run, workspace, target)
+            binary = output / name
+            compile_host(run, workspace, target, mut_libs, objects, binary,
+                         opt_level=0, warnings_as_errors=False)
+            require_kill(run, support, [binary, epub, '--case', case], workspace,
+                         f'control "{name}"', 'stderr', ('panicked at ', witness))
+        finally:
+            path.write_text(original)
+        print(f'PASS control: {name} rejected by {case}', flush=True)
+
+    # Unit negative control for pause_point_with Stop::Terminal override.
+    run.deadline = time.monotonic() + CONTROL_SECONDS
+    name, rel_source, good, bad, unit_test = UNIT_CONTROL
+    path = workspace / rel_source
+    original = path.read_text()
+    support.require(original.count(good) == 1,
+                    f'control "{name}": anchor must appear once in rust/{rel_source}')
+    path.write_text(original.replace(good, bad, 1))
+    try:
+        wire = run.cargo(workspace, target, 'test', '-p', 'newt-core', '--lib',
+                         '--target', HOST, '--no-run', '--message-format=json')
+        bins = [row['executable'] for row in map(json.loads, wire.splitlines())
+                if row.get('reason') == 'compiler-artifact' and row.get('executable')]
+        support.require(len(bins) == 1, 'one newt-core test binary expected')
+        require_kill(run, support, [bins[0], unit_test, '--exact'], workspace, f'control "{name}"', 'stdout',
+                     ('test result: FAILED. 0 passed; 1 failed', 'panicked at'))
+    finally:
+        path.write_text(original)
+    print(f'PASS control: {name} rejected by {unit_test}', flush=True)
+
+
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--negative-controls', action='store_true',
+                        help='Run only the negative controls, instead of the cases')
+    args = parser.parse_args()
     support = load('fill_policy_support', ROOT / 'rust/tests/inflate/run_support.py')
     support.install_signal_handlers()
     scratch = ROOT / '.build/producer-fill-policy'
@@ -243,11 +350,15 @@ def main():
         workspace = output / 'rust'
         shutil.copytree(ROOT / 'rust', workspace, ignore=shutil.ignore_patterns('target', '__pycache__'))
         (output / 'logs').mkdir()
-        run = support.Run(output / 'logs', support.verify_tools(), time.monotonic() + 300)
+        run = support.Run(output / 'logs', support.verify_tools(), time.monotonic() + SETUP_SECONDS)
         # Keep RUSTFLAGS constant across positive and mutated builds so Cargo
         # never invalidates untouched crate fingerprints; rust/check.py --landing
         # already compiles the workspace with -Dwarnings.
         target = output / 'target'
+        if args.negative_controls:
+            # Each control rebuilds after a one-line edit: incremental builds
+            # without debug info cut that, as in large_epub_corpus_test.py.
+            run.env.update(CARGO_INCREMENTAL='1', CARGO_PROFILE_DEV_DEBUG='0')
         epub = output / 'synthetic.epub'
         write_synthetic_epub(epub)
         try:
@@ -270,6 +381,9 @@ def main():
                 objects.append(obj)
 
             libraries = build_libraries(run, workspace, target)
+            if args.negative_controls:
+                run_controls(run, support, workspace, target, libraries, objects, epub, output)
+                return
             positive = output / 'positive'
             compile_host(run, workspace, target, libraries, objects, positive,
                          opt_level=1, warnings_as_errors=False)
@@ -277,60 +391,6 @@ def main():
             support.require('PASS producer fill policy (15 cases)' in stdout,
                             'all 15 fill-policy and cold-boot cache hit cases must pass')
             print(stdout, end='', flush=True)
-
-            if negative_controls(__file__):
-                for name, rel_source, good, bad, case, witness in CONTROLS:
-                    path = workspace / rel_source
-                    original = path.read_text()
-                    support.require(original.count(good) == 1,
-                                    f'control "{name}": anchor must appear once in rust/{rel_source}')
-                    path.write_text(original.replace(good, bad, 1))
-                    try:
-                        # firmware/ files are #[path]-included by host.rs, never compiled
-                        # into the Cargo library graph, so they reuse clean libraries directly.
-                        mut_libs = libraries if rel_source.startswith('firmware/') else build_libraries(run, workspace, target)
-                        binary = output / name
-                        compile_host(run, workspace, target, mut_libs, objects, binary,
-                                     opt_level=0, warnings_as_errors=False)
-                        number = len(run.commands)
-                        try:
-                            run.run([binary, epub, '--case', case], workspace)
-                        except RuntimeError:
-                            stderr = (run.output / f'{number:03d}.stderr').read_text()
-                            support.require('panicked at ' in stderr and witness in stderr,
-                                            f'control "{name}": expected witness "{witness}" in stderr:\n{stderr}')
-                        else:
-                            raise RuntimeError(f'control "{name}": {case} passed with rule broken')
-                    finally:
-                        path.write_text(original)
-                    print(f'PASS control: {name} rejected by {case}', flush=True)
-
-                # Unit negative control for pause_point_with Stop::Terminal override.
-                name, rel_source, good, bad, unit_test = UNIT_CONTROL
-                path = workspace / rel_source
-                original = path.read_text()
-                support.require(original.count(good) == 1,
-                                f'control "{name}": anchor must appear once in rust/{rel_source}')
-                path.write_text(original.replace(good, bad, 1))
-                try:
-                    wire = run.cargo(workspace, target, 'test', '-p', 'newt-core', '--lib',
-                                     '--target', HOST, '--no-run', '--message-format=json')
-                    bins = [row['executable'] for row in map(json.loads, wire.splitlines())
-                            if row.get('reason') == 'compiler-artifact' and row.get('executable')]
-                    support.require(len(bins) == 1, 'one newt-core test binary expected')
-                    number = len(run.commands)
-                    try:
-                        run.run([bins[0], unit_test, '--exact'], workspace)
-                    except RuntimeError:
-                        stdout = (run.output / f'{number:03d}.stdout').read_text()
-                        support.require('test result: FAILED. 0 passed; 1 failed' in stdout
-                                        and 'panicked at' in stdout,
-                                        f'control "{name}": {unit_test} must fail on an assertion')
-                    else:
-                        raise RuntimeError(f'control "{name}": {unit_test} passed with rule broken')
-                finally:
-                    path.write_text(original)
-                print(f'PASS control: {name} rejected by {unit_test}', flush=True)
         except RuntimeError:
             for log in sorted((output / 'logs').glob('*.std*'))[-2:]:
                 print(log.read_text(), file=sys.stderr, end='')

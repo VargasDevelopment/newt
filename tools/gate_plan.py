@@ -125,6 +125,9 @@ def plan(profile: str, fresh_objects: bool, controls=None) -> list[Phase]:
     test("dev_put_test.py")
     test("dev_usb_live_capture_test.py")
     test("producer_fill_policy_test.py")
+    # Its controls are a phase of their own too: on CI the two together came
+    # within 15 of the 360 CPU seconds (#216's gate, 345.4).
+    test("producer_fill_policy_test.py", "--negative-controls", full_only=True)
     test("large_epub_corpus_test.py", "--full")
     # Its controls are a phase of their own: together the two outgrow one
     # phase's CPU budget (tools/gate-cpu-budgets.json).
