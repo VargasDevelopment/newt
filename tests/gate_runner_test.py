@@ -418,6 +418,7 @@ class PlanTests(unittest.TestCase):
                                'preview_owners_test.py', 'preview_update_test.py', 'preview_reader_wake_test.py',
                                'preview_reader_finish_test.py', 'preview_reader_reimport_test.py',
                                'preview_reader_reflow_test.py',
+                               'preview_reader_work_test.py',
                                'preview_reader_inline_ascent_test.py',
                                'preview_reader_small_caps_test.py',
                                'preview_reader_picture_notes_test.py',
